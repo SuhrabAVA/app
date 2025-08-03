@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <base href="/">
+
+    <meta charset="UTF-8">
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+    <meta name="description" content="A new Flutter project.">
+
+    <!-- iOS meta tags & icons -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="sheet_clone">
+    <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="favicon.png" />
+
+    <title>sheet_clone</title>
+    <link rel="manifest" href="manifest.json">
+
+    <!-- Firebase SDK для Web -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <!-- 🔥 ОБЯЗАТЕЛЬНО: подключаем firebase глобально -->
+    <script>
+        window.firebase = firebase;
+    </script>
+
+    <script>
+        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+        const firebaseConfig = {
+            apiKey: "AIzaSyBtk-hkhAfDwjqr4uOed_XsLGhYuh-gJjw",
+            authDomain: "sheets-40e7c.firebaseapp.com",
+            databaseURL: "https://sheets-40e7c-default-rtdb.firebaseio.com",
+            projectId: "sheets-40e7c",
+            storageBucket: "sheets-40e7c.firebasestorage.app",
+            messagingSenderId: "1066189756651",
+            appId: "1:1066189756651:web:a7a7b78ad3dc23d49cc6ae",
+            measurementId: "G-GJL6SBRDBN"
+        };
+        firebase.initializeApp(firebaseConfig);
+    </script>
+</head>
+
+<body>
+    <script src="flutter_bootstrap.js" async></script>
+</body>
+
+</html>
