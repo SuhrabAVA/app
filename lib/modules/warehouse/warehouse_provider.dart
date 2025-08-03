@@ -24,6 +24,7 @@ class WarehouseProvider with ChangeNotifier {
           description: item['description'],
           quantity: (item['quantity'] as num).toDouble(),
           unit: item['unit'],
+          note: item['note'],
         );
       }).toList();
       notifyListeners();
@@ -42,6 +43,7 @@ class WarehouseProvider with ChangeNotifier {
     required String description,
     required double quantity,
     required String unit,
+    String? note,
   }) async {
     final id = const Uuid().v4();
     final date = DateTime.now().toIso8601String();
@@ -54,6 +56,7 @@ class WarehouseProvider with ChangeNotifier {
       'description': description,
       'quantity': quantity,
       'unit': unit,
+      'note': note,
     };
 
     await _db.child('tmc').child(id).set(data);
@@ -97,12 +100,14 @@ class WarehouseProvider with ChangeNotifier {
     String? unit,
     double? quantity,
     String? supplier,
+    String? note,
   }) async {
     final Map<String, dynamic> updates = {};
     if (description != null) updates['description'] = description;
     if (unit != null) updates['unit'] = unit;
     if (quantity != null) updates['quantity'] = quantity;
     if (supplier != null) updates['supplier'] = supplier;
+    if (note != null) updates['note'] = note;
     if (updates.isEmpty) return;
     await _db.child('tmc').child(id).update(updates);
     await fetchTmc();

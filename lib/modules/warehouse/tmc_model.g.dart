@@ -24,13 +24,14 @@ class TmcModelAdapter extends TypeAdapter<TmcModel> {
       description: fields[4] as String,
       quantity: fields[5] as double,
       unit: fields[6] as String,
+      note: fields[7] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, TmcModel obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -44,7 +45,9 @@ class TmcModelAdapter extends TypeAdapter<TmcModel> {
       ..writeByte(5)
       ..write(obj.quantity)
       ..writeByte(6)
-      ..write(obj.unit);
+      ..write(obj.unit)
+      ..writeByte(7)
+      ..write(obj.note);
   }
 
   @override
