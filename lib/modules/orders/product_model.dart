@@ -17,4 +17,26 @@ class ProductModel {
     required this.depth,
     this.parameters = '',
   });
+
+  /// Преобразует модель продукта в Map.
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'type': type,
+        'quantity': quantity,
+        'width': width,
+        'height': height,
+        'depth': depth,
+        'parameters': parameters,
+      };
+
+  /// Создаёт [ProductModel] из Map.
+  factory ProductModel.fromMap(Map<String, dynamic> map) => ProductModel(
+        id: map['id'] as String,
+        type: map['type'] as String? ?? '',
+        quantity: (map['quantity'] as num?)?.toInt() ?? 0,
+        width: (map['width'] as num?)?.toDouble() ?? 0,
+        height: (map['height'] as num?)?.toDouble() ?? 0,
+        depth: (map['depth'] as num?)?.toDouble() ?? 0,
+        parameters: map['parameters'] as String? ?? '',
+      );
 }

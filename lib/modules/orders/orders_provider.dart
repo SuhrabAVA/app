@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 import 'order_model.dart';
 import 'product_model.dart';
@@ -8,15 +9,36 @@ import 'product_model.dart';
 /// уведомляет слушателей об изменениях.
 class OrdersProvider with ChangeNotifier {
   final _uuid = const Uuid();
+  final DatabaseReference _ordersRef =
+      FirebaseDatabase.instance.ref('orders');
 
   final List<OrderModel> _orders = [];
 
+  OrdersProvider() {
+    _listenToOrders();
+  }
+
   List<OrderModel> get orders => List.unmodifiable(_orders);
 
-  /// Добавляет новый заказ в список.
+  void _listenToOrders() {
+    _ordersRef.onValue.listen((event) {
+      final data = event.snapshot.value;
+      _orders.clear();
+      if (data is Map) {
+        data.forEach((key, value) {
+          final map = Map<String, dynamic>.from(value as Map);
+          _orders.add(OrderModel.fromMap(map));
+        });
+      }
+      notifyListeners();
+    });
+  }
+
+  /// Добавляет новый заказ в список и сохраняет его в Firebase.
   void addOrder(OrderModel order) {
     _orders.add(order);
     notifyListeners();
+    _ordersRef.child(order.id).set(order.toMap());
   }
 
   /// Создаёт и добавляет новый заказ с автоматически сгенерированным ID.
@@ -42,6 +64,7 @@ class OrdersProvider with ChangeNotifier {
     );
     _orders.add(newOrder);
     notifyListeners();
+    _ordersRef.child(newOrder.id).set(newOrder.toMap());
     return newOrder;
   }
 
@@ -51,6 +74,7 @@ class OrdersProvider with ChangeNotifier {
     if (index >= 0) {
       _orders[index] = updated;
       notifyListeners();
+      _ordersRef.child(updated.id).set(updated.toMap());
     }
   }
 

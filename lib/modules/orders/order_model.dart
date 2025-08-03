@@ -26,4 +26,33 @@ class OrderModel {
     this.comments = '',
     this.status = OrderStatus.newOrder,
   });
+
+  /// Преобразует модель заказа в Map для сохранения в Firebase.
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'customer': customer,
+        'orderDate': orderDate.toIso8601String(),
+        'dueDate': dueDate.toIso8601String(),
+        'products': products.map((p) => p.toMap()).toList(),
+        'contractSigned': contractSigned,
+        'paymentDone': paymentDone,
+        'comments': comments,
+        'status': status.name,
+      };
+
+  /// Создаёт [OrderModel] из Map, полученного из Firebase.
+  factory OrderModel.fromMap(Map<String, dynamic> map) => OrderModel(
+        id: map['id'] as String,
+        customer: map['customer'] as String? ?? '',
+        orderDate: DateTime.parse(map['orderDate'] as String),
+        dueDate: DateTime.parse(map['dueDate'] as String),
+        products: (map['products'] as List<dynamic>? ?? [])
+            .map((p) => ProductModel.fromMap(Map<String, dynamic>.from(p)))
+            .toList(),
+        contractSigned: map['contractSigned'] as bool? ?? false,
+        paymentDone: map['paymentDone'] as bool? ?? false,
+        comments: map['comments'] as String? ?? '',
+        status:
+            OrderStatus.values.byName(map['status'] as String? ?? 'newOrder'),
+      );
 }
