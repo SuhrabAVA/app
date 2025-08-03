@@ -36,17 +36,21 @@ class _StockListScreenState extends State<StockListScreen> {
       appBar: AppBar(
         title: const Text('Остатки на складе'),
         actions: [
-          DropdownButton<String>(
+          DropdownButton<String?>(
             value: _selectedType,
             hint: const Text('Фильтр по типу'),
             onChanged: (val) => setState(() => _selectedType = val),
             items: [
-              const DropdownMenuItem<String>(
-                  value: null, child: Text('Все')),
-              ...uniqueTypes.map((type) => DropdownMenuItem<String>(
-                    value: type,
-                    child: Text(type),
-                  )),
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('Все'),
+              ),
+              ...uniqueTypes.map(
+                (type) => DropdownMenuItem<String?>(
+                  value: type,
+                  child: Text(type),
+                ),
+              ),
             ],
           ),
         ],
