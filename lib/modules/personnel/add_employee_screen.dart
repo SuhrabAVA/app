@@ -17,6 +17,8 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
   final _patronymicController = TextEditingController();
   final _iinController = TextEditingController();
   final _commentsController = TextEditingController();
+  final _loginController = TextEditingController();
+  final _passwordController = TextEditingController();
   List<String> _positionIds = [];
 
   File? _selectedImage;
@@ -38,10 +40,17 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
     final patronymic = _patronymicController.text.trim();
     final iin = _iinController.text.trim();
     final comments = _commentsController.text.trim();
+    final login = _loginController.text.trim();
+    final password = _passwordController.text.trim();
 
-    if (lastName.isEmpty || firstName.isEmpty || iin.isEmpty || _selectedImage == null) {
+    if (lastName.isEmpty ||
+        firstName.isEmpty ||
+        iin.isEmpty ||
+        login.isEmpty ||
+        password.isEmpty ||
+        _selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Заполните все обязательные поля и выберите фото')),
+        const SnackBar(content: Text('Заполните все обязательные поля, логин/пароль и выберите фото')),
       );
       return;
     }
@@ -69,6 +78,8 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
         'positionIds': _positionIds,
         'isFired': false,
         'comments': comments,
+        'login': login,
+        'password': password,
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -120,6 +131,16 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
               controller: _iinController,
               decoration: const InputDecoration(labelText: 'ИИН *'),
               keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _loginController,
+              decoration: const InputDecoration(labelText: 'Логин *'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _passwordController,
+              decoration: const InputDecoration(labelText: 'Пароль *'),
             ),
             const SizedBox(height: 10),
             TextField(

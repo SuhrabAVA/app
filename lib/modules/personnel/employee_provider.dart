@@ -32,6 +32,8 @@ class EmployeeProvider with ChangeNotifier {
     required List<String> positionIds,
     required String comments,
     required File? image,
+    required String login,
+    required String password,
   }) async {
     String? photoUrl;
     if (image != null) {
@@ -52,6 +54,8 @@ class EmployeeProvider with ChangeNotifier {
       'positionIds': positionIds,
       'isFired': false,
       'comments': comments,
+      'login': login,
+      'password': password,
     });
 
     await fetchEmployees();

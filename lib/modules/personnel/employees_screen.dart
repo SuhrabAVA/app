@@ -117,6 +117,8 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
   final TextEditingController _iin = TextEditingController();
   final TextEditingController _photoUrl = TextEditingController();
   final TextEditingController _comments = TextEditingController();
+  final TextEditingController _login = TextEditingController();
+  final TextEditingController _password = TextEditingController();
   bool _isFired = false;
   final Set<String> _selectedPositions = {};
 
@@ -144,6 +146,8 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
     _iin.dispose();
     _photoUrl.dispose();
     _comments.dispose();
+    _login.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -160,31 +164,34 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
   void _submit(BuildContext context) {
     if (!_formKey.currentState!.validate()) return;
     final provider = Provider.of<PersonnelProvider>(context, listen: false);
-    final photo = _photoUrl.text.trim().isEmpty ? null : _photoUrl.text.trim();
-    if (widget.employee == null) {
-      provider.addEmployee(
-        lastName: _lastName.text.trim(),
-        firstName: _firstName.text.trim(),
-        patronymic: _patronymic.text.trim(),
-        iin: _iin.text.trim(),
-        photoUrl: photo,
-        positionIds: _selectedPositions.toList(),
-        isFired: _isFired,
-        comments: _comments.text.trim(),
-      );
-    } else {
-      provider.updateEmployee(
-        id: widget.employee!.id,
-        lastName: _lastName.text.trim(),
-        firstName: _firstName.text.trim(),
-        patronymic: _patronymic.text.trim(),
-        iin: _iin.text.trim(),
-        photoUrl: photo,
-        positionIds: _selectedPositions.toList(),
-        isFired: _isFired,
-        comments: _comments.text.trim(),
-      );
-    }
+final photo = _photoUrl.text.trim().isEmpty ? null : _photoUrl.text.trim();
+if (widget.employee == null) {
+  provider.addEmployee(
+    lastName: _lastName.text.trim(),
+    firstName: _firstName.text.trim(),
+    patronymic: _patronymic.text.trim(),
+    iin: _iin.text.trim(),
+    photoUrl: photo,
+    positionIds: _selectedPositions.toList(),
+    isFired: _isFired,
+    comments: _comments.text.trim(),
+    login: _login.text.trim(),
+    password: _password.text.trim(),
+  );
+} else {
+  provider.updateEmployee(
+    id: widget.employee!.id,
+    lastName: _lastName.text.trim(),
+    firstName: _firstName.text.trim(),
+    patronymic: _patronymic.text.trim(),
+    iin: _iin.text.trim(),
+    photoUrl: photo,
+    positionIds: _selectedPositions.toList(),
+    isFired: _isFired,
+    comments: _comments.text.trim(),
+  );
+}
+
     Navigator.of(context).pop();
   }
 
@@ -246,6 +253,34 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return 'Введите ИИН';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _login,
+                decoration: const InputDecoration(
+                  labelText: 'Логин',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Введите логин';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _password,
+                decoration: const InputDecoration(
+                  labelText: 'Пароль',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Введите пароль';
                   }
                   return null;
                 },

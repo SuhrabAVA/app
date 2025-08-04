@@ -133,6 +133,8 @@ class PersonnelProvider with ChangeNotifier {
     required List<String> positionIds,
     bool isFired = false,
     String comments = '',
+    String login = '',
+    String password = '',
   }) {
     final id = _uuid.v4();
     final employee = EmployeeModel(
@@ -145,6 +147,8 @@ class PersonnelProvider with ChangeNotifier {
       positionIds: positionIds,
       isFired: isFired,
       comments: comments,
+      login: login,
+      password: password,
     );
     _employees.add(employee);
     notifyListeners();
