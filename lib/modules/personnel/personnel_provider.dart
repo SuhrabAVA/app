@@ -24,7 +24,7 @@ class PersonnelProvider with ChangeNotifier {
   /// которые используются в системе. Дополнять список при необходимости
   /// можно динамически через экран «Должности».
   final List<PositionModel> _positions = [
-    PositionModel(id: 'bab', name: 'Бабинорезчик'),
+    PositionModel(id: 'bob_cutter', name: 'Бобинорезчик'),
     PositionModel(id: 'print', name: 'Печатник'),
     PositionModel(id: 'cut_sheet', name: 'Листорезчик'),
     PositionModel(id: 'bag_collector', name: 'Пакетосборщик'),
@@ -46,8 +46,8 @@ class PersonnelProvider with ChangeNotifier {
   /// пользовательского интерфейса. Предопределённые рабочие места
   /// упрощают начальную конфигурацию системы.
   final List<WorkplaceModel> _workplaces = [
-    // 1. Бобинорезка — работает бабинорезчик
-    WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bab']),
+    // 1. Бобинорезка — работает бобинорезчик
+    WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bob_cutter']),
     // 2. Флексопечать — печатник
     WorkplaceModel(id: 'w_flexoprint', name: 'Флексопечать', positionIds: ['print']),
     // 3–4. Листорезка (старая и новая) — листорезчик
@@ -149,6 +149,36 @@ class PersonnelProvider with ChangeNotifier {
     _employees.add(employee);
     notifyListeners();
     _employeesRef.child(id).set(employee.toJson());
+  }
+
+  // Обновление существующего сотрудника
+  void updateEmployee({
+    required String id,
+    required String lastName,
+    required String firstName,
+    required String patronymic,
+    required String iin,
+    String? photoUrl,
+    required List<String> positionIds,
+    bool isFired = false,
+    String comments = '',
+  }) {
+    final index = _employees.indexWhere((e) => e.id == id);
+    if (index == -1) return;
+    final updated = EmployeeModel(
+      id: id,
+      lastName: lastName,
+      firstName: firstName,
+      patronymic: patronymic,
+      iin: iin,
+      photoUrl: photoUrl,
+      positionIds: positionIds,
+      isFired: isFired,
+      comments: comments,
+    );
+    _employees[index] = updated;
+    notifyListeners();
+    _employeesRef.child(id).set(updated.toJson());
   }
 
   // Добавление рабочего места
