@@ -8,4 +8,18 @@ class WorkplaceModel {
     required this.name,
     required this.positionIds,
   });
+
+  /// Преобразование модели рабочего места в Map для Firebase.
+  Map<String, dynamic> toMap() => {
+        'name': name,
+        'positionIds': positionIds,
+      };
+
+  /// Создание модели из Map, полученного из Firebase.
+  factory WorkplaceModel.fromMap(Map<String, dynamic> map, String id) =>
+      WorkplaceModel(
+        id: id,
+        name: map['name'] as String? ?? '',
+        positionIds: List<String>.from(map['positionIds'] ?? []),
+      );
 }
