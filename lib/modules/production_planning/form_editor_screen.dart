@@ -119,6 +119,32 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     }
     if (_photoUrl != null) plan['photoUrl'] = _photoUrl;
     await _plansRef.child(widget.order.id).set(plan);
+
+    // Синхронизируем задачи для этого заказа, чтобы они отображались
+    // в рабочем пространстве сотрудников.
+    final tasksRef = FirebaseDatabase.instance.ref('tasks');
+    final existing = await tasksRef
+        .orderByChild('orderId')
+        .equalTo(widget.order.id)
+        .get();
+    final value = existing.value;
+    if (value is Map) {
+      final map = Map<dynamic, dynamic>.from(value);
+      for (final key in map.keys) {
+        await tasksRef.child(key.toString()).remove();
+      }
+    }
+
+    for (final stage in _stages) {
+      final newTaskRef = tasksRef.push();
+      await newTaskRef.set({
+        'orderId': widget.order.id,
+        'stageId': stage.stageId,
+        'status': 'waiting',
+        'spentSeconds': 0,
+      });
+    }
+
     if (mounted) Navigator.pop(context);
   }
 
