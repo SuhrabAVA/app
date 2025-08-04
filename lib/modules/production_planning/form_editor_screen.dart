@@ -21,6 +21,7 @@ class FormEditorScreen extends StatefulWidget {
 class _FormEditorScreenState extends State<FormEditorScreen> {
   final List<PlannedStage> _stages = [];
   final _plansRef = FirebaseDatabase.instance.ref('production_plans');
+  String? _photoUrl;
 
   Future<void> _addStage() async {
     final provider = context.read<StageProvider>();
@@ -57,7 +58,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     }
   }
 
-  Future<void> _pickImage(int index) async {
+  Future<void> _pickOrderImage() async {
     final picker = ImagePicker();
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
@@ -66,15 +67,18 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
         .ref('plan_photos/${widget.order.id}/${DateTime.now().millisecondsSinceEpoch}.jpg');
     await ref.putFile(file);
     final url = await ref.getDownloadURL();
+    if (!mounted) return;
     setState(() {
-      _stages[index].photoUrl = url;
+      _photoUrl = url;
     });
   }
 
   Future<void> _save() async {
     if (_stages.isEmpty) return;
     final data = _stages.map((s) => s.toMap()).toList();
-    await _plansRef.child(widget.order.id).set({'stages': data});
+    final plan = {'stages': data};
+    if (_photoUrl != null) plan['photoUrl'] = _photoUrl;
+    await _plansRef.child(widget.order.id).set(plan);
     if (mounted) Navigator.pop(context);
   }
 
@@ -100,6 +104,11 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
               ],
             ),
           ),
+          if (_photoUrl != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Image.network(_photoUrl!, height: 100),
+            ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -110,6 +119,15 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
                     onPressed: _addStage,
                     icon: const Icon(Icons.add),
                     label: const Text('Добавить этап'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _pickOrderImage,
+                    icon: const Icon(Icons.image),
+                    label: const Text('Добавить фото'),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -140,21 +158,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(stage.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                IconButton(
-                  icon: const Icon(Icons.image),
-                  onPressed: () => _pickImage(index),
-                ),
-              ],
-            ),
-            if (planned.photoUrl != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Image.network(planned.photoUrl!, height: 100),
-              ),
+            Text(stage.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             TextField(
               decoration: const InputDecoration(labelText: 'Комментарий'),
               onChanged: (val) => planned.comment = val,
