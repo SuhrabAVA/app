@@ -12,7 +12,9 @@ import 'terminal_model.dart';
 /// слушателей при изменениях.
 class PersonnelProvider with ChangeNotifier {
   final _uuid = const Uuid();
-  final DatabaseReference _employeesRef =
+
+   final DatabaseReference _employeesRef =
+
       FirebaseDatabase.instance.ref('employees');
 
   PersonnelProvider() {
@@ -46,7 +48,7 @@ class PersonnelProvider with ChangeNotifier {
   /// пользовательского интерфейса. Предопределённые рабочие места
   /// упрощают начальную конфигурацию системы.
   final List<WorkplaceModel> _workplaces = [
-    // 1. Бобинорезка — работает бобинорезчик
+
     WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bob_cutter']),
     // 2. Флексопечать — печатник
     WorkplaceModel(id: 'w_flexoprint', name: 'Флексопечать', positionIds: ['print']),
@@ -123,7 +125,6 @@ class PersonnelProvider with ChangeNotifier {
     });
   }
 
-  // Добавление сотрудника с сохранением в Firebase
   void addEmployee({
     required String lastName,
     required String firstName,
@@ -155,7 +156,7 @@ class PersonnelProvider with ChangeNotifier {
     _employeesRef.child(id).set(employee.toJson());
   }
 
-  // Обновление существующего сотрудника
+
   void updateEmployee({
     required String id,
     required String lastName,

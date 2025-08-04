@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../orders/orders_provider.dart';
 import 'form_editor_screen.dart';
+
 import 'stage_editor_screen.dart';
 
 class ProductionPlanningScreen extends StatelessWidget {
@@ -18,7 +19,8 @@ class ProductionPlanningScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Планирование производства')),
-      body: Column(
+       body: Column(
+
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
@@ -29,8 +31,11 @@ class ProductionPlanningScreen extends StatelessWidget {
                 child: const Text('Создать этап'),
               ),
             ),
-          ),
-          const Divider(height: 1),
+
+            
+            ),
+             const Divider(height: 1),
+
           Expanded(
             child: ListView.builder(
               itemCount: orders.length,
@@ -46,7 +51,8 @@ class ProductionPlanningScreen extends StatelessWidget {
                   ),
                 );
               },
-            ),
+
+            )
           ),
         ],
       ),

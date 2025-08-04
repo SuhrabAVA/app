@@ -19,7 +19,9 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Форма для ${widget.order.id}')),
+
+        appBar: AppBar(title: Text('Форма для ${widget.order.id}')),
+
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -135,4 +137,6 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
       ),
     );
   }
+
 }
+

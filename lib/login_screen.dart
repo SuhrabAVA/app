@@ -14,8 +14,10 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
 
   void _attemptLogin() {
-    const correctLogin = 'Рсул';
-    const correctPassword = 'Расул 123123';
+
+    const correctLogin = 'Расул';
+    const correctPassword = '123123';
+
     if (_loginController.text == correctLogin &&
         _passwordController.text == correctPassword) {
       Navigator.pushReplacement(
@@ -65,4 +67,6 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+
 }
+

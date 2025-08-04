@@ -47,4 +47,6 @@ class StageProvider with ChangeNotifier {
     _stagesRef.child(stage.id).set(stage.toMap());
     return stage;
   }
+
 }
+

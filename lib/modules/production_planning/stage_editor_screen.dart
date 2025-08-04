@@ -5,6 +5,9 @@ import '../personnel/personnel_provider.dart';
 import 'stage_provider.dart';
 
 class StageEditorScreen extends StatefulWidget {
+
+
+
   const StageEditorScreen({super.key});
 
   @override
@@ -16,10 +19,12 @@ class _StageEditorScreenState extends State<StageEditorScreen> {
   final _descCtrl = TextEditingController();
   String? _selectedWorkplaceId;
 
+
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
     final workplaces = personnel.workplaces;
+
 
     return Scaffold(
       appBar: AppBar(title: const Text('Новый этап')),
@@ -38,7 +43,9 @@ class _StageEditorScreenState extends State<StageEditorScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _descCtrl,
+
+               controller: _descCtrl,
+
               maxLines: 3,
               decoration: const InputDecoration(
                 labelText: 'Описание',
@@ -53,9 +60,12 @@ class _StageEditorScreenState extends State<StageEditorScreen> {
                 labelText: 'Оборудование / Рабочее место',
                 border: OutlineInputBorder(),
               ),
-              items: [
+
+                 items: [
                 for (final w in workplaces)
                   DropdownMenuItem(value: w.id, child: Text(w.name)),
+                
+
               ],
               onChanged: (val) => setState(() => _selectedWorkplaceId = val),
             ),
@@ -84,4 +94,6 @@ class _StageEditorScreenState extends State<StageEditorScreen> {
       ),
     );
   }
+
 }
+

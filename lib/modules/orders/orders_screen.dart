@@ -4,6 +4,14 @@ import 'package:provider/provider.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'edit_order_screen.dart';
+enum SortOption {
+  orderDateAsc,
+  orderDateDesc,
+  dueDateAsc,
+  dueDateDesc,
+  quantityAsc,
+  quantityDesc,
+}
 
 enum SortOption {
   orderDateAsc,
@@ -128,11 +136,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
             );
           },
         ),
-        // Сортировка
+
         IconButton(
           icon: const Icon(Icons.sort),
           onPressed: _showSortOptions,
         ),
+        
       ],
     );
   }
@@ -215,7 +224,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return filtered;
   }
 
-  void _showSortOptions() {
+void _showSortOptions() {
+
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -338,13 +348,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
               const SizedBox(height: 6),
               Text('Заказчик: ${order.customer}', style: const TextStyle(fontSize: 12)),
               const SizedBox(height: 4),
-              Row(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Дата заказа: ${_formatDate(order.orderDate)}', style: const TextStyle(fontSize: 12)),
-                  const SizedBox(width: 12),
+                  const SizedBox(height: 2),
                   Text('Срок выполнения: ${_formatDate(order.dueDate)}', style: const TextStyle(fontSize: 12)),
                 ],
               ),
+
               const SizedBox(height: 6),
               // Перечень продуктов
               if (order.products.isNotEmpty)
