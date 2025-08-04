@@ -9,6 +9,7 @@ import 'modules/personnel/personnel_provider.dart';
 import 'my_app.dart';
 import 'modules/orders/orders_provider.dart';
 import 'modules/production_planning/stage_provider.dart';
+import 'modules/tasks/task_provider.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -24,6 +25,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => OrdersProvider()),
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
         ChangeNotifierProvider(create: (_) => StageProvider()),
+        ChangeNotifierProvider(create: (_) => TaskProvider()),
       ],
       child: const MyApp(),
     ),

@@ -20,10 +20,10 @@ class EmployeeWorkspaceScreen extends StatelessWidget {
             ],
           ),
         ),
-        body: const TabBarView(
+        body: TabBarView(
           children: [
-            TasksScreen(),
-            ChatTab(),
+            TasksScreen(employeeId: employeeId),
+            const ChatTab(),
           ],
         ),
       ),
