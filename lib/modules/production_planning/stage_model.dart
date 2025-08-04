@@ -12,13 +12,14 @@ class StageModel {
   });
 
   Map<String, dynamic> toMap() => {
+        'id': id,
         'name': name,
         'description': description,
         'workplaceId': workplaceId,
       };
 
-  factory StageModel.fromMap(Map<String, dynamic> map, String id) => StageModel(
-        id: id,
+  factory StageModel.fromMap(Map<String, dynamic> map) => StageModel(
+        id: map['id'] as String? ?? '',
         name: map['name'] as String? ?? '',
         description: map['description'] as String? ?? '',
         workplaceId: map['workplaceId'] as String? ?? '',
