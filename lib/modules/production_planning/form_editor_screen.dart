@@ -23,6 +23,36 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   final _plansRef = FirebaseDatabase.instance.ref('production_plans');
   String? _photoUrl;
 
+  @override
+  void initState() {
+    super.initState();
+    _loadExistingPlan();
+  }
+
+  Future<void> _loadExistingPlan() async {
+    final snapshot =
+        await _plansRef.child(widget.order.id).child('stages').get();
+    if (!snapshot.exists) return;
+    final loaded = <PlannedStage>[];
+    final data = snapshot.value;
+    if (data is List) {
+      for (final item in data) {
+        if (item is Map) {
+          loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(item)));
+        }
+      }
+    } else if (data is Map) {
+      data.forEach((_, value) {
+        if (value is Map) {
+          loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(value)));
+        }
+      });
+    }
+    setState(() {
+      _stages..clear()..addAll(loaded);
+    });
+  }
+
   Future<void> _addStage() async {
     final provider = context.read<StageProvider>();
     String? selectedId;
@@ -69,7 +99,11 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     final url = await ref.getDownloadURL();
     if (!mounted) return;
     setState(() {
-      _photoUrl = url;
+
+      _stages[index] = _stages[index].copyWith(photoUrl: url);
+
+      
+
     });
   }
 
@@ -158,10 +192,13 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
             Text(stage.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             TextField(
+
               decoration: const InputDecoration(labelText: 'Комментарий'),
-              onChanged: (val) => planned.comment = val,
+              onChanged: (val) => setState(
+                  () => _stages[index] = _stages[index].copyWith(comment: val)),
             ),
           ],
         ),

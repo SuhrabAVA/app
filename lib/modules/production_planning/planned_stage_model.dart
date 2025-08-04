@@ -4,6 +4,12 @@ class PlannedStage {
 
   PlannedStage({required this.stageId, this.comment});
 
+  PlannedStage copyWith({String? comment, String? photoUrl}) => PlannedStage(
+        stageId: stageId,
+        comment: comment ?? this.comment,
+        photoUrl: photoUrl ?? this.photoUrl,
+      );
+
   Map<String, dynamic> toMap() => {
         'stageId': stageId,
         if (comment != null && comment!.isNotEmpty) 'comment': comment,
