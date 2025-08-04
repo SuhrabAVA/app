@@ -116,6 +116,20 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
 
   Future<void> _save() async {
     if (_stages.isEmpty && _photoUrl == null) return;
+    final provider = context.read<StageProvider>();
+    for (var i = 0; i < _stages.length; i++) {
+      final s = _stages[i];
+      if (s.stageName.isEmpty) {
+        final match = provider.stages.where((st) => st.id == s.stageId);
+        if (match.isNotEmpty) {
+          _stages[i] = PlannedStage(
+            stageId: s.stageId,
+            stageName: match.first.name,
+            comment: s.comment,
+          );
+        }
+      }
+    }
     final plan = <String, dynamic>{};
     if (_stages.isNotEmpty) {
       plan['stages'] = _stages.map((s) => s.toMap()).toList();
