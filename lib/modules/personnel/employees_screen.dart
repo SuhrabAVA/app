@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'personnel_provider.dart';
-import 'position_model.dart';
 import 'employee_model.dart';
 
 /// Экран для отображения и управления списком сотрудников.
@@ -12,7 +11,14 @@ class EmployeesScreen extends StatelessWidget {
   void _openAddDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (_) => const _AddEmployeeDialog(),
+      builder: (_) => const _EmployeeDialog(),
+    );
+  }
+
+  void _openEditDialog(BuildContext context, EmployeeModel employee) {
+    showDialog(
+      context: context,
+      builder: (_) => _EmployeeDialog(employee: employee),
     );
   }
 
@@ -56,6 +62,7 @@ class EmployeesScreen extends StatelessWidget {
                     side: BorderSide(color: emp.isFired ? Colors.red.shade200 : Colors.grey.shade300),
                   ),
                   child: ListTile(
+                    onTap: () => _openEditDialog(context, emp),
                     leading: CircleAvatar(
                       backgroundColor: Colors.blueGrey.shade100,
                       backgroundImage:
@@ -83,7 +90,7 @@ class EmployeesScreen extends StatelessWidget {
                     ),
                     trailing: emp.isFired
                         ? const Icon(Icons.block, color: Colors.red)
-                        : null,
+                        : const Icon(Icons.edit, color: Colors.grey),
                   ),
                 );
               },
@@ -92,15 +99,17 @@ class EmployeesScreen extends StatelessWidget {
   }
 }
 
-/// Диалог для добавления нового сотрудника.
-class _AddEmployeeDialog extends StatefulWidget {
-  const _AddEmployeeDialog();
+/// Диалог для добавления или редактирования сотрудника.
+class _EmployeeDialog extends StatefulWidget {
+  final EmployeeModel? employee;
+
+  const _EmployeeDialog({this.employee});
 
   @override
-  State<_AddEmployeeDialog> createState() => _AddEmployeeDialogState();
+  State<_EmployeeDialog> createState() => _EmployeeDialogState();
 }
 
-class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
+class _EmployeeDialogState extends State<_EmployeeDialog> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _lastName = TextEditingController();
   final TextEditingController _firstName = TextEditingController();
@@ -110,6 +119,22 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
   final TextEditingController _comments = TextEditingController();
   bool _isFired = false;
   final Set<String> _selectedPositions = {};
+
+  @override
+  void initState() {
+    super.initState();
+    final emp = widget.employee;
+    if (emp != null) {
+      _lastName.text = emp.lastName;
+      _firstName.text = emp.firstName;
+      _patronymic.text = emp.patronymic;
+      _iin.text = emp.iin;
+      if (emp.photoUrl != null) _photoUrl.text = emp.photoUrl!;
+      _comments.text = emp.comments;
+      _isFired = emp.isFired;
+      _selectedPositions.addAll(emp.positionIds);
+    }
+  }
 
   @override
   void dispose() {
@@ -135,16 +160,31 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
   void _submit(BuildContext context) {
     if (!_formKey.currentState!.validate()) return;
     final provider = Provider.of<PersonnelProvider>(context, listen: false);
-    provider.addEmployee(
-      lastName: _lastName.text.trim(),
-      firstName: _firstName.text.trim(),
-      patronymic: _patronymic.text.trim(),
-      iin: _iin.text.trim(),
-      photoUrl: _photoUrl.text.trim().isEmpty ? null : _photoUrl.text.trim(),
-      positionIds: _selectedPositions.toList(),
-      isFired: _isFired,
-      comments: _comments.text.trim(),
-    );
+    final photo = _photoUrl.text.trim().isEmpty ? null : _photoUrl.text.trim();
+    if (widget.employee == null) {
+      provider.addEmployee(
+        lastName: _lastName.text.trim(),
+        firstName: _firstName.text.trim(),
+        patronymic: _patronymic.text.trim(),
+        iin: _iin.text.trim(),
+        photoUrl: photo,
+        positionIds: _selectedPositions.toList(),
+        isFired: _isFired,
+        comments: _comments.text.trim(),
+      );
+    } else {
+      provider.updateEmployee(
+        id: widget.employee!.id,
+        lastName: _lastName.text.trim(),
+        firstName: _firstName.text.trim(),
+        patronymic: _patronymic.text.trim(),
+        iin: _iin.text.trim(),
+        photoUrl: photo,
+        positionIds: _selectedPositions.toList(),
+        isFired: _isFired,
+        comments: _comments.text.trim(),
+      );
+    }
     Navigator.of(context).pop();
   }
 
@@ -153,7 +193,7 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
     final provider = Provider.of<PersonnelProvider>(context);
     final positions = provider.positions;
     return AlertDialog(
-      title: const Text('Добавить сотрудника'),
+      title: Text(widget.employee == null ? 'Добавить сотрудника' : 'Редактировать сотрудника'),
       content: SingleChildScrollView(
         child: Form(
           key: _formKey,
