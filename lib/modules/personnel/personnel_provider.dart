@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:firebase_database/firebase_database.dart';
+
 import 'position_model.dart';
 import 'employee_model.dart';
 import 'workplace_model.dart';
@@ -11,7 +12,9 @@ import 'terminal_model.dart';
 /// слушателей при изменениях.
 class PersonnelProvider with ChangeNotifier {
   final _uuid = const Uuid();
+
    final DatabaseReference _employeesRef =
+
       FirebaseDatabase.instance.ref('employees');
 
   PersonnelProvider() {
@@ -45,7 +48,7 @@ class PersonnelProvider with ChangeNotifier {
   /// пользовательского интерфейса. Предопределённые рабочие места
   /// упрощают начальную конфигурацию системы.
   final List<WorkplaceModel> _workplaces = [
-    // 1. Бобинорезка — работает бабинорезчик
+
     WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bob_cutter']),
     // 2. Флексопечать — печатник
     WorkplaceModel(id: 'w_flexoprint', name: 'Флексопечать', positionIds: ['print']),
@@ -107,6 +110,7 @@ class PersonnelProvider with ChangeNotifier {
     _positions.add(PositionModel(id: id, name: name));
     notifyListeners();
   }
+
   void _listenToEmployees() {
     _employeesRef.onValue.listen((event) {
       final data = event.snapshot.value;
@@ -120,7 +124,7 @@ class PersonnelProvider with ChangeNotifier {
       notifyListeners();
     });
   }
-  // Добавление сотрудника
+
   void addEmployee({
     required String lastName,
     required String firstName,
@@ -152,7 +156,7 @@ class PersonnelProvider with ChangeNotifier {
     _employeesRef.child(id).set(employee.toJson());
   }
 
- // Обновление существующего сотрудника
+
   void updateEmployee({
     required String id,
     required String lastName,

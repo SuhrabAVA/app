@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -9,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../orders/order_model.dart';
 import 'planned_stage_model.dart';
 import 'stage_provider.dart';
+
 
 class FormEditorScreen extends StatefulWidget {
   final OrderModel order;
@@ -126,6 +128,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   Widget build(BuildContext context) {
     final stageProvider = context.watch<StageProvider>();
     return Scaffold(
+
       appBar: AppBar(title: Text('План для ${widget.order.id}')),
       body: Column(
         children: [
@@ -142,6 +145,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
                 for (int i = 0; i < _stages.length; i++)
                   _buildStageCard(i, stageProvider),
               ],
+
             ),
           ),
           if (_photoUrl != null)
@@ -211,4 +215,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
       ),
     );
   }
+
+
 }
+

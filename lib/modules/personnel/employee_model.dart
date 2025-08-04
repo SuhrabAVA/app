@@ -34,6 +34,8 @@ class EmployeeModel {
         'positionIds': positionIds,
         'isFired': isFired,
         'comments': comments,
+        'login': login,
+        'password': password,
       };
 
   factory EmployeeModel.fromJson(Map<String, dynamic> json, String id) {

@@ -13,6 +13,15 @@ enum SortOption {
   quantityDesc,
 }
 
+enum SortOption {
+  orderDateAsc,
+  orderDateDesc,
+  dueDateAsc,
+  dueDateDesc,
+  quantityAsc,
+  quantityDesc,
+}
+
 /// Главный экран модуля оформления заказа. Показывает список заказов с
 /// возможностью фильтрации по статусам, поиска и создания нового заказа.
 class OrdersScreen extends StatefulWidget {
@@ -26,6 +35,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _selectedFilter = 'all';
   SortOption _sortOption = SortOption.orderDateDesc;
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -126,7 +136,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             );
           },
         ),
-        
+
         IconButton(
           icon: const Icon(Icons.sort),
           onPressed: _showSortOptions,
@@ -213,7 +223,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     return filtered;
   }
+
 void _showSortOptions() {
+
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -279,6 +291,7 @@ void _showSortOptions() {
       },
     );
   }
+
   /// Строит карточку заказа для отображения в списке.
   Widget _buildOrderCard(OrderModel order) {
     // Определяем цвет для статуса

@@ -8,6 +8,7 @@ class TerminalModel {
     required this.name,
     required this.workplaceIds,
   });
+
   /// Преобразование модели терминала в Map для Firebase.
   Map<String, dynamic> toMap() => {
         'name': name,

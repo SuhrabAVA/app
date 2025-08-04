@@ -140,6 +140,22 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    final emp = widget.employee;
+    if (emp != null) {
+      _lastName.text = emp.lastName;
+      _firstName.text = emp.firstName;
+      _patronymic.text = emp.patronymic;
+      _iin.text = emp.iin;
+      if (emp.photoUrl != null) _photoUrl.text = emp.photoUrl!;
+      _comments.text = emp.comments;
+      _isFired = emp.isFired;
+      _selectedPositions.addAll(emp.positionIds);
+    }
+  }
+
+  @override
   void dispose() {
     _lastName.dispose();
     _firstName.dispose();
@@ -165,6 +181,7 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
   void _submit(BuildContext context) {
     if (!_formKey.currentState!.validate()) return;
     final provider = Provider.of<PersonnelProvider>(context, listen: false);
+
       final photo = _photoUrl.text.trim().isEmpty ? null : _photoUrl.text.trim();
     if (widget.employee == null) {
       provider.addEmployee(
@@ -192,6 +209,7 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
         comments: _comments.text.trim(),
       );
     }
+
     Navigator.of(context).pop();
   }
 
@@ -253,6 +271,34 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return 'Введите ИИН';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _login,
+                decoration: const InputDecoration(
+                  labelText: 'Логин',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Введите логин';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _password,
+                decoration: const InputDecoration(
+                  labelText: 'Пароль',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Введите пароль';
                   }
                   return null;
                 },

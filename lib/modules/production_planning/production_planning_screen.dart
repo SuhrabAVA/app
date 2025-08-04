@@ -16,8 +16,10 @@ class ProductionPlanningScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final orders = context.watch<OrdersProvider>().orders;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Планирование производства')),
+
       floatingActionButton: FloatingActionButton(
         onPressed: () => _open(context, const StageEditorScreen()),
         child: const Icon(Icons.add),
@@ -26,6 +28,7 @@ class ProductionPlanningScreen extends StatelessWidget {
       body: orders.isEmpty
           ? const Center(child: Text('Заказы отсутствуют'))
           : ListView.builder(
+
               itemCount: orders.length,
               itemBuilder: (context, index) {
                 final order = orders[index];
@@ -61,7 +64,9 @@ class ProductionPlanningScreen extends StatelessWidget {
                   ),
                 );
               },
+
             ),
+
     );
   }
 }

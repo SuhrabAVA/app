@@ -3,7 +3,7 @@ class PositionModel {
   final String name;
 
   PositionModel({required this.id, required this.name});
-  
+
   /// Преобразование модели в Map для хранения в Firebase.
   Map<String, dynamic> toMap() => {
         'name': name,

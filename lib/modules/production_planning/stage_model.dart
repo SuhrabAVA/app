@@ -23,4 +23,6 @@ class StageModel {
         description: map['description'] as String? ?? '',
         workplaceId: map['workplaceId'] as String? ?? '',
       );
+
 }
+

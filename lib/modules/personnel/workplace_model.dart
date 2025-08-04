@@ -8,7 +8,7 @@ class WorkplaceModel {
     required this.name,
     required this.positionIds,
   });
-   /// Преобразование модели рабочего места в Map для Firebase.
+
   Map<String, dynamic> toMap() => {
         'name': name,
         'positionIds': positionIds,
