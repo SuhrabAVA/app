@@ -22,6 +22,36 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   final List<PlannedStage> _stages = [];
   final _plansRef = FirebaseDatabase.instance.ref('production_plans');
 
+  @override
+  void initState() {
+    super.initState();
+    _loadExistingPlan();
+  }
+
+  Future<void> _loadExistingPlan() async {
+    final snapshot =
+        await _plansRef.child(widget.order.id).child('stages').get();
+    if (!snapshot.exists) return;
+    final loaded = <PlannedStage>[];
+    final data = snapshot.value;
+    if (data is List) {
+      for (final item in data) {
+        if (item is Map) {
+          loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(item)));
+        }
+      }
+    } else if (data is Map) {
+      data.forEach((_, value) {
+        if (value is Map) {
+          loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(value)));
+        }
+      });
+    }
+    setState(() {
+      _stages..clear()..addAll(loaded);
+    });
+  }
+
   Future<void> _addStage() async {
     final provider = context.read<StageProvider>();
     String? selectedId;
@@ -67,7 +97,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     await ref.putFile(file);
     final url = await ref.getDownloadURL();
     setState(() {
-      _stages[index].photoUrl = url;
+      _stages[index] = _stages[index].copyWith(photoUrl: url);
     });
   }
 
@@ -155,9 +185,11 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Image.network(planned.photoUrl!, height: 100),
               ),
-            TextField(
+            TextFormField(
+              initialValue: planned.comment,
               decoration: const InputDecoration(labelText: 'Комментарий'),
-              onChanged: (val) => planned.comment = val,
+              onChanged: (val) => setState(
+                  () => _stages[index] = _stages[index].copyWith(comment: val)),
             ),
           ],
         ),
