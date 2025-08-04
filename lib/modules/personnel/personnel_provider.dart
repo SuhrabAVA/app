@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 import 'position_model.dart';
 import 'employee_model.dart';
@@ -11,6 +12,12 @@ import 'terminal_model.dart';
 /// слушателей при изменениях.
 class PersonnelProvider with ChangeNotifier {
   final _uuid = const Uuid();
+  final DatabaseReference _employeesRef =
+      FirebaseDatabase.instance.ref('employees');
+
+  PersonnelProvider() {
+    _listenToEmployees();
+  }
 
   // Список должностей
   /// Начальный список должностей. Здесь собраны все типы должностей,
@@ -102,7 +109,21 @@ class PersonnelProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Добавление сотрудника
+  void _listenToEmployees() {
+    _employeesRef.onValue.listen((event) {
+      final data = event.snapshot.value;
+      _employees.clear();
+      if (data is Map) {
+        data.forEach((key, value) {
+          final map = Map<String, dynamic>.from(value as Map);
+          _employees.add(EmployeeModel.fromJson(map, key));
+        });
+      }
+      notifyListeners();
+    });
+  }
+
+  // Добавление сотрудника с сохранением в Firebase
   void addEmployee({
     required String lastName,
     required String firstName,
@@ -114,7 +135,7 @@ class PersonnelProvider with ChangeNotifier {
     String comments = '',
   }) {
     final id = _uuid.v4();
-    _employees.add(EmployeeModel(
+    final employee = EmployeeModel(
       id: id,
       lastName: lastName,
       firstName: firstName,
@@ -124,8 +145,10 @@ class PersonnelProvider with ChangeNotifier {
       positionIds: positionIds,
       isFired: isFired,
       comments: comments,
-    ));
+    );
+    _employees.add(employee);
     notifyListeners();
+    _employeesRef.child(id).set(employee.toJson());
   }
 
   // Добавление рабочего места
