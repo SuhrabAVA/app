@@ -82,6 +82,12 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
         'password': password,
       });
 
+      // Создаем рабочее пространство для сотрудника
+      await FirebaseDatabase.instance
+          .ref('workspaces')
+          .child(dbRef.key!)
+          .set({'tasks': []});
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сотрудник успешно добавлен')),
       );

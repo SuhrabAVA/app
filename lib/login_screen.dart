@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'admin_panel.dart';
+import 'modules/personnel/employee_workspace_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -13,7 +15,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   String? _error;
 
-  void _attemptLogin() {
+  Future<void> _attemptLogin() async {
     const correctLogin = 'Расул';
     const correctPassword = '123123';
     if (_loginController.text == correctLogin &&
@@ -22,11 +24,31 @@ class _LoginScreenState extends State<LoginScreen> {
         context,
         MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
       );
-    } else {
-      setState(() {
-        _error = 'Неверный логин или пароль';
-      });
+      return;
     }
+
+    final snapshot = await FirebaseDatabase.instance.ref('employees').get();
+    if (snapshot.exists) {
+      final employees =
+          Map<String, dynamic>.from(snapshot.value as Map<dynamic, dynamic>);
+      for (final entry in employees.entries) {
+        final data = Map<String, dynamic>.from(entry.value as Map);
+        if (data['login'] == _loginController.text &&
+            data['password'] == _passwordController.text) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => EmployeeWorkspaceScreen(employeeId: entry.key),
+            ),
+          );
+          return;
+        }
+      }
+    }
+
+    setState(() {
+      _error = 'Неверный логин или пароль';
+    });
   }
 
   @override
