@@ -90,8 +90,11 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
       ),
     );
     if (selectedId != null) {
+      final stage =
+          provider.stages.firstWhere((s) => s.id == selectedId);
       setState(() {
-        _stages.add(PlannedStage(stageId: selectedId!));
+        _stages.add(
+            PlannedStage(stageId: selectedId!, stageName: stage.name));
       });
     }
   }
@@ -113,6 +116,20 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
 
   Future<void> _save() async {
     if (_stages.isEmpty && _photoUrl == null) return;
+    final provider = context.read<StageProvider>();
+    for (var i = 0; i < _stages.length; i++) {
+      final s = _stages[i];
+      if (s.stageName.isEmpty) {
+        final match = provider.stages.where((st) => st.id == s.stageId);
+        if (match.isNotEmpty) {
+          _stages[i] = PlannedStage(
+            stageId: s.stageId,
+            stageName: match.first.name,
+            comment: s.comment,
+          );
+        }
+      }
+    }
     final plan = <String, dynamic>{};
     if (_stages.isNotEmpty) {
       plan['stages'] = _stages.map((s) => s.toMap()).toList();
@@ -215,7 +232,9 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
 
   Widget _buildStageCard(int index, StageProvider provider) {
     final planned = _stages[index];
-    final stage = provider.stages.firstWhere((s) => s.id == planned.stageId);
+    final match = provider.stages
+        .where((s) => s.id == planned.stageId);
+    final name = match.isNotEmpty ? match.first.name : planned.stageName;
     return Card(
       key: ValueKey(planned.stageId),
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -224,13 +243,13 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
-            Text(stage.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
             TextFormField(
               initialValue: planned.comment,
               decoration: const InputDecoration(labelText: 'Комментарий'),
               onChanged: (val) => setState(
-                  () => _stages[index] = _stages[index].copyWith(comment: val)),
+                  () => _stages[index] =
+                      _stages[index].copyWith(comment: val)),
             ),
           ],
         ),
