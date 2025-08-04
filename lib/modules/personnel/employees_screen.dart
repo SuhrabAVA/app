@@ -108,6 +108,8 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
   final TextEditingController _iin = TextEditingController();
   final TextEditingController _photoUrl = TextEditingController();
   final TextEditingController _comments = TextEditingController();
+  final TextEditingController _login = TextEditingController();
+  final TextEditingController _password = TextEditingController();
   bool _isFired = false;
   final Set<String> _selectedPositions = {};
 
@@ -119,6 +121,8 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
     _iin.dispose();
     _photoUrl.dispose();
     _comments.dispose();
+    _login.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -144,6 +148,8 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
       positionIds: _selectedPositions.toList(),
       isFired: _isFired,
       comments: _comments.text.trim(),
+      login: _login.text.trim(),
+      password: _password.text.trim(),
     );
     Navigator.of(context).pop();
   }
@@ -206,6 +212,34 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return 'Введите ИИН';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _login,
+                decoration: const InputDecoration(
+                  labelText: 'Логин',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Введите логин';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _password,
+                decoration: const InputDecoration(
+                  labelText: 'Пароль',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Введите пароль';
                   }
                   return null;
                 },
