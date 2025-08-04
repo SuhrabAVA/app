@@ -163,6 +163,8 @@ class PersonnelProvider with ChangeNotifier {
     required List<String> positionIds,
     bool isFired = false,
     String comments = '',
+    String login = '',
+    String password = '',
   }) {
     final index = _employees.indexWhere((e) => e.id == id);
     if (index == -1) return;
@@ -176,6 +178,8 @@ class PersonnelProvider with ChangeNotifier {
       positionIds: positionIds,
       isFired: isFired,
       comments: comments,
+      login: login,
+      password: password,
     );
     _employees[index] = updated;
     notifyListeners();
