@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 import '../orders/orders_provider.dart';
 import 'form_editor_screen.dart';
@@ -29,8 +30,27 @@ class ProductionPlanningScreen extends StatelessWidget {
               itemBuilder: (context, index) {
                 final order = orders[index];
                 return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: ListTile(
+                    leading: StreamBuilder<DatabaseEvent>(
+                      stream: FirebaseDatabase.instance
+                          .ref('production_plans/${order.id}/photoUrl')
+                          .onValue,
+                      builder: (context, snapshot) {
+                        final url = snapshot.data?.snapshot.value as String?;
+                        if (url != null && url.isNotEmpty) {
+                          return Image.network(
+                            url,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                          );
+                        }
+                        return const Icon(Icons.photo,
+                            color: Colors.grey);
+                      },
+                    ),
                     title: Text(order.id),
                     subtitle: Text(order.customer),
                     trailing: const Icon(Icons.chevron_right),

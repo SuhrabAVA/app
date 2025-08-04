@@ -112,9 +112,11 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   }
 
   Future<void> _save() async {
-    if (_stages.isEmpty) return;
-    final data = _stages.map((s) => s.toMap()).toList();
-    final plan = {'stages': data};
+    if (_stages.isEmpty && _photoUrl == null) return;
+    final plan = <String, dynamic>{};
+    if (_stages.isNotEmpty) {
+      plan['stages'] = _stages.map((s) => s.toMap()).toList();
+    }
     if (_photoUrl != null) plan['photoUrl'] = _photoUrl;
     await _plansRef.child(widget.order.id).set(plan);
     if (mounted) Navigator.pop(context);
