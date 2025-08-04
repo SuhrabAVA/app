@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'modules/chat/chat_screen.dart';
-import 'modules/equipment/equipment_screen.dart';
+import 'modules/production_planning/production_planning_screen.dart';
 import 'modules/orders/orders_screen.dart';
 import 'modules/personnel/personnel_screen.dart';
 import 'modules/production/production_screen.dart';
@@ -15,7 +15,7 @@ class AdminPanelScreen extends StatelessWidget {
       {'label': '📦\nСклад', 'page': const WarehouseDashboard()},
       {'label': '👥\nПерсонал', 'page': const PersonnelScreen()},
       {'label': '🧾\nЗаказы', 'page': const OrdersScreen()},
-      {'label': '⚙️\nОборуд.', 'page': const EquipmentScreen()},
+      {'label': '🗓️\nПланир.', 'page': const ProductionPlanningScreen()},
       {'label': '🏭\nПроизв.', 'page': const ProductionScreen()},
       {'label': '💬\nЧат', 'page': const ChatScreen()},
     ];
