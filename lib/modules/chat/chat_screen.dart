@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'chat_tab.dart';
 
 class ChatScreen extends StatelessWidget {
   const ChatScreen({super.key});
@@ -7,12 +8,7 @@ class ChatScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Чат')),
-      body: const Center(
-        child: Text(
-          'Здесь будет чат между сотрудниками',
-          style: TextStyle(fontSize: 18),
-        ),
-      ),
+      body: const ChatTab(),
     );
   }
 }
