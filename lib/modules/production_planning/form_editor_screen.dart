@@ -30,26 +30,34 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   }
 
   Future<void> _loadExistingPlan() async {
-    final snapshot =
-        await _plansRef.child(widget.order.id).child('stages').get();
+    final snapshot = await _plansRef.child(widget.order.id).get();
     if (!snapshot.exists) return;
+
+    final value = snapshot.value;
+    Map<String, dynamic> data = {};
+    if (value is Map) {
+      data = Map<String, dynamic>.from(value as Map);
+    }
+
     final loaded = <PlannedStage>[];
-    final data = snapshot.value;
-    if (data is List) {
-      for (final item in data) {
+    final stagesData = data['stages'];
+    if (stagesData is List) {
+      for (final item in stagesData) {
         if (item is Map) {
           loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(item)));
         }
       }
-    } else if (data is Map) {
-      data.forEach((_, value) {
+    } else if (stagesData is Map) {
+      stagesData.forEach((_, value) {
         if (value is Map) {
           loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(value)));
         }
       });
     }
+
     setState(() {
       _stages..clear()..addAll(loaded);
+      _photoUrl = data['photoUrl'] as String?;
     });
   }
 
@@ -93,17 +101,13 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
     final file = File(picked.path);
-    final ref = FirebaseStorage.instance
-        .ref('plan_photos/${widget.order.id}/${DateTime.now().millisecondsSinceEpoch}.jpg');
+    final ref = FirebaseStorage.instance.ref(
+        'plan_photos/${widget.order.id}/${DateTime.now().millisecondsSinceEpoch}.jpg');
     await ref.putFile(file);
     final url = await ref.getDownloadURL();
     if (!mounted) return;
     setState(() {
-
-      _stages[index] = _stages[index].copyWith(photoUrl: url);
-
-      
-
+      _photoUrl = url;
     });
   }
 
@@ -194,8 +198,8 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
           children: [
 
             Text(stage.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            TextField(
-
+            TextFormField(
+              initialValue: planned.comment,
               decoration: const InputDecoration(labelText: 'Комментарий'),
               onChanged: (val) => setState(
                   () => _stages[index] = _stages[index].copyWith(comment: val)),
