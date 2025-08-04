@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../orders/order_model.dart';
+
 class FormEditorScreen extends StatefulWidget {
-  const FormEditorScreen({super.key});
+  final OrderModel order;
+  const FormEditorScreen({super.key, required this.order});
 
   @override
   State<FormEditorScreen> createState() => _FormEditorScreenState();
@@ -16,7 +19,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Редактор формы')),
+      appBar: AppBar(title: Text('Форма для ${widget.order.id}')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(

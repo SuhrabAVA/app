@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../orders/orders_provider.dart';
 import 'form_editor_screen.dart';
-import 'form_preview_screen.dart';
 import 'stage_editor_screen.dart';
 
 class ProductionPlanningScreen extends StatelessWidget {
@@ -12,29 +14,41 @@ class ProductionPlanningScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final orders = context.watch<OrdersProvider>().orders;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Планирование производства')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ElevatedButton(
-              onPressed: () => _open(context, const StageEditorScreen()),
-              child: const Text('Создать этап'),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => _open(context, const StageEditorScreen()),
+                child: const Text('Создать этап'),
+              ),
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: () => _open(context, const FormEditorScreen()),
-              child: const Text('Редактор формы'),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.builder(
+              itemCount: orders.length,
+              itemBuilder: (context, index) {
+                final order = orders[index];
+                return ListTile(
+                  title: Text(order.id),
+                  subtitle: Text(order.customer),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _open(
+                    context,
+                    FormEditorScreen(order: order),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: () => _open(context, const FormPreviewScreen()),
-              child: const Text('Предпросмотр формы'),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

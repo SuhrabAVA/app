@@ -1,12 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-class StageEditorScreen extends StatelessWidget {
+import '../personnel/personnel_provider.dart';
+import 'stage_provider.dart';
+
+class StageEditorScreen extends StatefulWidget {
   const StageEditorScreen({super.key});
 
   @override
+  State<StageEditorScreen> createState() => _StageEditorScreenState();
+}
+
+class _StageEditorScreenState extends State<StageEditorScreen> {
+  final _nameCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  String? _selectedWorkplaceId;
+
+  @override
   Widget build(BuildContext context) {
-    final stageNameController = TextEditingController();
-    final stageDescController = TextEditingController();
+    final personnel = context.watch<PersonnelProvider>();
+    final workplaces = personnel.workplaces;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Новый этап')),
@@ -16,7 +29,7 @@ class StageEditorScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
-              controller: stageNameController,
+              controller: _nameCtrl,
               decoration: const InputDecoration(
                 labelText: 'Название',
                 hintText: 'Введите название этапа',
@@ -25,7 +38,7 @@ class StageEditorScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: stageDescController,
+              controller: _descCtrl,
               maxLines: 3,
               decoration: const InputDecoration(
                 labelText: 'Описание',
@@ -35,33 +48,31 @@ class StageEditorScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              value: _selectedWorkplaceId,
               decoration: const InputDecoration(
                 labelText: 'Оборудование / Рабочее место',
                 border: OutlineInputBorder(),
               ),
-              items: const [
-                DropdownMenuItem(value: 'Станок', child: Text('Станок')),
-                DropdownMenuItem(value: 'Упаковка', child: Text('Упаковка')),
+              items: [
+                for (final w in workplaces)
+                  DropdownMenuItem(value: w.id, child: Text(w.name)),
               ],
-              onChanged: (val) {},
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text('Временные метки'),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.add),
-                  label: const Text('Добавить'),
-                ),
-              ],
+              onChanged: (val) => setState(() => _selectedWorkplaceId = val),
             ),
             const Spacer(),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: () {
+                  if (_selectedWorkplaceId == null ||
+                      _nameCtrl.text.isEmpty) return;
+                  context.read<StageProvider>().createStage(
+                        name: _nameCtrl.text,
+                        description: _descCtrl.text,
+                        workplaceId: _selectedWorkplaceId!,
+                      );
+                  Navigator.pop(context);
+                },
                 icon: const Icon(Icons.save_alt),
                 label: const Text('Создать этап'),
                 style:
