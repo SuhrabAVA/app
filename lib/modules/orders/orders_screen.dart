@@ -5,6 +5,15 @@ import 'orders_provider.dart';
 import 'order_model.dart';
 import 'edit_order_screen.dart';
 
+enum SortOption {
+  orderDateAsc,
+  orderDateDesc,
+  dueDateAsc,
+  dueDateDesc,
+  quantityAsc,
+  quantityDesc,
+}
+
 /// Главный экран модуля оформления заказа. Показывает список заказов с
 /// возможностью фильтрации по статусам, поиска и создания нового заказа.
 class OrdersScreen extends StatefulWidget {
@@ -17,6 +26,7 @@ class OrdersScreen extends StatefulWidget {
 class _OrdersScreenState extends State<OrdersScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _selectedFilter = 'all';
+  SortOption _sortOption = SortOption.orderDateDesc;
 
   @override
   void dispose() {
@@ -118,14 +128,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             );
           },
         ),
-        // Сортировка (пока заглушка)
+        // Сортировка
         IconButton(
           icon: const Icon(Icons.sort),
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Сортировка в разработке')),
-            );
-          },
+          onPressed: _showSortOptions,
         ),
       ],
     );
@@ -184,7 +190,96 @@ class _OrdersScreenState extends State<OrdersScreen> {
       default:
         break;
     }
+    int totalQty(OrderModel o) =>
+        o.products.fold<int>(0, (sum, p) => sum + p.quantity);
+    switch (_sortOption) {
+      case SortOption.orderDateAsc:
+        filtered.sort((a, b) => a.orderDate.compareTo(b.orderDate));
+        break;
+      case SortOption.orderDateDesc:
+        filtered.sort((a, b) => b.orderDate.compareTo(a.orderDate));
+        break;
+      case SortOption.dueDateAsc:
+        filtered.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+        break;
+      case SortOption.dueDateDesc:
+        filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
+        break;
+      case SortOption.quantityAsc:
+        filtered.sort((a, b) => totalQty(a).compareTo(totalQty(b)));
+        break;
+      case SortOption.quantityDesc:
+        filtered.sort((a, b) => totalQty(b).compareTo(totalQty(a)));
+        break;
+    }
     return filtered;
+  }
+
+  void _showSortOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RadioListTile<SortOption>(
+              title: const Text('По дате (новые сначала)'),
+              value: SortOption.orderDateDesc,
+              groupValue: _sortOption,
+              onChanged: (value) {
+                setState(() => _sortOption = value!);
+                Navigator.pop(context);
+              },
+            ),
+            RadioListTile<SortOption>(
+              title: const Text('По дате (старые сначала)'),
+              value: SortOption.orderDateAsc,
+              groupValue: _sortOption,
+              onChanged: (value) {
+                setState(() => _sortOption = value!);
+                Navigator.pop(context);
+              },
+            ),
+            RadioListTile<SortOption>(
+              title: const Text('По сроку (раньше)'),
+              value: SortOption.dueDateAsc,
+              groupValue: _sortOption,
+              onChanged: (value) {
+                setState(() => _sortOption = value!);
+                Navigator.pop(context);
+              },
+            ),
+            RadioListTile<SortOption>(
+              title: const Text('По сроку (позже)'),
+              value: SortOption.dueDateDesc,
+              groupValue: _sortOption,
+              onChanged: (value) {
+                setState(() => _sortOption = value!);
+                Navigator.pop(context);
+              },
+            ),
+            RadioListTile<SortOption>(
+              title: const Text('По тиражу (меньше)'),
+              value: SortOption.quantityAsc,
+              groupValue: _sortOption,
+              onChanged: (value) {
+                setState(() => _sortOption = value!);
+                Navigator.pop(context);
+              },
+            ),
+            RadioListTile<SortOption>(
+              title: const Text('По тиражу (больше)'),
+              value: SortOption.quantityDesc,
+              groupValue: _sortOption,
+              onChanged: (value) {
+                setState(() => _sortOption = value!);
+                Navigator.pop(context);
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   /// Строит карточку заказа для отображения в списке.
