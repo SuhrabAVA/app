@@ -32,16 +32,17 @@ class _TasksScreenState extends State<TasksScreen> {
     final ordersProvider = context.watch<OrdersProvider>();
     final taskProvider = context.watch<TaskProvider>();
 
-    final EmployeeModel? employee =
-        personnel.employees.firstWhere(
-            (e) => e.id == widget.employeeId,
-            orElse: () => EmployeeModel(
-                id: '',
-                lastName: '',
-                firstName: '',
-                patronymic: '',
-                iin: '',
-                positionIds: []));
+    final EmployeeModel employee = personnel.employees.firstWhere(
+      (e) => e.id == widget.employeeId,
+      orElse: () => EmployeeModel(
+        id: '',
+        lastName: '',
+        firstName: '',
+        patronymic: '',
+        iin: '',
+        positionIds: [],
+      ),
+    );
 
     final workplaces = personnel.workplaces
         .where((w) => w.positionIds
