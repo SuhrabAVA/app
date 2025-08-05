@@ -37,6 +37,8 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     Map<String, dynamic> data = {};
     if (value is Map) {
       data = Map<String, dynamic>.from(value as Map);
+    } else if (value is List) {
+      data = {'stages': value};
     }
 
     final loaded = <PlannedStage>[];
@@ -44,17 +46,20 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     if (stagesData is List) {
       for (final item in stagesData) {
         if (item is Map) {
-          loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(item)));
+          loaded.add(
+              PlannedStage.fromMap(Map<String, dynamic>.from(item as Map)));
         }
       }
     } else if (stagesData is Map) {
       stagesData.forEach((_, value) {
         if (value is Map) {
-          loaded.add(PlannedStage.fromMap(Map<String, dynamic>.from(value)));
+          loaded.add(PlannedStage.fromMap(
+              Map<String, dynamic>.from(value as Map)));
         }
       });
     }
 
+    if (!mounted) return;
     setState(() {
       _stages..clear()..addAll(loaded);
       _photoUrl = data['photoUrl'] as String?;
