@@ -37,7 +37,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     Map<String, dynamic> data = {};
     if (value is Map) {
       data = Map<String, dynamic>.from(value as Map);
-    } else if (value is List) {
+      } else if (value is List) {
       data = {'stages': value};
     }
 
@@ -58,7 +58,6 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
         }
       });
     }
-
     if (!mounted) return;
     setState(() {
       _stages..clear()..addAll(loaded);
@@ -120,8 +119,8 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
   }
 
   Future<void> _save() async {
-    if (_stages.isEmpty && _photoUrl == null) return;
-    final provider = context.read<StageProvider>();
+        if (_stages.isEmpty && _photoUrl == null) return;
+            final provider = context.read<StageProvider>();
     for (var i = 0; i < _stages.length; i++) {
       final s = _stages[i];
       if (s.stageName.isEmpty) {
@@ -139,10 +138,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     if (_stages.isNotEmpty) {
       plan['stages'] = _stages.map((s) => s.toMap()).toList();
     }
-    if (_photoUrl != null) plan['photoUrl'] = _photoUrl;
-    await _plansRef.child(widget.order.id).set(plan);
-
-    // Синхронизируем задачи для этого заказа, чтобы они отображались
+     // Синхронизируем задачи для этого заказа, чтобы они отображались
     // в рабочем пространстве сотрудников.
     final tasksRef = FirebaseDatabase.instance.ref('tasks');
     final existing = await tasksRef
@@ -167,6 +163,8 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
       });
     }
 
+    if (_photoUrl != null) plan['photoUrl'] = _photoUrl;
+    await _plansRef.child(widget.order.id).set(plan);
     if (mounted) Navigator.pop(context);
   }
 
@@ -248,6 +246,7 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
             Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
             TextFormField(
               initialValue: planned.comment,
