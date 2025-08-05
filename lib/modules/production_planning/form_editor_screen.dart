@@ -34,30 +34,13 @@ class _FormEditorScreenState extends State<FormEditorScreen> {
     if (!snapshot.exists) return;
 
     final value = snapshot.value;
-    Map<String, dynamic> data = {};
-    if (value is Map) {
-      data = Map<String, dynamic>.from(value as Map);
-      } else if (value is List) {
-      data = {'stages': value};
-    }
+    final data = value is Map
+        ? Map<String, dynamic>.from(value as Map)
+        : value is List
+            ? {'stages': value}
+            : <String, dynamic>{};
 
-    final loaded = <PlannedStage>[];
-    final stagesData = data['stages'];
-    if (stagesData is List) {
-      for (final item in stagesData) {
-        if (item is Map) {
-          loaded.add(
-              PlannedStage.fromMap(Map<String, dynamic>.from(item as Map)));
-        }
-      }
-    } else if (stagesData is Map) {
-      stagesData.forEach((_, value) {
-        if (value is Map) {
-          loaded.add(PlannedStage.fromMap(
-              Map<String, dynamic>.from(value as Map)));
-        }
-      });
-    }
+    final loaded = decodePlannedStages(data['stages']);
     if (!mounted) return;
     setState(() {
       _stages..clear()..addAll(loaded);
