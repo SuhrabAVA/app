@@ -1,32 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import 'supplier_model.dart';
 
 /// Провайдер для управления данными поставщиков.
 ///
-/// Данные хранятся в Firebase Realtime Database по пути `suppliers`.
+/// Данные хранятся в Supabase в таблице `suppliers`.
 /// Предоставляет методы для загрузки, добавления, обновления и удаления
 /// поставщиков, а также уведомляет слушателей о изменениях.
 class SupplierProvider with ChangeNotifier {
-  final DatabaseReference _db = FirebaseDatabase.instance.ref();
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   List<SupplierModel> _suppliers = [];
   List<SupplierModel> get suppliers => _suppliers;
 
-  /// Загрузка списка поставщиков из Firebase.
+  /// Загрузка списка поставщиков из Supabase.
   Future<void> fetchSuppliers() async {
-    final snapshot = await _db.child('suppliers').get();
-    if (snapshot.exists) {
-      final data = Map<String, dynamic>.from(snapshot.value as Map);
-      _suppliers = data.entries.map((e) {
-        final item = Map<String, dynamic>.from(e.value);
-        return SupplierModel.fromMap(item);
-      }).toList();
-    } else {
-      _suppliers = [];
-    }
+    final rows = await _supabase.from('suppliers').select();
+    _suppliers = rows
+        .map((e) => SupplierModel.fromMap(Map<String, dynamic>.from(e)))
+        .toList();
     notifyListeners();
   }
 
@@ -45,7 +39,7 @@ class SupplierProvider with ChangeNotifier {
       'contact': contact,
       'phone': phone,
     };
-    await _db.child('suppliers').child(id).set(data);
+    await _supabase.from('suppliers').insert(data);
     await fetchSuppliers();
   }
 
@@ -63,13 +57,13 @@ class SupplierProvider with ChangeNotifier {
     if (contact != null) updates['contact'] = contact;
     if (phone != null) updates['phone'] = phone;
     if (updates.isEmpty) return;
-    await _db.child('suppliers').child(id).update(updates);
+    await _supabase.from('suppliers').update(updates).eq('id', id);
     await fetchSuppliers();
   }
 
   /// Удаление поставщика по id.
   Future<void> deleteSupplier(String id) async {
-    await _db.child('suppliers').child(id).remove();
+    await _supabase.from('suppliers').delete().eq('id', id);
     await fetchSuppliers();
   }
 }

@@ -8,13 +8,13 @@ class TerminalModel {
     required this.name,
     required this.workplaceIds,
   });
-  /// Преобразование модели терминала в Map для Firebase.
+  /// Преобразование модели терминала в Map для Supabase.
   Map<String, dynamic> toMap() => {
         'name': name,
         'workplaceIds': workplaceIds,
       };
 
-  /// Создание модели из Map, полученного из Firebase.
+  /// Создание модели из Map, полученного из Supabase.
   factory TerminalModel.fromMap(Map<String, dynamic> map, String id) =>
       TerminalModel(
         id: id,

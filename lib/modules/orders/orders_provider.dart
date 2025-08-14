@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'order_model.dart';
 import 'product_model.dart';
@@ -9,8 +9,7 @@ import 'product_model.dart';
 /// уведомляет слушателей об изменениях.
 class OrdersProvider with ChangeNotifier {
   final _uuid = const Uuid();
-  final DatabaseReference _ordersRef =
-      FirebaseDatabase.instance.ref('orders');
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<OrderModel> _orders = [];
 
@@ -21,24 +20,22 @@ class OrdersProvider with ChangeNotifier {
   List<OrderModel> get orders => List.unmodifiable(_orders);
 
   void _listenToOrders() {
-    _ordersRef.onValue.listen((event) {
-      final data = event.snapshot.value;
-      _orders.clear();
-      if (data is Map) {
-        data.forEach((key, value) {
-          final map = Map<String, dynamic>.from(value as Map);
-          _orders.add(OrderModel.fromMap(map));
-        });
-      }
+    _supabase.from('orders').stream(primaryKey: ['id']).listen((rows) {
+      _orders
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          return OrderModel.fromMap(map);
+        }));
       notifyListeners();
     });
   }
 
-  /// Добавляет новый заказ в список и сохраняет его в Firebase.
+  /// Добавляет новый заказ в список и сохраняет его в Supabase.
   void addOrder(OrderModel order) {
     _orders.add(order);
     notifyListeners();
-    _ordersRef.child(order.id).set(order.toMap());
+    _supabase.from('orders').insert(order.toMap());
   }
 
   /// Создаёт и добавляет новый заказ с автоматически сгенерированным ID.
@@ -66,31 +63,28 @@ class OrdersProvider with ChangeNotifier {
     );
     _orders.add(newOrder);
     notifyListeners();
-    _ordersRef.child(newOrder.id).set(newOrder.toMap());
+    _supabase.from('orders').insert(newOrder.toMap());
     return newOrder;
   }
 
   /// Обновляет существующий заказ по его идентификатору.
-  /// Если заказ найден в локальном списке, он заменяется, а изменения
-  /// сохраняются в Firebase. В противном случае новая запись будет
-  /// создана в базе данных.
+  /// Сохраняет изменения в Supabase.
   void updateOrder(OrderModel updated) {
     final index = _orders.indexWhere((o) => o.id == updated.id);
     if (index >= 0) {
       _orders[index] = updated;
       notifyListeners();
     }
-    // Сохраняем обновлённую запись в Firebase независимо от наличия в списке.
-    _ordersRef.child(updated.id).set(updated.toMap());
+    _supabase.from('orders').upsert(updated.toMap());
   }
 
-  /// Удаляет заказ по идентификатору. Удаляет его из списка и из Firebase.
+  /// Удаляет заказ по идентификатору. Удаляет его из списка и из Supabase.
   void deleteOrder(String id) {
     final index = _orders.indexWhere((o) => o.id == id);
     if (index == -1) return;
     final removed = _orders.removeAt(index);
     notifyListeners();
-    _ordersRef.child(removed.id).remove();
+    _supabase.from('orders').delete().eq('id', removed.id);
   }
   
 

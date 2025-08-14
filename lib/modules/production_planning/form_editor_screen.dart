@@ -2,9 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 import '../orders/order_model.dart';
 import '../orders/orders_provider.dart';
@@ -14,7 +14,7 @@ import 'stage_provider.dart';
 /// A form editor for building and saving a production plan for a specific order.
 ///
 /// This widget allows the technical leader to compose a list of stages for an
-/// order, attach an optional photo and persist the plan to Firebase. It
+/// order, attach an optional photo and persist the plan to Supabase. It
 /// supports reordering stages, deleting stages, adding stages from the list
 /// defined in [StageProvider], and uploading a reference image. When the plan
 /// is saved, corresponding tasks are synchronised in the `tasks` collection
@@ -31,7 +31,7 @@ class FormEditorScreen extends StatefulWidget {
 
 class _FormEditorScreenState extends State<FormEditorScreen> {
   final List<PlannedStage> _stages = [];
-  final _plansRef = FirebaseDatabase.instance.ref('production_plans');
+  final SupabaseClient _supabase = Supabase.instance.client;
   String? _photoUrl;
 
   @override
@@ -44,34 +44,31 @@ Future<void> _pickOrderImage() async {
   final picked = await picker.pickImage(source: ImageSource.gallery);
   if (picked == null) return;
 
-  final storage = FirebaseStorage.instance;
-  final ref = storage.ref().child('order_photos/${widget.order.id}.jpg');
-
-  await ref.putFile(File(picked.path));
-  final url = await ref.getDownloadURL();
+  final storage = _supabase.storage.from('order_photos');
+  final path = '${widget.order.id}.jpg';
+  await storage.upload(path, File(picked.path));
+  final url = storage.getPublicUrl(path);
 
   setState(() {
     _photoUrl = url;
   });
 }
 
-  /// Loads an existing plan from Firebase if one exists for the current order.
+  /// Loads an existing plan from Supabase if one exists for the current order.
   Future<void> _loadExistingPlan() async {
-    final snapshot = await _plansRef.child(widget.order.id).get();
-    if (!snapshot.exists) return;
-    final value = snapshot.value;
-    final data = value is Map
-        ? Map<String, dynamic>.from(value as Map)
-        : value is List
-            ? {'stages': value}
-            : <String, dynamic>{};
+    final data = await _supabase
+        .from('production_plans')
+        .select()
+        .eq('order_id', widget.order.id)
+        .maybeSingle();
+    if (data == null) return;
     final loaded = decodePlannedStages(data['stages']);
     if (!mounted) return;
     setState(() {
       _stages
         ..clear()
         ..addAll(loaded);
-      _photoUrl = data['photoUrl'] as String?;
+      _photoUrl = data['photo_url'] as String?;
     });
   }
 
@@ -114,33 +111,32 @@ Future<void> _pickOrderImage() async {
   /// the download URL. This is optional metadata for the plan.
   
 
-  /// Persists the current list of stages and optional photo to Firebase. Also
+  /// Persists the current list of stages and optional photo to Supabase. Also
   /// synchronises tasks for employees based on these stages. When no stages
   /// remain, all existing tasks for this order are removed, and an empty plan
-  /// is written so that the absence of a plan is reflected in Firebase.
+  /// is written so that the absence of a plan is reflected in Supabase.
   Future<void> _save() async {
-  final planRef = FirebaseDatabase.instance.ref('production_plans');
-  final taskRef = FirebaseDatabase.instance.ref('tasks');
-  final orderId = widget.order.id;
+    final orderId = widget.order.id;
 
-  final stageMaps = _stages.map((stage) => stage.toMap()).toList();
-  await planRef.child(orderId).set(stageMaps);
-
-  final snapshot = await taskRef.orderByChild('orderId').equalTo(orderId).get();
-  for (final child in snapshot.children) {
-    await taskRef.child(child.key!).remove();
-  }
-
-  for (final stage in _stages) {
-    final taskKey = taskRef.push().key!;
-    await taskRef.child(taskKey).set({
-      'id': taskKey,
-      'orderId': orderId,
-      'stageId': stage.stageId,
-      'status': 'waiting',
-      'createdAt': DateTime.now().millisecondsSinceEpoch,
+    final stageMaps = _stages.map((stage) => stage.toMap()).toList();
+    await _supabase.from('production_plans').upsert({
+      'order_id': orderId,
+      'stages': stageMaps,
+      if (_photoUrl != null) 'photo_url': _photoUrl,
     });
-  }
+
+    await _supabase.from('tasks').delete().eq('orderId', orderId);
+
+    for (final stage in _stages) {
+      final taskId = const Uuid().v4();
+      await _supabase.from('tasks').insert({
+        'id': taskId,
+        'orderId': orderId,
+        'stageId': stage.stageId,
+        'status': 'waiting',
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
 
     // После сохранения плана и создания задач формируем идентификатор производственного
     // задания (ЗК-...) и обновляем статус заказа на inWork. Если задание ранее
@@ -168,10 +164,10 @@ Future<void> _pickOrderImage() async {
     );
     ordersProvider.updateOrder(updatedOrder);
 
-  if (mounted) {
-    Navigator.of(context).pop();
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {

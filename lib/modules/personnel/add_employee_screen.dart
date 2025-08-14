@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 class AddEmployeeScreen extends StatefulWidget {
   const AddEmployeeScreen({super.key});
@@ -60,16 +60,15 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
     });
 
     try {
-      final photoRef = FirebaseStorage.instance
-          .ref('employee_photos')
-          .child('${DateTime.now().millisecondsSinceEpoch}.jpg');
+      final client = Supabase.instance.client;
+      final id = const Uuid().v4();
 
-      await photoRef.putFile(_selectedImage!);
-      final photoUrl = await photoRef.getDownloadURL();
+      final filePath = 'employee_photos/$id.jpg';
+      await client.storage.from('employee_photos').upload(filePath, _selectedImage!);
+      final photoUrl = client.storage.from('employee_photos').getPublicUrl(filePath);
 
-      final dbRef = FirebaseDatabase.instance.ref('employees').push();
-
-      await dbRef.set({
+      await client.from('employees').insert({
+        'id': id,
         'lastName': lastName,
         'firstName': firstName,
         'patronymic': patronymic,
@@ -81,10 +80,8 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
         'login': login,
         'password': password,
       });
-        await FirebaseDatabase.instance
-          .ref('workspaces')
-          .child(dbRef.key!)
-          .set({'tasks': []});
+
+      await client.from('workspaces').insert({'employee_id': id, 'tasks': []});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сотрудник успешно добавлен')),

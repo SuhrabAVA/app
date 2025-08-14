@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 
 import 'task_model.dart';
 
 class TaskProvider with ChangeNotifier {
-  final DatabaseReference _tasksRef =
-      FirebaseDatabase.instance.ref('tasks');
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TaskModel> _tasks = [];
 
@@ -18,15 +17,13 @@ class TaskProvider with ChangeNotifier {
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
 
   void _listenToTasks() {
-    _tasksRef.onValue.listen((event) {
-      final data = event.snapshot.value;
-      _tasks.clear();
-      if (data is Map) {
-        data.forEach((key, value) {
-          final map = Map<String, dynamic>.from(value as Map);
-          _tasks.add(TaskModel.fromMap(map, key));
-        });
-      }
+    _supabase.from('tasks').stream(primaryKey: ['id']).listen((rows) {
+      _tasks
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          return TaskModel.fromMap(map, map['id'].toString());
+        }));
       notifyListeners();
     });
   }
@@ -35,7 +32,6 @@ class TaskProvider with ChangeNotifier {
       {int? spentSeconds, int? startedAt}) async {
     final index = _tasks.indexWhere((t) => t.id == id);
     if (index == -1) return;
-    // Сохраняем текущие комментарии и исполнителей при обновлении статуса.
     final current = _tasks[index];
     final updated = current.copyWith(
       status: status,
@@ -46,63 +42,60 @@ class TaskProvider with ChangeNotifier {
     );
     _tasks[index] = updated;
     notifyListeners();
-    await _tasksRef.child(id).update({
+    await _supabase.from('tasks').update({
       'status': status.name,
       'spentSeconds': updated.spentSeconds,
       'startedAt': updated.startedAt,
-    });
+    }).eq('id', id);
 
-    // После обновления статуса проверяем, все ли задачи этого заказа завершены.
     final orderId = updated.orderId;
     final tasksForOrder = _tasks.where((t) => t.orderId == orderId).toList();
     final allDone = tasksForOrder.isNotEmpty &&
         tasksForOrder.every((t) => t.status == TaskStatus.completed);
     if (allDone) {
-      // Обновляем статус заказа на "completed" в Firebase. OrdersProvider слушает это и обновит локальное состояние.
-      await FirebaseDatabase.instance
-          .ref('orders/$orderId')
-          .update({'status': OrderStatus.completed.name});
+      await _supabase
+          .from('orders')
+          .update({'status': OrderStatus.completed.name}).eq('id', orderId);
     }
   }
 
-  /// Обновляет список исполнителей для задачи. Перезаписывает существующий
-  /// список идентификаторов сотрудников и обновляет запись в Firebase.
   Future<void> updateAssignees(String id, List<String> assignees) async {
     final index = _tasks.indexWhere((t) => t.id == id);
     if (index == -1) return;
     final current = _tasks[index];
-    final updated = current.copyWith(assignees: assignees, comments: current.comments);
+    final updated =
+        current.copyWith(assignees: assignees, comments: current.comments);
     _tasks[index] = updated;
     notifyListeners();
-    await _tasksRef.child(id).update({'assignees': assignees});
+    await _supabase
+        .from('tasks')
+        .update({'assignees': assignees}).eq('id', id);
   }
 
-  /// Добавляет комментарий к задаче. Комментарии хранятся в подузле
-  /// `comments` в каждой задаче. Каждый комментарий содержит текст, тип
-  /// (pause/problem), идентификатор пользователя и временную метку. При
-  /// добавлении комментария обновляется локальный список задач, чтобы
-  /// комментарий стал доступен без повторной загрузки данных.
   Future<void> addComment({
     required String taskId,
     required String type,
     required String text,
     required String userId,
   }) async {
-    // Создаём новую запись в Firebase.
-    final commentRef = _tasksRef.child(taskId).child('comments').push();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    await commentRef.set({
-      'type': type,
-      'text': text,
-      'userId': userId,
-      'timestamp': timestamp,
-    });
-    // Обновляем локальную модель.
+    final res = await _supabase
+        .from('task_comments')
+        .insert({
+          'task_id': taskId,
+          'type': type,
+          'text': text,
+          'user_id': userId,
+          'timestamp': timestamp,
+        })
+        .select()
+        .single();
+
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index != -1) {
       final current = _tasks[index];
       final newComment = TaskComment(
-        id: commentRef.key ?? '',
+        id: res['id'].toString(),
         type: type,
         text: text,
         userId: userId,

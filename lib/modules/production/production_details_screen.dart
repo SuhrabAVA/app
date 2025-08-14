@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
@@ -37,7 +37,7 @@ const Map<_AggregatedStatus, Color> _statusColors = {
 ///
 /// Эта страница отображает детальную информацию о выбранном заказе,
 /// включая список этапов производства и их состояние. Информация
-/// о плане этапов подгружается из узла `production_plans` в Firebase.
+/// о плане этапов подгружается из таблицы `production_plans` в Supabase.
 /// Для каждого этапа отображаются начальное и конечное время (если
 /// задание уже выполнялось), а также количество комментариев.
 class ProductionDetailsScreen extends StatefulWidget {
@@ -59,23 +59,20 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     _loadPlan();
   }
 
-  /// Загружает список этапов производства для заказа из Firebase.
+  /// Загружает список этапов производства для заказа из Supabase.
   /// Данные хранятся в виде массива или словаря под путём
   /// `production_plans/{orderId}`. Если план отсутствует, список будет пустым.
   Future<void> _loadPlan() async {
-    final ref = FirebaseDatabase.instance.ref('production_plans/${widget.order.id}');
     try {
-      final snapshot = await ref.get();
-      final value = snapshot.value;
-      List<PlannedStage> stages;
-      if (value is List) {
+      final data = await Supabase.instance.client
+          .from('production_plans')
+          .select()
+          .eq('order_id', widget.order.id)
+          .maybeSingle();
+      List<PlannedStage> stages = [];
+      if (data != null) {
+        final value = data['stages'];
         stages = decodePlannedStages(value);
-      } else if (value is Map) {
-        // Планы могут храниться в объекте со свойством stages
-        final dataMap = Map<String, dynamic>.from(value as Map);
-        stages = decodePlannedStages(dataMap['stages']);
-      } else {
-        stages = [];
       }
       if (mounted) {
         setState(() {
@@ -84,7 +81,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         });
       }
     } catch (_) {
-      // В случае ошибки загрузки просто выставляем пустой список
       if (mounted) {
         setState(() {
           _plannedStages = [];

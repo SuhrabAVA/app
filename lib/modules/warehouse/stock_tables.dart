@@ -4,7 +4,7 @@ import '../warehouse/type_table_screen.dart';
 
 /// Экран для отображения списка таблиц по остаткам.
 /// Каждая карточка представляет отдельную категорию складского остатка и
-/// ведёт к экрану [TypeTableScreen], который отображает данные из Firebase.
+/// ведёт к экрану [TypeTableScreen], который отображает данные из Supabase.
 class StockTables extends StatelessWidget {
   const StockTables({super.key});
 

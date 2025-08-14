@@ -1,36 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'tmc_model.dart';
 
 class WarehouseProvider with ChangeNotifier {
-  final DatabaseReference _db = FirebaseDatabase.instance.ref();
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   List<TmcModel> _allTmc = [];
   List<TmcModel> get allTmc => _allTmc;
 
-  /// Загрузка всех ТМЦ из Firebase
+  /// Загрузка всех ТМЦ из Supabase
   Future<void> fetchTmc() async {
-    final snapshot = await _db.child('tmc').get();
-    if (snapshot.exists) {
-      final data = Map<String, dynamic>.from(snapshot.value as Map);
-      _allTmc = data.entries.map((e) {
-        final item = Map<String, dynamic>.from(e.value);
-        return TmcModel(
-          id: item['id'],
-          date: item['date'],
-          supplier: item['supplier'],
-          type: item['type'],
-          description: item['description'],
-          quantity: (item['quantity'] as num).toDouble(),
-          unit: item['unit'],
-          note: item['note'],
-          imageUrl: item['imageUrl'],
-          imageBase64: item['imageBase64'],
-        );
-      }).toList();
-      notifyListeners();
-    }
+    final rows = await _supabase.from('tmc').select();
+    _allTmc = rows.map((e) {
+      final item = Map<String, dynamic>.from(e);
+      return TmcModel(
+        id: item['id'],
+        date: item['date'],
+        supplier: item['supplier'],
+        type: item['type'],
+        description: item['description'],
+        quantity: (item['quantity'] as num).toDouble(),
+        unit: item['unit'],
+        note: item['note'],
+        imageUrl: item['imageUrl'],
+        imageBase64: item['imageBase64'],
+      );
+    }).toList();
+    notifyListeners();
   }
 
   /// Получение всех ТМЦ определённого типа (например, "Бумага", "Канцелярия")
@@ -71,20 +68,20 @@ class WarehouseProvider with ChangeNotifier {
       data['imageBase64'] = imageBase64;
     }
 
-    await _db.child('tmc').child(newId).set(data);
-    await fetchTmc(); // обновляем локально
+    await _supabase.from('tmc').insert(data);
+    await fetchTmc();
   }
 
   /// Обновление количества для существующего ТМЦ.
   ///
   /// Принимает идентификатор записи и новое значение количества,
-  /// затем обновляет запись в базе данных Firebase и перезагружает
+  /// затем обновляет запись в базе данных Supabase и перезагружает
   /// локальный список ТМЦ. Если запись отсутствует, метод ничего не делает.
   Future<void> updateTmcQuantity({
     required String id,
     required double newQuantity,
   }) async {
-    await _db.child('tmc').child(id).update({'quantity': newQuantity});
+    await _supabase.from('tmc').update({'quantity': newQuantity}).eq('id', id);
     await fetchTmc();
   }
 
@@ -95,7 +92,7 @@ class WarehouseProvider with ChangeNotifier {
   /// ничего не делает.
   Future<void> deleteTmc(String id) async {
     try {
-      await _db.child('tmc').child(id).remove();
+      await _supabase.from('tmc').delete().eq('id', id);
       await fetchTmc();
     } catch (_) {
       // Игнорируем ошибки при удалении, чтобы не прерывать работу UI
@@ -125,7 +122,7 @@ class WarehouseProvider with ChangeNotifier {
     if (imageUrl != null) updates['imageUrl'] = imageUrl;
     if (imageBase64 != null) updates['imageBase64'] = imageBase64;
     if (updates.isEmpty) return;
-    await _db.child('tmc').child(id).update(updates);
+    await _supabase.from('tmc').update(updates).eq('id', id);
     await fetchTmc();
   }
 
@@ -146,7 +143,7 @@ class WarehouseProvider with ChangeNotifier {
       'document': document,
     };
 
-    await _db.child('shipments').child(id).set(data);
+    await _supabase.from('shipments').insert(data);
   }
 
   /// Возврат
@@ -170,6 +167,6 @@ class WarehouseProvider with ChangeNotifier {
       'note': note,
     };
 
-    await _db.child('returns').child(id).set(data);
+    await _supabase.from('returns').insert(data);
   }
 }

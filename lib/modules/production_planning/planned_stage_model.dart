@@ -27,8 +27,8 @@ class PlannedStage {
         comment: map['comment'] as String?,
       );
 }
-/// Decodes a dynamic value retrieved from Firebase into a list of
-/// [PlannedStage] objects. Firebase can return either a List or a Map for
+/// Decodes a dynamic value retrieved from Supabase into a list of
+/// [PlannedStage] objects.
 /// arrays depending on how the data was stored, so this helper normalises the
 /// format for further processing.
 List<PlannedStage> decodePlannedStages(dynamic stagesData) {

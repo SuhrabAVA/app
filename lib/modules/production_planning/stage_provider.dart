@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'stage_model.dart';
 
 class StageProvider with ChangeNotifier {
   final _uuid = const Uuid();
-  final DatabaseReference _stagesRef =
-      FirebaseDatabase.instance.ref('stages');
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<StageModel> _stages = [];
 
@@ -18,18 +17,13 @@ class StageProvider with ChangeNotifier {
   List<StageModel> get stages => List.unmodifiable(_stages);
 
   void _listenToStages() {
-    _stagesRef.onValue.listen((event) {
-      final data = event.snapshot.value;
-      _stages.clear();
-      if (data is Map) {
-        data.forEach((key, value) {
-          if (value is Map) {
-            final map = Map<String, dynamic>.from(value as Map);
-            map['id'] = key;
-            _stages.add(StageModel.fromMap(map));
-          }
-        });
-      }
+    _supabase.from('stages').stream(primaryKey: ['id']).listen((rows) {
+      _stages
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          return StageModel.fromMap(map);
+        }));
       notifyListeners();
     });
   }
@@ -47,7 +41,8 @@ class StageProvider with ChangeNotifier {
     );
     _stages.add(stage);
     notifyListeners();
-    _stagesRef.child(stage.id).set(stage.toMap());
+    final data = stage.toMap();
+    _supabase.from('stages').insert(data);
     return stage;
   }
 }

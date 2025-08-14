@@ -33,7 +33,7 @@ class OrderModel {
     this.assignmentCreated = false,
   });
 
-  /// Преобразует модель заказа в Map для сохранения в Firebase.
+  /// Преобразует модель заказа в Map для сохранения в Supabase.
   Map<String, dynamic> toMap() => {
         'id': id,
         'customer': customer,
@@ -48,7 +48,7 @@ class OrderModel {
         'assignmentCreated': assignmentCreated,
       };
 
-  /// Создаёт [OrderModel] из Map, полученного из Firebase.
+  /// Создаёт [OrderModel] из Map, полученного из Supabase.
   factory OrderModel.fromMap(Map<String, dynamic> map) => OrderModel(
         id: map['id'] as String,
         customer: map['customer'] as String? ?? '',

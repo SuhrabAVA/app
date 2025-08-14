@@ -6,7 +6,7 @@ import 'modules/personnel/personnel_screen.dart';
 import 'modules/production/production_screen.dart';
 import 'modules/warehouse/warehouse_screen.dart';
 import 'modules/analytics/analytics_screen.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'services/auth_service.dart';
 class AdminPanelScreen extends StatelessWidget {
   const AdminPanelScreen({super.key});
 
@@ -19,11 +19,11 @@ class AdminPanelScreen extends StatelessWidget {
       {'label': '🗓️\nПланир.', 'page': const ProductionPlanningScreen()},
       {'label': '🏭\nПроизв.', 'page': const ProductionScreen()},
       {
-  'label': '💬\nЧат',
-  'page': ChatScreen(
-    currentUserId: FirebaseAuth.instance.currentUser?.uid ?? 'anonymous',
-  ),
-},
+        'label': '💬\nЧат',
+        'page': ChatScreen(
+          currentUserId: AuthService.currentUser?.id ?? 'anonymous',
+        ),
+      },
 
       // Модуль аналитики отображает действия сотрудников по заказам
       {'label': '📊\nАналитика', 'page': const AnalyticsScreen()},

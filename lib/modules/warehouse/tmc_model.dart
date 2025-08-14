@@ -26,7 +26,7 @@ class TmcModel {
     this.imageBase64,
   });
 
-  // Для преобразования из Firebase Map
+  // Для преобразования из Supabase Map
   factory TmcModel.fromMap(Map<String, dynamic> map) {
     return TmcModel(
       id: map['id'] ?? '',
@@ -42,7 +42,7 @@ class TmcModel {
     );
   }
 
-  // Для сохранения в Firebase
+  // Для сохранения в Supabase
   Map<String, dynamic> toMap() {
     return {
       'id': id,

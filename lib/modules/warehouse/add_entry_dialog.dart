@@ -139,7 +139,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   Uint8List? _imageBytes;
 
   /// Открывает галерею для выбора изображения. Выбранный файл сохраняется
-  /// в переменную [_pickedImage], чтобы затем загрузить его в Firebase.
+  /// в переменную [_pickedImage], чтобы затем загрузить его в Supabase.
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final XFile? file = await picker.pickImage(source: ImageSource.gallery);
@@ -153,7 +153,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     }
   }
 
-  // Метод загрузки в Firebase Storage удалён, так как изображения сохраняются в виде base64.
+  // Метод загрузки в Supabase Storage удалён, так как изображения сохраняются в виде base64.
 
   @override
   void dispose() {

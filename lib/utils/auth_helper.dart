@@ -6,7 +6,7 @@
 /// they are the technical leader.
 class AuthHelper {
   /// Unique identifier of the currently logged‑in user. For regular
-  /// employees this corresponds to their Firebase key. For the
+  /// employees this corresponds to their entry in Supabase. For the
   /// technical leader we use the special identifier `tech_leader`.
   static String? currentUserId;
 

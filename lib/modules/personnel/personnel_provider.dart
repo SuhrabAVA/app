@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-// ⬇️ вместо Firebase:
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'position_model.dart';
@@ -9,7 +8,7 @@ import 'workplace_model.dart';
 import 'terminal_model.dart';
 
 /// Провайдер для управления данными персонала.
-/// Firebase Realtime DB → Supabase (Postgres + Realtime).
+/// Провайдер использует Supabase (Postgres + Realtime).
 class PersonnelProvider with ChangeNotifier {
   final _uuid = const Uuid();
   final SupabaseClient _supabase = Supabase.instance.client;

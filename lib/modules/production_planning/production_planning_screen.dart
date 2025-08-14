@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../orders/orders_provider.dart';
 import 'form_editor_screen.dart';
 import 'stage_editor_screen.dart';
@@ -32,26 +32,15 @@ class ProductionPlanningScreen extends StatelessWidget {
                 margin:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: ListTile(
-                    leading: StreamBuilder<DatabaseEvent>(
-                      stream: FirebaseDatabase.instance
-                          .ref('production_plans/${order.id}/photoUrls')
-                          .onValue,
-                      builder: (context, snapshot) {
-                        final value = snapshot.data?.snapshot.value;
-                        String? firstUrl;
-                        if (value is List && value.isNotEmpty) {
-                          firstUrl = value.first as String?;
-                        }
-                        if (firstUrl != null && firstUrl.isNotEmpty) {
-                          return Image.network(
-                            firstUrl,
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.cover,
-                          );
-                        }
-                        return const Icon(Icons.photo, color: Colors.grey);
-                      },
+                    leading: Image.network(
+                      Supabase.instance.client.storage
+                          .from('order_photos')
+                          .getPublicUrl('${order.id}.jpg'),
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          const Icon(Icons.photo, color: Colors.grey),
                     ),
                     title: Text(order.id),
                     subtitle: Text(order.customer),
