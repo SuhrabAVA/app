@@ -1,36 +1,35 @@
 name: sheet_clone
 description: A Flutter project
-
-publish_to: 'none'
+publish_to: "none"
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  uuid: ^4.4.0
-  # UI и базовые
+
+  # Supabase
+  supabase_flutter: ^2.5.4
+
+  # Утилиты
   provider: ^6.1.2
+  uuid: ^4.4.0
+  path: ^1.9.0
+  file_picker: ^8.0.0
   image_picker: ^1.1.0
 
-  # Firebase (обновлённые версии)
-  firebase_core: ^4.0.0
-  firebase_database: ^12.0.0
-  firebase_storage: ^13.0.0
+  # Дата/время (эта версия совместима с Flutter 3.22+)
+  intl: ^0.18.1
 
-  # Если НУЖНА авторизация (например, логин админа)
-  firebase_auth: ^6.0.0
-
-  # Для веба
+  # Для Web (если таргетируешь web)
   flutter_web_plugins:
     sdk: flutter
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  flutter_lints: ^3.0.0
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true

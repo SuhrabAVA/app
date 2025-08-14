@@ -23,8 +23,11 @@ class StageProvider with ChangeNotifier {
       _stages.clear();
       if (data is Map) {
         data.forEach((key, value) {
-          final map = Map<String, dynamic>.from(value as Map);
-          _stages.add(StageModel.fromMap(map, key));
+          if (value is Map) {
+            final map = Map<String, dynamic>.from(value as Map);
+            map['id'] = key;
+            _stages.add(StageModel.fromMap(map));
+          }
         });
       }
       notifyListeners();

@@ -3,6 +3,11 @@ import 'package:provider/provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/supplier_provider.dart';
+import 'package:uuid/uuid.dart';
+import 'dart:typed_data';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
 
 class AddEntryDialog extends StatefulWidget {
   /// Если задан [initialTable], выбор таблицы пользователем блокируется,
@@ -82,9 +87,27 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   ];
   // Список Pantone цветов. Должно загружаться из справочника.
   final List<String> _colors = [
-    'Pantone 123C',
-    'Pantone 456C',
-    'Pantone 789C',
+    'Красный',
+    'Синий',
+    'Зелёный',
+    'Жёлтый',
+    'Оранжевый',
+    'Фиолетовый',
+    'Розовый',
+    'Коричневый',
+    'Чёрный',
+    'Белый',
+    'Серый',
+    'Голубой',
+    'Бежевый',
+    'Бирюзовый',
+    'Лаймовый',
+    'Золотой',
+    'Серебряный',
+    'Малиновый',
+    'Индиго',
+    'Песочный',
+
   ];
   // Список типов готовой продукции, согласно ТЗ
   final List<String> _productTypes = [
@@ -107,6 +130,30 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
 
   // Список рулонов для выбора при создании бобины
   List<TmcModel> _rollItems = [];
+
+  // Хранит выбранное изображение для типа "Краска".
+  XFile? _pickedImage;
+  // При редактировании существующей записи сохраняем URL изображения.
+  String? _existingImageUrl;
+  // Байтовое представление выбранного изображения для корректного отображения на вебе.
+  Uint8List? _imageBytes;
+
+  /// Открывает галерею для выбора изображения. Выбранный файл сохраняется
+  /// в переменную [_pickedImage], чтобы затем загрузить его в Firebase.
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final XFile? file = await picker.pickImage(source: ImageSource.gallery);
+    if (file != null) {
+      // Считываем байты изображения для корректного отображения в веб-приложении
+      final bytes = await file.readAsBytes();
+      setState(() {
+        _pickedImage = file;
+        _imageBytes = bytes;
+      });
+    }
+  }
+
+  // Метод загрузки в Firebase Storage удалён, так как изображения сохраняются в виде base64.
 
   @override
   void dispose() {
@@ -138,6 +185,15 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     if (widget.existing != null) {
       _selectedTable = widget.existing!.type;
       _populateForEdit(widget.existing!);
+      // Если запись содержит изображение в base64, подготавливаем байты для превью
+      if (widget.existing!.imageBase64 != null) {
+        try {
+          final bytes = base64Decode(widget.existing!.imageBase64!);
+          _imageBytes = bytes;
+        } catch (_) {}
+      }
+      // сохраняем ссылку на url изображения (если использовался url)
+      _existingImageUrl = widget.existing!.imageUrl;
     } else if (widget.initialTable != null) {
       _selectedTable = widget.initialTable;
     }
@@ -231,7 +287,19 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           final newDesc = _controllers['name']!.text.trim().isNotEmpty
               ? _controllers['name']!.text.trim()
               : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: 'кг', quantity: newWeight, note: note.isNotEmpty ? note : existing.note);
+          // Поддержка изображений: сохраняем новое изображение в base64, если оно выбрано
+          String? imageBase64 = existing.imageBase64;
+          if (_imageBytes != null) {
+            imageBase64 = base64Encode(_imageBytes!);
+          }
+          await warehouseProvider.updateTmc(
+            id: id,
+            description: newDesc,
+            unit: 'кг',
+            quantity: newWeight,
+            note: note.isNotEmpty ? note : existing.note,
+            imageBase64: imageBase64,
+          );
           break;
         case 'Канцелярия':
         case 'Универсальное изделие':
@@ -402,17 +470,25 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       Navigator.of(context).pop();
       return;
     } else if (table == 'Краска') {
+      // Создание записи для краски, сохраняем изображение в base64 при наличии
       final name = _controllers['name']!.text.trim();
       final color = _selectedColor ?? '';
       final weightStr = _controllers['weight']!.text.trim();
       final double weight = double.tryParse(weightStr) ?? 0;
       final description = color.isNotEmpty ? '$name $color' : name;
+      final id = const Uuid().v4();
+      String? imageBase64;
+      if (_imageBytes != null) {
+        imageBase64 = base64Encode(_imageBytes!);
+      }
       await warehouseProvider.addTmc(
+        id: id,
         type: 'Краска',
         description: description,
         quantity: weight,
         unit: 'кг',
         note: note.isEmpty ? null : note,
+        imageBase64: imageBase64,
       );
       Navigator.of(context).pop();
       return;
@@ -687,7 +763,46 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         );
       case 'Краска':
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Просмотр выбранного изображения или существующего URL
+            if (_imageBytes != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6.0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    _imageBytes!,
+                    height: 120,
+                    width: 120,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              )
+            else if (_existingImageUrl != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6.0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    _existingImageUrl!,
+                    height: 120,
+                    width: 120,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            // Кнопка выбора изображения
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6.0),
+              child: ElevatedButton.icon(
+                onPressed: _pickImage,
+                icon: const Icon(Icons.photo_library),
+                label: Text(_pickedImage != null || _existingImageUrl != null
+                    ? 'Изменить фото'
+                    : 'Добавить фото'),
+              ),
+            ),
             _buildField('name', 'Название'),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),

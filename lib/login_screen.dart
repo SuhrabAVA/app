@@ -1,6 +1,22 @@
 import 'package:flutter/material.dart';
-import 'admin_panel.dart';
+import 'package:provider/provider.dart';
 
+import 'admin_panel.dart';
+import 'modules/personnel/employee_workspace_screen.dart';
+import 'modules/personnel/personnel_provider.dart';
+import 'modules/personnel/position_model.dart';
+import 'utils/auth_helper.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'dart:io' show Platform;
+
+import 'package:firebase_core/firebase_core.dart'; // для Android/Web
+ // генерируется автоматически (если используешь flutterfire CLI)
+
+/// Главный экран авторизации. Показывает список пользователей, где первым
+/// всегда идёт технический лидер, а дальше – сотрудники, добавленные
+/// техническим лидером. Пользователь выбирает своё имя, вводит пароль и
+/// переходит в соответствующий модуль приложения.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -9,60 +25,230 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _loginController = TextEditingController();
-  final _passwordController = TextEditingController();
-  String? _error;
-
-  void _attemptLogin() {
-    const correctLogin = 'Расул';
-    const correctPassword = '123123';
-    if (_loginController.text == correctLogin &&
-        _passwordController.text == correctPassword) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-      );
-    } else {
-      setState(() {
-        _error = 'Неверный логин или пароль';
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _loginController,
-                decoration: const InputDecoration(labelText: 'Логин'),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Card(
+            elevation: 4,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Вход в систему',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Выберите ваше имя для начала работы',
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  Consumer<PersonnelProvider>(
+                    builder: (context, personnel, _) {
+                      // Формируем список пользователей: первый – технический лидер.
+                      final List<_UserItem> users = [];
+                      users.add(_UserItem(
+                        id: 'tech_leader',
+                        name: 'Технический лидер',
+                        position: 'Технический лидер',
+                        password: '123123',
+                        isTechLeader: true,
+                      ));
+                      for (final e in personnel.employees) {
+                        if (e.isFired) continue;
+                        String positionName = '';
+                        if (e.positionIds.isNotEmpty) {
+                          final match = personnel.positions
+                              .firstWhere(
+                                (p) => p.id == e.positionIds.first,
+                                orElse: () => PositionModel(id: '', name: ''),
+                              )
+                              .name;
+                          positionName = match;
+                        }
+                        final fullName =
+                            '${e.lastName} ${e.firstName} ${e.patronymic}';
+                        users.add(_UserItem(
+                          id: e.id,
+                          name: fullName,
+                          position: positionName,
+                          password: e.password,
+                          isTechLeader: false,
+                        ));
+                      }
+                      return users.isEmpty
+                          ? const Center(child: CircularProgressIndicator())
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: users.length,
+                              physics: const NeverScrollableScrollPhysics(),
+                              separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final user = users[index];
+                                return InkWell(
+                                  onTap: () => _promptPassword(context, user),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: Colors.grey.shade300),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 12),
+                                    child: Row(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 20,
+                                          backgroundColor: Colors.grey.shade200,
+                                          child: const Icon(Icons.person_outline,
+                                              color: Colors.grey),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                user.name,
+                                                style: const TextStyle(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                user.position,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                    },
+                  ),
+                ],
               ),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(labelText: 'Пароль'),
-                obscureText: true,
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _attemptLogin,
-                child: const Text('Войти'),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 20),
-                Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.red),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  /// Показывает диалог ввода пароля и при успешном вводе
+  /// выполняет навигацию в нужный модуль.
+  Future<void> _promptPassword(BuildContext context, _UserItem user) async {
+    final TextEditingController controller = TextEditingController();
+    String? error;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Введите пароль для ${user.name}'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Пароль'),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      error!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Отмена'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final password = controller.text.trim();
+                    if (password == user.password) {
+                      // Запоминаем пользователя в AuthHelper
+                      if (user.isTechLeader) {
+                        AuthHelper.setTechLeader(name: user.name);
+                      } else {
+                        AuthHelper.setEmployee(id: user.id, name: user.name);
+                      }
+                      Navigator.pop(ctx);
+                      // Навигация
+                      if (user.isTechLeader) {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminPanelScreen(),
+                          ),
+                        );
+                      } else {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => EmployeeWorkspaceScreen(
+                                employeeId: user.id),
+                          ),
+                        );
+                      }
+                    } else {
+                      setState(() {
+                        error = 'Неверный пароль';
+                      });
+                    }
+                  },
+                  child: const Text('Войти'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// Модель элемента списка пользователей на экране входа.
+class _UserItem {
+  final String id;
+  final String name;
+  final String position;
+  final String password;
+  final bool isTechLeader;
+  _UserItem({
+    required this.id,
+    required this.name,
+    required this.position,
+    required this.password,
+    this.isTechLeader = false,
+  });
 }

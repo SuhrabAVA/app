@@ -14,6 +14,10 @@ class OrderModel {
   bool paymentDone;
   String comments;
   OrderStatus status;
+  /// Идентификатор производственного задания (формат ЗК-YYYY-NNN). Генерируется при планировании.
+  String? assignmentId;
+  /// Признак того, что производственное задание создано для этого заказа.
+  bool assignmentCreated;
 
   OrderModel({
     required this.id,
@@ -25,6 +29,8 @@ class OrderModel {
     this.paymentDone = false,
     this.comments = '',
     this.status = OrderStatus.newOrder,
+    this.assignmentId,
+    this.assignmentCreated = false,
   });
 
   /// Преобразует модель заказа в Map для сохранения в Firebase.
@@ -38,6 +44,8 @@ class OrderModel {
         'paymentDone': paymentDone,
         'comments': comments,
         'status': status.name,
+        if (assignmentId != null) 'assignmentId': assignmentId,
+        'assignmentCreated': assignmentCreated,
       };
 
   /// Создаёт [OrderModel] из Map, полученного из Firebase.
@@ -54,5 +62,7 @@ class OrderModel {
         comments: map['comments'] as String? ?? '',
         status:
             OrderStatus.values.byName(map['status'] as String? ?? 'newOrder'),
+        assignmentId: map['assignmentId'] as String?,
+        assignmentCreated: map['assignmentCreated'] as bool? ?? false,
       );
 }

@@ -6,6 +6,7 @@ import 'suppliers_screen.dart';
 import 'stock_tables.dart';
 import 'add_entry_dialog.dart';
 import 'stocks_screen.dart';
+import 'paint_table.dart';
 
 class WarehouseDashboard extends StatelessWidget {
   const WarehouseDashboard({super.key});
@@ -51,6 +52,7 @@ class WarehouseDashboard extends StatelessWidget {
             _buildCard(context, '📦\nКатегории', const StockTables()),
             _buildCard(context, '📊\nЗапасы', const StocksScreen()),
             _buildCard(context, '🏷️\nПоставщики', const SuppliersScreen()),
+            _buildCard(context, '🎨\nКраски', const PaintTable()),
           ],
         ),
       ),
@@ -81,4 +83,5 @@ class WarehouseDashboard extends StatelessWidget {
       ),
     );
   }
+
 }

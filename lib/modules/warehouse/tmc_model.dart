@@ -7,6 +7,11 @@ class TmcModel {
   final double quantity;
   final String unit;
   final String? note;
+  /// URL изображения, если для записи загрузили фото (например, для красок).
+  final String? imageUrl;
+  /// base64-строка изображения. Используется для отображения изображений без
+  /// необходимости загружать их из интернета (например, в веб-версии).
+  final String? imageBase64;
 
   TmcModel({
     required this.id,
@@ -17,6 +22,8 @@ class TmcModel {
     required this.quantity,
     required this.unit,
     this.note,
+    this.imageUrl,
+    this.imageBase64,
   });
 
   // Для преобразования из Firebase Map
@@ -30,6 +37,8 @@ class TmcModel {
       quantity: (map['quantity'] as num).toDouble(),
       unit: map['unit'] ?? '',
       note: map['note'],
+      imageUrl: map['imageUrl'],
+      imageBase64: map['imageBase64'],
     );
   }
 
@@ -44,6 +53,8 @@ class TmcModel {
       'quantity': quantity,
       'unit': unit,
       'note': note,
+      if (imageUrl != null) 'imageUrl': imageUrl,
+      if (imageBase64 != null) 'imageBase64': imageBase64,
     };
   }
 }

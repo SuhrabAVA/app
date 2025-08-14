@@ -136,6 +136,8 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
       _comments.text = emp.comments;
       _isFired = emp.isFired;
       _selectedPositions.addAll(emp.positionIds);
+      _login.text = emp.login;
+      _password.text = emp.password;
     }
   }
 
@@ -190,6 +192,8 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
         positionIds: _selectedPositions.toList(),
         isFired: _isFired,
         comments: _comments.text.trim(),
+        login: _login.text.trim(),
+        password: _password.text.trim(),
       );
     }
     Navigator.of(context).pop();

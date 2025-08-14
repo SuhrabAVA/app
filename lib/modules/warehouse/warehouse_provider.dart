@@ -25,6 +25,8 @@ class WarehouseProvider with ChangeNotifier {
           quantity: (item['quantity'] as num).toDouble(),
           unit: item['unit'],
           note: item['note'],
+          imageUrl: item['imageUrl'],
+          imageBase64: item['imageBase64'],
         );
       }).toList();
       notifyListeners();
@@ -38,18 +40,22 @@ class WarehouseProvider with ChangeNotifier {
 
   /// Добавление ТМЦ
   Future<void> addTmc({
+    String? id,
     String? supplier,
     required String type,
     required String description,
     required double quantity,
     required String unit,
     String? note,
+    String? imageUrl,
+    String? imageBase64,
   }) async {
-    final id = const Uuid().v4();
+    // Позволяем передать идентификатор извне (например, для загрузки фото перед записью).
+    final String newId = id ?? const Uuid().v4();
     final date = DateTime.now().toIso8601String();
 
-    final data = {
-      'id': id,
+    final data = <String, dynamic>{
+      'id': newId,
       'date': date,
       'supplier': supplier,
       'type': type,
@@ -58,8 +64,14 @@ class WarehouseProvider with ChangeNotifier {
       'unit': unit,
       'note': note,
     };
+    if (imageUrl != null) {
+      data['imageUrl'] = imageUrl;
+    }
+    if (imageBase64 != null) {
+      data['imageBase64'] = imageBase64;
+    }
 
-    await _db.child('tmc').child(id).set(data);
+    await _db.child('tmc').child(newId).set(data);
     await fetchTmc(); // обновляем локально
   }
 
@@ -101,6 +113,8 @@ class WarehouseProvider with ChangeNotifier {
     double? quantity,
     String? supplier,
     String? note,
+    String? imageUrl,
+    String? imageBase64,
   }) async {
     final Map<String, dynamic> updates = {};
     if (description != null) updates['description'] = description;
@@ -108,6 +122,8 @@ class WarehouseProvider with ChangeNotifier {
     if (quantity != null) updates['quantity'] = quantity;
     if (supplier != null) updates['supplier'] = supplier;
     if (note != null) updates['note'] = note;
+    if (imageUrl != null) updates['imageUrl'] = imageUrl;
+    if (imageBase64 != null) updates['imageBase64'] = imageBase64;
     if (updates.isEmpty) return;
     await _db.child('tmc').child(id).update(updates);
     await fetchTmc();

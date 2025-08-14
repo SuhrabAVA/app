@@ -162,11 +162,46 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(isEditing ? 'Редактирование заказа ${widget.order!.id}' : 'Новый заказ'),
+        title: Text(isEditing
+            ? 'Редактирование заказа ${widget.order!.id}'
+            : 'Новый заказ'),
         actions: [
+          // Кнопка удаления доступна только при редактировании существующего заказа
+          if (isEditing)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Удалить заказ',
+              onPressed: () async {
+                final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Удалить заказ?'),
+                        content: const Text(
+                            'Вы действительно хотите удалить этот заказ? Это действие невозможно отменить.'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Отмена'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('Удалить'),
+                          ),
+                        ],
+                      ),
+                    ) ??
+                    false;
+                if (confirmed) {
+                  final provider = Provider.of<OrdersProvider>(context, listen: false);
+                  provider.deleteOrder(widget.order!.id);
+                  Navigator.of(context).pop();
+                }
+              },
+            ),
           TextButton(
             onPressed: _saveOrder,
-            child: const Text('Сохранить', style: TextStyle(color: Colors.white)),
+            child: const Text('Сохранить',
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),

@@ -41,6 +41,73 @@ class _StocksScreenState extends State<StocksScreen> {
     });
   }
 
+  /// Выполняет списание указанного количества для записи из любой таблицы.
+  /// Запрашивает количество и комментарий, затем уменьшает количество в складе
+  /// и создаёт отдельную запись типа 'Списание'.
+  Future<void> _writeOffItem(TmcModel item) async {
+    final qtyController = TextEditingController();
+    final commentController = TextEditingController();
+    final result = await showDialog<double?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Списать ${item.description}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: qtyController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Количество для списания',
+              ),
+            ),
+            TextField(
+              controller: commentController,
+              decoration: const InputDecoration(
+                labelText: 'Комментарий (необязательно)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              final qty = double.tryParse(qtyController.text);
+              Navigator.of(ctx).pop(qty);
+            },
+            child: const Text('Списать'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result > 0) {
+      final provider = Provider.of<WarehouseProvider>(context, listen: false);
+      final newQty = item.quantity - result;
+      if (newQty < 0) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Нельзя списать больше, чем есть на складе'),
+        ));
+        return;
+      }
+      await provider.updateTmcQuantity(id: item.id, newQuantity: newQty);
+      await provider.addTmc(
+        supplier: item.supplier,
+        type: 'Списание',
+        description: item.description,
+        quantity: result,
+        unit: item.unit,
+        note: commentController.text.trim().isEmpty
+            ? null
+            : commentController.text.trim(),
+        imageUrl: item.imageUrl,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -49,7 +116,8 @@ class _StocksScreenState extends State<StocksScreen> {
       ),
       body: Consumer<WarehouseProvider>(
         builder: (context, provider, _) {
-          final allStocks = provider.allTmc;
+          // Исключаем записи типа 'Списание' из отображения в запасах
+          final allStocks = provider.allTmc.where((e) => e.type != 'Списание').toList();
           // Собираем уникальные единицы измерения
           final units = <String>{};
           for (final item in allStocks) {
@@ -134,6 +202,11 @@ class _StocksScreenState extends State<StocksScreen> {
                                         IconButton(
                                           icon: const Icon(Icons.edit, size: 20),
                                           onPressed: () => _openAddDialog(existing: item),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                          tooltip: 'Списать',
+                                          onPressed: () => _writeOffItem(item),
                                         ),
                                         IconButton(
                                           icon: const Icon(Icons.delete, size: 20),

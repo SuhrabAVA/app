@@ -61,6 +61,8 @@ class OrdersProvider with ChangeNotifier {
       paymentDone: paymentDone,
       comments: comments,
       status: OrderStatus.newOrder,
+      assignmentId: null,
+      assignmentCreated: false,
     );
     _orders.add(newOrder);
     notifyListeners();
@@ -68,15 +70,29 @@ class OrdersProvider with ChangeNotifier {
     return newOrder;
   }
 
-  /// Обновляет существующий заказ. Идентификация по ID.
+  /// Обновляет существующий заказ по его идентификатору.
+  /// Если заказ найден в локальном списке, он заменяется, а изменения
+  /// сохраняются в Firebase. В противном случае новая запись будет
+  /// создана в базе данных.
   void updateOrder(OrderModel updated) {
     final index = _orders.indexWhere((o) => o.id == updated.id);
     if (index >= 0) {
       _orders[index] = updated;
       notifyListeners();
-      _ordersRef.child(updated.id).set(updated.toMap());
     }
+    // Сохраняем обновлённую запись в Firebase независимо от наличия в списке.
+    _ordersRef.child(updated.id).set(updated.toMap());
   }
+
+  /// Удаляет заказ по идентификатору. Удаляет его из списка и из Firebase.
+  void deleteOrder(String id) {
+    final index = _orders.indexWhere((o) => o.id == id);
+    if (index == -1) return;
+    final removed = _orders.removeAt(index);
+    notifyListeners();
+    _ordersRef.child(removed.id).remove();
+  }
+  
 
   /// Генерирует новый номер заказа в формате ORD-YYYY-NNN.
   String _generateOrderNumber() {
@@ -84,5 +100,19 @@ class OrdersProvider with ChangeNotifier {
     final year = now.year;
     final serial = (_orders.length + 1).toString().padLeft(3, '0');
     return 'ORD-$year-$serial';
+  }
+
+  /// Генерирует уникальный идентификатор производственного задания в формате ЗК-YYYY-NNN.
+  /// Подсчитывает количество уже существующих заданий в текущем году и увеличивает счётчик.
+  String generateAssignmentId() {
+    final now = DateTime.now();
+    final year = now.year;
+    // Подсчитываем количество заказов с назначенным заданием в текущем году.
+    final count = _orders
+            .where((o) => o.assignmentId != null && o.assignmentId!.startsWith('ZK-$year-'))
+            .length +
+        1;
+    final serial = count.toString().padLeft(3, '0');
+    return 'ZK-$year-$serial';
   }
 }

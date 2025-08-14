@@ -5,7 +5,8 @@ import 'modules/orders/orders_screen.dart';
 import 'modules/personnel/personnel_screen.dart';
 import 'modules/production/production_screen.dart';
 import 'modules/warehouse/warehouse_screen.dart';
-
+import 'modules/analytics/analytics_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 class AdminPanelScreen extends StatelessWidget {
   const AdminPanelScreen({super.key});
 
@@ -17,11 +18,34 @@ class AdminPanelScreen extends StatelessWidget {
       {'label': '🧾\nЗаказы', 'page': const OrdersScreen()},
       {'label': '🗓️\nПланир.', 'page': const ProductionPlanningScreen()},
       {'label': '🏭\nПроизв.', 'page': const ProductionScreen()},
-      {'label': '💬\nЧат', 'page': const ChatScreen()},
+      {
+  'label': '💬\nЧат',
+  'page': ChatScreen(
+    currentUserId: FirebaseAuth.instance.currentUser?.uid ?? 'anonymous',
+  ),
+},
+
+      // Модуль аналитики отображает действия сотрудников по заказам
+      {'label': '📊\nАналитика', 'page': const AnalyticsScreen()},
+
+
+
     ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Панель администратора')),
+      appBar: AppBar(
+  title: const Text('Панель администратора'),
+  actions: [
+    IconButton(
+      icon: const Icon(Icons.logout),
+      tooltip: 'Выйти',
+      onPressed: () {
+        Navigator.of(context).pop(); // Возврат на предыдущий экран
+      },
+    ),
+  ],
+),
+
       body: Padding(
         padding: const EdgeInsets.all(8.0),
         child: GridView.count(
