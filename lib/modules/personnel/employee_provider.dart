@@ -54,6 +54,8 @@ class EmployeeProvider with ChangeNotifier {
       'positionIds': positionIds,
       'isFired': false,
       'comments': comments,
+      'login': login,
+      'password': password,
     });
 
     await fetchEmployees();
