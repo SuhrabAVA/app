@@ -31,15 +31,15 @@ class OrdersProvider with ChangeNotifier {
     });
   }
 
-  /// Добавляет новый заказ в список и сохраняет его в Firebase.
-  void addOrder(OrderModel order) {
+  /// Добавляет новый заказ в список и сохраняет его в Supabase.
+  Future<void> addOrder(OrderModel order) async {
     _orders.add(order);
     notifyListeners();
-   _supabase.from('orders').insert(order.toMap());
+    await _supabase.from('orders').insert(order.toMap());
   }
 
   /// Создаёт и добавляет новый заказ с автоматически сгенерированным ID.
-  OrderModel createOrder({
+  Future<OrderModel> createOrder({
     required String customer,
     required DateTime orderDate,
     required DateTime dueDate,
@@ -63,7 +63,7 @@ class OrdersProvider with ChangeNotifier {
     );
     _orders.add(newOrder);
     notifyListeners();
-    _supabase.from('orders').insert(newOrder.toMap());
+    await _supabase.from('orders').insert(newOrder.toMap());
     return newOrder;
   }
 
@@ -71,23 +71,23 @@ class OrdersProvider with ChangeNotifier {
   /// Если заказ найден в локальном списке, он заменяется, а изменения
   /// сохраняются в Firebase. В противном случае новая запись будет
   /// создана в базе данных.
-  void updateOrder(OrderModel updated) {
+  Future<void> updateOrder(OrderModel updated) async {
     final index = _orders.indexWhere((o) => o.id == updated.id);
     if (index >= 0) {
       _orders[index] = updated;
       notifyListeners();
     }
     // Сохраняем обновлённую запись в Firebase независимо от наличия в списке.
-    _supabase.from('orders').upsert(updated.toMap());
+    await _supabase.from('orders').upsert(updated.toMap());
   }
 
   /// Удаляет заказ по идентификатору. Удаляет его из списка и из Firebase.
-  void deleteOrder(String id) {
+  Future<void> deleteOrder(String id) async {
     final index = _orders.indexWhere((o) => o.id == id);
     if (index == -1) return;
     final removed = _orders.removeAt(index);
     notifyListeners();
-    _supabase.from('orders').delete().eq('id', removed.id);
+    await _supabase.from('orders').delete().eq('id', removed.id);
   }
   
 

@@ -28,11 +28,11 @@ class StageProvider with ChangeNotifier {
     });
   }
 
-  StageModel createStage({
+  Future<StageModel> createStage({
     required String name,
     required String description,
     required String workplaceId,
-  }) {
+  }) async {
     final stage = StageModel(
       id: _uuid.v4(),
       name: name,
@@ -42,7 +42,7 @@ class StageProvider with ChangeNotifier {
     _stages.add(stage);
     notifyListeners();
     final data = stage.toMap();
-    _supabase.from('stages').insert(data);
+    await _supabase.from('stages').insert(data);
     return stage;
   }
 }
