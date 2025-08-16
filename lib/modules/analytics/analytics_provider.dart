@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'analytics_record.dart';
 
@@ -9,8 +9,7 @@ import 'analytics_record.dart';
 /// возможность добавлять новые записи. Записи читаются в реальном времени
 /// и отсортированы по временной метке.
 class AnalyticsProvider with ChangeNotifier {
-  final DatabaseReference _logsRef =
-      FirebaseDatabase.instance.ref('analytics');
+    final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<AnalyticsRecord> _logs = [];
 
@@ -21,18 +20,13 @@ class AnalyticsProvider with ChangeNotifier {
   List<AnalyticsRecord> get logs => List.unmodifiable(_logs);
 
   void _listenToLogs() {
-    _logsRef.onValue.listen((event) {
-      final data = event.snapshot.value;
-      _logs.clear();
-      if (data is Map) {
-        data.forEach((key, value) {
-          if (value is Map) {
-            final map = Map<String, dynamic>.from(value as Map);
-            _logs.add(AnalyticsRecord.fromMap(map, key));
-          }
-        });
-      }
-      // Сортируем по временной метке (самые новые сверху)
+    _supabase.from('analytics').stream(primaryKey: ['id']).listen((rows) {
+      _logs
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          return AnalyticsRecord.fromMap(map, map['id'].toString());
+        }));
       _logs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
       notifyListeners();
     });
@@ -46,9 +40,9 @@ class AnalyticsProvider with ChangeNotifier {
     required String userId,
     required String action,
   }) async {
-    final ref = _logsRef.push();
+    
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    await ref.set({
+    await _supabase.from('analytics').insert({
       'orderId': orderId,
       'stageId': stageId,
       'userId': userId,

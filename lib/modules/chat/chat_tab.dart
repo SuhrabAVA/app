@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:provider/provider.dart';
 
 import '../personnel/employee_model.dart';
@@ -22,8 +22,7 @@ class ChatTab extends StatefulWidget {
 }
 
 class _ChatTabState extends State<ChatTab> {
-  final DatabaseReference _messagesRef =
-      FirebaseDatabase.instance.ref('messages');
+  final SupabaseClient _supabase = Supabase.instance.client;
   final TextEditingController _controller = TextEditingController();
   List<_ChatMessage> _messages = [];
 
@@ -34,23 +33,21 @@ class _ChatTabState extends State<ChatTab> {
   }
 
   void _listenToMessages() {
-    _messagesRef.orderByChild('timestamp').onValue.listen((event) {
-      final data = event.snapshot.value;
-      final List<_ChatMessage> loaded = [];
-      if (data is Map) {
-        data.forEach((key, value) {
-          final map = Map<String, dynamic>.from(value as Map);
-          loaded.add(
-            _ChatMessage(
-              id: key,
-              senderId: map['senderId'] as String? ?? '',
-              text: map['text'] as String? ?? '',
-              timestamp: map['timestamp'] as int? ?? 0,
-            ),
-          );
-        });
-        loaded.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      }
+    _supabase
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .order('timestamp')
+        .listen((rows) {
+      final loaded = rows.map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        return _ChatMessage(
+          id: map['id'].toString(),
+          senderId: map['senderId'] as String? ?? '',
+          text: map['text'] as String? ?? '',
+          timestamp: map['timestamp'] as int? ?? 0,
+        );
+      }).toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
       setState(() {
         _messages = loaded;
       });
@@ -61,7 +58,7 @@ class _ChatTabState extends State<ChatTab> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     _controller.clear();
-    await _messagesRef.push().set({
+    await _supabase.from('messages').insert({
       'senderId': widget.currentUserId,
       'text': text,
       'timestamp': DateTime.now().millisecondsSinceEpoch,

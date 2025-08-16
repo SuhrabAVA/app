@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
@@ -63,19 +63,18 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   /// Данные хранятся в виде массива или словаря под путём
   /// `production_plans/{orderId}`. Если план отсутствует, список будет пустым.
   Future<void> _loadPlan() async {
-    final ref = FirebaseDatabase.instance.ref('production_plans/${widget.order.id}');
+    
     try {
-      final snapshot = await ref.get();
-      final value = snapshot.value;
-      List<PlannedStage> stages;
-      if (value is List) {
+      final data = await Supabase.instance.client
+          .from('production_plans')
+          .select()
+          .eq('order_id', widget.order.id)
+          .maybeSingle();
+      List<PlannedStage> stages = [];
+      if (data != null) {
+        final value = data['stages'];
         stages = decodePlannedStages(value);
-      } else if (value is Map) {
-        // Планы могут храниться в объекте со свойством stages
-        final dataMap = Map<String, dynamic>.from(value as Map);
-        stages = decodePlannedStages(dataMap['stages']);
-      } else {
-        stages = [];
+      
       }
       if (mounted) {
         setState(() {

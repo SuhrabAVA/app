@@ -8,9 +8,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
+  google_fonts: ^6.2.1
   # Supabase
   supabase_flutter: ^2.5.4
+  flutter_dotenv: ^5.1.0
 
   # Утилиты
   provider: ^6.1.2
@@ -26,6 +27,7 @@ dependencies:
   flutter_web_plugins:
     sdk: flutter
 
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -33,3 +35,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - .env

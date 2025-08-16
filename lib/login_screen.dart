@@ -7,11 +7,9 @@ import 'modules/personnel/personnel_provider.dart';
 import 'modules/personnel/position_model.dart';
 import 'utils/auth_helper.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/material.dart';
+
 import 'dart:io' show Platform;
 
-import 'package:firebase_core/firebase_core.dart'; // для Android/Web
- // генерируется автоматически (если используешь flutterfire CLI)
 
 /// Главный экран авторизации. Показывает список пользователей, где первым
 /// всегда идёт технический лидер, а дальше – сотрудники, добавленные

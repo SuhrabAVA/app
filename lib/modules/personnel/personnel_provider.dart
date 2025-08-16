@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-// ⬇️ вместо Firebase:
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'position_model.dart';
@@ -117,81 +117,98 @@ class PersonnelProvider with ChangeNotifier {
 
   // -------------------- CRUD сотрудника в Supabase --------------------
 
-  void addEmployee({
-    required String lastName,
-    required String firstName,
-    required String patronymic,
-    required String iin,
-    String? photoUrl,
-    required List<String> positionIds,
-    bool isFired = false,
-    String comments = '',
-    String login = '',
-    String password = '',
-  }) {
-    final id = _uuid.v4();
+  Future<void> addEmployee({
+  required String lastName,
+  required String firstName,
+  required String patronymic,
+  required String iin,
+  String? photoUrl,
+  required List<String> positionIds,
+  bool isFired = false,
+  String comments = '',
+  String login = '',
+  String password = '',
+}) async {
+  final id = _uuid.v4();
 
-    final employee = EmployeeModel(
-      id: id,
-      lastName: lastName,
-      firstName: firstName,
-      patronymic: patronymic,
-      iin: iin,
-      photoUrl: photoUrl,
-      positionIds: positionIds,
-      isFired: isFired,
-      comments: comments,
-      login: login,
-      password: password,
-    );
+  final employee = EmployeeModel(
+    id: id,
+    lastName: lastName,
+    firstName: firstName,
+    patronymic: patronymic,
+    iin: iin,
+    photoUrl: photoUrl,
+    positionIds: positionIds,
+    isFired: isFired,
+    comments: comments,
+    login: login,
+    password: password,
+  );
 
-    // локально
-    _employees.add(employee);
+  // локально
+  _employees.add(employee);
+  notifyListeners();
+
+  // запись в БД (обязательно await + select() чтобы всплывала ошибка)
+  final data = Map<String, dynamic>.from(employee.toJson());
+  data['id'] = id;
+
+  try {
+    await _supabase.from('employees').insert(data).select().single();
+  } catch (e) {
+    // откатим локально, если запись не прошла
+    _employees.removeWhere((x) => x.id == id);
     notifyListeners();
-
-    // запись в БД (важно убедиться, что таблица employees имеет колонку id)
-    final data = Map<String, dynamic>.from(employee.toJson());
-    data['id'] = id; // в Supabase id хранится в строке, не в ключе
-    _supabase.from('employees').insert(data);
+    debugPrint('❌ addEmployee insert failed: $e');
+    rethrow;
   }
+}
 
-  void updateEmployee({
-    required String id,
-    required String lastName,
-    required String firstName,
-    required String patronymic,
-    required String iin,
-    String? photoUrl,
-    required List<String> positionIds,
-    bool isFired = false,
-    String comments = '',
-    String login = '',
-    String password = '',
-  }) {
-    final index = _employees.indexWhere((e) => e.id == id);
-    if (index == -1) return;
 
-    final updated = EmployeeModel(
-      id: id,
-      lastName: lastName,
-      firstName: firstName,
-      patronymic: patronymic,
-      iin: iin,
-      photoUrl: photoUrl,
-      positionIds: positionIds,
-      isFired: isFired,
-      comments: comments,
-      login: login,
-      password: password,
-    );
+  Future<void> updateEmployee({
+  required String id,
+  required String lastName,
+  required String firstName,
+  required String patronymic,
+  required String iin,
+  String? photoUrl,
+  required List<String> positionIds,
+  bool isFired = false,
+  String comments = '',
+  String login = '',
+  String password = '',
+}) async {
+  final index = _employees.indexWhere((e) => e.id == id);
+  if (index == -1) return;
 
-    // локально
-    _employees[index] = updated;
+  final updated = EmployeeModel(
+    id: id,
+    lastName: lastName,
+    firstName: firstName,
+    patronymic: patronymic,
+    iin: iin,
+    photoUrl: photoUrl,
+    positionIds: positionIds,
+    isFired: isFired,
+    comments: comments,
+    login: login,
+    password: password,
+  );
+
+  final prev = _employees[index];
+  _employees[index] = updated;
+  notifyListeners();
+
+  final data = Map<String, dynamic>.from(updated.toJson())..remove('id');
+
+  try {
+    await _supabase.from('employees').update(data).eq('id', id).select().single();
+  } catch (e) {
+    // откат
+    _employees[index] = prev;
     notifyListeners();
-
-    // БД: не передаём id в update (он в where)
-    final data = Map<String, dynamic>.from(updated.toJson());
-    data.remove('id');
-    _supabase.from('employees').update(data).eq('id', id);
+    debugPrint('❌ updateEmployee failed: $e');
+    rethrow;
   }
+}
 }
