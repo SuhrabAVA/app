@@ -47,7 +47,7 @@ class OrdersProvider with ChangeNotifier {
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
-  }) {
+  }) async {
     final newOrder = OrderModel(
       id: _generateOrderNumber(),
       customer: customer,
