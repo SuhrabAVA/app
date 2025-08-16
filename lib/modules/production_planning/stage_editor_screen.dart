@@ -67,10 +67,10 @@ class _StageEditorScreenState extends State<StageEditorScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () {
+                onPressed: () async {
                   if (_selectedWorkplaceId == null ||
                       _nameCtrl.text.isEmpty) return;
-                  context.read<StageProvider>().createStage(
+                  await context.read<StageProvider>().createStage(
                         name: _nameCtrl.text,
                         description: _descCtrl.text,
                         workplaceId: _selectedWorkplaceId!,
