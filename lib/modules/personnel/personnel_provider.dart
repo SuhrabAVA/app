@@ -145,24 +145,32 @@ class PersonnelProvider with ChangeNotifier {
     password: password,
   );
 
-  // локально
+  // оптимистичное обновление UI
   _employees.add(employee);
   notifyListeners();
 
-  // запись в БД (обязательно await + select() чтобы всплывала ошибка)
-  final data = Map<String, dynamic>.from(employee.toJson());
-  data['id'] = id;
+  final data = Map<String, dynamic>.from(employee.toJson())..['id'] = id;
 
   try {
-    await _supabase.from('employees').insert(data).select().single();
-  } catch (e) {
-    // откатим локально, если запись не прошла
+    final inserted = await Supabase.instance.client
+        .from('employees')
+        .insert(data)
+        .select()
+        .single(); // <- заставляет PostgREST вернуть ошибку, если что-то не так
+    debugPrint('✅ employees.insert OK: $inserted');
+  } on PostgrestException catch (e, st) {
+    debugPrint('❌ PostgrestException on insert: ${e.message} code=${e.code} details=${e.details}\n$st');
+    _employees.removeWhere((x) => x.id == id); // откат UI
+    notifyListeners();
+    rethrow;
+  } catch (e, st) {
+    debugPrint('❌ Unknown error on insert: $e\n$st');
     _employees.removeWhere((x) => x.id == id);
     notifyListeners();
-    debugPrint('❌ addEmployee insert failed: $e');
     rethrow;
   }
 }
+
 
 
   Future<void> updateEmployee({

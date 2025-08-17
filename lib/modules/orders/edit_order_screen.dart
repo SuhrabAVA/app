@@ -115,7 +115,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
-  void _saveOrder() {
+  Future<void> _saveOrder() async {
     if (!_formKey.currentState!.validate()) return;
     if (_orderDate == null || _dueDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -148,7 +148,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         comments: _commentsController.text.trim(),
         status: widget.order!.status,
       );
-      provider.updateOrder(updated);
+      await provider.updateOrder(updated);
     }
     Navigator.of(context).pop();
   }
@@ -193,13 +193,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     false;
                 if (confirmed) {
                   final provider = Provider.of<OrdersProvider>(context, listen: false);
-                  provider.deleteOrder(widget.order!.id);
+                  await provider.deleteOrder(widget.order!.id);
                   Navigator.of(context).pop();
                 }
               },
             ),
           TextButton(
-            onPressed: _saveOrder,
+            onPressed: () async {
+              await _saveOrder();
+            },
             child: const Text('Сохранить',
                 style: TextStyle(color: Colors.white)),
           ),

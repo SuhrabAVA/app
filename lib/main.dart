@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'modules/chat/chat_provider.dart';
 
-import 'admin_panel.dart';
+import 'admin_panel.dart'; // если не используешь — можешь удалить импорт
 import 'my_app.dart';
 import 'modules/warehouse/warehouse_provider.dart';
 import 'modules/warehouse/supplier_provider.dart';
@@ -30,27 +31,25 @@ Future<void> main() async {
     return;
   }
 
-  // 3) Инициализация Supabase (важно: используем ИМЕНА переменных, а не их значения!)
+  // 3) Инициализация Supabase (ВАЖНО: имена переменных из .env)
   await Supabase.initialize(
     url: supabaseUrl,
     anonKey: supabaseAnon,
   );
 
-  // 4) Автовход для отладки (нужен из-за RLS). Если в .env есть логин/пароль — войдём.
+  // 4) Автовход для отладки (нужен из-за RLS). Войдём, если есть логин/пароль в .env
   final authEmail = dotenv.env['AUTH_EMAIL'];
   final authPassword = dotenv.env['AUTH_PASSWORD'];
-  final auth = Supabase.instance.client.auth;
+  final supaAuth = Supabase.instance.client.auth;
 
-  if (auth.currentUser == null &&
+  if (supaAuth.currentUser == null &&
       authEmail != null && authEmail.isNotEmpty &&
       authPassword != null && authPassword.isNotEmpty) {
     try {
-      await auth.signInWithPassword(email: authEmail, password: authPassword);
+      await supaAuth.signInWithPassword(email: authEmail, password: authPassword);
     } catch (e, st) {
       debugPrint('❌ Auth signInWithPassword error: $e\n$st');
-      // Для отладки можно не падать, просто продолжить без сессии:
-      // runApp(const _EnvErrorApp(message: 'Ошибка авторизации. Проверьте AUTH_EMAIL/AUTH_PASSWORD'));
-      // return;
+      // Можно оставить без return — приложение запустится без сессии.
     }
   }
 
@@ -72,6 +71,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => StageProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),
         ChangeNotifierProvider(create: (_) => AnalyticsProvider()),
+        ChangeNotifierProvider(create: (_) => ChatProvider()),
       ],
       child: const MyApp(),
     ),

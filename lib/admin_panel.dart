@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'modules/chat/chat_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'modules/production_planning/production_planning_screen.dart';
 import 'modules/orders/orders_screen.dart';
 import 'modules/personnel/personnel_screen.dart';
@@ -7,11 +8,92 @@ import 'modules/production/production_screen.dart';
 import 'modules/warehouse/warehouse_screen.dart';
 import 'modules/analytics/analytics_screen.dart';
 import 'services/auth_service.dart';
-class AdminPanelScreen extends StatelessWidget {
+import 'modules/chat/chat_tab.dart';
+
+class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
 
   @override
+  State<AdminPanelScreen> createState() => _AdminPanelScreenState();
+}
+
+class _AdminPanelScreenState extends State<AdminPanelScreen> {
+  String? _meName;
+  bool _loadingName = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveDisplayName();
+  }
+
+  Future<void> _resolveDisplayName() async {
+    final user = AuthService.currentUser;
+    if (user == null) {
+      setState(() {
+        _meName = 'Гость';
+        _loadingName = false;
+      });
+      return;
+    }
+
+    // 1) сначала берем имя из userMetadata
+    String? name = (user.userMetadata?['name'] as String?)?.trim();
+
+    // 2) если его нет — пробуем достать из employees
+    if (name == null || name.isEmpty) {
+      final client = Supabase.instance.client;
+      try {
+        final email = user.email;
+        final uid = user.id;
+
+        // Ищем по login = email ИЛИ по id = uid
+        final rows = await client
+            .from('employees')
+            .select('firstName, lastName, patronymic, login, id')
+            .or('login.eq.$email,id.eq.$uid')
+            .limit(1);
+
+        if (rows is List && rows.isNotEmpty) {
+          final r = Map<String, dynamic>.from(rows.first);
+          final last = (r['lastName'] ?? '').toString().trim();
+          final first = (r['firstName'] ?? '').toString().trim();
+          final patr = (r['patronymic'] ?? '').toString().trim();
+          final full = [last, first, patr]
+              .where((s) => s.isNotEmpty)
+              .join(' ')
+              .trim();
+          if (full.isNotEmpty) name = full;
+        }
+      } catch (_) {
+        // тихо игнорируем, fallback ниже
+      }
+    }
+
+    // 3) финальный fallback — часть email до @
+    name ??= (user.email?.split('@').first ?? '').trim();
+    if (name.isEmpty) name = 'Пользователь';
+
+    setState(() {
+      _meName = name;
+      _loadingName = false;
+    });
+
+    // (необязательно) можно закэшировать имя в userMetadata:
+    // try {
+    //   await Supabase.instance.client.auth.updateUser(
+    //     UserAttributes(data: {'name': name}),
+    //   );
+    // } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final u = AuthService.currentUser;
+    final meId = u?.id ?? 'anonymous';
+    final isLead =
+        ((u?.userMetadata?['role'] ?? u?.appMetadata?['role']) == 'lead');
+
     final modules = [
       {'label': '📦\nСклад', 'page': const WarehouseDashboard()},
       {'label': '👥\nПерсонал', 'page': const PersonnelScreen()},
@@ -20,54 +102,57 @@ class AdminPanelScreen extends StatelessWidget {
       {'label': '🏭\nПроизв.', 'page': const ProductionScreen()},
       {
         'label': '💬\nЧат',
-        'page': ChatScreen(
-          currentUserId: AuthService.currentUser?.id ?? 'anonymous',
+        'page': ChatTab(
+          currentUserId: meId,
+          currentUserName: _meName ?? 'Пользователь', // не-null
+          roomId: 'general',
         ),
       },
-
-      // Модуль аналитики отображает действия сотрудников по заказам
       {'label': '📊\nАналитика', 'page': const AnalyticsScreen()},
-
-
-
     ];
 
     return Scaffold(
       appBar: AppBar(
-  title: const Text('Панель администратора'),
-  actions: [
-    IconButton(
-      icon: const Icon(Icons.logout),
-      tooltip: 'Выйти',
-      onPressed: () {
-        Navigator.of(context).pop(); // Возврат на предыдущий экран
-      },
-    ),
-  ],
-),
-
-      body: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: GridView.count(
-          crossAxisCount: 5, // 5 модулей в ряд
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-          childAspectRatio: 1,
-          children: modules.map((module) {
-            return _buildModuleCard(
-              context,
-              label: module['label'] as String,
-              page: module['page'] as Widget,
-            );
-          }).toList(),
-        ),
+        title: const Text('Панель администратора'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Выйти',
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
       ),
+      body: _loadingName
+          ? const Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: GridView.count(
+                crossAxisCount: 5,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                childAspectRatio: 1,
+                children: modules
+                    .map((module) => _buildModuleCard(
+                          context,
+                          label: module['label'] as String,
+                          page: module['page'] as Widget,
+                        ))
+                    .toList(),
+              ),
+            ),
     );
   }
 
-  Widget _buildModuleCard(BuildContext context, {required String label, required Widget page}) {
+  Widget _buildModuleCard(
+    BuildContext context, {
+    required String label,
+    required Widget page,
+  }) {
     return GestureDetector(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => page)),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => page),
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.lightBlue.shade50,

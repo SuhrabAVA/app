@@ -13,6 +13,8 @@ dependencies:
   supabase_flutter: ^2.5.4
   flutter_dotenv: ^5.1.0
 
+  mime: any
+  
   # Утилиты
   provider: ^6.1.2
   uuid: ^4.4.0
@@ -26,6 +28,9 @@ dependencies:
   # Для Web (если таргетируешь web)
   flutter_web_plugins:
     sdk: flutter
+  record: ^6.1.0
+  audioplayers: ^6.5.0
+  url_launcher: ^6.3.2
 
 
 dev_dependencies:

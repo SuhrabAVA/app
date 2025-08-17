@@ -162,7 +162,7 @@ Future<void> _pickOrderImage() async {
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
     );
-    ordersProvider.updateOrder(updatedOrder);
+    await ordersProvider.updateOrder(updatedOrder);
 
     if (mounted) {
       Navigator.of(context).pop();
@@ -233,7 +233,9 @@ Future<void> _pickOrderImage() async {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _save,
+                    onPressed: () async {
+                      await _save();
+                    },
                     icon: const Icon(Icons.save),
                     label: const Text('Сохранить'),
                   ),
