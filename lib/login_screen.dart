@@ -10,9 +10,6 @@ import 'modules/manager/manager_workspace_screen.dart';
 import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'utils/auth_helper.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-
-import 'dart:io' show Platform;
 
 bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
   // 1) По id должности
@@ -54,6 +51,15 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -83,6 +89,19 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Text(
                     'Выберите ваше имя для начала работы',
                     style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _searchController,
+                    decoration: const InputDecoration(
+                      labelText: 'Поиск по имени или должности',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
                   ),
                   const SizedBox(height: 16),
                   Consumer<PersonnelProvider>(
@@ -118,63 +137,76 @@ class _LoginScreenState extends State<LoginScreen> {
                           isTechLeader: false,
                         ));
                       }
-                      return users.isEmpty
-                          ? const Center(child: CircularProgressIndicator())
-                          : ListView.separated(
-                              shrinkWrap: true,
-                              itemCount: users.length,
-                              physics: const NeverScrollableScrollPhysics(),
-                              separatorBuilder: (_, __) => const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final user = users[index];
-                                return InkWell(
-                                  onTap: () => _promptPassword(context, user),
+                      if (personnel.employees.isEmpty) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      final query = _searchQuery.toLowerCase();
+                      final filtered = users
+                          .where((u) => u.name.toLowerCase().contains(query) ||
+                              u.position.toLowerCase().contains(query))
+                          .toList();
+
+                      if (filtered.isEmpty) {
+                        return const Center(child: Text('Пользователи не найдены'));
+                      }
+
+                      return SizedBox(
+                        height: 300,
+                        child: ListView.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final user = filtered[index];
+                            return InkWell(
+                              onTap: () => _promptPassword(context, user),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.grey.shade300),
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.grey.shade300),
-                                      borderRadius: BorderRadius.circular(8),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 12),
+                                child: Row(
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 20,
+                                      backgroundColor: Colors.grey.shade200,
+                                      child: const Icon(Icons.person_outline,
+                                          color: Colors.grey),
                                     ),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 12),
-                                    child: Row(
-                                      children: [
-                                        CircleAvatar(
-                                          radius: 20,
-                                          backgroundColor: Colors.grey.shade200,
-                                          child: const Icon(Icons.person_outline,
-                                              color: Colors.grey),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                user.name,
-                                                style: const TextStyle(
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                user.position,
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey,
-                                                ),
-                                              ),
-                                            ],
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            user.name,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            user.position,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                );
-                              },
+                                  ],
+                                ),
+                              ),
                             );
+                          },
+                        ),
+                      );
                     },
                   ),
                 ],
