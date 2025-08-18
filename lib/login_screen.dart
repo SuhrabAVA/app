@@ -6,8 +6,8 @@ import 'modules/personnel/position_model.dart';        // <-- если испо�
 
 import 'admin_panel.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
+import 'modules/manager/manager_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
-import 'modules/personnel/position_model.dart';
 import 'utils/auth_helper.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -227,12 +227,31 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         );
                       } else {
+                        final pr = context.read<PersonnelProvider>();
+                        final emp = pr.employees.firstWhere(
+                          (e) => e.id == user.id,
+                          orElse: () => EmployeeModel(
+                            id: user.id,
+                            lastName: '',
+                            firstName: '',
+                            patronymic: '',
+                            iin: '',
+                            photoUrl: null,
+                            positionIds: const [],
+                            isFired: false,
+                            comments: '',
+                            login: '',
+                            password: '',
+                          ),
+                        );
+
+                        final screen = isManagerUser(emp, pr)
+                            ? ManagerWorkspaceScreen(employeeId: user.id)
+                            : EmployeeWorkspaceScreen(employeeId: user.id);
+
                         Navigator.pushReplacement(
                           context,
-                          MaterialPageRoute(
-                            builder: (_) => EmployeeWorkspaceScreen(
-                                employeeId: user.id),
-                          ),
+                          MaterialPageRoute(builder: (_) => screen),
                         );
                       }
                     } else {
