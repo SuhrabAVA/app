@@ -601,6 +601,67 @@ begin
   end if;
 end $$;
 
+create table if not exists public.plan_templates (
+  id text primary key,
+  name text,
+  stages jsonb default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
+);
+alter table public.plan_templates enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'plan_templates'
+      and policyname = 'plan_templates_read'
+  ) then
+    create policy plan_templates_read on public.plan_templates
+      for select
+      using (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'plan_templates'
+      and policyname = 'plan_templates_insert'
+  ) then
+    create policy plan_templates_insert on public.plan_templates
+      for insert
+      with check (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'plan_templates'
+      and policyname = 'plan_templates_update'
+  ) then
+    create policy plan_templates_update on public.plan_templates
+      for update
+      using (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'plan_templates'
+      and policyname = 'plan_templates_delete'
+  ) then
+    create policy plan_templates_delete on public.plan_templates
+      for delete
+      using (auth.uid() is not null);
+  end if;
+end $$;
+
 create table if not exists public.suppliers (
   id text primary key,
   data jsonb default '{}'::jsonb,

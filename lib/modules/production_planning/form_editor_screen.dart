@@ -8,15 +8,17 @@ import 'package:provider/provider.dart';
 
 import '../orders/order_model.dart';
 import '../orders/orders_provider.dart';
+import '../personnel/personnel_provider.dart';
 import 'planned_stage_model.dart';
-import 'stage_provider.dart';
+import 'template_provider.dart';
+import 'template_model.dart';
 
 /// A form editor for building and saving a production plan for a specific order.
 ///
 /// This widget allows the technical leader to compose a list of stages for an
 /// order, attach an optional photo and persist the plan to Firebase. It
 /// supports reordering stages, deleting stages, adding stages from the list
-/// defined in [StageProvider], and uploading a reference image. When the plan
+/// of available workplaces or templates, and uploading a reference image. When the plan
 /// is saved, corresponding tasks are synchronised in the `tasks` collection
 /// so that employees see the updated stages in their workspace. Even if
 /// there are no stages and no photo, saving will clear any existing plan
@@ -72,9 +74,9 @@ Future<void> _pickOrderImage() async {
     });
   }
 
-  /// Opens a dialog to pick a stage from [StageProvider] and add it to the plan.
+  /// Opens a dialog to pick a workplace and add it to the plan.
   Future<void> _addStage() async {
-    final provider = context.read<StageProvider>();
+    final personnel = context.read<PersonnelProvider>();
     String? selectedId;
     await showDialog(
       context: context,
@@ -82,8 +84,8 @@ Future<void> _pickOrderImage() async {
         title: const Text('Выберите этап'),
         content: DropdownButtonFormField<String>(
           items: [
-            for (final s in provider.stages)
-              DropdownMenuItem(value: s.id, child: Text(s.name)),
+            for (final w in personnel.workplaces)
+              DropdownMenuItem(value: w.id, child: Text(w.name)),
           ],
           onChanged: (val) => selectedId = val,
         ),
@@ -100,9 +102,50 @@ Future<void> _pickOrderImage() async {
       ),
     );
     if (selectedId != null) {
-      final stage = provider.stages.firstWhere((s) => s.id == selectedId);
+      final stage =
+          personnel.workplaces.firstWhere((w) => w.id == selectedId);
       setState(() {
-        _stages.add(PlannedStage(stageId: selectedId!, stageName: stage.name));
+        _stages
+            .add(PlannedStage(stageId: stage.id, stageName: stage.name));
+      });
+    }
+  }
+
+  /// Applies a predefined template of stages to the current plan.
+  Future<void> _applyTemplate() async {
+    final provider = context.read<TemplateProvider>();
+    String? templateId;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Выберите шаблон'),
+        content: DropdownButtonFormField<String>(
+          items: [
+            for (final t in provider.templates)
+              DropdownMenuItem(value: t.id, child: Text(t.name)),
+          ],
+          onChanged: (val) => templateId = val,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Загрузить'),
+          ),
+        ],
+      ),
+    );
+    if (templateId != null) {
+      final TemplateModel tpl =
+          provider.templates.firstWhere((t) => t.id == templateId);
+      setState(() {
+        _stages
+          ..clear()
+          ..addAll(tpl.stages
+              .map((s) => PlannedStage(stageId: s.stageId, stageName: s.stageName)));
       });
     }
   }
@@ -172,7 +215,7 @@ Future<void> _pickOrderImage() async {
 
   @override
   Widget build(BuildContext context) {
-    final stageProvider = context.watch<StageProvider>();
+    final personnel = context.watch<PersonnelProvider>();
     return Scaffold(
       appBar: AppBar(title: Text('План для ${widget.order.id}')),
       body: Column(
@@ -188,7 +231,7 @@ Future<void> _pickOrderImage() async {
         ),
       Expanded(
         child: ReorderableListView(
-          onReorder: (oldIndex, newIndex) {
+              onReorder: (oldIndex, newIndex) {
             setState(() {
               if (newIndex > oldIndex) newIndex--;
               final item = _stages.removeAt(oldIndex);
@@ -197,7 +240,7 @@ Future<void> _pickOrderImage() async {
           },
           children: [
             for (int i = 0; i < _stages.length; i++)
-              _buildStageCard(i, stageProvider),
+              _buildStageCard(i, personnel),
           ],
         ),
       ),
@@ -218,6 +261,15 @@ Future<void> _pickOrderImage() async {
                     onPressed: _addStage,
                     icon: const Icon(Icons.add),
                     label: const Text('Добавить этап'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _applyTemplate,
+                    icon: const Icon(Icons.list),
+                    label: const Text('Применить шаблон'),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -256,9 +308,10 @@ Future<void> _pickOrderImage() async {
   }
 
   /// Builds a card for a single stage with a delete button and reorder handle.
-  Widget _buildStageCard(int index, StageProvider provider) {
+  Widget _buildStageCard(int index, PersonnelProvider personnel) {
     final planned = _stages[index];
-    final match = provider.stages.where((s) => s.id == planned.stageId);
+    final match =
+        personnel.workplaces.where((w) => w.id == planned.stageId);
     final name = match.isNotEmpty ? match.first.name : planned.stageName;
     return Card(
       key: ValueKey(planned.stageId),
