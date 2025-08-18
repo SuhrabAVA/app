@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'personnel_provider.dart';
 
 import 'employee_model.dart';
+import 'positions_picker.dart';
 
 /// Экран для отображения и управления списком сотрудников.
 class EmployeesScreen extends StatelessWidget {
@@ -154,16 +155,6 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
     super.dispose();
   }
 
-  void _togglePosition(String id, bool selected) {
-    setState(() {
-      if (selected) {
-        _selectedPositions.add(id);
-      } else {
-        _selectedPositions.remove(id);
-      }
-    });
-  }
-
   void _submit(BuildContext context) {
     if (!_formKey.currentState!.validate()) return;
     final provider = Provider.of<PersonnelProvider>(context, listen: false);
@@ -201,8 +192,6 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = Provider.of<PersonnelProvider>(context);
-    final positions = provider.positions;
     return AlertDialog(
       title: Text(widget.employee == null ? 'Добавить сотрудника' : 'Редактировать сотрудника'),
       content: SingleChildScrollView(
@@ -308,18 +297,15 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
                 ),
               ),
               const SizedBox(height: 4),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: positions.map((pos) {
-                  final selected = _selectedPositions.contains(pos.id);
-                  return FilterChip(
-                    label: Text(pos.name),
-                    selected: selected,
-                    onSelected: (val) => _togglePosition(pos.id, val),
-                    selectedColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-                  );
-                }).toList(),
+              ManagerAwarePositionsPicker(
+                value: _selectedPositions.toList(),
+                onChanged: (ids) {
+                  setState(() {
+                    _selectedPositions
+                      ..clear()
+                      ..addAll(ids);
+                  });
+                },
               ),
               // Признак уволен
               SwitchListTile(
