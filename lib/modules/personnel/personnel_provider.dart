@@ -1,24 +1,32 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'personnel_constants.dart'; // <-- константа kManagerId
+import 'position_model.dart';  
 import 'position_model.dart';
 import 'employee_model.dart';
 import 'workplace_model.dart';
 import 'terminal_model.dart';
 
 /// Провайдер для управления данными персонала.
-/// Firebase Realtime DB → Supabase (Postgres + Realtime).
+/// Источник данных сотрудников — Supabase (Postgres + Realtime).
 class PersonnelProvider with ChangeNotifier {
+  PersonnelProvider() {
+    // гарантируем, что «Менеджер» есть среди должностей
+    ensureManagerPosition();
+    // подтягиваем сотрудников и слушаем изменения
+    _listenToEmployees();
+  }
+
   final _uuid = const Uuid();
   final SupabaseClient _supabase = Supabase.instance.client;
 
-  PersonnelProvider() {
-    _listenToEmployees(); // аналогично старому _listenToEmployees()
-  }
+  StreamSubscription<List<Map<String, dynamic>>>? _empSub;
 
-  // Список должностей (как было)
+  // -------------------- Локальные справочники (как было) --------------------
+
+  /// Должности (локально, можно расширять)
   final List<PositionModel> _positions = [
     PositionModel(id: 'bob_cutter', name: 'Бобинорезчик'),
     PositionModel(id: 'print', name: 'Печатник'),
@@ -35,9 +43,10 @@ class PersonnelProvider with ChangeNotifier {
     PositionModel(id: 'single_point_gluer', name: 'Склейка одной точки'),
   ];
 
+  /// Сотрудники (поднимаются из Supabase)
   final List<EmployeeModel> _employees = [];
 
-  /// Начальный список рабочих мест (как было)
+  /// Рабочие места (локально, как было)
   final List<WorkplaceModel> _workplaces = [
     WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bob_cutter']),
     WorkplaceModel(id: 'w_flexoprint', name: 'Флексопечать', positionIds: ['print']),
@@ -71,152 +80,356 @@ class PersonnelProvider with ChangeNotifier {
     WorkplaceModel(id: 'w_single_point', name: 'Склейка одной точки', positionIds: ['single_point_gluer']),
   ];
 
-  /// Список терминалов (как было)
+  /// Терминалы (оставлено как было)
   final List<TerminalModel> _terminals = [];
 
+  // ---- Getters
   List<PositionModel> get positions => List.unmodifiable(_positions);
   List<EmployeeModel> get employees => List.unmodifiable(_employees);
   List<WorkplaceModel> get workplaces => List.unmodifiable(_workplaces);
   List<TerminalModel> get terminals => List.unmodifiable(_terminals);
 
-  // -------------------- Загрузка/стрим сотрудников (Supabase) --------------------
+  // -------------------- Сотрудники: загрузка и realtime --------------------
+
+  /// Разовая загрузка (если нужно вручную дёрнуть)
+  Future<void> fetchEmployees() async {
+    try {
+      final rows = await _supabase
+          .from('employees')
+          .select('*')
+          .order('lastName', ascending: true);
+
+      _employees
+        ..clear()
+        ..addAll((rows as List).map((r) {
+          final map = Map<String, dynamic>.from(r as Map);
+          final id = (map['id'] ?? '').toString();
+          return EmployeeModel.fromJson(map, id);
+        }));
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ fetchEmployees failed: $e');
+    }
+  }
 
   void _listenToEmployees() {
-    // Realtime поток из таблицы employees по первичному ключу id
-    _supabase.from('employees').stream(primaryKey: ['id']).listen((rows) {
-      _employees.clear();
-      for (final row in rows) {
-        final map = Map<String, dynamic>.from(row as Map);
-        // Если у тебя EmployeeModel.fromJson ожидает (map, id) — передаём id из строки:
-        final id = (row['id'] ?? '').toString();
-        _employees.add(EmployeeModel.fromJson(map, id));
-      }
+    _empSub?.cancel();
+    _empSub = _supabase
+        .from('employees')
+        .stream(primaryKey: ['id'])
+        .order('lastName', ascending: true)
+        .listen((rows) {
+      _employees
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          final id = (row['id'] ?? '').toString();
+          return EmployeeModel.fromJson(map, id);
+        }));
       notifyListeners();
+    }, onError: (e) {
+      debugPrint('❌ employees stream error: $e');
     });
   }
 
-  // -------------------- Должности/терминалы (локально, как было) --------------------
+  // -------------------- Хелперы --------------------
+
+  /// Название должности по id (для подпиcей в UI)
+  String positionNameById(String? id) {
+    if (id == null || id.isEmpty) return '';
+    final p = _positions.firstWhere(
+      (p) => p.id == id,
+      orElse: () => PositionModel(id: '', name: ''),
+    );
+    return p.name;
+  }
+
+  // -------------------- CRUD локальных справочников --------------------
 
   void addPosition(String name) {
     final id = _uuid.v4();
-    _positions.add(PositionModel(id: id, name: name));
+    _positions.add(PositionModel(id: id, name: name.trim()));
     notifyListeners();
   }
 
   void addWorkplace({required String name, required List<String> positionIds}) {
     final id = _uuid.v4();
-    _workplaces.add(WorkplaceModel(id: id, name: name, positionIds: positionIds));
+    _workplaces.add(WorkplaceModel(id: id, name: name.trim(), positionIds: positionIds));
     notifyListeners();
   }
 
   void addTerminal({required String name, required List<String> workplaceIds}) {
     final id = _uuid.v4();
-    _terminals.add(TerminalModel(id: id, name: name, workplaceIds: workplaceIds));
+    _terminals.add(TerminalModel(id: id, name: name.trim(), workplaceIds: workplaceIds));
     notifyListeners();
   }
 
-  // -------------------- CRUD сотрудника в Supabase --------------------
+  // -------------------- CRUD сотрудника (Supabase) --------------------
 
   Future<void> addEmployee({
-  required String lastName,
-  required String firstName,
-  required String patronymic,
-  required String iin,
-  String? photoUrl,
-  required List<String> positionIds,
-  bool isFired = false,
-  String comments = '',
-  String login = '',
-  String password = '',
-}) async {
-  final id = _uuid.v4();
+    required String lastName,
+    required String firstName,
+    required String patronymic,
+    required String iin,
+    String? photoUrl,
+    required List<String> positionIds,
+    bool isFired = false,
+    String comments = '',
+    String login = '',
+    String password = '',
+  }) async {
+    final id = _uuid.v4();
 
-  final employee = EmployeeModel(
-    id: id,
-    lastName: lastName,
-    firstName: firstName,
-    patronymic: patronymic,
-    iin: iin,
-    photoUrl: photoUrl,
-    positionIds: positionIds,
-    isFired: isFired,
-    comments: comments,
-    login: login,
-    password: password,
-  );
+    final employee = EmployeeModel(
+      id: id,
+      lastName: lastName,
+      firstName: firstName,
+      patronymic: patronymic,
+      iin: iin,
+      photoUrl: photoUrl,
+      positionIds: positionIds,
+      isFired: isFired,
+      comments: comments,
+      login: login,
+      password: password,
+    );
 
-  // оптимистичное обновление UI
-  _employees.add(employee);
-  notifyListeners();
-
-  final data = Map<String, dynamic>.from(employee.toJson())..['id'] = id;
-
-  try {
-    final inserted = await Supabase.instance.client
-        .from('employees')
-        .insert(data)
-        .select()
-        .single(); // <- заставляет PostgREST вернуть ошибку, если что-то не так
-    debugPrint('✅ employees.insert OK: $inserted');
-  } on PostgrestException catch (e, st) {
-    debugPrint('❌ PostgrestException on insert: ${e.message} code=${e.code} details=${e.details}\n$st');
-    _employees.removeWhere((x) => x.id == id); // откат UI
+    // оптимистично обновляем UI
+    _employees.add(employee);
     notifyListeners();
-    rethrow;
-  } catch (e, st) {
-    debugPrint('❌ Unknown error on insert: $e\n$st');
-    _employees.removeWhere((x) => x.id == id);
-    notifyListeners();
-    rethrow;
+
+    final data = Map<String, dynamic>.from(employee.toJson())..['id'] = id;
+
+    try {
+      final inserted = await _supabase
+          .from('employees')
+          .insert(data)
+          .select()
+          .single();
+      debugPrint('✅ employees.insert OK: $inserted');
+    } on PostgrestException catch (e, st) {
+      debugPrint('❌ PostgrestException on insert: ${e.message} code=${e.code} details=${e.details}\n$st');
+      _employees.removeWhere((x) => x.id == id);
+      notifyListeners();
+      rethrow;
+    } catch (e, st) {
+      debugPrint('❌ Unknown error on insert: $e\n$st');
+      _employees.removeWhere((x) => x.id == id);
+      notifyListeners();
+      rethrow;
+    }
   }
-}
-
-
 
   Future<void> updateEmployee({
-  required String id,
-  required String lastName,
-  required String firstName,
-  required String patronymic,
-  required String iin,
-  String? photoUrl,
-  required List<String> positionIds,
-  bool isFired = false,
-  String comments = '',
-  String login = '',
-  String password = '',
-}) async {
-  final index = _employees.indexWhere((e) => e.id == id);
-  if (index == -1) return;
+    required String id,
+    required String lastName,
+    required String firstName,
+    required String patronymic,
+    required String iin,
+    String? photoUrl,
+    required List<String> positionIds,
+    bool isFired = false,
+    String comments = '',
+    String login = '',
+    String password = '',
+  }) async {
+    final index = _employees.indexWhere((e) => e.id == id);
+    if (index == -1) return;
 
-  final updated = EmployeeModel(
-    id: id,
-    lastName: lastName,
-    firstName: firstName,
-    patronymic: patronymic,
-    iin: iin,
-    photoUrl: photoUrl,
-    positionIds: positionIds,
-    isFired: isFired,
-    comments: comments,
-    login: login,
-    password: password,
-  );
+    final updated = EmployeeModel(
+      id: id,
+      lastName: lastName,
+      firstName: firstName,
+      patronymic: patronymic,
+      iin: iin,
+      photoUrl: photoUrl,
+      positionIds: positionIds,
+      isFired: isFired,
+      comments: comments,
+      login: login,
+      password: password,
+    );
 
-  final prev = _employees[index];
-  _employees[index] = updated;
-  notifyListeners();
-
-  final data = Map<String, dynamic>.from(updated.toJson())..remove('id');
-
-  try {
-    await _supabase.from('employees').update(data).eq('id', id).select().single();
-  } catch (e) {
-    // откат
-    _employees[index] = prev;
+    final prev = _employees[index];
+    _employees[index] = updated;
     notifyListeners();
-    debugPrint('❌ updateEmployee failed: $e');
-    rethrow;
+
+    final data = Map<String, dynamic>.from(updated.toJson())..remove('id');
+
+    try {
+      await _supabase.from('employees').update(data).eq('id', id).select().single();
+    } catch (e) {
+      // откатываем локально, если запрос не удался
+      _employees[index] = prev;
+      notifyListeners();
+      debugPrint('❌ updateEmployee failed: $e');
+      rethrow;
+    }
+  }
+
+  // -------------------- Positions: редактирование/удаление (в БД) --------------------
+
+  Future<void> updatePosition({
+    required String id,
+    required String name,
+    String? description,
+  }) async {
+    try {
+      await _supabase.from('positions').update({
+        'name': name.trim(),
+        'description': (description ?? '').trim().isEmpty ? null : description!.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', id);
+      // локально тоже обновим, чтобы UI сразу увидел
+      final i = _positions.indexWhere((p) => p.id == id);
+      if (i != -1) _positions[i] = PositionModel(id: id, name: name.trim());
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ updatePosition failed: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deletePosition(String id) async {
+    try {
+      await _supabase.from('positions').delete().eq('id', id);
+      _positions.removeWhere((p) => p.id == id);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ deletePosition failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Гарантирует наличие должности «Менеджер» локально + пытается синкнуть в БД.
+  
+
+  // -------------------- Workplaces: редактирование/удаление (в БД) --------------------
+
+  Future<void> updateWorkplace({
+    required String id,
+    required String name,
+    String? description,
+  }) async {
+    try {
+      await _supabase.from('workplaces').update({
+        'name': name.trim(),
+        'description': (description ?? '').trim().isEmpty ? null : description!.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', id);
+
+      final i = _workplaces.indexWhere((w) => w.id == id);
+      if (i != -1) {
+        final old = _workplaces[i];
+        _workplaces[i] = WorkplaceModel(
+          id: id,
+          name: name.trim(),
+          positionIds: old.positionIds,
+        );
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ updateWorkplace failed: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteWorkplace(String id) async {
+    try {
+      await _supabase.from('workplaces').delete().eq('id', id);
+      _workplaces.removeWhere((w) => w.id == id);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ deleteWorkplace failed: $e');
+      rethrow;
+    }
+  }
+
+  // -------------------- Жизненный цикл --------------------
+
+  @override
+  void dispose() {
+    _empSub?.cancel();
+    super.dispose();
   }
 }
+
+
+
+extension PersonnelProviderHelpers on PersonnelProvider {
+  bool isManagerPositionId(String id) => id == kManagerId;
+
+  /// Возвращает позицию «Менеджер» (по id или названию)
+  PositionModel? findManagerPosition() {
+    try {
+      return _positions.firstWhere(
+        (p) => p.id == kManagerId || p.name.toLowerCase().trim() == 'менеджер',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Все обычные должности (без «Менеджера»)
+  List<PositionModel> get regularPositions =>
+      _positions
+          .where((p) => !(p.id == kManagerId || p.name.toLowerCase().trim() == 'менеджер'))
+          .toList();
+
+  /// Имя должности по id (без падений)
+  String positionNameById(String? id) {
+    if (id == null) return '';
+    try {
+      return _positions.firstWhere((p) => p.id == id).name;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Гарантируем, что «Менеджер» есть и внизу списка
+  Future<void> ensureManagerPosition() async {
+    // локально
+    final already = _positions.any(
+      (p) => p.id == kManagerId || p.name.toLowerCase().trim() == 'менеджер',
+    );
+    if (!already) {
+      _positions.add(PositionModel(id: kManagerId, name: 'Менеджер'));
+      notifyListeners();
+    } else {
+      // переместим вниз
+      final copy = List<PositionModel>.from(_positions);
+      copy.removeWhere(
+        (p) => p.id == kManagerId || p.name.toLowerCase().trim() == 'менеджер',
+      );
+      final mgr = _positions.firstWhere(
+        (p) => p.id == kManagerId || p.name.toLowerCase().trim() == 'менеджер',
+      );
+      copy.add(mgr);
+      _positions
+        ..clear()
+        ..addAll(copy);
+      notifyListeners();
+    }
+
+    // при наличии таблицы positions — мягкая синхронизация
+    try {
+      final rows = await _supabase
+          .from('positions')
+          .select('id')
+          .ilike('name', 'менеджер')
+          .limit(1);
+
+      if (rows is List && rows.isNotEmpty) return;
+
+      await _supabase.from('positions').insert({
+        'id': kManagerId,
+        'name': 'Менеджер',
+        'description': 'Управление заказами и чат менеджеров',
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      // ок: локально уже есть
+    }
+  }
 }

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'modules/personnel/employee_model.dart';        // <-- тип EmployeeModel
+import 'modules/personnel/personnel_constants.dart';   // <-- kManagerId
+import 'modules/personnel/position_model.dart';        // <-- если используешь PositionModel в проверке
 
 import 'admin_panel.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
@@ -10,7 +13,21 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'dart:io' show Platform;
 
+bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
+  // 1) По id должности
+  final ids = emp.positionIds.map((e) => e.toString()).toSet();
+  if (ids.contains(kManagerId)) return true;
 
+  // 2) По названию должности "Менеджер" (если id другой)
+  final mgr = pr.findManagerPosition();
+  if (mgr != null && ids.contains(mgr.id)) return true;
+
+  // 3) По логину (email у модели нет)
+  final loginLower = (emp.login ?? '').toLowerCase();
+  if (loginLower.contains('manager') || loginLower.contains('менедж')) return true;
+
+  return false;
+}
 /// Главный экран авторизации. Показывает список пользователей, где первым
 /// всегда идёт технический лидер, а дальше – сотрудники, добавленные
 /// техническим лидером. Пользователь выбирает своё имя, вводит пароль и

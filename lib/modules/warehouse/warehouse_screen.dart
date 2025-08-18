@@ -1,67 +1,42 @@
 import 'package:flutter/material.dart';
-import 'paper_table.dart';
-import 'stationery_table.dart';
-import 'writeoff_table.dart';
+
+import 'type_table_tabs_screen.dart';
 import 'suppliers_screen.dart';
-import 'stock_tables.dart';
-import 'add_entry_dialog.dart';
-import 'stocks_screen.dart';
-import 'paint_table.dart';
+import 'categories_hub_screen.dart';
 
 class WarehouseDashboard extends StatelessWidget {
   const WarehouseDashboard({super.key});
 
-  void _openTable(BuildContext context, Widget screen) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => screen),
-    );
-  }
-
-  void _openAddDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => const AddEntryDialog(),
-    );
+  void _open(BuildContext context, Widget screen) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Склад'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _openAddDialog(context),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Склад')),
       body: Padding(
         padding: const EdgeInsets.all(8.0),
         child: GridView.count(
-          // Устанавливаем 3 колонки, чтобы разместить 6 карточек в две строки
           crossAxisCount: 3,
           crossAxisSpacing: 8,
           mainAxisSpacing: 8,
           childAspectRatio: 1,
           children: [
-            _buildCard(context, '📄\nБумага', const PaperTable()),
-            _buildCard(context, '✏️\nКанцелярия', const StationeryTable()),
-            _buildCard(context, '🗑️\nСписание', const WriteOffTable()),
-            _buildCard(context, '📦\nКатегории', const StockTables()),
-            _buildCard(context, '📊\nЗапасы', const StocksScreen()),
-            _buildCard(context, '🏷️\nПоставщики', const SuppliersScreen()),
-            _buildCard(context, '🎨\nКраски', const PaintTable()),
+            _card(context, '📄\nБумага', const TypeTableTabsScreen(type: 'Бумага', title: 'Бумага')),
+            _card(context, '✏️\nКанцелярия', const TypeTableTabsScreen(type: 'Канцелярия', title: 'Канцелярия')),
+            _card(context, '🎨\nКраски', const TypeTableTabsScreen(type: 'Краска', title: 'Краски', enablePhoto: true)),
+            _card(context, '📦\nКатегории', const CategoriesHubScreen()),
+            _card(context, '🏷️\nПоставщики', const SuppliersScreen()),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCard(BuildContext context, String title, Widget page) {
+  Widget _card(BuildContext context, String title, Widget page) {
     return GestureDetector(
-      onTap: () => _openTable(context, page),
+      onTap: () => _open(context, page),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.lightBlue.shade50,
@@ -73,15 +48,10 @@ class WarehouseDashboard extends StatelessWidget {
           child: Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              height: 1.3,
-            ),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3),
           ),
         ),
       ),
     );
   }
-
 }

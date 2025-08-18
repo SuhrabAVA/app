@@ -1,172 +1,140 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import 'personnel_provider.dart';
+import 'workplace_model.dart';
 
-/// Экран для отображения и управления списком рабочих мест.
 class WorkplacesScreen extends StatelessWidget {
   const WorkplacesScreen({super.key});
 
-  void _openAddDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => const _AddWorkplaceDialog(),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final provider = Provider.of<PersonnelProvider>(context);
-    final workplaces = provider.workplaces;
-    final positionsById = {for (var p in provider.positions) p.id: p.name};
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Рабочие места'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _openAddDialog(context),
-          ),
-        ],
-      ),
-      body: workplaces.isEmpty
-          ? const Center(child: Text('Список рабочих мест пуст'))
-          : ListView.separated(
-              itemCount: workplaces.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
-              itemBuilder: (context, index) {
-                final wp = workplaces[index];
-                final posNames = wp.positionIds
-                    .map((id) => positionsById[id] ?? '')
-                    .where((s) => s.isNotEmpty)
-                    .join(', ');
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  elevation: 1,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.teal.shade100,
-                      child: const Icon(Icons.build_outlined, size: 18, color: Colors.teal),
-                    ),
-                    title: Text(
-                      wp.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(
-                      posNames.isEmpty ? 'Нет должностей' : posNames,
-                      style: const TextStyle(color: Colors.black54),
-                    ),
-                  ),
-                );
-              },
-            ),
-    );
-  }
-}
-
-/// Диалог для добавления рабочего места.
-class _AddWorkplaceDialog extends StatefulWidget {
-  const _AddWorkplaceDialog();
-
-  @override
-  State<_AddWorkplaceDialog> createState() => _AddWorkplaceDialogState();
-}
-
-class _AddWorkplaceDialogState extends State<_AddWorkplaceDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _nameController = TextEditingController();
-  final Set<String> _selectedPositions = {};
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  void _togglePosition(String id, bool selected) {
-    setState(() {
-      if (selected) {
-        _selectedPositions.add(id);
-      } else {
-        _selectedPositions.remove(id);
-      }
-    });
-  }
-
-  void _submit(BuildContext context) {
-    if (!_formKey.currentState!.validate()) return;
-    final provider = Provider.of<PersonnelProvider>(context, listen: false);
-    provider.addWorkplace(
-      name: _nameController.text.trim(),
-      positionIds: _selectedPositions.toList(),
-    );
-    Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = Provider.of<PersonnelProvider>(context);
-    final positions = provider.positions;
-    return AlertDialog(
-      title: const Text('Добавить рабочее место'),
-      content: SingleChildScrollView(
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Название',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Введите название';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Должности',
-                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700]),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: positions.map((pos) {
-                  final selected = _selectedPositions.contains(pos.id);
-                  return FilterChip(
-                    label: Text(pos.name),
-                    selected: selected,
-                    onSelected: (val) => _togglePosition(pos.id, val),
-                    selectedColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-                  );
-                }).toList(),
+    return ChangeNotifierProvider<PersonnelProvider>(
+      create: (_) => PersonnelProvider(),
+      builder: (context, _) {
+        final pr = context.watch<PersonnelProvider>();
+        final items = pr.workplaces;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Рабочие места'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: () => _showAddDialog(context),
+                tooltip: 'Добавить место',
               ),
             ],
           ),
-        ),
+          body: ListView.separated(
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final WorkplaceModel w = items[i];
+              return ListTile(
+                leading: const Icon(Icons.chair_alt_outlined),
+                title: Text(w.name),
+                subtitle: Text('Должности: ${w.positionIds.join(', ')}'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      tooltip: 'Изменить',
+                      onPressed: () => _openEditDialog(context, w),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_forever),
+                      tooltip: 'Удалить',
+                      onPressed: () => _confirmDelete(context, w.id),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAddDialog(BuildContext context) async {
+    final nameC = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Новое рабочее место'),
+        content: TextField(controller: nameC, decoration: const InputDecoration(labelText: 'Название')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Добавить')),
+        ],
+      ),
+    );
+    if (ok == true && nameC.text.trim().isNotEmpty) {
+      context.read<PersonnelProvider>().addWorkplace(name: nameC.text.trim(), positionIds: const []);
+    }
+  }
+
+  void _openEditDialog(BuildContext context, WorkplaceModel workplace) {
+    showDialog(
+      context: context,
+      builder: (_) => _EditWorkplaceDialog(workplace: workplace),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context, String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить рабочее место?'),
+        content: const Text('Действие необратимо. Если место назначено сотрудникам, переназначьте его заранее.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Удалить')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await context.read<PersonnelProvider>().deleteWorkplace(id);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Удалено')));
+      }
+    }
+  }
+}
+
+class _EditWorkplaceDialog extends StatefulWidget {
+  final WorkplaceModel workplace;
+  const _EditWorkplaceDialog({required this.workplace});
+
+  @override
+  State<_EditWorkplaceDialog> createState() => _EditWorkplaceDialogState();
+}
+
+class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
+  late final TextEditingController _name = TextEditingController(text: widget.workplace.name);
+  final TextEditingController _desc = TextEditingController();
+
+  Future<void> _submit() async {
+    await context.read<PersonnelProvider>()
+        .updateWorkplace(id: widget.workplace.id, name: _name.text.trim(), description: _desc.text.trim());
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Изменить рабочее место'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(controller: _name, decoration: const InputDecoration(labelText: 'Название')),
+          const SizedBox(height: 8),
+          TextField(controller: _desc, decoration: const InputDecoration(labelText: 'Описание'), maxLines: 2),
+        ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        ElevatedButton(
-          onPressed: () => _submit(context),
-          child: const Text('Сохранить'),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        FilledButton(onPressed: _submit, child: const Text('Сохранить')),
       ],
     );
   }
