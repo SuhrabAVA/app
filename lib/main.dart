@@ -10,7 +10,7 @@ import 'modules/warehouse/warehouse_provider.dart';
 import 'modules/warehouse/supplier_provider.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'modules/orders/orders_provider.dart';
-import 'modules/production_planning/stage_provider.dart';
+import 'modules/production_planning/template_provider.dart';
 import 'modules/tasks/task_provider.dart';
 import 'modules/analytics/analytics_provider.dart';
 
@@ -68,7 +68,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => PersonnelProvider()),
         ChangeNotifierProvider(create: (_) => OrdersProvider()),
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
-        ChangeNotifierProvider(create: (_) => StageProvider()),
+        ChangeNotifierProvider(create: (_) => TemplateProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),
         ChangeNotifierProvider(create: (_) => AnalyticsProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),

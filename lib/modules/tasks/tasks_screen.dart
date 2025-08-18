@@ -4,12 +4,9 @@ import 'package:provider/provider.dart';
 
 import '../orders/order_model.dart';
 import '../orders/orders_provider.dart';
-import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
-import '../personnel/employee_model.dart';
 import '../personnel/workplace_model.dart';
-import '../production_planning/stage_model.dart';
-import '../production_planning/stage_provider.dart';
+import '../personnel/employee_model.dart';
 import '../analytics/analytics_provider.dart';
 import 'task_model.dart';
 import 'task_provider.dart';
@@ -29,7 +26,6 @@ class _TasksScreenState extends State<TasksScreen> {
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
-    final stageProvider = context.watch<StageProvider>();
     final ordersProvider = context.watch<OrdersProvider>();
     final taskProvider = context.watch<TaskProvider>();
 
@@ -53,13 +49,6 @@ class _TasksScreenState extends State<TasksScreen> {
       _selectedWorkplaceId = workplaces.first.id;
     }
 
-    StageModel? findStage(String id) {
-      for (final s in stageProvider.stages) {
-        if (s.id == id) return s;
-      }
-      return null;
-    }
-
     OrderModel? findOrder(String id) {
       for (final o in ordersProvider.orders) {
         if (o.id == id) return o;
@@ -67,10 +56,9 @@ class _TasksScreenState extends State<TasksScreen> {
       return null;
     }
 
-    final tasks = taskProvider.tasks.where((t) {
-      final stage = findStage(t.stageId);
-      return stage != null && stage.workplaceId == _selectedWorkplaceId;
-    }).toList();
+    final tasks = taskProvider.tasks
+        .where((t) => t.stageId == _selectedWorkplaceId)
+        .toList();
 
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
@@ -79,8 +67,13 @@ class _TasksScreenState extends State<TasksScreen> {
           )
         : null;
 
-    final selectedStage =
-        currentTask != null ? findStage(currentTask.stageId) : null;
+    final selectedWorkplace = currentTask != null
+        ? personnel.workplaces.firstWhere(
+            (w) => w.id == currentTask.stageId,
+            orElse: () =>
+                WorkplaceModel(id: '', name: '', positionIds: []),
+          )
+        : null;
     final selectedOrder =
         currentTask != null ? findOrder(currentTask.orderId) : null;
 
@@ -200,15 +193,16 @@ class _TasksScreenState extends State<TasksScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (currentTask != null &&
-                        selectedStage != null &&
+                        selectedWorkplace != null &&
                         selectedOrder != null)
-                      _buildDetailsPanel(selectedOrder, selectedStage),
+                      _buildDetailsPanel(selectedOrder, selectedWorkplace),
                     if (currentTask != null &&
-                        selectedStage != null)
+                        selectedWorkplace != null)
                       const SizedBox(height: 16),
                     if (currentTask != null &&
-                        selectedStage != null)
-                      _buildControlPanel(currentTask, selectedStage, taskProvider),
+                        selectedWorkplace != null)
+                      _buildControlPanel(
+                          currentTask, selectedWorkplace, taskProvider),
                   ],
                 ),
   ),
@@ -220,7 +214,7 @@ class _TasksScreenState extends State<TasksScreen> {
     );
   }
 
-  Widget _buildDetailsPanel(OrderModel order, StageModel stage) {
+  Widget _buildDetailsPanel(OrderModel order, WorkplaceModel stage) {
     final product = order.products.isNotEmpty ? order.products.first : null;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -280,7 +274,7 @@ class _TasksScreenState extends State<TasksScreen> {
   /// Строит список этапов производства с иконками выполнено/ожидание.
   Widget _buildStageList(OrderModel order) {
     final taskProvider = context.read<TaskProvider>();
-    final stageProvider = context.read<StageProvider>();
+    final personnel = context.read<PersonnelProvider>();
     // Все задачи по данному заказу
     final tasksForOrder =
         taskProvider.tasks.where((t) => t.orderId == order.id).toList();
@@ -301,10 +295,10 @@ class _TasksScreenState extends State<TasksScreen> {
         const SizedBox(height: 4),
         for (final id in stageIds)
           Builder(builder: (context) {
-            final stage = stageProvider.stages.firstWhere(
-              (s) => s.id == id,
-              orElse: () => StageModel(
-                  id: id, name: id, description: '', workplaceId: ''),
+            final stage = personnel.workplaces.firstWhere(
+              (w) => w.id == id,
+              orElse: () =>
+                  WorkplaceModel(id: id, name: id, positionIds: []),
             );
             final stageTasks =
                 tasksForOrder.where((t) => t.stageId == id).toList();
@@ -334,7 +328,7 @@ class _TasksScreenState extends State<TasksScreen> {
   }
 
   Widget _buildControlPanel(
-      TaskModel task, StageModel stage, TaskProvider provider) {
+      TaskModel task, WorkplaceModel stage, TaskProvider provider) {
     // Определяем, захвачено ли задание другим сотрудником. Если задание в
     // процессе и в списке исполнителей есть хотя бы один сотрудник, но
     // текущий пользователь не среди них, блокируем управление.
