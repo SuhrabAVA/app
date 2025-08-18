@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'modules/personnel/employee_model.dart';        // <-- тип EmployeeModel
-import 'modules/personnel/personnel_constants.dart';   // <-- kManagerId
+import 'modules/personnel/personnel_constants.dart';   // <-- kManagerId, kWarehouseHeadId
 import 'modules/personnel/position_model.dart';        // <-- если используешь PositionModel в проверке
 
 import 'admin_panel.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/manager/manager_workspace_screen.dart';
+import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'utils/auth_helper.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -25,6 +26,19 @@ bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
   // 3) По логину (email у модели нет)
   final loginLower = (emp.login ?? '').toLowerCase();
   if (loginLower.contains('manager') || loginLower.contains('менедж')) return true;
+
+  return false;
+}
+
+bool isWarehouseHeadUser(EmployeeModel emp, PersonnelProvider pr) {
+  final ids = emp.positionIds.map((e) => e.toString()).toSet();
+  if (ids.contains(kWarehouseHeadId)) return true;
+
+  final wh = pr.findWarehouseHeadPosition();
+  if (wh != null && ids.contains(wh.id)) return true;
+
+  final loginLower = (emp.login ?? '').toLowerCase();
+  if (loginLower.contains('warehouse') || loginLower.contains('склад')) return true;
 
   return false;
 }
@@ -247,7 +261,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         final screen = isManagerUser(emp, pr)
                             ? ManagerWorkspaceScreen(employeeId: user.id)
-                            : EmployeeWorkspaceScreen(employeeId: user.id);
+                            : isWarehouseHeadUser(emp, pr)
+                                ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
+                                : EmployeeWorkspaceScreen(employeeId: user.id);
 
                         Navigator.pushReplacement(
                           context,
