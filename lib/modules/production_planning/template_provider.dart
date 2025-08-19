@@ -43,4 +43,28 @@ class TemplateProvider with ChangeNotifier {
       'stages': stages.map((s) => s.toMap()).toList(),
     });
   }
+
+  Future<void> updateTemplate({
+    required String id,
+    required String name,
+    required List<PlannedStage> stages,
+  }) async {
+    final index = _templates.indexWhere((t) => t.id == id);
+    if (index == -1) return;
+    _templates[index] = TemplateModel(id: id, name: name, stages: stages);
+    notifyListeners();
+    await _supabase
+        .from('plan_templates')
+        .update({
+          'name': name,
+          'stages': stages.map((s) => s.toMap()).toList(),
+        })
+        .eq('id', id);
+  }
+
+  Future<void> deleteTemplate(String id) async {
+    _templates.removeWhere((t) => t.id == id);
+    notifyListeners();
+    await _supabase.from('plan_templates').delete().eq('id', id);
+  }
 }
