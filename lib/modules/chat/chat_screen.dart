@@ -56,6 +56,48 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _handleMenu(String value) async {
+    final chat = context.read<ChatProvider>();
+    switch (value) {
+      case 'clear':
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Очистить чат?'),
+            content: const Text('Все сообщения будут удалены.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Отмена'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Очистить'),
+              ),
+            ],
+          ),
+        );
+        if (ok == true) {
+          await chat.clearRoom(widget.roomId);
+        }
+        break;
+      case 'range':
+        final range = await showDateRangePicker(
+          context: context,
+          firstDate: DateTime(2020),
+          lastDate: DateTime.now(),
+        );
+        if (range != null) {
+          await chat.deleteMessagesInRange(
+            roomId: widget.roomId,
+            from: range.start,
+            to: range.end.add(const Duration(days: 1)),
+          );
+        }
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -67,6 +109,16 @@ class _ChatScreenState extends State<ChatScreen> {
         return Scaffold(
           appBar: AppBar(
             title: Text('Чат • ${widget.roomId}'),
+            actions: [
+              if (widget.isLead)
+                PopupMenuButton<String>(
+                  onSelected: _handleMenu,
+                  itemBuilder: (ctx) => const [
+                    PopupMenuItem(value: 'clear', child: Text('Очистить чат')),
+                    PopupMenuItem(value: 'range', child: Text('Удалить за период')),
+                  ],
+                ),
+            ],
           ),
           body: Column(
             children: [
