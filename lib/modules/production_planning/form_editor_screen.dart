@@ -166,7 +166,7 @@ Future<void> _pickOrderImage() async {
       'order_id': orderId,
       'stages': stageMaps,
       if (_photoUrl != null) 'photo_url': _photoUrl,
-    });
+    }, onConflict: 'order_id');
     
     await _supabase.from('tasks').delete().eq('orderId', orderId);
 

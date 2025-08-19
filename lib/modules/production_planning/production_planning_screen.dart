@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../orders/orders_provider.dart';
 import 'form_editor_screen.dart';
-import 'template_editor_screen.dart';
+import 'templates_screen.dart';
 
 class ProductionPlanningScreen extends StatelessWidget {
   const ProductionPlanningScreen({super.key});
@@ -18,9 +18,9 @@ class ProductionPlanningScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Планирование производства')),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _open(context, const TemplateEditorScreen()),
-        child: const Icon(Icons.add),
-        tooltip: 'Создать шаблон',
+        onPressed: () => _open(context, const TemplatesScreen()),
+        child: const Icon(Icons.list),
+        tooltip: 'Шаблоны',
       ),
       body: orders.isEmpty
           ? const Center(child: Text('Заказы отсутствуют'))
