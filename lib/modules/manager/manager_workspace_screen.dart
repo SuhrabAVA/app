@@ -56,7 +56,6 @@ class ManagerWorkspaceScreen extends StatelessWidget {
               currentUserId: emp.id,
               currentUserName: fio.isEmpty ? 'Менеджер' : fio,
               roomId: 'general', // общий чат
-              isLead: true,
             ),
           ],
         ),
