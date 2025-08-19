@@ -56,7 +56,6 @@ class WarehouseManagerWorkspaceScreen extends StatelessWidget {
               currentUserName:
                   fio.isEmpty ? 'Заведующий складом' : fio,
               roomId: 'general',
-              isLead: true,
             ),
           ],
         ),

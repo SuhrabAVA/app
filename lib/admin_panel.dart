@@ -106,6 +106,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           currentUserId: meId,
           currentUserName: _meName ?? 'Пользователь', // не-null
           roomId: 'general',
+          isLead: isLead,
         ),
       },
       {'label': '📊\nАналитика', 'page': const AnalyticsScreen()},
