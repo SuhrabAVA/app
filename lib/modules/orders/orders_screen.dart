@@ -189,8 +189,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       default:
         break;
     }
-    int totalQty(OrderModel o) =>
-        o.products.isNotEmpty ? o.products.first.quantity : 0;
+    int totalQty(OrderModel o) => o.product.quantity;
     switch (_sortOption) {
       case SortOption.orderDateAsc:
         filtered.sort((a, b) => a.orderDate.compareTo(b.orderDate));
@@ -300,8 +299,8 @@ void _showSortOptions() {
         break;
     }
     // В текущей версии заказ содержит один продукт
-    final product = order.products.isNotEmpty ? order.products.first : null;
-    final totalQty = product?.quantity ?? 0;
+    final product = order.product;
+    final totalQty = product.quantity;
     return SizedBox(
       width: 320,
       child: Card(
@@ -346,15 +345,14 @@ void _showSortOptions() {
               ),
 
               const SizedBox(height: 6),
-              if (product != null)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Изделие: ${product.type}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text('Тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                  ],
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Изделие: ${product.type}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('Тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                ],
+              ),
               const SizedBox(height: 6),
               Row(
                 children: [

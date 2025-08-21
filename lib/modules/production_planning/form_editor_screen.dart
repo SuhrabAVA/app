@@ -197,7 +197,7 @@ Future<void> _pickOrderImage() async {
       customer: widget.order.customer,
       orderDate: widget.order.orderDate,
       dueDate: widget.order.dueDate,
-      products: widget.order.products,
+      product: widget.order.product,
       contractSigned: widget.order.contractSigned,
       paymentDone: widget.order.paymentDone,
       comments: widget.order.comments,

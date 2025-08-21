@@ -247,9 +247,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                   fontSize: 20, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 4),
                           Text(
-                            widget.order.products.isNotEmpty
-                                ? widget.order.products.first.type
-                                : '',
+                            widget.order.product.type,
                             style: const TextStyle(fontSize: 16),
                           ),
                           const SizedBox(height: 2),
@@ -261,14 +259,11 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              if (widget.order.products.isNotEmpty) ...[
-                                const Icon(Icons.layers,
-                                    size: 16, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Text(
-                                    '${widget.order.products.first.quantity} шт.'),
-                                const SizedBox(width: 16),
-                              ],
+                              const Icon(Icons.layers,
+                                  size: 16, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Text('${widget.order.product.quantity} шт.'),
+                              const SizedBox(width: 16),
                               const Icon(Icons.calendar_today,
                                   size: 16, color: Colors.grey),
                               const SizedBox(width: 4),

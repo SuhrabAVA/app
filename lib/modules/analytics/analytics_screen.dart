@@ -39,7 +39,7 @@ class AnalyticsScreen extends StatelessWidget {
     String getOrderName(String id) {
       try {
         final OrderModel o = ordersProvider.orders.firstWhere((o) => o.id == id);
-        final product = o.products.isNotEmpty ? o.products.first.type : '';
+        final product = o.product.type;
         return product.isNotEmpty ? '${o.id} ($product)' : o.id;
       } catch (_) {
         return id;

@@ -40,8 +40,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _dueDate = order?.dueDate;
     _contractSigned = order?.contractSigned ?? false;
     _paymentDone = order?.paymentDone ?? false;
-    if (order != null && order.products.isNotEmpty) {
-      final p = order.products.first;
+    if (order != null) {
+      final p = order.product;
       _product = ProductModel(
         id: p.id,
         type: p.type,
@@ -123,7 +123,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
-        products: [_product],
+        product: _product,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -135,7 +135,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
-        products: [_product],
+        product: _product,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),

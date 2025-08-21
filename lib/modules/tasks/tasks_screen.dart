@@ -215,7 +215,7 @@ class _TasksScreenState extends State<TasksScreen> {
   }
 
   Widget _buildDetailsPanel(OrderModel order, WorkplaceModel stage) {
-    final product = order.products.isNotEmpty ? order.products.first : null;
+    final product = order.product;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -240,12 +240,10 @@ class _TasksScreenState extends State<TasksScreen> {
                     const SizedBox(height: 16),
                     const Text('Информация о продукте',
                         style: TextStyle(fontWeight: FontWeight.bold)),
-                    if (product != null) ...[
-                      Text('Продукт: ${product.type}'),
-                      Text('Тираж: ${product.quantity} шт.'),
-                      Text(
-                          'Размер: ${product.width}x${product.depth}x${product.height} мм'),
-                    ],
+                    Text('Продукт: ${product.type}'),
+                    Text('Тираж: ${product.quantity} шт.'),
+                    Text(
+                        'Размер: ${product.width}x${product.depth}x${product.height} мм'),
                     Text('Заказчик: ${order.customer}'),
                   ],
                 ),
@@ -635,9 +633,7 @@ class _TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _statusColor(task.status);
-    final name = order?.products.isNotEmpty == true
-        ? order!.products.first.type
-        : '';
+    final name = order?.product.type ?? '';
     // Показываем идентификатор задания (assignmentId) если он назначен, иначе номер заказа.
     final displayId = order?.assignmentId ?? order?.id ?? task.orderId;
     return Card(
