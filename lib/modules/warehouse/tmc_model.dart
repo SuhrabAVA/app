@@ -6,6 +6,9 @@ class TmcModel {
   final String description;
   final double quantity;
   final String unit;
+  final String? format; // для бумаги
+  final String? grammage; // граммаж бумаги
+  final double? weight; // вес бумаги
   final String? note;
   /// URL изображения, если для записи загрузили фото (например, для красок).
   final String? imageUrl;
@@ -21,6 +24,9 @@ class TmcModel {
     required this.description,
     required this.quantity,
     required this.unit,
+    this.format,
+    this.grammage,
+    this.weight,
     this.note,
     this.imageUrl,
     this.imageBase64,
@@ -36,6 +42,9 @@ class TmcModel {
       description: map['description'] ?? '',
       quantity: (map['quantity'] as num).toDouble(),
       unit: map['unit'] ?? '',
+      format: map['format'],
+      grammage: map['grammage'],
+      weight: (map['weight'] as num?)?.toDouble(),
       note: map['note'],
       imageUrl: map['imageUrl'],
       imageBase64: map['imageBase64'],
@@ -52,6 +61,9 @@ class TmcModel {
       'description': description,
       'quantity': quantity,
       'unit': unit,
+      if (format != null) 'format': format,
+      if (grammage != null) 'grammage': grammage,
+      if (weight != null) 'weight': weight,
       'note': note,
       if (imageUrl != null) 'imageUrl': imageUrl,
       if (imageBase64 != null) 'imageBase64': imageBase64,
