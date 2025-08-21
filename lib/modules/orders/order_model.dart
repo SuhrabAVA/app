@@ -3,7 +3,7 @@ import 'product_model.dart';
 /// Статус заказа определяет его стадия обработки.
 enum OrderStatus { newOrder, inWork, completed }
 
-/// Модель заказа. Один заказ может включать несколько продуктов.
+/// Модель заказа. В текущей реализации заказ содержит один продукт.
 class OrderModel {
   final String id;
   String customer;

@@ -190,7 +190,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         break;
     }
     int totalQty(OrderModel o) =>
-        o.products.fold<int>(0, (sum, p) => sum + p.quantity);
+        o.products.isNotEmpty ? o.products.first.quantity : 0;
     switch (_sortOption) {
       case SortOption.orderDateAsc:
         filtered.sort((a, b) => a.orderDate.compareTo(b.orderDate));
@@ -299,8 +299,9 @@ void _showSortOptions() {
         statusLabel = 'Новый';
         break;
     }
-    // Вычисляем общий тираж
-    final totalQty = order.products.fold<int>(0, (sum, p) => sum + p.quantity);
+    // В текущей версии заказ содержит один продукт
+    final product = order.products.isNotEmpty ? order.products.first : null;
+    final totalQty = product?.quantity ?? 0;
     return SizedBox(
       width: 320,
       child: Card(
@@ -345,17 +346,15 @@ void _showSortOptions() {
               ),
 
               const SizedBox(height: 6),
-              // Перечень продуктов
-              if (order.products.isNotEmpty)
+              if (product != null)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Продукты (${order.products.length}):', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                    ...order.products.map((p) => Text('• ${p.type} (${p.quantity})', style: const TextStyle(fontSize: 12))).toList(),
+                    Text('Изделие: ${product.type}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text('Тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                   ],
                 ),
-              const SizedBox(height: 6),
-              Text('Общий тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               Row(
                 children: [
