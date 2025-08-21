@@ -27,7 +27,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   DateTime? _dueDate;
   bool _contractSigned = false;
   bool _paymentDone = false;
-  late List<ProductModel> _products;
+  late ProductModel _product;
 
   @override
   void initState() {
@@ -39,17 +39,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _dueDate = order?.dueDate;
     _contractSigned = order?.contractSigned ?? false;
     _paymentDone = order?.paymentDone ?? false;
-    _products = order != null
-        ? order.products.map((p) => ProductModel(
-              id: p.id,
-              type: p.type,
-              quantity: p.quantity,
-              width: p.width,
-              height: p.height,
-              depth: p.depth,
-              parameters: p.parameters,
-            )).toList()
-        : [];
+    if (order != null && order.products.isNotEmpty) {
+      final p = order.products.first;
+      _product = ProductModel(
+        id: p.id,
+        type: p.type,
+        quantity: p.quantity,
+        width: p.width,
+        height: p.height,
+        depth: p.depth,
+        parameters: p.parameters,
+      );
+    } else {
+      _product = ProductModel(
+        id: _uuid.v4(),
+        type: 'П-пакет',
+        quantity: 0,
+        width: 0,
+        height: 0,
+        depth: 0,
+        parameters: '',
+      );
+    }
   }
 
   @override
@@ -59,27 +70,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     super.dispose();
   }
 
-  /// Создаёт новый продукт и добавляет его в список для редактирования.
-  void _addProduct() {
-    setState(() {
-      _products.add(ProductModel(
-        id: _uuid.v4(),
-        type: 'П-пакет',
-        quantity: 0,
-        width: 0,
-        height: 0,
-        depth: 0,
-        parameters: '',
-      ));
-    });
-  }
-
-  /// Удаляет продукт из списка.
-  void _removeProduct(ProductModel p) {
-    setState(() {
-      _products.remove(p);
-    });
-  }
+  // В текущей версии заказ содержит только один продукт, поэтому
+  // функции добавления или удаления дополнительных продуктов не требуются.
 
   Future<void> _pickOrderDate(BuildContext context) async {
     final initial = _orderDate ?? DateTime.now();
@@ -130,7 +122,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
-        products: _products,
+        products: [_product],
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -142,7 +134,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
-        products: _products,
+        products: [_product],
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -306,22 +298,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Продукты в заказе',
+              'Продукт в заказе',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            Column(
-              children: _products.map((product) {
-                final index = _products.indexOf(product) + 1;
-                return _buildProductCard(product, index);
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _addProduct,
-              icon: const Icon(Icons.add),
-              label: const Text('Добавить продукт'),
-            ),
+            _buildProductCard(_product),
           ],
         ),
       ),
@@ -329,8 +310,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   /// Строит карточку формы одного продукта. Содержит поля для ввода типа
-  /// изделия, тиража, размеров и параметров. Также есть кнопка удаления.
-  Widget _buildProductCard(ProductModel product, int index) {
+  /// изделия, тиража, размеров и параметров.
+  Widget _buildProductCard(ProductModel product) {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       elevation: 1,
@@ -340,18 +321,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Продукт $index',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                IconButton(
-                  onPressed: () => _removeProduct(product),
-                  icon: const Icon(Icons.delete_outline),
-                ),
-              ],
+            Text(
+              'Продукт',
+              style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             // Тип изделия и тираж
