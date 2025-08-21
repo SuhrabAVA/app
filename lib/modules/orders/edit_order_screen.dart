@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:open_filex/open_filex.dart';
 
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
+import 'material_model.dart';
 import '../products/products_provider.dart';
 import '../production_planning/template_provider.dart';
+import '../warehouse/warehouse_provider.dart';
+import '../warehouse/tmc_model.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -36,6 +41,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   double _makeready = 0;
   double _val = 0;
   String? _stageTemplateId;
+  MaterialModel? _selectedMaterial;
+  TmcModel? _selectedMaterialTmc;
+  TmcModel? _stockExtraItem;
+  double? _stockExtra;
+  PlatformFile? _pickedPdf;
+  bool _lengthExceeded = false;
 
   @override
   void initState() {
@@ -53,6 +64,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _makeready = order?.makeready ?? 0;
     _val = order?.val ?? 0;
     _stageTemplateId = order?.stageTemplateId;
+    _selectedMaterial = order?.material;
     if (order != null) {
       final p = order.product;
       _product = ProductModel(
@@ -63,6 +75,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         height: p.height,
         depth: p.depth,
         parameters: p.parameters,
+        roll: p.roll,
+        widthB: p.widthB,
+        length: p.length,
+        leftover: p.leftover,
       );
     } else {
       _product = ProductModel(
@@ -73,8 +89,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         height: 0,
         depth: 0,
         parameters: '',
+        roll: null,
+        widthB: null,
+        length: null,
+        leftover: null,
       );
     }
+    _customerController.addListener(_updateStockExtra);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
   }
 
   /// Удаляет продукт из списка.
@@ -83,6 +105,54 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _customerController.dispose();
     _commentsController.dispose();
     super.dispose();
+  }
+
+  void _updateStockExtra() {
+    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+    final customer = _customerController.text.trim();
+    final type = _product.type;
+    final items = warehouse.allTmc.where((t) =>
+        t.type == 'Готовая продукция' &&
+        t.description == type &&
+        (t.supplier ?? '') == customer);
+    if (items.isNotEmpty) {
+      setState(() {
+        _stockExtraItem = items.first;
+        _stockExtra = items.first.quantity;
+      });
+    } else {
+      setState(() {
+        _stockExtraItem = null;
+        _stockExtra = null;
+      });
+    }
+  }
+
+  void _selectMaterial(TmcModel tmc) {
+    _selectedMaterialTmc = tmc;
+    _selectedMaterial = MaterialModel(
+      id: tmc.id,
+      name: tmc.description,
+      format: tmc.format ?? '',
+      grammage: tmc.grammage ?? '',
+      weight: tmc.weight,
+    );
+    if (_product.length != null) {
+      _lengthExceeded = _product.length! > tmc.quantity;
+    }
+    setState(() {});
+  }
+
+  Future<void> _pickPdf() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (result != null && result.files.isNotEmpty) {
+      setState(() {
+        _pickedPdf = result.files.first;
+      });
+    }
   }
 
   Future<void> _pickOrderDate(BuildContext context) async {
@@ -127,10 +197,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ));
       return;
     }
+    if (_lengthExceeded) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Недостаточно материала на складе'),
+      ));
+      return;
+    }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
+    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     if (widget.order == null) {
       // Создание нового заказа
-      provider.createOrder(
+      await provider.createOrder(
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
@@ -138,8 +215,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         additionalParams: _selectedParams,
         handle: _selectedHandle,
         cardboard: _selectedCardboard,
+        material: _selectedMaterial,
         makeready: _makeready,
         val: _val,
+        pdfUrl: _pickedPdf?.path,
         stageTemplateId: _stageTemplateId,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
@@ -156,8 +235,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         additionalParams: _selectedParams,
         handle: _selectedHandle,
         cardboard: _selectedCardboard,
+        material: _selectedMaterial,
         makeready: _makeready,
         val: _val,
+        pdfUrl: _pickedPdf?.path ?? widget.order!.pdfUrl,
         stageTemplateId: _stageTemplateId,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
@@ -165,6 +246,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         status: widget.order!.status,
       );
       await provider.updateOrder(updated);
+    }
+    if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
+      final newQty = _selectedMaterialTmc!.quantity - (_product.length ?? 0);
+      await warehouse.updateTmcQuantity(
+          id: _selectedMaterialTmc!.id, newQuantity: newQty);
+    }
+    if (_stockExtraItem != null && _stockExtra != null && _stockExtra! > 0) {
+      final used =
+          (_product.quantity.toDouble() < _stockExtra!) ? _product.quantity.toDouble() : _stockExtra!;
+      final newQty = _stockExtraItem!.quantity - used;
+      await warehouse.updateTmcQuantity(
+          id: _stockExtraItem!.id, newQuantity: newQty);
     }
     Navigator.of(context).pop();
   }
@@ -476,8 +569,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                   child: Text(p),
                                 ))
                             .toList(),
-                        onChanged: (val) =>
-                            setState(() => product.type = val ?? product.type),
+                        onChanged: (val) {
+                          setState(() => product.type = val ?? product.type);
+                          _updateStockExtra();
+                        },
                       );
                     },
                   ),
@@ -557,6 +652,131 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     },
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Autocomplete<TmcModel>(
+                    optionsBuilder: (text) {
+                      final provider =
+                          Provider.of<WarehouseProvider>(context, listen: false);
+                      final list = provider.getTmcByType('Бумага');
+                      if (text.text.isEmpty) return list;
+                      return list.where((t) => t.description
+                          .toLowerCase()
+                          .contains(text.text.toLowerCase()));
+                    },
+                    displayStringForOption: (tmc) => tmc.description,
+                    fieldViewBuilder:
+                        (context, controller, focusNode, onFieldSubmitted) {
+                      if (_selectedMaterial?.name != null) {
+                        controller.text = _selectedMaterial!.name;
+                      }
+                      return TextFormField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: const InputDecoration(
+                          labelText: 'Материал',
+                          border: OutlineInputBorder(),
+                        ),
+                      );
+                    },
+                    onSelected: (tmc) => _selectMaterial(tmc),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Плотность',
+                      border: OutlineInputBorder(),
+                    ),
+                    controller: TextEditingController(
+                        text: _selectedMaterial?.grammage ?? ''),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              readOnly: true,
+              decoration: const InputDecoration(
+                labelText: 'Лишнее на складе',
+                border: OutlineInputBorder(),
+              ),
+              controller: TextEditingController(
+                  text: _stockExtra != null ? _stockExtra.toString() : '-'),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.roll?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Ролл',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) => product.roll = double.tryParse(val),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.widthB?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Ширина b',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) => product.widthB = double.tryParse(val),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.length?.toString() ?? '',
+                    decoration: InputDecoration(
+                      labelText: 'Длина L',
+                      border: const OutlineInputBorder(),
+                      errorText: _lengthExceeded ? 'Недостаточно' : null,
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) {
+                      final d = double.tryParse(val);
+                      setState(() {
+                        product.length = d;
+                        if (_selectedMaterialTmc != null && d != null) {
+                          _lengthExceeded = d > _selectedMaterialTmc!.quantity;
+                        } else {
+                          _lengthExceeded = false;
+                        }
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _pickPdf,
+                  icon: const Icon(Icons.attach_file),
+                  label: Text(
+                      _pickedPdf == null ? 'Прикрепить PDF' : _pickedPdf!.name),
+                ),
+                if (_pickedPdf != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: () => OpenFilex.open(_pickedPdf!.path!),
+                  ),
+                ]
               ],
             ),
             const SizedBox(height: 8),
