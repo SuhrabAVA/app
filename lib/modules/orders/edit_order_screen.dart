@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
+import '../products/products_provider.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -330,20 +331,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             Row(
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: product.type,
-                    decoration: const InputDecoration(
-                      labelText: 'Наименование изделия',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'П-пакет', child: Text('П‑пакет')),
-                      DropdownMenuItem(value: 'V-пакет', child: Text('V‑пакет')),
-                      DropdownMenuItem(value: 'Листы', child: Text('Листы')),
-                      DropdownMenuItem(value: 'Маффин', child: Text('Маффин')),
-                      DropdownMenuItem(value: 'Тюльпан', child: Text('Тюльпан')),
-                    ],
-                    onChanged: (val) => setState(() => product.type = val ?? product.type),
+                  child: Consumer<ProductsProvider>(
+                    builder: (context, provider, _) {
+                      final items = provider.products;
+                      final value =
+                          items.contains(product.type) ? product.type : null;
+                      return DropdownButtonFormField<String>(
+                        value: value,
+                        decoration: const InputDecoration(
+                          labelText: 'Наименование изделия',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: items
+                            .map((p) => DropdownMenuItem(
+                                  value: p,
+                                  child: Text(p),
+                                ))
+                            .toList(),
+                        onChanged: (val) =>
+                            setState(() => product.type = val ?? product.type),
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),
