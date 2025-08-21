@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
+import '../products/products_provider.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -27,7 +28,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   DateTime? _dueDate;
   bool _contractSigned = false;
   bool _paymentDone = false;
-  late List<ProductModel> _products;
+  late ProductModel _product;
 
   @override
   void initState() {
@@ -39,30 +40,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _dueDate = order?.dueDate;
     _contractSigned = order?.contractSigned ?? false;
     _paymentDone = order?.paymentDone ?? false;
-    _products = order != null
-        ? order.products.map((p) => ProductModel(
-              id: p.id,
-              type: p.type,
-              quantity: p.quantity,
-              width: p.width,
-              height: p.height,
-              depth: p.depth,
-              parameters: p.parameters,
-            )).toList()
-        : [];
-  }
-
-  @override
-  void dispose() {
-    _customerController.dispose();
-    _commentsController.dispose();
-    super.dispose();
-  }
-
-  /// Создаёт новый продукт и добавляет его в список для редактирования.
-  void _addProduct() {
-    setState(() {
-      _products.add(ProductModel(
+    if (order != null) {
+      final p = order.product;
+      _product = ProductModel(
+        id: p.id,
+        type: p.type,
+        quantity: p.quantity,
+        width: p.width,
+        height: p.height,
+        depth: p.depth,
+        parameters: p.parameters,
+      );
+    } else {
+      _product = ProductModel(
         id: _uuid.v4(),
         type: 'П-пакет',
         quantity: 0,
@@ -70,15 +60,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         height: 0,
         depth: 0,
         parameters: '',
-      ));
-    });
+      );
+    }
   }
 
   /// Удаляет продукт из списка.
-  void _removeProduct(ProductModel p) {
-    setState(() {
-      _products.remove(p);
-    });
+  @override
+  void dispose() {
+    _customerController.dispose();
+    _commentsController.dispose();
+    super.dispose();
   }
 
   Future<void> _pickOrderDate(BuildContext context) async {
@@ -130,7 +121,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
-        products: _products,
+        product: _product,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -142,7 +133,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
-        products: _products,
+        product: _product,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -306,22 +297,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Продукты в заказе',
+              'Продукт в заказе',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            Column(
-              children: _products.map((product) {
-                final index = _products.indexOf(product) + 1;
-                return _buildProductCard(product, index);
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _addProduct,
-              icon: const Icon(Icons.add),
-              label: const Text('Добавить продукт'),
-            ),
+            _buildProductCard(_product),
           ],
         ),
       ),
@@ -329,8 +309,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   /// Строит карточку формы одного продукта. Содержит поля для ввода типа
-  /// изделия, тиража, размеров и параметров. Также есть кнопка удаления.
-  Widget _buildProductCard(ProductModel product, int index) {
+  Widget _buildProductCard(ProductModel product) {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       elevation: 1,
@@ -340,38 +319,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Продукт $index',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                IconButton(
-                  onPressed: () => _removeProduct(product),
-                  icon: const Icon(Icons.delete_outline),
-                ),
-              ],
+            Text(
+              'Продукт',
+              style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             // Тип изделия и тираж
             Row(
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: product.type,
-                    decoration: const InputDecoration(
-                      labelText: 'Наименование изделия',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'П-пакет', child: Text('П‑пакет')),
-                      DropdownMenuItem(value: 'V-пакет', child: Text('V‑пакет')),
-                      DropdownMenuItem(value: 'Листы', child: Text('Листы')),
-                      DropdownMenuItem(value: 'Маффин', child: Text('Маффин')),
-                      DropdownMenuItem(value: 'Тюльпан', child: Text('Тюльпан')),
-                    ],
-                    onChanged: (val) => setState(() => product.type = val ?? product.type),
+                  child: Consumer<ProductsProvider>(
+                    builder: (context, provider, _) {
+                      final items = provider.products;
+                      final value =
+                          items.contains(product.type) ? product.type : null;
+                      return DropdownButtonFormField<String>(
+                        value: value,
+                        decoration: const InputDecoration(
+                          labelText: 'Наименование изделия',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: items
+                            .map((p) => DropdownMenuItem(
+                                  value: p,
+                                  child: Text(p),
+                                ))
+                            .toList(),
+                        onChanged: (val) =>
+                            setState(() => product.type = val ?? product.type),
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),

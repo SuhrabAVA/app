@@ -6,8 +6,7 @@ import '../personnel/personnel_provider.dart';
 import '../personnel/employee_model.dart';
 import '../orders/orders_provider.dart';
 import '../orders/order_model.dart';
-import '../production_planning/stage_provider.dart';
-import '../production_planning/stage_model.dart';
+
 import 'analytics_provider.dart';
 import 'analytics_record.dart';
 
@@ -23,7 +22,6 @@ class AnalyticsScreen extends StatelessWidget {
     final analytics = context.watch<AnalyticsProvider>();
     final personnel = context.watch<PersonnelProvider>();
     final ordersProvider = context.watch<OrdersProvider>();
-    final stageProvider = context.watch<StageProvider>();
     final logs = analytics.logs;
 
     String getEmployeeNames(String userIds) {
@@ -42,7 +40,7 @@ class AnalyticsScreen extends StatelessWidget {
     String getOrderName(String id) {
       try {
         final OrderModel o = ordersProvider.orders.firstWhere((o) => o.id == id);
-        final product = o.products.isNotEmpty ? o.products.first.type : '';
+        final product = o.product.type;
         return product.isNotEmpty ? '${o.id} ($product)' : o.id;
       } catch (_) {
         return id;
@@ -51,8 +49,9 @@ class AnalyticsScreen extends StatelessWidget {
 
     String getStageName(String id) {
       try {
-        final StageModel s = stageProvider.stages.firstWhere((s) => s.id == id);
-        return s.name;
+        final stage =
+            personnel.workplaces.firstWhere((w) => w.id == id);
+        return stage.name;
       } catch (_) {
         return id;
       }

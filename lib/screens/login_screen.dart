@@ -4,7 +4,11 @@ import 'package:provider/provider.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/manager/manager_workspace_screen.dart';
-
+import '../modules/personnel/personnel_provider.dart';
+import '../modules/personnel/employee_workspace_screen.dart';
+import '../modules/manager/manager_workspace_screen.dart';
+import '../modules/personnel/employee_model.dart';
+import '../modules/personnel/position_model.dart';
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -15,23 +19,23 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _searchC = TextEditingController();
   bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
-  // 1) Прямой ID
-  final ids = emp.positionIds.map((e) => e.toString()).toSet();
-  if (ids.contains('manager')) return true;
+      // 1) Прямой ID
+    final ids = emp.positionIds.map((e) => e.toString()).toSet();
+    if (ids.contains('manager')) return true;
 
-  // 2) По названию должности (если в БД id другой, но есть позиция с именем «Менеджер»)
-  final managerPos = pr.positions.firstWhere(
-    (p) => p.name.toLowerCase().trim() == 'менеджер',
-    orElse: () => PositionModel(id: '', name: ''),
-  );
-  if (managerPos.id.isNotEmpty && ids.contains(managerPos.id)) return true;
+    // 2) По названию должности (если в БД id другой, но есть позиция с именем «Менеджер»)
+    final managerPos = pr.positions.firstWhere(
+      (p) => p.name.toLowerCase().trim() == 'менеджер',
+      orElse: () => PositionModel(id: '', name: ''),
+    );
+    if (managerPos.id.isNotEmpty && ids.contains(managerPos.id)) return true;
 
-  // 3) На всякий случай — по логину/почте
-  final login = (emp.login ?? emp.email ?? '').toLowerCase();
-  if (login.contains('manager') || login.contains('менедж')) return true;
+    // 3) На всякий случай — по логину/почте
+    final login = emp.login.toLowerCase();
+    if (login.contains('manager') || login.contains('менедж')) return true;
 
-  return false;
-}
+    return false;
+  }
 
 
   @override
@@ -182,18 +186,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _enterAs(String employeeId) {
-  final pr = context.read<PersonnelProvider>();
-  final emp = pr.employees.firstWhere((e) => e.id == employeeId);
+    final pr = context.read<PersonnelProvider>();
+    final emp = pr.employees.firstWhere((e) => e.id == employeeId);
 
-  if (isManagerUser(emp, pr)) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => ManagerWorkspaceScreen(employeeId: employeeId)),
-    );
-  } else {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => EmployeeWorkspaceScreen(employeeId: employeeId)),
-    );
-  }
+    if (isManagerUser(emp, pr)) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ManagerWorkspaceScreen(employeeId: employeeId),
+        ),
+      );
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => EmployeeWorkspaceScreen(employeeId: employeeId),
+        ),
+      );
+    }
 }
 
 }

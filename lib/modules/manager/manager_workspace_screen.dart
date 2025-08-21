@@ -52,11 +52,10 @@ class ManagerWorkspaceScreen extends StatelessWidget {
             // Полный доступ к заказам
             const OrdersScreen(),
             // Отдельная комната менеджеров
-            ChatScreenCompat(
+            ChatTab(
               currentUserId: emp.id,
               currentUserName: fio.isEmpty ? 'Менеджер' : fio,
-              roomId: 'managers',   // общий менеджерский чат
-              isLead: true,
+              roomId: 'general',    // общий менеджерский чат
             ),
           ],
         ),

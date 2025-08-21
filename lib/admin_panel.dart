@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'modules/products/products_screen.dart';
 import 'modules/production_planning/production_planning_screen.dart';
 import 'modules/orders/orders_screen.dart';
 import 'modules/personnel/personnel_screen.dart';
@@ -96,6 +96,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
     final modules = [
       {'label': '📦\nСклад', 'page': const WarehouseDashboard()},
+      {'label': '🛍️\nПродукция', 'page': const ProductsScreen()},
       {'label': '👥\nПерсонал', 'page': const PersonnelScreen()},
       {'label': '🧾\nЗаказы', 'page': const OrdersScreen()},
       {'label': '🗓️\nПланир.', 'page': const ProductionPlanningScreen()},
@@ -106,6 +107,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           currentUserId: meId,
           currentUserName: _meName ?? 'Пользователь', // не-null
           roomId: 'general',
+          isLead: isLead,
         ),
       },
       {'label': '📊\nАналитика', 'page': const AnalyticsScreen()},

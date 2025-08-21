@@ -142,6 +142,29 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+     final personnel = context.watch<PersonnelProvider>();
+    final EmployeeModel emp = personnel.employees.firstWhere(
+      (e) => e.id == employeeId,
+      orElse: () => EmployeeModel(
+        id: employeeId,
+        lastName: '',
+        firstName: '',
+        patronymic: '',
+        iin: '',
+        photoUrl: null,
+        positionIds: const [],
+        isFired: false,
+        comments: '',
+        login: '',
+        password: '',
+      ),
+    );
+
+    final fio = [emp.lastName, emp.firstName, emp.patronymic]
+        .where((s) => s.trim().isNotEmpty)
+        .join(' ')
+        .trim();
+
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -160,7 +183,10 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
         body: TabBarView(
           children: [
             TasksScreen(employeeId: employeeId),
-            ChatTab(currentUserId: employeeId),
+            ChatTab(
+              currentUserId: employeeId,
+              currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
+            ),
           ],
         ),
       ),

@@ -3,14 +3,14 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'modules/chat/chat_provider.dart';
-
+import 'modules/products/products_provider.dart';
 import 'admin_panel.dart'; // если не используешь — можешь удалить импорт
 import 'my_app.dart';
 import 'modules/warehouse/warehouse_provider.dart';
 import 'modules/warehouse/supplier_provider.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'modules/orders/orders_provider.dart';
-import 'modules/production_planning/stage_provider.dart';
+import 'modules/production_planning/template_provider.dart';
 import 'modules/tasks/task_provider.dart';
 import 'modules/analytics/analytics_provider.dart';
 
@@ -67,8 +67,9 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => WarehouseProvider()),
         ChangeNotifierProvider(create: (_) => PersonnelProvider()),
         ChangeNotifierProvider(create: (_) => OrdersProvider()),
+        ChangeNotifierProvider(create: (_) => ProductsProvider()),
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
-        ChangeNotifierProvider(create: (_) => StageProvider()),
+        ChangeNotifierProvider(create: (_) => TemplateProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),
         ChangeNotifierProvider(create: (_) => AnalyticsProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),

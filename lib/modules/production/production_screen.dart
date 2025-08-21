@@ -217,9 +217,9 @@ class _ProductionScreenState extends State<ProductionScreen>
         final aggStatus = _computeAggregatedStatus(orderTasks);
         final color = _statusColors[aggStatus] ?? Colors.grey;
         final label = _statusLabels[aggStatus] ?? '';
-        final product = order.products.isNotEmpty ? order.products.first : null;
-        final productDesc = product?.type ?? '';
-        final qty = product != null ? '${product.quantity} шт.' : '';
+        final product = order.product;
+        final productDesc = product.type;
+        final qty = '${product.quantity} шт.';
         final due = dateFormat.format(order.dueDate);
         // Вычисляем последний комментарий для заказа. Используется для
         // отображения причины паузы или проблемы, если такая есть.

@@ -7,8 +7,8 @@ import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
 import '../production_planning/planned_stage_model.dart';
-import '../production_planning/stage_provider.dart';
-import '../production_planning/stage_model.dart';
+import '../personnel/personnel_provider.dart';
+import '../personnel/workplace_model.dart';
 
 /// Статус заказа на основе всех его задач. Дублируется здесь, поскольку
 /// оригинальное определение является приватным в production_screen.dart.
@@ -196,7 +196,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final taskProvider = context.watch<TaskProvider>();
-    final stageProvider = context.watch<StageProvider>();
+    final personnel = context.watch<PersonnelProvider>();
     // Отбираем задачи, относящиеся к текущему заказу.
     final tasks = taskProvider.tasks
         .where((t) => t.orderId == widget.order.id)
@@ -247,9 +247,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                   fontSize: 20, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 4),
                           Text(
-                            widget.order.products.isNotEmpty
-                                ? widget.order.products.first.type
-                                : '',
+                            widget.order.product.type,
                             style: const TextStyle(fontSize: 16),
                           ),
                           const SizedBox(height: 2),
@@ -261,14 +259,11 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              if (widget.order.products.isNotEmpty) ...[
-                                const Icon(Icons.layers,
-                                    size: 16, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Text(
-                                    '${widget.order.products.first.quantity} шт.'),
-                                const SizedBox(width: 16),
-                              ],
+                              const Icon(Icons.layers,
+                                  size: 16, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Text('${widget.order.product.quantity} шт.'),
+                              const SizedBox(width: 16),
                               const Icon(Icons.calendar_today,
                                   size: 16, color: Colors.grey),
                               const SizedBox(width: 4),
@@ -387,13 +382,12 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                           for (final planned in _plannedStages)
                             Builder(builder: (context) {
                               final stageId = planned.stageId;
-                              final stage = stageProvider.stages.firstWhere(
+                              final stage = personnel.workplaces.firstWhere(
                                   (s) => s.id == stageId,
-                                  orElse: () => StageModel(
+                                  orElse: () => WorkplaceModel(
                                       id: stageId,
                                       name: planned.stageName,
-                                      description: '',
-                                      workplaceId: ''));
+                                      positionIds: []));
                               final stageTasks = tasksByStage[stageId] ?? [];
                               // Определяем статус этапа по задачам: если все завершены — completed,
                               // если есть проблемы — problem, если есть в работе — inProgress,

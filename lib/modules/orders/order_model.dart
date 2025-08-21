@@ -3,13 +3,14 @@ import 'product_model.dart';
 /// Статус заказа определяет его стадия обработки.
 enum OrderStatus { newOrder, inWork, completed }
 
-/// Модель заказа. Один заказ может включать несколько продуктов.
+ /// Модель заказа. В текущей реализации заказ содержит один продукт.
 class OrderModel {
   final String id;
   String customer;
   DateTime orderDate;
   DateTime dueDate;
-  List<ProductModel> products;
+  /// Единственный продукт, связанный с заказом.
+  ProductModel product;
   bool contractSigned;
   bool paymentDone;
   String comments;
@@ -24,7 +25,7 @@ class OrderModel {
     required this.customer,
     required this.orderDate,
     required this.dueDate,
-    required this.products,
+    required this.product,
     this.contractSigned = false,
     this.paymentDone = false,
     this.comments = '',
@@ -39,7 +40,7 @@ class OrderModel {
         'customer': customer,
         'orderDate': orderDate.toIso8601String(),
         'dueDate': dueDate.toIso8601String(),
-        'products': products.map((p) => p.toMap()).toList(),
+        'product': product.toMap(),
         'contractSigned': contractSigned,
         'paymentDone': paymentDone,
         'comments': comments,
@@ -54,9 +55,11 @@ class OrderModel {
         customer: map['customer'] as String? ?? '',
         orderDate: DateTime.parse(map['orderDate'] as String),
         dueDate: DateTime.parse(map['dueDate'] as String),
-        products: (map['products'] as List<dynamic>? ?? [])
-            .map((p) => ProductModel.fromMap(Map<String, dynamic>.from(p)))
-            .toList(),
+        product: ProductModel.fromMap(
+          Map<String, dynamic>.from(
+            map['product'] as Map? ?? const {},
+          ),
+        ),
         contractSigned: map['contractSigned'] as bool? ?? false,
         paymentDone: map['paymentDone'] as bool? ?? false,
         comments: map['comments'] as String? ?? '',

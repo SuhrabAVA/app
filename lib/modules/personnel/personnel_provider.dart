@@ -15,6 +15,7 @@ class PersonnelProvider with ChangeNotifier {
   PersonnelProvider() {
     // гарантируем, что «Менеджер» есть среди должностей
     ensureManagerPosition();
+    ensureWarehouseHeadPosition();
     // подтягиваем сотрудников и слушаем изменения
     _listenToEmployees();
   }
@@ -358,6 +359,7 @@ class PersonnelProvider with ChangeNotifier {
 
 extension PersonnelProviderHelpers on PersonnelProvider {
   bool isManagerPositionId(String id) => id == kManagerId;
+  bool isWarehouseHeadPositionId(String id) => id == kWarehouseHeadId;
 
   /// Возвращает позицию «Менеджер» (по id или названию)
   PositionModel? findManagerPosition() {
@@ -370,12 +372,26 @@ extension PersonnelProviderHelpers on PersonnelProvider {
     }
   }
 
-  /// Все обычные должности (без «Менеджера»)
-  List<PositionModel> get regularPositions =>
-      _positions
-          .where((p) => !(p.id == kManagerId || p.name.toLowerCase().trim() == 'менеджер'))
-          .toList();
+    /// Возвращает позицию «Заведующий складом» (по id или названию)
+  PositionModel? findWarehouseHeadPosition() {
+    try {
+      return _positions.firstWhere(
+        (p) =>
+            p.id == kWarehouseHeadId || p.name.toLowerCase().trim() == 'заведующий складом',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
+  /// Все обычные должности (без «Менеджера» и «Заведующего складом»)
+  List<PositionModel> get regularPositions => _positions
+      .where((p) =>
+          !(p.id == kManagerId ||
+            p.name.toLowerCase().trim() == 'менеджер' ||
+            p.id == kWarehouseHeadId ||
+            p.name.toLowerCase().trim() == 'заведующий складом'))
+      .toList();
   /// Имя должности по id (без падений)
   String positionNameById(String? id) {
     if (id == null) return '';
@@ -425,6 +441,56 @@ extension PersonnelProviderHelpers on PersonnelProvider {
         'id': kManagerId,
         'name': 'Менеджер',
         'description': 'Управление заказами и чат менеджеров',
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      // ок: локально уже есть
+    }
+  }
+    /// Гарантируем, что «Заведующий складом» есть и внизу списка
+  Future<void> ensureWarehouseHeadPosition() async {
+    // локально
+    final already = _positions.any(
+      (p) => p.id == kWarehouseHeadId ||
+          p.name.toLowerCase().trim() == 'заведующий складом',
+    );
+    if (!already) {
+      _positions.add(
+          PositionModel(id: kWarehouseHeadId, name: 'Заведующий складом'));
+      notifyListeners();
+    } else {
+      // переместим вниз
+      final copy = List<PositionModel>.from(_positions);
+      copy.removeWhere(
+        (p) => p.id == kWarehouseHeadId ||
+            p.name.toLowerCase().trim() == 'заведующий складом',
+      );
+      final wh = _positions.firstWhere(
+        (p) => p.id == kWarehouseHeadId ||
+            p.name.toLowerCase().trim() == 'заведующий складом',
+      );
+      copy.add(wh);
+      _positions
+        ..clear()
+        ..addAll(copy);
+      notifyListeners();
+    }
+
+    // при наличии таблицы positions — мягкая синхронизация
+    try {
+      final rows = await _supabase
+          .from('positions')
+          .select('id')
+          .ilike('name', 'заведующий складом')
+          .limit(1);
+
+      if (rows is List && rows.isNotEmpty) return;
+
+      await _supabase.from('positions').insert({
+        'id': kWarehouseHeadId,
+        'name': 'Заведующий складом',
+        'description': 'Управление складом и чат',
         'created_at': DateTime.now().toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
       });

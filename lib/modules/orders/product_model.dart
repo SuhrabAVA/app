@@ -31,7 +31,7 @@ class ProductModel {
 
   /// Создаёт [ProductModel] из Map.
   factory ProductModel.fromMap(Map<String, dynamic> map) => ProductModel(
-        id: map['id'] as String,
+        id: map['id'] as String? ?? '',
         type: map['type'] as String? ?? '',
         quantity: (map['quantity'] as num?)?.toInt() ?? 0,
         width: (map['width'] as num?)?.toDouble() ?? 0,

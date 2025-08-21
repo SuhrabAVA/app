@@ -30,16 +30,17 @@ class OrdersProvider with ChangeNotifier {
         ..addAll(rows.map((row) {
           final map = Map<String, dynamic>.from(row);
 
-          // products в БД — jsonb; подстрахуемся, если пришла строка
-          final p = map['products'];
+          // product в БД — jsonb; подстрахуемся, если пришла строка
+          final p = map['product'];
           if (p is String) {
             try {
-              map['products'] = p.isEmpty ? [] : (jsonDecode(p) as List);
+              map['product'] =
+                  p.isEmpty ? <String, dynamic>{} : jsonDecode(p) as Map;
             } catch (_) {
-              map['products'] = const [];
+              map['product'] = <String, dynamic>{};
             }
           } else if (p == null) {
-            map['products'] = const [];
+            map['product'] = <String, dynamic>{};
           }
 
           return OrderModel.fromMap(map);
@@ -75,7 +76,7 @@ class OrdersProvider with ChangeNotifier {
     required String customer,
     required DateTime orderDate,
     required DateTime dueDate,
-    List<ProductModel>? products,
+    required ProductModel product,
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
@@ -85,7 +86,7 @@ class OrdersProvider with ChangeNotifier {
       customer: customer,
       orderDate: orderDate,
       dueDate: dueDate,
-      products: products ?? <ProductModel>[],
+      product: product,
       contractSigned: contractSigned,
       paymentDone: paymentDone,
       comments: comments,
@@ -179,32 +180,31 @@ class OrdersProvider with ChangeNotifier {
     OrderModel order, {
     required bool isShipment,
   }) async {
-    for (final p in order.products) {
-      final pm = p.toMap();
+    final pm = order.product.toMap();
 
-      // поддержим разные названия полей
-      final tmcId = (pm['tmcId'] ??
-          pm['tmc_id'] ??
-          pm['materialId'] ??
-          pm['material_id']) as String?;
+    // поддержим разные названия полей
+    final tmcId = (pm['tmcId'] ??
+            pm['tmc_id'] ??
+            pm['materialId'] ??
+            pm['material_id']) as String?;
 
-      final qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
-      final qty =
-          (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
+    final qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
+    final qty =
+        (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
 
-      if (tmcId == null || qty <= 0) continue;
+    if (tmcId == null || qty <= 0) return;
 
-      final delta = isShipment ? -qty : qty;
-      try {
-        await _supabase.rpc('materials_increment', params: {
-          'p_id': tmcId,
-          'p_delta': delta,
-        });
-      } catch (e) {
-        // не блокируем процесс — просто логируем
-        debugPrint('⚠️ stock delta failed for $tmcId: $e');
+    final delta = isShipment ? -qty : qty;
+    try {
+      await _supabase.rpc('materials_increment', params: {
+        'p_id': tmcId,
+        'p_delta': delta,
+      });
+    } catch (e) {
+      // не блокируем процесс — просто логируем
+      debugPrint('⚠️ stock delta failed for $tmcId: $e');
       }
-    }
+    
   }
 
   // ===== генераторы =====
