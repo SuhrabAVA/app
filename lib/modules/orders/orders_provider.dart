@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'order_model.dart';
 import 'product_model.dart';
+import 'material_model.dart';
 
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -77,6 +78,14 @@ class OrdersProvider with ChangeNotifier {
     required DateTime orderDate,
     required DateTime dueDate,
     required ProductModel product,
+    List<String> additionalParams = const [],
+    String handle = '-',
+    String cardboard = 'нет',
+    MaterialModel? material,
+    double makeready = 0,
+    double val = 0,
+    String? pdfUrl,
+    String? stageTemplateId,
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
@@ -87,6 +96,14 @@ class OrdersProvider with ChangeNotifier {
       orderDate: orderDate,
       dueDate: dueDate,
       product: product,
+      additionalParams: additionalParams,
+      handle: handle,
+      cardboard: cardboard,
+      material: material,
+      makeready: makeready,
+      val: val,
+      pdfUrl: pdfUrl,
+      stageTemplateId: stageTemplateId,
       contractSigned: contractSigned,
       paymentDone: paymentDone,
       comments: comments,
