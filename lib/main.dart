@@ -13,6 +13,7 @@ import 'modules/orders/orders_provider.dart';
 import 'modules/production_planning/template_provider.dart';
 import 'modules/tasks/task_provider.dart';
 import 'modules/analytics/analytics_provider.dart';
+import 'modules/products/products_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,6 +68,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => WarehouseProvider()),
         ChangeNotifierProvider(create: (_) => PersonnelProvider()),
         ChangeNotifierProvider(create: (_) => OrdersProvider()),
+        ChangeNotifierProvider(create: (_) => ProductsProvider()),
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
         ChangeNotifierProvider(create: (_) => TemplateProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),

@@ -7,6 +7,7 @@ import 'modules/personnel/personnel_screen.dart';
 import 'modules/production/production_screen.dart';
 import 'modules/warehouse/warehouse_screen.dart';
 import 'modules/analytics/analytics_screen.dart';
+import 'modules/products/products_screen.dart';
 import 'services/auth_service.dart';
 import 'modules/chat/chat_tab.dart';
 
@@ -96,6 +97,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
     final modules = [
       {'label': '📦\nСклад', 'page': const WarehouseDashboard()},
+      {'label': '🛍️\nПродукция', 'page': const ProductsScreen()},
       {'label': '👥\nПерсонал', 'page': const PersonnelScreen()},
       {'label': '🧾\nЗаказы', 'page': const OrdersScreen()},
       {'label': '🗓️\nПланир.', 'page': const ProductionPlanningScreen()},
