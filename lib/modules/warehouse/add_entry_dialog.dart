@@ -39,6 +39,10 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     'width': TextEditingController(),
     // Вес в килограммах (для красок)
     'weight': TextEditingController(),
+    // Формат бумаги
+    'format': TextEditingController(),
+    // Грамаж бумаги
+    'grammage': TextEditingController(),
     // Дополнительные характеристики (для универсальных изделий)
     'characteristics': TextEditingController(),
     // Идентификатор заказа (для готовых изделий)
@@ -204,6 +208,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     // В режиме редактирования заполняем основные поля исходя из типа записи.
     switch (item.type) {
       case 'Бумага':
+        _controllers['name']!.text = item.description;
+        _controllers['length']!.text = item.quantity.toString();
+        _controllers['format']!.text = item.format ?? '';
+        _controllers['grammage']!.text = item.grammage ?? '';
+        _controllers['weight']!.text = item.weight?.toString() ?? '';
+        break;
       case 'Рулон':
         _controllers['name']!.text = item.description;
         _controllers['length']!.text = item.quantity.toString();
@@ -267,6 +277,21 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       final note = _controllers['note']!.text.trim();
       switch (type) {
         case 'Бумага':
+          final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
+          final newDesc = _controllers['name']!.text.trim().isNotEmpty
+              ? _controllers['name']!.text.trim()
+              : existing.description;
+          await warehouseProvider.updateTmc(
+            id: id,
+            description: newDesc,
+            unit: 'м',
+            quantity: newLength,
+            note: note.isNotEmpty ? note : existing.note,
+            format: _controllers['format']!.text.trim().isNotEmpty ? _controllers['format']!.text.trim() : existing.format,
+            grammage: _controllers['grammage']!.text.trim().isNotEmpty ? _controllers['grammage']!.text.trim() : existing.grammage,
+            weight: double.tryParse(_controllers['weight']!.text.trim()) ?? existing.weight,
+          );
+          break;
         case 'Рулон':
           final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
           final newDesc = _controllers['name']!.text.trim().isNotEmpty
@@ -355,6 +380,16 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       if (existingItem != null) {
         final newQty = existingItem.quantity + length;
         await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
+        await warehouseProvider.updateTmc(
+          id: existingItem.id,
+          format: _controllers['format']!.text.trim().isEmpty
+              ? existingItem.format
+              : _controllers['format']!.text.trim(),
+          grammage: _controllers['grammage']!.text.trim().isEmpty
+              ? existingItem.grammage
+              : _controllers['grammage']!.text.trim(),
+          weight: double.tryParse(_controllers['weight']!.text.trim()) ?? existingItem.weight,
+        );
       } else {
         await warehouseProvider.addTmc(
           type: 'Бумага',
@@ -362,6 +397,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           quantity: length,
           unit: 'м',
           note: note.isEmpty ? null : note,
+          format: _controllers['format']!.text.trim().isEmpty
+              ? null
+              : _controllers['format']!.text.trim(),
+          grammage: _controllers['grammage']!.text.trim().isEmpty
+              ? null
+              : _controllers['grammage']!.text.trim(),
+          weight: double.tryParse(_controllers['weight']!.text.trim()),
         );
       }
       Navigator.of(context).pop();
@@ -581,6 +623,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             if (_isNewPaper)
               _buildField('name', 'Новый вид бумаги'),
+            _buildField('format', 'Формат'),
+            _buildField('grammage', 'Грамаж'),
+            _buildField('weight', 'Вес (кг)'),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: TextFormField(

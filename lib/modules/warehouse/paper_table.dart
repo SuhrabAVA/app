@@ -59,6 +59,9 @@ class _PaperTableState extends State<PaperTable> {
                       columns: const [
                         DataColumn(label: Text('№')),
                         DataColumn(label: Text('Наименование')),
+                        DataColumn(label: Text('Формат')),
+                        DataColumn(label: Text('Грамаж')),
+                        DataColumn(label: Text('Вес')),
                         DataColumn(label: Text('Количество')),
                         DataColumn(label: Text('Ед.')),
                         DataColumn(label: Text('Действия')),
@@ -70,6 +73,9 @@ class _PaperTableState extends State<PaperTable> {
                           return DataRow(cells: [
                             DataCell(Text('${index + 1}')),
                             DataCell(Text(item.description)),
+                            DataCell(Text(item.format ?? '')),
+                            DataCell(Text(item.grammage ?? '')),
+                            DataCell(Text(item.weight?.toString() ?? '')),
                             DataCell(Text(item.quantity.toString())),
                             DataCell(Text(item.unit)),
                             DataCell(Row(

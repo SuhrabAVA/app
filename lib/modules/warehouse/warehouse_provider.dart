@@ -48,6 +48,9 @@ class WarehouseProvider with ChangeNotifier {
         description: m['description'] as String,
         quantity: (m['quantity'] as num?)?.toDouble() ?? 0.0,
         unit: m['unit'] as String,
+        format: m['format'] as String?,
+        grammage: m['grammage'] as String?,
+        weight: (m['weight'] as num?)?.toDouble(),
         note: m['note'] as String?,
         imageUrl: m['imageUrl'] as String?,
         // поле в модели оставлено для обратной совместимости
@@ -81,6 +84,9 @@ class WarehouseProvider with ChangeNotifier {
     required double quantity,
     required String unit,
     String? note,
+    String? format,
+    String? grammage,
+    double? weight,
 
     Uint8List? imageBytes,
     String imageContentType = 'image/jpeg',
@@ -120,6 +126,9 @@ class WarehouseProvider with ChangeNotifier {
       'description': description,
       'quantity': quantity,
       'unit': unit,
+      if (format != null) 'format': format,
+      if (grammage != null) 'grammage': grammage,
+      if (weight != null) 'weight': weight,
       'note': note,
       if (finalImageUrl != null) 'imageUrl': finalImageUrl,
     };
@@ -149,6 +158,9 @@ class WarehouseProvider with ChangeNotifier {
     double? quantity,
     String? supplier,
     String? note,
+    String? format,
+    String? grammage,
+    double? weight,
 
     Uint8List? imageBytes,
     String imageContentType = 'image/jpeg',
@@ -161,6 +173,9 @@ class WarehouseProvider with ChangeNotifier {
     if (quantity != null) updates['quantity'] = quantity;
     if (supplier != null) updates['supplier'] = supplier;
     if (note != null) updates['note'] = note;
+    if (format != null) updates['format'] = format;
+    if (grammage != null) updates['grammage'] = grammage;
+    if (weight != null) updates['weight'] = weight;
 
     // Вычисляем новый imageUrl (если что-то из картинки передали)
     String? finalImageUrl = imageUrl;
@@ -199,6 +214,9 @@ class WarehouseProvider with ChangeNotifier {
         description: updates['description'] ?? prev.description,
         quantity: (updates['quantity'] as double?) ?? prev.quantity,
         unit: updates['unit'] ?? prev.unit,
+        format: updates['format'] ?? prev.format,
+        grammage: updates['grammage'] ?? prev.grammage,
+        weight: (updates['weight'] as double?) ?? prev.weight,
         note: updates['note'] ?? prev.note,
         imageUrl: updates['imageUrl'] ?? prev.imageUrl,
         imageBase64: prev.imageBase64,
