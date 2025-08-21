@@ -6,6 +6,7 @@ import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
 import '../products/products_provider.dart';
+import '../production_planning/template_provider.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -29,6 +30,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _contractSigned = false;
   bool _paymentDone = false;
   late ProductModel _product;
+  List<String> _selectedParams = [];
+  String _selectedHandle = '-';
+  String _selectedCardboard = 'нет';
+  double _makeready = 0;
+  double _val = 0;
+  String? _stageTemplateId;
 
   @override
   void initState() {
@@ -40,6 +47,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _dueDate = order?.dueDate;
     _contractSigned = order?.contractSigned ?? false;
     _paymentDone = order?.paymentDone ?? false;
+    _selectedParams = order?.additionalParams ?? [];
+    _selectedHandle = order?.handle ?? '-';
+    _selectedCardboard = order?.cardboard ?? 'нет';
+    _makeready = order?.makeready ?? 0;
+    _val = order?.val ?? 0;
+    _stageTemplateId = order?.stageTemplateId;
     if (order != null) {
       final p = order.product;
       _product = ProductModel(
@@ -122,6 +135,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         orderDate: _orderDate!,
         dueDate: _dueDate!,
         product: _product,
+        additionalParams: _selectedParams,
+        handle: _selectedHandle,
+        cardboard: _selectedCardboard,
+        makeready: _makeready,
+        val: _val,
+        stageTemplateId: _stageTemplateId,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -134,6 +153,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         orderDate: _orderDate!,
         dueDate: _dueDate!,
         product: _product,
+        additionalParams: _selectedParams,
+        handle: _selectedHandle,
+        cardboard: _selectedCardboard,
+        makeready: _makeready,
+        val: _val,
+        stageTemplateId: _stageTemplateId,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -302,6 +327,112 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
             const SizedBox(height: 8),
             _buildProductCard(_product),
+            const SizedBox(height: 16),
+            Text(
+              'Дополнительные параметры',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            Consumer<ProductsProvider>(
+              builder: (context, provider, _) {
+                final params = provider.parameters;
+                return Column(
+                  children: params.map((p) {
+                    final selected = _selectedParams.contains(p);
+                    return CheckboxListTile(
+                      value: selected,
+                      title: Text(p),
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedParams.add(p);
+                          } else {
+                            _selectedParams.remove(p);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            Consumer<ProductsProvider>(
+              builder: (context, provider, _) {
+                final handles = ['-'] + provider.handles;
+                return DropdownButtonFormField<String>(
+                  value: handles.contains(_selectedHandle) ? _selectedHandle : '-',
+                  decoration: const InputDecoration(
+                    labelText: 'Ручки',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: handles
+                      .map((h) => DropdownMenuItem(value: h, child: Text(h)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _selectedHandle = val ?? '-'),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _selectedCardboard,
+              decoration: const InputDecoration(
+                labelText: 'Картон',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'нет', child: Text('нет')),
+                DropdownMenuItem(value: 'офсет', child: Text('офсет')),
+              ],
+              onChanged: (val) => setState(() => _selectedCardboard = val ?? 'нет'),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: _makeready > 0 ? '$_makeready' : '',
+                    decoration: const InputDecoration(
+                      labelText: 'Приладка',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _makeready = double.tryParse(v) ?? 0,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: _val > 0 ? '$_val' : '',
+                    decoration: const InputDecoration(
+                      labelText: 'ВАЛ',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _val = double.tryParse(v) ?? 0,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Consumer<TemplateProvider>(
+              builder: (context, provider, _) {
+                final templates = provider.templates;
+                return DropdownButtonFormField<String>(
+                  value: _stageTemplateId,
+                  decoration: const InputDecoration(
+                    labelText: 'Шаблон этапов',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: templates
+                      .map((t) => DropdownMenuItem(
+                            value: t.id,
+                            child: Text(t.name),
+                          ))
+                      .toList(),
+                  onChanged: (val) => setState(() => _stageTemplateId = val),
+                );
+              },
+            ),
           ],
         ),
       ),
