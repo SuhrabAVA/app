@@ -663,12 +663,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       final provider =
                           Provider.of<WarehouseProvider>(context, listen: false);
                       final list = provider.getTmcByType('Бумага');
-                      if (text.text.isEmpty) return list;
-                      return list.where((t) => t.description
-                          .toLowerCase()
-                          .contains(text.text.toLowerCase()));
+                      final query = text.text.toLowerCase();
+                      if (query.isEmpty) return list;
+                      return list.where((t) =>
+                          t.description.toLowerCase().contains(query) ||
+                          (t.grammage?.toLowerCase().contains(query) ?? false));
                     },
                     displayStringForOption: (tmc) => tmc.description,
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4,
+                          child: SizedBox(
+                            height: 200,
+                            child: ListView(
+                              padding: EdgeInsets.zero,
+                              children: options
+                                  .map((tmc) => ListTile(
+                                        title: Text(tmc.description),
+                                        subtitle: tmc.grammage != null && tmc.grammage!.isNotEmpty
+                                            ? Text('Граммаж: ${tmc.grammage}')
+                                            : null,
+                                        onTap: () => onSelected(tmc),
+                                      ))
+                                  .toList(),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                     fieldViewBuilder:
                         (context, controller, focusNode, onFieldSubmitted) {
                       if (_selectedMaterial?.name != null) {
