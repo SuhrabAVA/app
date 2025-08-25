@@ -84,33 +84,67 @@ class TaskModel {
   /// используется Map, где ключи — это push-ключи Firebase. Комментарии
   /// сортируются по возрастанию временной метки.
   factory TaskModel.fromMap(Map<String, dynamic> map, String id) {
-    List<String> assignees = const [];
-    if (map['assignees'] is List) {
-      assignees = List<String>.from(
-          (map['assignees'] as List).map((e) => e.toString()));
+  // Берём первое непустое значение по списку ключей
+  dynamic pick(List<String> keys) {
+    for (final k in keys) {
+      if (map.containsKey(k) && map[k] != null) return map[k];
     }
-    // Parse comments if present.
-    List<TaskComment> comments = [];
-    final commentsData = map['comments'];
-    if (commentsData is Map) {
-      commentsData.forEach((key, value) {
-        final data = Map<String, dynamic>.from(value as Map);
-        comments.add(TaskComment.fromMap(data, key));
-      });
-      comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    }
-    return TaskModel(
-      id: id,
-      orderId: map['orderId'] as String,
-      stageId: map['stageId'] as String,
-      status: TaskStatus.values
-          .byName(map['status'] as String? ?? 'waiting'),
-      spentSeconds: map['spentSeconds'] as int? ?? 0,
-      startedAt: map['startedAt'] as int?,
-      assignees: assignees,
-      comments: comments,
-    );
+    return null;
   }
+
+  int? toInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
+
+  // assignees
+  List<String> assignees = const [];
+  final a = map['assignees'];
+  if (a is List) {
+    assignees = a.map((e) => e.toString()).toList();
+  }
+
+  // comments
+  List<TaskComment> comments = [];
+  final commentsData = map['comments'];
+  if (commentsData is Map) {
+    commentsData.forEach((key, value) {
+      final data = Map<String, dynamic>.from(value as Map);
+      comments.add(TaskComment.fromMap(data, key));
+    });
+    comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  }
+
+  // поля с разными названиями
+  final orderId = (pick(['orderId','order_id','orderid']) as String?) ?? '';
+  final stageId = (pick(['stageId','stage_id','stageid']) as String?) ?? '';
+
+  final statusStr = (map['status'] as String?) ?? 'waiting';
+  TaskStatus status;
+  try {
+    status = TaskStatus.values.byName(statusStr);
+  } catch (_) {
+    status = TaskStatus.waiting;
+  }
+
+  final spentSeconds =
+      toInt(pick(['spentSeconds','spent_seconds','spentseconds'])) ?? 0;
+  final startedAt =
+      toInt(pick(['startedAt','started_at','startedat']));
+
+  return TaskModel(
+    id: id,
+    orderId: orderId,
+    stageId: stageId,
+    status: status,
+    spentSeconds: spentSeconds,
+    startedAt: startedAt,
+    assignees: assignees,
+    comments: comments,
+  );
+}
 
   /// Создаёт копию задачи с обновлёнными полями. Для сохранения текущих
   /// комментариев передайте [comments], иначе будут использованы существующие.

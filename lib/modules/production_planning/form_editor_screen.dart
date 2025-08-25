@@ -173,11 +173,12 @@ Future<void> _pickOrderImage() async {
       final taskId = const Uuid().v4();
       await _supabase.from('tasks').insert({
         'id': taskId,
-        'orderId': orderId,
-        'stageId': stage.stageId,
+        'orderid': orderId,                    // было orderId
+        'stageid': stage.stageId,             // было stageId
         'status': 'waiting',
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
+        'createdat': DateTime.now().millisecondsSinceEpoch, // было createdAt
       });
+
     }
 
     // После сохранения плана и создания задач формируем идентификатор производственного

@@ -201,12 +201,13 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _supabase
-          .from('orders')
-          .update(updated.toMap())
-          .eq('id', updated.id)
-          .select()
-          .single();
+      final _ = await _supabase
+        .from('orders')
+        .update(updated.toMap())
+        .eq('id', updated.id)
+        .select()
+        .maybeSingle();  // не бросает, если 0 строк
+
       await _logOrderEvent(updated.id, 'Обновление', 'Изменён заказ');
     } catch (e, st) {
       _orders[index] = prev; // откат
@@ -328,9 +329,19 @@ class OrdersProvider with ChangeNotifier {
   // ===== helpers =====
 
   Future<String> _reserveOrderId() async {
+  try {
     final res = await _supabase.rpc('reserve_order_id');
-    return res as String;
+    if (res is String && res.isNotEmpty) return res;
+    throw Exception('empty id from rpc');
+  } catch (e) {
+    debugPrint('⚠️ reserve_order_id failed: $e');
+    // Фоллбэк: уникальный локальный ID по времени (минимальный риск коллизии)
+    final now = DateTime.now();
+    final tail = (now.microsecondsSinceEpoch % 1000000).toString().padLeft(6, '0');
+    return 'ORD-${now.year}-$tail';
   }
+}
+
 
   // Локальный генератор — оставлен только как утилита.
   String _generateOrderNumber() {

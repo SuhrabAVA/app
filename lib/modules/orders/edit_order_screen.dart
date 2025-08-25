@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
-
+import 'package:supabase_flutter/supabase_flutter.dart'; // нужно добавить
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -192,64 +192,248 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
-  Future<void> _saveOrder() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_orderDate == null || _dueDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Укажите даты заказа и срока выполнения'),
-      ));
+   Future<void> _saveOrder() async {
+  if (!_formKey.currentState!.validate()) return;
+  if (_orderDate == null || _dueDate == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Укажите даты заказа и срока выполнения')),
+    );
+    return;
+  }
+  if (_lengthExceeded) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Недостаточно материала на складе')),
+    );
+    return;
+  }
+
+  final provider = Provider.of<OrdersProvider>(context, listen: false);
+  final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+
+  OrderModel? createdOrUpdatedOrder;
+
+  if (widget.order == null) {
+    // создаём новый заказ
+    createdOrUpdatedOrder = await provider.createOrder(
+      customer: _customerController.text.trim(),
+      orderDate: _orderDate!,
+      dueDate: _dueDate!,
+      product: _product,
+      additionalParams: _selectedParams,
+      handle: _selectedHandle,
+      cardboard: _selectedCardboard,
+      material: _selectedMaterial,
+      makeready: _makeready,
+      val: _val,
+      pdfUrl: _pickedPdf?.path,
+      stageTemplateId: _stageTemplateId,
+      contractSigned: _contractSigned,
+      paymentDone: _paymentDone,
+      comments: _commentsController.text.trim(),
+    );
+  } else {
+    // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
+    final updated = OrderModel(
+      id: widget.order!.id,
+      customer: _customerController.text.trim(),
+      orderDate: _orderDate!,
+      dueDate: _dueDate!,
+      product: _product,
+      additionalParams: _selectedParams,
+      handle: _selectedHandle,
+      cardboard: _selectedCardboard,
+      material: _selectedMaterial,
+      makeready: _makeready,
+      val: _val,
+      pdfUrl: _pickedPdf?.path ?? widget.order!.pdfUrl,
+      stageTemplateId: _stageTemplateId,
+      contractSigned: _contractSigned,
+      paymentDone: _paymentDone,
+      comments: _commentsController.text.trim(),
+      status: widget.order!.status,
+      assignmentId: widget.order!.assignmentId,
+      assignmentCreated: widget.order!.assignmentCreated,
+    );
+    await provider.updateOrder(updated);
+    createdOrUpdatedOrder = updated;
+  }
+
+  // если заказ не сохранился — не продолжаем
+  if (createdOrUpdatedOrder == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Не удалось сохранить заказ')),
+    );
+    return;
+  }
+
+  // если выбран шаблон и задания ещё не создавались — создаём их
+  if (_stageTemplateId != null &&
+      _stageTemplateId!.isNotEmpty &&
+      !createdOrUpdatedOrder.assignmentCreated) {
+    final supabase = Supabase.instance.client;
+
+    // убеждаемся, что заказ уже есть в БД (для FK)
+    final exists = await supabase
+        .from('orders')
+        .select('id')
+        .eq('id', createdOrUpdatedOrder.id)
+        .maybeSingle();
+    if (exists == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Заказ ещё не появился в БД')),
+      );
       return;
     }
-    if (_lengthExceeded) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Недостаточно материала на складе'),
-      ));
-      return;
-    }
-    final provider = Provider.of<OrdersProvider>(context, listen: false);
-    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
-    if (widget.order == null) {
-      // Создание нового заказа
-      await provider.createOrder(
-        customer: _customerController.text.trim(),
-        orderDate: _orderDate!,
-        dueDate: _dueDate!,
-        product: _product,
-        additionalParams: _selectedParams,
-        handle: _selectedHandle,
-        cardboard: _selectedCardboard,
-        material: _selectedMaterial,
-        makeready: _makeready,
-        val: _val,
-        pdfUrl: _pickedPdf?.path,
-        stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
-        comments: _commentsController.text.trim(),
+
+    // тянем этапы из шаблона
+    final tpl = await supabase
+        .from('plan_templates')
+        .select('stages')
+        .eq('id', _stageTemplateId!) // <= важно: non-null
+        .maybeSingle();
+
+    if (tpl != null) {
+      final stagesData = tpl['stages'];
+      final List<Map<String, dynamic>> stageMaps = [];
+      if (stagesData is List) {
+        for (final item in stagesData.whereType<Map>()) {
+          stageMaps.add(Map<String, dynamic>.from(item));
+        }
+      } else if (stagesData is Map) {
+        (stagesData as Map).forEach((_, value) {
+          if (value is Map) {
+            stageMaps.add(Map<String, dynamic>.from(value));
+          }
+        });
+      }
+
+      // удалим прежние задачи этого заказа, чтобы не было дублей
+      await supabase.from('tasks').delete().eq('orderid', createdOrUpdatedOrder.id);
+
+      // создаём задачи под каждый этап
+      for (final sm in stageMaps) {
+        final stageId = (sm['stageId'] as String?) ?? (sm['stageid'] as String?);
+        if (stageId == null || stageId.isEmpty) continue;
+        final taskId = const Uuid().v4();
+        await supabase.from('tasks').insert({
+          'id': taskId,
+          'orderid': createdOrUpdatedOrder.id,                 // имена колонок БД
+          'stageid': stageId,                                  // имена колонок БД
+          'status': 'waiting',
+          'createdat': DateTime.now().millisecondsSinceEpoch,  // имена колонок БД
+        });
+      }
+
+      // переводим заказ в работу и проставляем assignment
+      final withAssignment = OrderModel(
+        id: createdOrUpdatedOrder.id,
+        customer: createdOrUpdatedOrder.customer,
+        orderDate: createdOrUpdatedOrder.orderDate,
+        dueDate: createdOrUpdatedOrder.dueDate,
+        product: createdOrUpdatedOrder.product,
+        additionalParams: createdOrUpdatedOrder.additionalParams,
+        handle: createdOrUpdatedOrder.handle,
+        cardboard: createdOrUpdatedOrder.cardboard,
+        material: createdOrUpdatedOrder.material,
+        makeready: createdOrUpdatedOrder.makeready,
+        val: createdOrUpdatedOrder.val,
+        pdfUrl: createdOrUpdatedOrder.pdfUrl,
+        stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
+        contractSigned: createdOrUpdatedOrder.contractSigned,
+        paymentDone: createdOrUpdatedOrder.paymentDone,
+        comments: createdOrUpdatedOrder.comments,
+        status: OrderStatus.inWork.name, // "inWork"
+        assignmentId: provider.generateAssignmentId(),
+        assignmentCreated: true,
       );
-    } else {
-      // Обновление
-      final updated = OrderModel(
-        id: widget.order!.id,
-        customer: _customerController.text.trim(),
-        orderDate: _orderDate!,
-        dueDate: _dueDate!,
-        product: _product,
-        additionalParams: _selectedParams,
-        handle: _selectedHandle,
-        cardboard: _selectedCardboard,
-        material: _selectedMaterial,
-        makeready: _makeready,
-        val: _val,
-        pdfUrl: _pickedPdf?.path ?? widget.order!.pdfUrl,
-        stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
-        comments: _commentsController.text.trim(),
-        status: widget.order!.status,
-      );
-      await provider.updateOrder(updated);
+      await provider.updateOrder(withAssignment);
+      createdOrUpdatedOrder = withAssignment;
     }
+  }
+
+  // если у заказа выбран шаблон и ещё нет созданных задач — создаём их
+  if (_stageTemplateId != null &&
+      _stageTemplateId!.isNotEmpty &&
+      createdOrUpdatedOrder != null &&
+      !createdOrUpdatedOrder.assignmentCreated) {
+    final supabase = Supabase.instance.client;
+    // получаем список этапов из шаблона
+    final data = await supabase
+        .from('plan_templates')
+        .select('stages')
+        .eq('id', _stageTemplateId!)
+        .maybeSingle();
+    if (data != null) {
+      final stagesData = data['stages'];
+      final List<Map<String, dynamic>> stageMaps = [];
+      if (stagesData is List) {
+        for (final item in stagesData.whereType<Map>()) {
+          stageMaps.add(Map<String, dynamic>.from(item));
+        }
+      } else if (stagesData is Map) {
+        (stagesData as Map).forEach((_, value) {
+          if (value is Map) {
+            stageMaps.add(Map<String, dynamic>.from(value));
+          }
+        });
+      }
+      // очищаем старые задания (на случай повторного выбора шаблона)
+      await supabase.from('tasks').delete().eq('orderId', createdOrUpdatedOrder.id);
+      // создаём новые задания
+      for (final stage in stageMaps) {
+        final stageId = stage['stageId'] as String?;
+        if (stageId == null || stageId.isEmpty) continue;
+        final taskId = const Uuid().v4();
+        await supabase.from('tasks').insert({
+          'id': taskId,
+          'orderid': createdOrUpdatedOrder.id,            // <= нижний регистр, без _
+          'stageid': stageId,                              // <= то же правило
+          'status': 'waiting',
+          'createdat': DateTime.now().millisecondsSinceEpoch,
+        });
+
+      }
+      // генерируем номер производственного задания и обновляем заказ
+      final newAssignmentId = provider.generateAssignmentId();
+      final orderWithAssignment = OrderModel(
+        id: createdOrUpdatedOrder.id,
+        customer: createdOrUpdatedOrder.customer,
+        orderDate: createdOrUpdatedOrder.orderDate,
+        dueDate: createdOrUpdatedOrder.dueDate,
+        product: createdOrUpdatedOrder.product,
+        additionalParams: createdOrUpdatedOrder.additionalParams,
+        handle: createdOrUpdatedOrder.handle,
+        cardboard: createdOrUpdatedOrder.cardboard,
+        material: createdOrUpdatedOrder.material,
+        makeready: createdOrUpdatedOrder.makeready,
+        val: createdOrUpdatedOrder.val,
+        pdfUrl: createdOrUpdatedOrder.pdfUrl,
+        stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
+        contractSigned: createdOrUpdatedOrder.contractSigned,
+        paymentDone: createdOrUpdatedOrder.paymentDone,
+        comments: createdOrUpdatedOrder.comments,
+        status: OrderStatus.inWork.name,
+        assignmentId: newAssignmentId,
+        assignmentCreated: true,
+      );
+      await provider.updateOrder(orderWithAssignment);
+    }
+  }
+
+    if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
+      final newQty = _selectedMaterialTmc!.quantity - (_product.length ?? 0);
+      await warehouse.updateTmcQuantity(
+          id: _selectedMaterialTmc!.id, newQuantity: newQty);
+    }
+    if (_stockExtraItem != null && _stockExtra != null && _stockExtra! > 0) {
+      final used =
+          (_product.quantity.toDouble() < _stockExtra!) ? _product.quantity.toDouble() : _stockExtra!;
+      final newQty = _stockExtraItem!.quantity - used;
+      await warehouse.updateTmcQuantity(
+          id: _stockExtraItem!.id, newQuantity: newQty);
+    }
+
+
     if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
       final newQty = _selectedMaterialTmc!.quantity - (_product.length ?? 0);
       await warehouse.updateTmcQuantity(
