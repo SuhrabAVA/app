@@ -271,7 +271,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: const Text('Отмена'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     final password = controller.text.trim();
                     if (password == user.password) {
                       // Запоминаем пользователя в AuthHelper

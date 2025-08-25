@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'modules/products/products_screen.dart';
 import 'modules/production_planning/production_planning_screen.dart';
