@@ -62,6 +62,16 @@ class OrderModel {
         status            = status ?? 'newOrder',
         assignmentCreated = assignmentCreated ?? false;
 
+  /// Преобразует строковое поле [status] в [OrderStatus].
+  /// Если получено неизвестное значение, возвращается [OrderStatus.newOrder].
+  OrderStatus get statusEnum => OrderStatus.values.firstWhere(
+        (s) => s.name == status,
+        orElse: () => OrderStatus.newOrder,
+      );
+
+  /// Устанавливает статус, записывая строковое значение в [status].
+  set statusEnum(OrderStatus newStatus) => status = newStatus.name;
+
   /// В БД пишем SNAKE_CASE — соответствует SQL-схеме.
   Map<String, dynamic> toMap() => {
         'id': id,
