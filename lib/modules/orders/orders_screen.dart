@@ -193,12 +193,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       ),
                     );
                   } else {
+                    final Map<String, List<OrderModel>> ordersByCustomer = {};
+                    for (final o in orders) {
+                      ordersByCustomer.putIfAbsent(o.customer, () => []).add(o);
+                    }
                     return SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children:
-                            orders.map((o) => _buildOrderCard(o, tasks)).toList(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: ordersByCustomer.entries.map((entry) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  entry.key,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: entry.value
+                                      .map((o) => _buildOrderCard(o, tasks))
+                                      .toList(),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
                       ),
                     );
                   }
@@ -672,26 +698,49 @@ void _showSortOptions() {
               const SizedBox(height: 2),
               Text('Тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
-              // Статусы договора и оплаты
-              Row(
-                children: [
-                  Row(
-                    children: [
-                      Icon(order.contractSigned ? Icons.check_circle_outline : Icons.error_outline, size: 16, color: order.contractSigned ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(order.contractSigned ? 'Договор подписан' : 'Договор не подписан', style: TextStyle(fontSize: 11, color: order.contractSigned ? Colors.green : Colors.red)),
-                    ],
+              // Дополнительная информация о заказе
+              if (order.additionalParams.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    'Доп. параметры: ${order.additionalParams.join(', ')}',
+                    style: const TextStyle(fontSize: 11),
                   ),
-                  const SizedBox(width: 8),
-                  Row(
-                    children: [
-                      Icon(order.paymentDone ? Icons.check_circle_outline : Icons.error_outline, size: 16, color: order.paymentDone ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(order.paymentDone ? 'Оплачено' : 'Не оплачено', style: TextStyle(fontSize: 11, color: order.paymentDone ? Colors.green : Colors.red)),
-                    ],
-                  ),
-                ],
+                ),
+              if (order.handle.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Ручка: ${order.handle}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              if (order.cardboard.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Картон: ${order.cardboard}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              if (order.material != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Материал: ${order.material!.name}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('Макулатура: ${order.makeready}',
+                    style: const TextStyle(fontSize: 11)),
               ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child:
+                    Text('Стоимость: ${order.val}', style: const TextStyle(fontSize: 11)),
+              ),
+              if (order.comments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Комментарии: ${order.comments}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
               const SizedBox(height: 8),
               // Кнопки действий
               Wrap(

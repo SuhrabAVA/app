@@ -44,8 +44,6 @@ class ViewOrderScreen extends StatelessWidget {
           const SizedBox(height: 16),
 
           _sectionTitle('Дополнительно'),
-          _infoTile('Договор подписан', order.contractSigned ? 'Да' : 'Нет', Icons.assignment_turned_in_outlined),
-          _infoTile('Оплата получена', order.paymentDone ? 'Да' : 'Нет', Icons.payment_outlined),
           if (order.pdfUrl != null)
             _infoTile('PDF', order.pdfUrl!, Icons.picture_as_pdf_outlined),
           if (order.comments.isNotEmpty)
