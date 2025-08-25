@@ -6,6 +6,8 @@ import 'order_model.dart';
 import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
+import '../tasks/task_provider.dart';
+import '../tasks/task_model.dart';
 enum SortOption {
   orderDateAsc,
   orderDateDesc,
@@ -95,9 +97,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             _buildStatusTabs(),
             const SizedBox(height: 12),
             Expanded(
-              child: Consumer<OrdersProvider>(
-                builder: (context, provider, child) {
-                  final orders = _filteredOrders(provider.orders);
+              child: Consumer2<OrdersProvider, TaskProvider>(
+                builder: (context, ordersProvider, taskProvider, child) {
+                  final orders = _filteredOrders(ordersProvider.orders);
+                  final allTasks = taskProvider.tasks;
                   if (orders.isEmpty) {
                     return const Center(child: Text('Заказы не найдены'));
                   }
@@ -123,25 +126,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final o = orders[index];
                             final product = o.product;
                             final totalQty = product.quantity;
-                            String statusLabel;
-                            switch (o.statusEnum) {
-                              case OrderStatus.inWork:
-                                statusLabel = 'В работе';
-                                break;
-                              case OrderStatus.completed:
-                                statusLabel = 'Завершен';
-                                break;
-                              case OrderStatus.newOrder:
-                              default:
-                                statusLabel = 'Новый';
-                                break;
-                            }
-                    final missing = _isIncomplete(o);
-                    return DataRow(
-                      color: MaterialStateProperty.resolveWith<Color?>((states) {
-                        // Если заказ неполон, подсвечиваем строку серым
-                        return missing ? Colors.grey.shade200 : null;
-                      }),
+                            final statusInfo = _computeStatus(o, allTasks);
+                            final statusLabel = statusInfo.label;
+                            final missing = _isIncomplete(o);
+                            return DataRow(
+                              color: MaterialStateProperty.resolveWith<Color?>((states) {
+                                // Если заказ неполон, подсвечиваем строку серым
+                                return missing ? Colors.grey.shade200 : null;
+                              }),
                       cells: [
                         DataCell(Text('${index + 1}')),
                         DataCell(Text(o.customer)),
@@ -186,7 +178,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       child: Wrap(
                         spacing: 12,
                         runSpacing: 12,
-                        children: orders.map(_buildOrderCard).toList(),
+                        children: orders.map((o) => _buildOrderCard(o, allTasks)).toList(),
                       ),
                     );
                   }
@@ -579,26 +571,42 @@ void _showSortOptions() {
       builder: (_) => OrderTimelineDialog(order: order, events: events),
     );
   }
-  /// Строит карточку заказа для отображения в списке.
-  Widget _buildOrderCard(OrderModel order) {
-    // Определяем цвет и текст для статуса
-    Color statusColor;
-    String statusLabel;
+
+  /// Возвращает цвет и текст статуса для заказа с учётом связанных задач.
+  _OrderStatusInfo _computeStatus(OrderModel order, List<TaskModel> allTasks) {
+    final tasks = allTasks.where((t) => t.orderId == order.id).toList();
+    if (tasks.isNotEmpty) {
+      if (tasks.every((t) => t.status == TaskStatus.completed)) {
+        return const _OrderStatusInfo(Colors.green, 'Завершено');
+      }
+      if (tasks.any((t) => t.status == TaskStatus.inProgress)) {
+        return const _OrderStatusInfo(Colors.orange, 'В работе');
+      }
+      return const _OrderStatusInfo(Colors.blue, 'Новый');
+    }
     switch (order.statusEnum) {
       case OrderStatus.inWork:
-        statusColor = Colors.orange;
-        statusLabel = 'В работе';
-        break;
+        return const _OrderStatusInfo(Colors.orange, 'В работе');
       case OrderStatus.completed:
-        statusColor = Colors.green;
-        statusLabel = 'Завершен';
-        break;
+        return const _OrderStatusInfo(Colors.green, 'Завершено');
       case OrderStatus.newOrder:
       default:
-        statusColor = Colors.blue;
-        statusLabel = 'Новый';
-        break;
+        return const _OrderStatusInfo(Colors.blue, 'Новый');
     }
+  }
+
+  /// Контейнер для информации о статусе заказа.
+  class _OrderStatusInfo {
+    final Color color;
+    final String label;
+    const _OrderStatusInfo(this.color, this.label);
+  }
+  /// Строит карточку заказа для отображения в списке.
+  Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks) {
+    // Определяем цвет и текст для статуса с учётом задач
+    final statusInfo = _computeStatus(order, allTasks);
+    final Color statusColor = statusInfo.color;
+    final String statusLabel = statusInfo.label;
     final product = order.product;
     final totalQty = product.quantity;
     final missing = _isIncomplete(order);
