@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; // нужно добавить
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/storage_service.dart'; 
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -16,8 +18,11 @@ import '../warehouse/tmc_model.dart';
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
 class EditOrderScreen extends StatefulWidget {
   final OrderModel? order;
+  /// Если [initialOrder] передан, экран заполняется данными, но создаётся
+  /// новый заказ, а не редактируется существующий.
+  final OrderModel? initialOrder;
 
-  const EditOrderScreen({super.key, this.order});
+  const EditOrderScreen({super.key, this.order, this.initialOrder});
 
   @override
   State<EditOrderScreen> createState() => _EditOrderScreenState();
@@ -55,22 +60,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   @override
   void initState() {
     super.initState();
-    final order = widget.order;
-    _customerController = TextEditingController(text: order?.customer ?? '');
-    _commentsController = TextEditingController(text: order?.comments ?? '');
-    _orderDate = order?.orderDate;
-    _dueDate = order?.dueDate;
-    _contractSigned = order?.contractSigned ?? false;
-    _paymentDone = order?.paymentDone ?? false;
-    _selectedParams = order?.additionalParams ?? [];
-    _selectedHandle = order?.handle ?? '-';
-    _selectedCardboard = order?.cardboard ?? 'нет';
-    _makeready = order?.makeready ?? 0;
-    _val = order?.val ?? 0;
-    _stageTemplateId = order?.stageTemplateId;
-    _selectedMaterial = order?.material;
-    if (order != null) {
-      final p = order.product;
+     // order передан при редактировании, initialOrder — при создании на основе шаблона
+    final template = widget.order ?? widget.initialOrder;
+    _customerController = TextEditingController(text: template?.customer ?? '');
+    _commentsController = TextEditingController(text: template?.comments ?? '');
+    _orderDate = template?.orderDate;
+    _dueDate = template?.dueDate;
+    _contractSigned = template?.contractSigned ?? false;
+    _paymentDone = template?.paymentDone ?? false;
+    _selectedParams = template?.additionalParams ?? [];
+    _selectedHandle = template?.handle ?? '-';
+    _selectedCardboard = template?.cardboard ?? 'нет';
+    _makeready = template?.makeready ?? 0;
+    _val = template?.val ?? 0;
+    _stageTemplateId = template?.stageTemplateId;
+    _selectedMaterial = template?.material;
+    if (template != null) {
+      final p = template.product;
       _product = ProductModel(
         id: p.id,
         type: p.type,
@@ -150,6 +156,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
+      withData: true,
     );
     if (result != null && result.files.isNotEmpty) {
       setState(() {
@@ -157,7 +164,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       });
     }
   }
-
+  Future<void> _openPdf() async {
+    if (_pickedPdf != null && _pickedPdf!.path != null) {
+      await OpenFilex.open(_pickedPdf!.path!);
+    } else if (widget.order?.pdfUrl != null) {
+      final url = await getSignedUrl(widget.order!.pdfUrl!);
+      await launchUrl(Uri.parse(url));
+    }
+  }
   Future<void> _pickOrderDate(BuildContext context) async {
     final initial = _orderDate ?? DateTime.now();
     final picked = await showDatePicker(
@@ -225,7 +239,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       material: _selectedMaterial,
       makeready: _makeready,
       val: _val,
-      pdfUrl: _pickedPdf?.path,
+      
       stageTemplateId: _stageTemplateId,
       contractSigned: _contractSigned,
       paymentDone: _paymentDone,
@@ -245,7 +259,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       material: _selectedMaterial,
       makeready: _makeready,
       val: _val,
-      pdfUrl: _pickedPdf?.path ?? widget.order!.pdfUrl,
+      pdfUrl: widget.order!.pdfUrl,
       stageTemplateId: _stageTemplateId,
       contractSigned: _contractSigned,
       paymentDone: _paymentDone,
@@ -265,7 +279,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     return;
   }
-
+// Загружаем PDF при необходимости
+  if (_pickedPdf != null) {
+    final uploadedPath = await uploadPickedOrderPdf(
+      orderId: createdOrUpdatedOrder.id,
+      file: _pickedPdf!,
+    );
+    createdOrUpdatedOrder.pdfUrl = uploadedPath;
+    await provider.updateOrder(createdOrUpdatedOrder);
+  }
   // если выбран шаблон и задания ещё не создавались — создаём их
   if (_stageTemplateId != null &&
       _stageTemplateId!.isNotEmpty &&
@@ -306,6 +328,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         });
       }
+
+// сохраняем план этапов для отображения в модуле производства
+      await supabase.from('production_plans').upsert({
+        'order_id': createdOrUpdatedOrder.id,
+        'stages': stageMaps,
+      }, onConflict: 'order_id');
 
       // удалим прежние задачи этого заказа, чтобы не было дублей
       await supabase.from('tasks').delete().eq('orderid', createdOrUpdatedOrder.id);
@@ -377,8 +405,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         });
       }
+      // сохраняем план этапов
+      await supabase.from('production_plans').upsert({
+        'order_id': createdOrUpdatedOrder.id,
+        'stages': stageMaps,
+      }, onConflict: 'order_id');
       // очищаем старые задания (на случай повторного выбора шаблона)
-      await supabase.from('tasks').delete().eq('orderId', createdOrUpdatedOrder.id);
+      await supabase.from('tasks').delete().eq('orderid', createdOrUpdatedOrder.id);
       // создаём новые задания
       for (final stage in stageMaps) {
         final stageId = stage['stageId'] as String?;
@@ -1088,13 +1121,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   onPressed: _pickPdf,
                   icon: const Icon(Icons.attach_file),
                   label: Text(
-                      _pickedPdf == null ? 'Прикрепить PDF' : _pickedPdf!.name),
+                      _pickedPdf?.name ??
+                        (widget.order?.pdfUrl != null
+                            ? widget.order!.pdfUrl!.split('/').last
+                            : 'Прикрепить PDF'),
+                  ),
                 ),
-                if (_pickedPdf != null) ...[
+                if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
                   const SizedBox(width: 8),
                   IconButton(
                     icon: const Icon(Icons.open_in_new),
-                    onPressed: () => OpenFilex.open(_pickedPdf!.path!),
+                    onPressed: _openPdf,
                   ),
                 ]
               ],

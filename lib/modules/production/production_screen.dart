@@ -261,144 +261,151 @@ class _ProductionScreenState extends State<ProductionScreen>
     if (filtered.isEmpty) {
       return const Center(child: Text('Задания отсутствуют'));
     }
-    return ListView.builder(
+    final Map<String, List<OrderModel>> byCustomer = {};
+    for (final o in filtered) {
+      byCustomer.putIfAbsent(o.customer, () => []).add(o);
+    }
+    return ListView(
       padding: const EdgeInsets.all(8),
-      itemCount: filtered.length,
-      itemBuilder: (context, index) {
-        final order = filtered[index];
-        // Если для заказа создано производственное задание, отображаем его id (ЗК-...).
-        final displayId = order.assignmentId ?? order.id;
-        final orderTasks = tasksByOrder[order.id] ?? const [];
-        final aggStatus = _computeAggregatedStatus(orderTasks);
-        final color = _statusColors[aggStatus] ?? Colors.grey;
-        final label = _statusLabels[aggStatus] ?? '';
-        final product = order.product;
-        final productDesc = product.type;
-        final qty = '${product.quantity} шт.';
-        final due = dateFormat.format(order.dueDate);
-        // Вычисляем последний комментарий для заказа. Используется для
-        // отображения причины паузы или проблемы, если такая есть.
-        String? lastComment;
-        String? lastCommentType;
-        int lastTimestamp = 0;
-        for (final task in orderTasks) {
-          for (final c in task.comments) {
-            if (c.timestamp > lastTimestamp) {
-              lastTimestamp = c.timestamp;
-              lastComment = c.text;
-              lastCommentType = c.type;
+      children: byCustomer.entries.expand((entry) {
+        return [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Text(
+              entry.key,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+          ...entry.value.map((order) {
+            final displayId = order.assignmentId ?? order.id;
+            final orderTasks = tasksByOrder[order.id] ?? const [];
+            final aggStatus = _computeAggregatedStatus(orderTasks);
+            final color = _statusColors[aggStatus] ?? Colors.grey;
+            final label = _statusLabels[aggStatus] ?? '';
+            final product = order.product;
+            final productDesc = product.type;
+            final qty = '${product.quantity} шт.';
+            final due = dateFormat.format(order.dueDate);
+            String? lastComment;
+            String? lastCommentType;
+            int lastTimestamp = 0;
+            for (final task in orderTasks) {
+              for (final c in task.comments) {
+                if (c.timestamp > lastTimestamp) {
+                  lastTimestamp = c.timestamp;
+                  lastComment = c.text;
+                  lastCommentType = c.type;
+                }
+              }
             }
-          }
-        }
+          
+        
         return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        displayId,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: color.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        label,
-                        style: TextStyle(color: color, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                if (productDesc.isNotEmpty)
-                  Text(
-                    productDesc,
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                const SizedBox(height: 2),
-                // заказчик
-                Text(
-                  order.customer,
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    if (qty.isNotEmpty) ...[
-                      const Icon(Icons.layers, size: 16, color: Colors.grey),
-                      const SizedBox(width: 4),
-                      Text(qty),
-                      const SizedBox(width: 16),
-                    ],
-                    const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text('до $due'),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // Если есть комментарий (причина проблемы или паузы), выводим его
-                if (lastComment != null &&
-                    (aggStatus == _AggregatedStatus.problem ||
-                        aggStatus == _AggregatedStatus.paused))
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    Row(
                       children: [
-                        Icon(
-                          lastCommentType == 'problem'
-                              ? Icons.error_outline
-                              : Icons.pause_circle_outline,
-                          size: 16,
-                          color: lastCommentType == 'problem'
-                              ? Colors.redAccent
-                              : Colors.orange,
-                        ),
-                        const SizedBox(width: 4),
+                        
                         Expanded(
                           child: Text(
-                            lastComment!,
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.black87),
+                            displayId,
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            label,
+                            style: TextStyle(color: color, fontSize: 12),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () {
-                      // Открыть страницу подробностей заказа
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ProductionDetailsScreen(order: order),
+                  const SizedBox(height: 4),
+                    if (productDesc.isNotEmpty)
+                      Text(
+                        productDesc,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        if (qty.isNotEmpty) ...[
+                          const Icon(Icons.layers, size: 16, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          Text(qty),
+                          const SizedBox(width: 16),
+                        ],
+                        const Icon(Icons.calendar_today,
+                            size: 16, color: Colors.grey),
+                        const SizedBox(width: 4),
+                        Text('до $due'),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (lastComment != null &&
+                        (aggStatus == _AggregatedStatus.problem ||
+                            aggStatus == _AggregatedStatus.paused))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              lastCommentType == 'problem'
+                                  ? Icons.error_outline
+                                  : Icons.pause_circle_outline,
+                              size: 16,
+                              color: lastCommentType == 'problem'
+                                  ? Colors.redAccent
+                                  : Colors.orange,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                lastComment!,
+                                style: const TextStyle(
+                                    fontSize: 12, color: Colors.black87),
+                              ),
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                    child: const Text('Подробнее'),
-                  ),
+                       ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  ProductionDetailsScreen(order: order),
+                            ),
+                          );
+                        },
+                        child: const Text('Подробнее'),
+                       ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        );
-      },
+                ),
+            );
+          }),
+        ];
+      }).toList(),
     );
   }
 }

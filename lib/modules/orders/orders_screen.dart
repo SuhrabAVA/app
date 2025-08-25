@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
+import '../tasks/task_provider.dart';
+import '../tasks/task_model.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'edit_order_screen.dart';
@@ -95,9 +96,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             _buildStatusTabs(),
             const SizedBox(height: 12),
             Expanded(
-              child: Consumer<OrdersProvider>(
-                builder: (context, provider, child) {
-                  final orders = _filteredOrders(provider.orders);
+              child: Consumer2<OrdersProvider, TaskProvider>(
+                builder: (context, ordersProvider, taskProvider, child) {
+                  final orders = _filteredOrders(ordersProvider.orders);
+                  final allTasks = taskProvider.tasks;
                   if (orders.isEmpty) {
                     return const Center(child: Text('Заказы не найдены'));
                   }
@@ -123,25 +125,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final o = orders[index];
                             final product = o.product;
                             final totalQty = product.quantity;
-                            String statusLabel;
-                            switch (o.status) {
-                              case OrderStatus.inWork:
-                                statusLabel = 'В работе';
-                                break;
-                              case OrderStatus.completed:
-                                statusLabel = 'Завершен';
-                                break;
-                              case OrderStatus.newOrder:
-                              default:
-                                statusLabel = 'Новый';
-                                break;
-                            }
-                    final missing = _isIncomplete(o);
-                    return DataRow(
-                      color: MaterialStateProperty.resolveWith<Color?>((states) {
-                        // Если заказ неполон, подсвечиваем строку серым
-                        return missing ? Colors.grey.shade200 : null;
-                      }),
+                            final statusInfo = _computeStatus(o, allTasks);
+                            final statusLabel = statusInfo.label;
+                            final missing = _isIncomplete(o);
+                            return DataRow(
+                              color: MaterialStateProperty.resolveWith<Color?>((states) {
+                                // Если заказ неполон, подсвечиваем строку серым
+                                return missing ? Colors.grey.shade200 : null;
+                              }),
                       cells: [
                         DataCell(Text('${index + 1}')),
                         DataCell(Text(o.customer)),
@@ -182,11 +173,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       ),
                     );
                   } else {
+                    final Map<String, List<OrderModel>> ordersByCustomer = {};
+                    for (final o in orders) {
+                      ordersByCustomer.putIfAbsent(o.customer, () => []).add(o);
+                    }
                     return SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: orders.map(_buildOrderCard).toList(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: ordersByCustomer.entries.map((entry) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  entry.key,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: entry.value
+                                      .map((o) => _buildOrderCard(o, tasks))
+                                      .toList(),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
                       ),
                     );
                   }
@@ -296,13 +314,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // Filter by status
     switch (_selectedFilter) {
       case 'new':
-        filtered = filtered.where((o) => o.status == OrderStatus.newOrder).toList();
+        filtered =
+            filtered.where((o) => o.statusEnum == OrderStatus.newOrder).toList();
         break;
       case 'inWork':
-        filtered = filtered.where((o) => o.status == OrderStatus.inWork).toList();
+        filtered =
+            filtered.where((o) => o.statusEnum == OrderStatus.inWork).toList();
         break;
       case 'completed':
-        filtered = filtered.where((o) => o.status == OrderStatus.completed).toList();
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.completed)
+            .toList();
         break;
       case 'all':
       default:
@@ -575,26 +597,37 @@ void _showSortOptions() {
       builder: (_) => OrderTimelineDialog(order: order, events: events),
     );
   }
-  /// Строит карточку заказа для отображения в списке.
-  Widget _buildOrderCard(OrderModel order) {
-    // Определяем цвет и текст для статуса
-    Color statusColor;
-    String statusLabel;
-    switch (order.status) {
+  /// Возвращает цвет и текст статуса для заказа с учётом связанных задач.
+  _OrderStatusInfo _computeStatus(OrderModel order, List<TaskModel> allTasks) {
+    final tasks = allTasks.where((t) => t.orderId == order.id).toList();
+    if (tasks.isNotEmpty) {
+      if (tasks.every((t) => t.status == TaskStatus.completed)) {
+        return const _OrderStatusInfo(Colors.green, 'Завершено');
+      }
+      if (tasks.any((t) => t.status == TaskStatus.inProgress)) {
+        return const _OrderStatusInfo(Colors.orange, 'В работе');
+      }
+      return const _OrderStatusInfo(Colors.blue, 'Новый');
+    }
+    switch (order.statusEnum) {
       case OrderStatus.inWork:
-        statusColor = Colors.orange;
-        statusLabel = 'В работе';
-        break;
+        return const _OrderStatusInfo(Colors.orange, 'В работе');
       case OrderStatus.completed:
-        statusColor = Colors.green;
-        statusLabel = 'Завершен';
-        break;
+        return const _OrderStatusInfo(Colors.green, 'Завершено');
       case OrderStatus.newOrder:
       default:
-        statusColor = Colors.blue;
-        statusLabel = 'Новый';
-        break;
+        return const _OrderStatusInfo(Colors.blue, 'Новый');
     }
+    }
+
+  /// Контейнер для информации о статусе заказа.
+
+  /// Строит карточку заказа для отображения в списке.
+  Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks) {
+    // Определяем цвет и текст для статуса с учётом задач
+    final statusInfo = _computeStatus(order, allTasks);
+    final Color statusColor = statusInfo.color;
+    final String statusLabel = statusInfo.label;
     final product = order.product;
     final totalQty = product.quantity;
     final missing = _isIncomplete(order);
@@ -654,26 +687,50 @@ void _showSortOptions() {
               const SizedBox(height: 2),
               Text('Тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
-              // Статусы договора и оплаты
-              Row(
-                children: [
-                  Row(
-                    children: [
-                      Icon(order.contractSigned ? Icons.check_circle_outline : Icons.error_outline, size: 16, color: order.contractSigned ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(order.contractSigned ? 'Договор подписан' : 'Договор не подписан', style: TextStyle(fontSize: 11, color: order.contractSigned ? Colors.green : Colors.red)),
-                    ],
+              
+              // Дополнительная информация о заказе
+              if (order.additionalParams.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    'Доп. параметры: ${order.additionalParams.join(', ')}',
+                    style: const TextStyle(fontSize: 11),
                   ),
-                  const SizedBox(width: 8),
-                  Row(
-                    children: [
-                      Icon(order.paymentDone ? Icons.check_circle_outline : Icons.error_outline, size: 16, color: order.paymentDone ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(order.paymentDone ? 'Оплачено' : 'Не оплачено', style: TextStyle(fontSize: 11, color: order.paymentDone ? Colors.green : Colors.red)),
-                    ],
-                  ),
-                ],
+                   ),
+              if (order.handle.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Ручка: ${order.handle}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              if (order.cardboard.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Картон: ${order.cardboard}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              if (order.material != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Материал: ${order.material!.name}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('Макулатура: ${order.makeready}',
+                    style: const TextStyle(fontSize: 11)),
               ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child:
+                    Text('Стоимость: ${order.val}', style: const TextStyle(fontSize: 11)),
+              ),
+              if (order.comments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Комментарии: ${order.comments}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
               const SizedBox(height: 8),
               // Кнопки действий
               Wrap(
@@ -713,3 +770,8 @@ void _showSortOptions() {
     return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
   }
 }
+  class _OrderStatusInfo {
+    final Color color;
+    final String label;
+    const _OrderStatusInfo(this.color, this.label);
+  }

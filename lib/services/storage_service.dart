@@ -81,6 +81,57 @@ Future<String> uploadOrderPdf({
 
   return objectPath;
 }
+/// Загрузка уже выбранного PDF-файла в Supabase Storage.
+/// Принимает [PlatformFile], полученный, например, через FilePicker.
+/// Возвращает [objectPath] загруженного файла.
+Future<String> uploadPickedOrderPdf({
+  required String orderId,
+  required PlatformFile file,
+  String? customFileName,
+}) async {
+  final fileName = customFileName?.trim().isNotEmpty == true
+      ? customFileName!.trim()
+      : (file.name.isNotEmpty ? file.name : 'document.pdf');
+
+  final safeName = fileName.replaceAll(RegExp(r'[^\w\.\-]+'), '_');
+  final objectPath =
+      'orders/$orderId/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+
+  if (file.bytes != null) {
+    await supabase.storage.from(kOrderBucket).uploadBinary(
+          objectPath,
+          file.bytes!,
+          fileOptions: const FileOptions(
+            upsert: true,
+            contentType: 'application/pdf',
+          ),
+        );
+  } else if (file.path != null) {
+    await supabase.storage.from(kOrderBucket).upload(
+          objectPath,
+          File(file.path!),
+          fileOptions: const FileOptions(
+            upsert: true,
+            contentType: 'application/pdf',
+          ),
+        );
+  } else {
+    throw Exception('Не удалось прочитать файл');
+  }
+
+  try {
+    await linkOrderPdf(
+      orderId: orderId,
+      objectPath: objectPath,
+      fileName: safeName,
+      sizeBytes: file.size,
+    );
+  } catch (_) {
+    // файл загружен, метаданные не критичны
+  }
+
+  return objectPath;
+}
 
 /// Запись метаданных в таблицу order_files (создана SQL-скриптом)
 Future<void> linkOrderPdf({
