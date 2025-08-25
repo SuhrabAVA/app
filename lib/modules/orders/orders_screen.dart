@@ -124,7 +124,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final product = o.product;
                             final totalQty = product.quantity;
                             String statusLabel;
-                            switch (o.status) {
+                            switch (o.statusEnum) {
                               case OrderStatus.inWork:
                                 statusLabel = 'В работе';
                                 break;
@@ -296,13 +296,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // Filter by status
     switch (_selectedFilter) {
       case 'new':
-        filtered = filtered.where((o) => o.status == OrderStatus.newOrder).toList();
+        filtered =
+            filtered.where((o) => o.statusEnum == OrderStatus.newOrder).toList();
         break;
       case 'inWork':
-        filtered = filtered.where((o) => o.status == OrderStatus.inWork).toList();
+        filtered =
+            filtered.where((o) => o.statusEnum == OrderStatus.inWork).toList();
         break;
       case 'completed':
-        filtered = filtered.where((o) => o.status == OrderStatus.completed).toList();
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.completed)
+            .toList();
         break;
       case 'all':
       default:
@@ -580,7 +584,7 @@ void _showSortOptions() {
     // Определяем цвет и текст для статуса
     Color statusColor;
     String statusLabel;
-    switch (order.status) {
+    switch (order.statusEnum) {
       case OrderStatus.inWork:
         statusColor = Colors.orange;
         statusLabel = 'В работе';
