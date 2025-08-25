@@ -919,4 +919,10 @@ begin
   if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='analytics' and column_name='timestamp') then
     alter table public.analytics add column "timestamp" bigint;
   end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='analytics' and column_name='category') then
+    alter table public.analytics add column "category" text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='analytics' and column_name='details') then
+    alter table public.analytics add column "details" text;
+  end if;
 end $$;

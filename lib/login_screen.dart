@@ -9,6 +9,7 @@ import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'utils/auth_helper.dart';
 import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
+import 'modules/analytics/analytics_provider.dart';
 
 
 bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
@@ -279,6 +280,44 @@ class _LoginScreenState extends State<LoginScreen> {
                       } else {
                         AuthHelper.setEmployee(id: user.id, name: user.name);
                       }
+                      // логируем вход
+                      final analytics = context.read<AnalyticsProvider>();
+                      String category;
+                      if (user.isTechLeader) {
+                        category = 'manager';
+                      } else {
+                        final pr = context.read<PersonnelProvider>();
+                        final emp = pr.employees.firstWhere(
+                          (e) => e.id == user.id,
+                          orElse: () => EmployeeModel(
+                            id: user.id,
+                            lastName: '',
+                            firstName: '',
+                            patronymic: '',
+                            iin: '',
+                            photoUrl: null,
+                            positionIds: const [],
+                            isFired: false,
+                            comments: '',
+                            login: '',
+                            password: '',
+                          ),
+                        );
+                        if (isManagerUser(emp, pr)) {
+                          category = 'manager';
+                        } else if (isWarehouseHeadUser(emp, pr)) {
+                          category = 'warehouse';
+                        } else {
+                          category = 'production';
+                        }
+                      }
+                      await analytics.logEvent(
+                        orderId: '',
+                        stageId: '',
+                        userId: user.id,
+                        action: 'login',
+                        category: category,
+                      );
                       Navigator.pop(ctx);
                       // Навигация
                       if (user.isTechLeader) {

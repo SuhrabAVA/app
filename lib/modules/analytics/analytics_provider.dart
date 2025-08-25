@@ -39,14 +39,17 @@ class AnalyticsProvider with ChangeNotifier {
     required String stageId,
     required String userId,
     required String action,
+    String category = '',
+    String details = '',
   }) async {
-    
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     await _supabase.from('analytics').insert({
       'orderId': orderId,
       'stageId': stageId,
       'userId': userId,
       'action': action,
+      'category': category,
+      'details': details,
       'timestamp': timestamp,
     });
   }

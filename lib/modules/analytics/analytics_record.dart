@@ -10,6 +10,8 @@ class AnalyticsRecord {
   final String stageId;
   final String userId;
   final String action;
+  final String category;
+  final String details;
   final int timestamp;
 
   AnalyticsRecord({
@@ -18,6 +20,8 @@ class AnalyticsRecord {
     required this.stageId,
     required this.userId,
     required this.action,
+    required this.category,
+    required this.details,
     required this.timestamp,
   });
 
@@ -28,6 +32,8 @@ class AnalyticsRecord {
       stageId: map['stageId'] as String? ?? '',
       userId: map['userId'] as String? ?? '',
       action: map['action'] as String? ?? '',
+      category: map['category'] as String? ?? '',
+      details: map['details'] as String? ?? '',
       timestamp: map['timestamp'] is int ? map['timestamp'] as int : 0,
     );
   }
@@ -37,6 +43,8 @@ class AnalyticsRecord {
         'stageId': stageId,
         'userId': userId,
         'action': action,
+        'category': category,
+        'details': details,
         'timestamp': timestamp,
       };
 }
