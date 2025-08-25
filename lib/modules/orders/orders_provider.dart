@@ -1,10 +1,12 @@
 import 'dart:async';
-import 'dart:convert'; // jsonDecode
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'material_model.dart';
 import 'order_model.dart';
 import 'product_model.dart';
+import '../../utils/auth_helper.dart';
 
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -67,12 +69,12 @@ class OrdersProvider with ChangeNotifier {
       _orders.removeWhere((o) => o.id == order.id); // откат
       notifyListeners();
       debugPrint('❌ addOrder error: $e\n$st');
-      rethrow;
+      // НЕ бросаем дальше, чтобы не валить приложение
     }
   }
 
-  /// Создаёт заказ с авто-ID и сохраняет его.
-  Future<OrderModel> createOrder({
+  /// Создаёт заказ с ID, резервируемым на сервере (RPC reserve_order_id), и сохраняет его.
+  Future<OrderModel?> createOrder({
     required String customer,
     required DateTime orderDate,
     required DateTime dueDate,
@@ -89,8 +91,12 @@ class OrdersProvider with ChangeNotifier {
     bool paymentDone = false,
     String comments = '',
   }) async {
-    final newOrder = OrderModel(
-      id: _generateOrderNumber(),
+    // 1) Берём уникальный id на сервере
+    final reservedId = await _reserveOrderId();
+
+    // Собираем заказ
+    OrderModel newOrder = OrderModel(
+      id: reservedId,
       customer: customer,
       orderDate: orderDate,
       dueDate: dueDate,
@@ -106,7 +112,7 @@ class OrdersProvider with ChangeNotifier {
       contractSigned: contractSigned,
       paymentDone: paymentDone,
       comments: comments,
-      status: OrderStatus.newOrder, // используем то, что у тебя точно есть
+      status: 'newOrder',
       assignmentId: null,
       assignmentCreated: false,
     );
@@ -114,28 +120,74 @@ class OrdersProvider with ChangeNotifier {
     _orders.add(newOrder); // оптимистично
     notifyListeners();
 
-    try {
+    Future<Map<String, dynamic>> _tryInsert(OrderModel o) async {
       final inserted = await _supabase
           .from('orders')
-          .insert(newOrder.toMap())
+          .insert(o.toMap())
           .select()
-          .single() as Map<String, dynamic>;
+          .single();
+      return Map<String, dynamic>.from(inserted);
+    }
 
-      // синхронизируемся с тем, что вернула БД
-      final created = OrderModel.fromMap(Map<String, dynamic>.from(inserted));
+    try {
+      Map<String, dynamic> inserted;
+      try {
+        inserted = await _tryInsert(newOrder);
+      } on PostgrestException catch (e) {
+        // если вдруг конфликт — резервируем другой id и повторяем
+        if (e.code == '23505') {
+          final nextId = await _reserveOrderId();
+          final updatedOrder = OrderModel(
+            id: nextId,
+            customer: newOrder.customer,
+            orderDate: newOrder.orderDate,
+            dueDate: newOrder.dueDate,
+            product: newOrder.product,
+            additionalParams: newOrder.additionalParams,
+            handle: newOrder.handle,
+            cardboard: newOrder.cardboard,
+            material: newOrder.material,
+            makeready: newOrder.makeready,
+            val: newOrder.val,
+            pdfUrl: newOrder.pdfUrl,
+            stageTemplateId: newOrder.stageTemplateId,
+            contractSigned: newOrder.contractSigned,
+            paymentDone: newOrder.paymentDone,
+            comments: newOrder.comments,
+            status: newOrder.status,
+            assignmentId: newOrder.assignmentId,
+            assignmentCreated: newOrder.assignmentCreated,
+          );
+
+          final idx = _orders.indexWhere((x) => x.id == newOrder.id);
+          if (idx != -1) {
+            _orders[idx] = updatedOrder;
+            notifyListeners();
+          }
+          newOrder = updatedOrder;
+          inserted = await _tryInsert(updatedOrder);
+        } else {
+          rethrow;
+        }
+      }
+
+      // синхронизация с тем, что вернула БД
+      final created = OrderModel.fromMap(inserted);
       final idx = _orders.indexWhere((o) => o.id == newOrder.id);
       if (idx != -1) {
         _orders[idx] = created;
         notifyListeners();
       }
-      // Логируем создание заказа
+
+      // Логируем создание заказа (без падений)
       await _logOrderEvent(created.id, 'Создание', 'Создан заказ');
       return created;
     } catch (e, st) {
-      _orders.removeWhere((o) => o.id == newOrder.id); // откат
+      _orders.removeWhere((o) => o.id == newOrder.id);
       notifyListeners();
       debugPrint('❌ createOrder error: $e\n$st');
-      rethrow;
+      // НЕ rethrow — чтобы не убивать поток/экран
+      return null;
     }
   }
 
@@ -155,13 +207,11 @@ class OrdersProvider with ChangeNotifier {
           .eq('id', updated.id)
           .select()
           .single();
-      // Логируем обновление заказа
       await _logOrderEvent(updated.id, 'Обновление', 'Изменён заказ');
     } catch (e, st) {
       _orders[index] = prev; // откат
       notifyListeners();
       debugPrint('❌ updateOrder error: $e\n$st');
-      rethrow;
     }
   }
 
@@ -179,35 +229,50 @@ class OrdersProvider with ChangeNotifier {
       _orders.insert(index, removed); // откат
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
-      rethrow;
     }
   }
 
   // ===== История заказов =====
 
-  /// Записывает событие в историю заказов.
-  /// [eventType] — тип события (например, "Создание", "Обновление", "Изменение статуса").
-  /// [description] — описание события для отображения в UI.
   Future<void> _logOrderEvent(
     String orderId,
     String eventType,
     String description, {
     String? user,
   }) async {
+    final rawUser = user ?? AuthHelper.currentUserId;
+
+    bool _looksLikeUuid(String s) {
+      final re = RegExp(
+        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+      );
+      return re.hasMatch(s);
+    }
+
+    final payload = <String, dynamic>{
+      'order_id': orderId,
+      'event_type': eventType,
+      'description': description,
+    };
+
+    if (rawUser != null && rawUser.isNotEmpty) {
+      if (_looksLikeUuid(rawUser)) {
+        payload['user'] = rawUser; // только UUID
+      } else {
+        payload['actor_role'] = rawUser; // роли/строки сюда
+      }
+    }
+
+    debugPrint('ℹ️ order_history payload: $payload');
+
     try {
-      await _supabase.from('order_history').insert({
-        'order_id': orderId,
-        'event_type': eventType,
-        'description': description,
-        'user': user,
-      });
+      await _supabase.from('order_history').insert(payload);
     } catch (e, st) {
       debugPrint('❌ logOrderEvent error: $e\n$st');
     }
   }
 
   /// Возвращает список событий истории по идентификатору заказа.
-  /// События сортируются по возрастанию даты (от старых к новым).
   Future<List<Map<String, dynamic>>> fetchOrderHistory(String orderId) async {
     try {
       final rows = await _supabase
@@ -222,26 +287,22 @@ class OrdersProvider with ChangeNotifier {
     }
   }
 
-  // ===== Склад: вызывай сам в нужных местах UI/сценариев =====
+  // ===== Склад =====
 
-  /// Списание материалов по продуктам заказа (например, при «в производстве» или «завершён»).
   Future<void> applyStockOnFulfillment(OrderModel order) async {
     await _applyStockDelta(order, isShipment: true);
   }
 
-  /// Возврат материалов по продуктам заказа (например, при «отменён»).
   Future<void> revertStockOnCancel(OrderModel order) async {
     await _applyStockDelta(order, isShipment: false);
   }
 
-  /// Общая реализация списания/возврата.
   Future<void> _applyStockDelta(
     OrderModel order, {
     required bool isShipment,
   }) async {
     final pm = order.product.toMap();
 
-    // поддержим разные названия полей
     final tmcId = (pm['tmcId'] ??
             pm['tmc_id'] ??
             pm['materialId'] ??
@@ -260,15 +321,18 @@ class OrdersProvider with ChangeNotifier {
         'p_delta': delta,
       });
     } catch (e) {
-      // не блокируем процесс — просто логируем
       debugPrint('⚠️ stock delta failed for $tmcId: $e');
-      }
-    
+    }
   }
 
-  // ===== генераторы =====
+  // ===== helpers =====
 
-  /// ORD-YYYY-NNN (NNN — счётчик в пределах года).
+  Future<String> _reserveOrderId() async {
+    final res = await _supabase.rpc('reserve_order_id');
+    return res as String;
+  }
+
+  // Локальный генератор — оставлен только как утилита.
   String _generateOrderNumber() {
     final year = DateTime.now().year;
     final countThisYear =
@@ -277,7 +341,6 @@ class OrdersProvider with ChangeNotifier {
     return 'ORD-$year-$serial';
   }
 
-  /// ZK-YYYY-NNN — для производственных заданий.
   String generateAssignmentId() {
     final year = DateTime.now().year;
     final countThisYear = _orders

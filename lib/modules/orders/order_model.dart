@@ -1,114 +1,137 @@
 import 'product_model.dart';
 import 'material_model.dart';
-/// Статус заказа определяет его стадия обработки.
+
+/// Статус заказа.
 enum OrderStatus { newOrder, inWork, completed }
 
- /// Модель заказа. В текущей реализации заказ содержит один продукт.
+/// Модель заказа.
 class OrderModel {
   final String id;
   String customer;
   DateTime orderDate;
   DateTime dueDate;
-  /// Единственный продукт, связанный с заказом.
   ProductModel product;
-  /// Дополнительные параметры изделия, выбранные пользователем.
   List<String> additionalParams;
-  /// Выбранная ручка. По умолчанию прочерк "-".
   String handle;
-  /// Выбранный картон. По умолчанию "нет".
   String cardboard;
-  /// Материал (бумага) из склада.
   MaterialModel? material;
-  /// Приладка.
   double makeready;
-  /// ВАЛ.
   double val;
-  /// Ссылка на прикреплённый PDF-файл.
   String? pdfUrl;
-  /// Идентификатор выбранного шаблона этапов.
   String? stageTemplateId;
   bool contractSigned;
   bool paymentDone;
   String comments;
-  OrderStatus status;
-  /// Идентификатор производственного задания (формат ЗК-YYYY-NNN). Генерируется при планировании.
+  /// Храним строкой (name), чтобы не падать на незнакомых значениях
+  String status;
   String? assignmentId;
-  /// Признак того, что производственное задание создано для этого заказа.
   bool assignmentCreated;
 
+  /// Конструктор с безопасными дефолтами — не требует
+  /// additionalParams и assignmentCreated при создании.
   OrderModel({
     required this.id,
     required this.customer,
     required this.orderDate,
     required this.dueDate,
     required this.product,
-    this.additionalParams = const [],
-    this.handle = '-',
-    this.cardboard = 'нет',
+
+    List<String>? additionalParams,
+    String? handle,
+    String? cardboard,
     this.material,
-    this.makeready = 0,
-    this.val = 0,
+    double? makeready,
+    double? val,
     this.pdfUrl,
     this.stageTemplateId,
-    this.contractSigned = false,
-    this.paymentDone = false,
-    this.comments = '',
-    this.status = OrderStatus.newOrder,
-    this.assignmentId,
-    this.assignmentCreated = false,
-  });
+    bool? contractSigned,
+    bool? paymentDone,
+    String? comments,
+    String? status,
 
-  /// Преобразует модель заказа в [Map] для сохранения в базе данных.
+    this.assignmentId,
+    bool? assignmentCreated,
+  })  : additionalParams  = additionalParams ?? const <String>[],
+        handle            = handle ?? '-',
+        cardboard         = cardboard ?? 'нет',
+        makeready         = (makeready ?? 0).toDouble(),
+        val               = (val ?? 0).toDouble(),
+        contractSigned    = contractSigned ?? false,
+        paymentDone       = paymentDone ?? false,
+        comments          = comments ?? '',
+        status            = status ?? 'newOrder',
+        assignmentCreated = assignmentCreated ?? false;
+
+  /// В БД пишем SNAKE_CASE — соответствует SQL-схеме.
   Map<String, dynamic> toMap() => {
         'id': id,
         'customer': customer,
-        'orderDate': orderDate.toIso8601String(),
-        'dueDate': dueDate.toIso8601String(),
+        'order_date': orderDate.toIso8601String(),
+        'due_date': dueDate.toIso8601String(),
         'product': product.toMap(),
-        'additionalParams': additionalParams,
+        'additional_params': additionalParams,
         'handle': handle,
         'cardboard': cardboard,
         if (material != null) 'material': material!.toMap(),
         'makeready': makeready,
         'val': val,
-        if (pdfUrl != null) 'pdfUrl': pdfUrl,
-        if (stageTemplateId != null) 'stageTemplateId': stageTemplateId,
-        'contractSigned': contractSigned,
-        'paymentDone': paymentDone,
+        if (pdfUrl != null) 'pdf_url': pdfUrl,
+        if (stageTemplateId != null) 'stage_template_id': stageTemplateId,
+        'contract_signed': contractSigned,
+        'payment_done': paymentDone,
         'comments': comments,
-        'status': status.name,
-        if (assignmentId != null) 'assignmentId': assignmentId,
-        'assignmentCreated': assignmentCreated,
+        'status': status, // строка
+        if (assignmentId != null) 'assignment_id': assignmentId,
+        'assignment_created': assignmentCreated,
       };
 
-  /// Создаёт [OrderModel] из [Map], полученного из базы данных.
-  factory OrderModel.fromMap(Map<String, dynamic> map) => OrderModel(
-        id: map['id'] as String,
-        customer: map['customer'] as String? ?? '',
-        orderDate: DateTime.parse(map['orderDate'] as String),
-        dueDate: DateTime.parse(map['dueDate'] as String),
-        product: ProductModel.fromMap(
-          Map<String, dynamic>.from(
-            map['product'] as Map? ?? const {},
-          ),
-        ),
-        additionalParams: List<String>.from(map['additionalParams'] as List? ?? const []),
-        handle: map['handle'] as String? ?? '-',
-        cardboard: map['cardboard'] as String? ?? 'нет',
-        material: map['material'] != null
-            ? MaterialModel.fromMap(
-                Map<String, dynamic>.from(map['material'] as Map))
-            : null,
-        makeready: (map['makeready'] as num?)?.toDouble() ?? 0,
-        val: (map['val'] as num?)?.toDouble() ?? 0,
-        pdfUrl: map['pdfUrl'] as String?,
-        stageTemplateId: map['stageTemplateId'] as String?,
-        contractSigned: map['contractSigned'] as bool? ?? false,
-        paymentDone: map['paymentDone'] as bool? ?? false,
-        comments: map['comments'] as String? ?? '',
-        status: OrderStatus.values
-            .byName(map['status'] as String? ?? 'newOrder'),
-        assignmentId: map['assignmentId'] as String?,
-        assignmentCreated: map['assignmentCreated'] as bool? ?? false,
-      );
+  /// Парсим и camelCase, и snake_case (для обратной совместимости).
+  factory OrderModel.fromMap(Map<String, dynamic> map) {
+    dynamic _pick(List<String> keys) {
+      for (final k in keys) {
+        if (map.containsKey(k) && map[k] != null) return map[k];
+      }
+      return null;
+    }
+
+    DateTime _parseDate(dynamic v) {
+      if (v is String) return DateTime.parse(v);
+      if (v is DateTime) return v;
+      // если дата отсутствует — не падаем
+      return DateTime.now();
+    }
+
+    final productMap = (_pick(['product']) as Map?) ?? const {};
+    final materialMap = (_pick(['material']) as Map?);
+
+    return OrderModel(
+      id: (_pick(['id']) as String?) ?? '',
+      customer: (_pick(['customer']) as String?) ?? '',
+      orderDate: _parseDate(_pick(['orderDate', 'order_date'])),
+      dueDate: _parseDate(_pick(['dueDate', 'due_date'])),
+      product: ProductModel.fromMap(Map<String, dynamic>.from(productMap)),
+      additionalParams: List<String>.from(
+        (_pick(['additionalParams', 'additional_params']) as List?) ?? const [],
+      ),
+      handle: (_pick(['handle']) as String?) ?? '-',
+      cardboard: (_pick(['cardboard']) as String?) ?? 'нет',
+      material: materialMap != null
+          ? MaterialModel.fromMap(Map<String, dynamic>.from(materialMap))
+          : null,
+      makeready: ((_pick(['makeready']) as num?)?.toDouble()) ?? 0,
+      val: ((_pick(['val']) as num?)?.toDouble()) ?? 0,
+      pdfUrl: (_pick(['pdfUrl', 'pdf_url']) as String?),
+      stageTemplateId:
+          (_pick(['stageTemplateId', 'stage_template_id']) as String?),
+      contractSigned:
+          (_pick(['contractSigned', 'contract_signed']) as bool?) ?? false,
+      paymentDone:
+          (_pick(['paymentDone', 'payment_done']) as bool?) ?? false,
+      comments: (_pick(['comments']) as String?) ?? '',
+      status: (_pick(['status']) as String?) ?? 'newOrder',
+      assignmentId: (_pick(['assignmentId', 'assignment_id']) as String?),
+      assignmentCreated:
+          (_pick(['assignmentCreated', 'assignment_created']) as bool?) ?? false,
+    );
+  }
 }

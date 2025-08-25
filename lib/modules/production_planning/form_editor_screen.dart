@@ -200,7 +200,7 @@ Future<void> _pickOrderImage() async {
       contractSigned: widget.order.contractSigned,
       paymentDone: widget.order.paymentDone,
       comments: widget.order.comments,
-      status: OrderStatus.inWork,
+      status: OrderStatus.inWork.name, // => "inWork"
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
     );
