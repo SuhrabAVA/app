@@ -302,7 +302,7 @@ class _ProductionScreenState extends State<ProductionScreen>
                   children: [
                     Expanded(
                       child: Text(
-                        displayId,
+                        order.customer,
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
@@ -324,17 +324,16 @@ class _ProductionScreenState extends State<ProductionScreen>
                   ],
                 ),
                 const SizedBox(height: 4),
+                Text(
+                  displayId,
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
                 if (productDesc.isNotEmpty)
                   Text(
                     productDesc,
                     style: const TextStyle(fontSize: 14),
                   ),
-                const SizedBox(height: 2),
-                // заказчик
-                Text(
-                  order.customer,
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                ),
                 const SizedBox(height: 8),
                 Row(
                   children: [

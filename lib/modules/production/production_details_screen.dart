@@ -212,7 +212,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Производственное задание №${widget.order.assignmentId ?? widget.order.id}'),
+        title: Text(widget.order.customer),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
@@ -243,19 +243,19 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(widget.order.assignmentId ?? widget.order.id,
+                          Text(widget.order.customer,
                               style: const TextStyle(
                                   fontSize: 20, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 4),
                           Text(
-                            widget.order.product.type,
-                            style: const TextStyle(fontSize: 16),
+                            widget.order.assignmentId ?? widget.order.id,
+                            style: TextStyle(
+                                color: Colors.grey.shade600, fontSize: 14),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            widget.order.customer,
-                            style: TextStyle(
-                                color: Colors.grey.shade600, fontSize: 14),
+                            widget.order.product.type,
+                            style: const TextStyle(fontSize: 16),
                           ),
                           const SizedBox(height: 8),
                           Row(
