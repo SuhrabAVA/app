@@ -7,6 +7,10 @@ class ProductModel {
   double height;
   double depth;
   String parameters; // параметры продукта (строка)
+  double? roll;
+  double? widthB;
+  double? length;
+  double? leftover;
 
   ProductModel({
     required this.id,
@@ -16,6 +20,10 @@ class ProductModel {
     required this.height,
     required this.depth,
     this.parameters = '',
+    this.roll,
+    this.widthB,
+    this.length,
+    this.leftover,
   });
 
   /// Преобразует модель продукта в Map.
@@ -27,6 +35,10 @@ class ProductModel {
         'height': height,
         'depth': depth,
         'parameters': parameters,
+        if (roll != null) 'roll': roll,
+        if (widthB != null) 'widthB': widthB,
+        if (length != null) 'length': length,
+        if (leftover != null) 'leftover': leftover,
       };
 
   /// Создаёт [ProductModel] из Map.
@@ -38,5 +50,9 @@ class ProductModel {
         height: (map['height'] as num?)?.toDouble() ?? 0,
         depth: (map['depth'] as num?)?.toDouble() ?? 0,
         parameters: map['parameters'] as String? ?? '',
+        roll: (map['roll'] as num?)?.toDouble(),
+        widthB: (map['widthB'] as num?)?.toDouble(),
+        length: (map['length'] as num?)?.toDouble(),
+        leftover: (map['leftover'] as num?)?.toDouble(),
       );
 }

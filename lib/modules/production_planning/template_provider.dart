@@ -10,23 +10,27 @@ class TemplateProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TemplateModel> _templates = [];
-
-  TemplateProvider() {
-    _listen();
-  }
-
   List<TemplateModel> get templates => List.unmodifiable(_templates);
 
-  void _listen() {
-    _supabase.from('plan_templates').stream(primaryKey: ['id']).listen((rows) {
-      _templates
-        ..clear()
-        ..addAll(rows.map((row) {
-          final map = Map<String, dynamic>.from(row as Map);
-          return TemplateModel.fromMap(map);
-        }));
-      notifyListeners();
-    });
+  TemplateProvider() {
+    fetchTemplates();
+  }
+
+  Future<void> fetchTemplates() async {
+    // Без дженериков: возвращается dynamic -> приводим к List<Map<String, dynamic>>
+    final dynamic res = await _supabase
+        .from('plan_templates')
+        .select('*')
+        .order('created_at', ascending: false);
+
+    final rows = (res as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+
+    _templates
+      ..clear()
+      ..addAll(rows.map((row) => TemplateModel.fromMap(row)));
+    notifyListeners();
   }
 
   Future<void> createTemplate({
@@ -34,24 +38,30 @@ class TemplateProvider with ChangeNotifier {
     required List<PlannedStage> stages,
   }) async {
     final id = _uuid.v4();
-    final template = TemplateModel(id: id, name: name, stages: stages);
-    _templates.add(template);
+
+    _templates.insert(0, TemplateModel(id: id, name: name, stages: stages));
     notifyListeners();
+
     await _supabase.from('plan_templates').insert({
       'id': id,
       'name': name,
       'stages': stages.map((s) => s.toMap()).toList(),
     });
+
+    await fetchTemplates();
   }
+
   Future<void> updateTemplate({
     required String id,
     required String name,
     required List<PlannedStage> stages,
   }) async {
-    final index = _templates.indexWhere((t) => t.id == id);
-    if (index == -1) return;
-    _templates[index] = TemplateModel(id: id, name: name, stages: stages);
-    notifyListeners();
+    final i = _templates.indexWhere((t) => t.id == id);
+    if (i != -1) {
+      _templates[i] = TemplateModel(id: id, name: name, stages: stages);
+      notifyListeners();
+    }
+
     await _supabase
         .from('plan_templates')
         .update({
@@ -59,6 +69,8 @@ class TemplateProvider with ChangeNotifier {
           'stages': stages.map((s) => s.toMap()).toList(),
         })
         .eq('id', id);
+
+    await fetchTemplates();
   }
 
   Future<void> deleteTemplate(String id) async {

@@ -19,6 +19,59 @@ class WarehouseProvider with ChangeNotifier {
     _listenTmc();
   }
 
+  /// Создаёт запись в истории изменений ТМЦ. Используется для
+  /// отслеживания всех операций со склада: добавление, изменение,
+  /// списание и удаление. В таблице `tmc_history` хранится id
+  /// операции, ссылка на исходную запись `tmc_id`, тип события,
+  /// величина изменения (положительная при приходе, отрицательная
+  /// при списании), комментарий (если есть), пользователь и метка
+  /// времени.
+  Future<void> _logTmcEvent({
+    required String tmcId,
+    required String eventType,
+    required double quantityChange,
+    String? note,
+  }) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final data = <String, dynamic>{
+        'id': const Uuid().v4(),
+        'tmc_id': tmcId,
+        'event_type': eventType,
+        'quantity_change': quantityChange,
+        if (note != null) 'note': note,
+        'timestamp': DateTime.now().toIso8601String(),
+        if (userId != null) 'user_id': userId,
+      };
+      await _supabase.from('tmc_history').insert(data);
+    } catch (e) {
+      // Логирование ошибок не должно останавливать основной поток
+      debugPrint('⚠️ tmc_history insert error: $e');
+    }
+  }
+
+  /// Возвращает список событий для всех ТМЦ указанного типа. Используется для отображения
+  /// истории в интерфейсе склада. Если записей нет — возвращает пустой список.
+  Future<List<Map<String, dynamic>>> fetchHistoryByType(String type) async {
+    final ids = _allTmc.where((e) => e.type == type).map((e) => e.id).toList();
+    if (ids.isEmpty) return [];
+    final rows = await _supabase
+        .from('tmc_history')
+        .select()
+        .inFilter('tmc_id', ids);
+    return (rows as List?)?.map((e) => Map<String, dynamic>.from(e)).toList() ?? [];
+  }
+
+  /// Возвращает историю операций для конкретной записи склада [tmcId].
+  Future<List<Map<String, dynamic>>> fetchHistoryForItem(String tmcId) async {
+    final rows = await _supabase
+        .from('tmc_history')
+        .select()
+        .eq('tmc_id', tmcId)
+        .order('timestamp');
+    return (rows as List?)?.map((e) => Map<String, dynamic>.from(e)).toList() ?? [];
+  }
+
   // ------ live-стрим из Supabase ------
   void _listenTmc() {
     _tmcSub?.cancel();
@@ -48,6 +101,9 @@ class WarehouseProvider with ChangeNotifier {
         description: m['description'] as String,
         quantity: (m['quantity'] as num?)?.toDouble() ?? 0.0,
         unit: m['unit'] as String,
+        format: m['format'] as String?,
+        grammage: m['grammage'] as String?,
+        weight: (m['weight'] as num?)?.toDouble(),
         note: m['note'] as String?,
         imageUrl: m['imageUrl'] as String?,
         // поле в модели оставлено для обратной совместимости
@@ -81,6 +137,9 @@ class WarehouseProvider with ChangeNotifier {
     required double quantity,
     required String unit,
     String? note,
+    String? format,
+    String? grammage,
+    double? weight,
 
     Uint8List? imageBytes,
     String imageContentType = 'image/jpeg',
@@ -90,12 +149,18 @@ class WarehouseProvider with ChangeNotifier {
   }) async {
     final newId = id ?? const Uuid().v4();
 
+    // Сохраним base64‑строку изображения, чтобы иметь локальный превью без загрузки
+    String? finalBase64;
+    if (imageBytes != null && imageBytes.isNotEmpty) {
+      finalBase64 = base64Encode(imageBytes);
+    } else if (imageBase64 != null && imageBase64.isNotEmpty) {
+      finalBase64 = imageBase64;
+    }
+
     // 1) Определяем imageUrl: либо прямо пришёл, либо заливаем картинку
     String? finalImageUrl = imageUrl;
-
     if (finalImageUrl == null) {
       Uint8List? bytes;
-
       if (imageBytes != null && imageBytes.isNotEmpty) {
         bytes = imageBytes;
       } else if (imageBase64 != null && imageBase64.isNotEmpty) {
@@ -105,13 +170,14 @@ class WarehouseProvider with ChangeNotifier {
           debugPrint('⚠️ imageBase64 decode failed: $e');
         }
       }
-
       if (bytes != null && bytes.isNotEmpty) {
+        // Загружаем изображение в Storage, но не блокируем отображение превью
         finalImageUrl = await _uploadImage(newId, bytes, imageContentType);
       }
     }
 
-    // 2) Пишем запись в tmc (без base64)
+    // 2) Пишем запись в tmc. Теперь сохраняем и imageBase64, и imageUrl,
+    // чтобы таблица красок могла отобразить превью сразу без скачивания.
     final data = <String, dynamic>{
       'id': newId,
       'date': DateTime.now().toIso8601String(),
@@ -120,15 +186,31 @@ class WarehouseProvider with ChangeNotifier {
       'description': description,
       'quantity': quantity,
       'unit': unit,
+      if (format != null) 'format': format,
+      if (grammage != null) 'grammage': grammage,
+      if (weight != null) 'weight': weight,
       'note': note,
+      if (finalBase64 != null) 'imageBase64': finalBase64,
       if (finalImageUrl != null) 'imageUrl': finalImageUrl,
     };
 
     try {
-      final inserted =
-          await _supabase.from('tmc').insert(data).select().single() as Map<String, dynamic>;
+      final inserted = await _supabase
+          .from('tmc')
+          .insert(data)
+          .select()
+          .single() as Map<String, dynamic>;
       _allTmc.add(_rowToTmc(inserted));
       notifyListeners();
+
+      // Записываем событие добавления в историю склада. Количество всегда
+      // положительное, т.к. происходит приход.
+      await _logTmcEvent(
+        tmcId: inserted['id'] as String,
+        eventType: 'add',
+        quantityChange: quantity,
+        note: note,
+      );
     } catch (e) {
       debugPrint('❌ addTmc error: $e');
       rethrow;
@@ -149,6 +231,9 @@ class WarehouseProvider with ChangeNotifier {
     double? quantity,
     String? supplier,
     String? note,
+    String? format,
+    String? grammage,
+    double? weight,
 
     Uint8List? imageBytes,
     String imageContentType = 'image/jpeg',
@@ -161,10 +246,20 @@ class WarehouseProvider with ChangeNotifier {
     if (quantity != null) updates['quantity'] = quantity;
     if (supplier != null) updates['supplier'] = supplier;
     if (note != null) updates['note'] = note;
+    if (format != null) updates['format'] = format;
+    if (grammage != null) updates['grammage'] = grammage;
+    if (weight != null) updates['weight'] = weight;
+
+    // Подготовим base64‑строку для обновления (если передано фото)
+    String? finalBase64;
+    if (imageBytes != null && imageBytes.isNotEmpty) {
+      finalBase64 = base64Encode(imageBytes);
+    } else if (imageBase64 != null && imageBase64.isNotEmpty) {
+      finalBase64 = imageBase64;
+    }
 
     // Вычисляем новый imageUrl (если что-то из картинки передали)
     String? finalImageUrl = imageUrl;
-
     if (finalImageUrl == null) {
       Uint8List? bytes;
       if (imageBytes != null && imageBytes.isNotEmpty) {
@@ -181,6 +276,9 @@ class WarehouseProvider with ChangeNotifier {
       }
     }
 
+    if (finalBase64 != null) {
+      updates['imageBase64'] = finalBase64;
+    }
     if (finalImageUrl != null) {
       updates['imageUrl'] = finalImageUrl;
     }
@@ -191,7 +289,7 @@ class WarehouseProvider with ChangeNotifier {
     TmcModel? prev;
     if (idx != -1) {
       prev = _allTmc[idx];
-      final patched = TmcModel(
+        final patched = TmcModel(
         id: prev.id,
         date: prev.date,
         supplier: updates['supplier'] ?? prev.supplier,
@@ -199,9 +297,12 @@ class WarehouseProvider with ChangeNotifier {
         description: updates['description'] ?? prev.description,
         quantity: (updates['quantity'] as double?) ?? prev.quantity,
         unit: updates['unit'] ?? prev.unit,
+        format: updates['format'] ?? prev.format,
+        grammage: updates['grammage'] ?? prev.grammage,
+        weight: (updates['weight'] as double?) ?? prev.weight,
         note: updates['note'] ?? prev.note,
         imageUrl: updates['imageUrl'] ?? prev.imageUrl,
-        imageBase64: prev.imageBase64,
+        imageBase64: updates['imageBase64'] ?? prev.imageBase64,
       );
       _allTmc[idx] = patched;
       notifyListeners();
@@ -214,6 +315,22 @@ class WarehouseProvider with ChangeNotifier {
           .eq('id', id)
           .select()
           .single() as Map<String, dynamic>;
+
+      // Если количество изменилось, вычисляем разницу и логируем событие
+      if (prev != null && updates.containsKey('quantity')) {
+        final double oldQty = prev.quantity;
+        final double newQty = updates['quantity'] as double? ?? oldQty;
+        final diff = newQty - oldQty;
+        if (diff != 0) {
+          final eventType = diff > 0 ? 'increase' : 'decrease';
+          await _logTmcEvent(
+            tmcId: id,
+            eventType: eventType,
+            quantityChange: diff,
+            note: updates['note'] as String?,
+          );
+        }
+      }
 
       if (idx != -1) {
         _allTmc[idx] = _rowToTmc(updated);
@@ -248,6 +365,13 @@ class WarehouseProvider with ChangeNotifier {
 
     try {
       await _supabase.from('tmc').delete().eq('id', id);
+      // Логируем удаление: количество записываем как отрицательное целое значение
+      await _logTmcEvent(
+        tmcId: id,
+        eventType: 'delete',
+        quantityChange: -removed.quantity,
+        note: removed.note,
+      );
     } catch (e) {
       _allTmc.insert(idx, removed);
       notifyListeners();

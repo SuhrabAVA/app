@@ -6,9 +6,14 @@ import 'modules/orders/orders_screen.dart';
 import 'modules/personnel/personnel_screen.dart';
 import 'modules/production/production_screen.dart';
 import 'modules/warehouse/warehouse_screen.dart';
+import 'modules/orders/archive_orders_screen.dart';
 import 'modules/analytics/analytics_screen.dart';
 import 'services/auth_service.dart';
 import 'modules/chat/chat_tab.dart';
+
+// Для выхода и возврата на экран входа
+import 'utils/auth_helper.dart';
+import 'login_screen.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -31,7 +36,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     final user = AuthService.currentUser;
     if (user == null) {
       setState(() {
-        _meName = 'Гость';
+        _meName = 'Админ';
         _loadingName = false;
       });
       return;
@@ -99,6 +104,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       {'label': '🛍️\nПродукция', 'page': const ProductsScreen()},
       {'label': '👥\nПерсонал', 'page': const PersonnelScreen()},
       {'label': '🧾\nЗаказы', 'page': const OrdersScreen()},
+      {'label': '📂\nАрхив', 'page': const ArchiveOrdersScreen()},
       {'label': '🗓️\nПланир.', 'page': const ProductionPlanningScreen()},
       {'label': '🏭\nПроизв.', 'page': const ProductionScreen()},
       {
@@ -120,7 +126,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Выйти',
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              // Очищаем авторизацию и переходим на экран входа
+              AuthHelper.clear();
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (route) => false,
+              );
+            },
           ),
         ],
       ),

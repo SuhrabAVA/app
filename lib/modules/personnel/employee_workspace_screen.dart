@@ -6,6 +6,10 @@ import '../tasks/tasks_screen.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 
+// Для выхода и возврата на экран входа
+import '../../utils/auth_helper.dart';
+import '../../login_screen.dart';
+
 /// Рабочее пространство сотрудника.
 ///
 /// Экран поддерживает одновременную работу нескольких сотрудников в рамках
@@ -52,28 +56,86 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
       return;
     }
     String? selectedId;
+    String password = '';
+    bool wrongPass = false;
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Добавить сотрудника'),
-        content: DropdownButtonFormField<String>(
-          items: [
-            for (final e in available)
-              DropdownMenuItem(value: e.id, child: Text('${e.lastName} ${e.firstName}')),
-          ],
-          onChanged: (val) => selectedId = val,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Добавить'),
-          ),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Добавить сотрудника'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    decoration: const InputDecoration(labelText: 'Сотрудник'),
+                    items: [
+                      for (final e in available)
+                        DropdownMenuItem(value: e.id, child: Text('${e.lastName} ${e.firstName}')),
+                    ],
+                    onChanged: (val) {
+                      setStateDialog(() {
+                        selectedId = val;
+                        wrongPass = false;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Пароль',
+                      errorText: wrongPass ? 'Неверный пароль' : null,
+                    ),
+                    onChanged: (val) {
+                      password = val;
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Отмена'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    if (selectedId == null) {
+                      return;
+                    }
+                    final emp = personnel.employees.firstWhere(
+                      (e) => e.id == selectedId,
+                      orElse: () => EmployeeModel(
+                        id: '',
+                        lastName: '',
+                        firstName: '',
+                        patronymic: '',
+                        iin: '',
+                        photoUrl: null,
+                        positionIds: const [],
+                        isFired: false,
+                        comments: '',
+                        login: '',
+                        password: '',
+                      ),
+                    );
+                    if (emp.password == password) {
+                      Navigator.pop(ctx);
+                    } else {
+                      setStateDialog(() {
+                        wrongPass = true;
+                      });
+                    }
+                  },
+                  child: const Text('Добавить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
     if (selectedId != null && !_employeeIds.contains(selectedId)) {
       setState(() {
@@ -94,10 +156,40 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
       appBar: AppBar(
         title: const Text('Рабочее пространство'),
         actions: [
+          // Кнопка добавления сотрудника
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: 'Добавить сотрудника',
             onPressed: _addEmployeeTab,
+          ),
+          // Кнопка выхода из рабочего места сотрудника
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Выйти',
+            onPressed: () async {
+              final tabIndex = _employeeTabController.index;
+              if (_employeeIds.length > 1) {
+                // Если открыто несколько вкладок, закрываем текущую вкладку
+                setState(() {
+                  _employeeIds.removeAt(tabIndex);
+                  // Пересоздаём TabController для нового списка сотрудников
+                  _employeeTabController.dispose();
+                  _employeeTabController = TabController(length: _employeeIds.length, vsync: this);
+                  // Выставляем индекс на предыдущую вкладку, если она есть
+                  if (tabIndex > 0) {
+                    _employeeTabController.index = tabIndex - 1;
+                  }
+                });
+              } else {
+                // Если это последняя вкладка, выходим на экран входа
+                AuthHelper.clear();
+                if (!mounted) return;
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+              }
+            },
           ),
         ],
         bottom: TabBar(

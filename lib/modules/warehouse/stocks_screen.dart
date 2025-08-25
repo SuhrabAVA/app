@@ -176,7 +176,12 @@ class _StocksScreenState extends State<StocksScreen> {
                     child: filtered.isEmpty
                         ? const Center(child: Text('Нет данных'))
                         : SingleChildScrollView(
-                            child: DataTable(
+                            // Nest a horizontal scroll view so that the DataTable can scroll
+                            // sideways when it overflows the screen width. Without this, long
+                            // rows can be clipped and unreadable.
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: DataTable(
                               columnSpacing: 16,
                               columns: const [
                                 DataColumn(label: Text('ID')),

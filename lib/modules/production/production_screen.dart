@@ -6,6 +6,8 @@ import '../orders/order_model.dart';
 import '../orders/orders_provider.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
+import '../warehouse/warehouse_provider.dart';
+import '../warehouse/tmc_model.dart';
 // Экран редактирования плана и создания этапов. Используется для
 // создания нового производственного задания.
 import '../production_planning/production_planning_screen.dart';
@@ -167,6 +169,59 @@ class _ProductionScreenState extends State<ProductionScreen>
                       ),
                     ),
                   ],
+                ),
+              ),
+              // Индикатор низкого остатка материалов (бумага, краска)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Consumer<WarehouseProvider>(
+                  builder: (context, provider, _) {
+                    final List<TmcModel> low = provider.allTmc.where((t) {
+                      if (t.type == 'Бумага') {
+                        return t.quantity <= 10000;
+                      } else if (t.type == 'Краска') {
+                        return t.quantity <= 10;
+                      } else {
+                        return false;
+                      }
+                    }).toList();
+                    if (low.isEmpty) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.yellow.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.yellow.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Низкий остаток:', style: TextStyle(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 4,
+                            runSpacing: 4,
+                            children: low.map((t) {
+                              Color bg;
+                              if (t.type == 'Бумага') {
+                                bg = t.quantity <= 5000 ? Colors.red.shade200 : Colors.yellow.shade200;
+                              } else {
+                                bg = t.quantity <= 5 ? Colors.red.shade200 : Colors.yellow.shade200;
+                              }
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: bg,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text('${t.description}: ${t.quantity}${t.unit}', style: const TextStyle(fontSize: 12)),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 8),

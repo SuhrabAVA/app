@@ -55,7 +55,7 @@ class TaskProvider with ChangeNotifier {
     final allDone = tasksForOrder.isNotEmpty &&
         tasksForOrder.every((t) => t.status == TaskStatus.completed);
     if (allDone) {
-      // Обновляем статус заказа на "completed" в Firebase. OrdersProvider слушает это и обновит локальное состояние.
+      // Обновляем статус заказа на "completed" в Supabase. OrdersProvider слушает это и обновит локальное состояние.
       await _supabase
           .from('orders')
           .update({'status': OrderStatus.completed.name}).eq('id', orderId);
@@ -63,7 +63,7 @@ class TaskProvider with ChangeNotifier {
   }
 
   /// Обновляет список исполнителей для задачи. Перезаписывает существующий
-  /// список идентификаторов сотрудников и обновляет запись в Firebase.
+  /// список идентификаторов сотрудников и обновляет запись в Supabase.
   Future<void> updateAssignees(String id, List<String> assignees) async {
     final index = _tasks.indexWhere((t) => t.id == id);
     if (index == -1) return;

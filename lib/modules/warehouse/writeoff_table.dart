@@ -54,40 +54,45 @@ class _WriteOffTableState extends State<WriteOffTable> {
                   padding: const EdgeInsets.all(8.0),
                   child: SizedBox(
                     width: double.infinity,
-                    child: DataTable(
-                      columnSpacing: 24,
-                      columns: const [
-                        DataColumn(label: Text('№')),
-                        DataColumn(label: Text('Наименование')),
-                        DataColumn(label: Text('Количество')),
-                        DataColumn(label: Text('Ед.')),
-                        DataColumn(label: Text('Действия')),
-                      ],
-                      rows: List<DataRow>.generate(
-                        _items.length,
-                        (index) {
-                          final item = _items[index];
-                          return DataRow(cells: [
-                            DataCell(Text('${index + 1}')),
-                            DataCell(Text(item.description)),
-                            DataCell(Text(item.quantity.toString())),
-                            DataCell(Text(item.unit)),
-                            DataCell(Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit, size: 20),
-                                  tooltip: 'Редактировать',
-                                  onPressed: () => _editItem(item),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, size: 20),
-                                  tooltip: 'Удалить',
-                                  onPressed: () => _deleteItem(item),
-                                ),
-                              ],
-                            )),
-                          ]);
-                        },
+                    // Wrap the DataTable in a horizontal scroll view so that
+                    // wide tables are scrollable on smaller screens.
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columnSpacing: 24,
+                        columns: const [
+                          DataColumn(label: Text('№')),
+                          DataColumn(label: Text('Наименование')),
+                          DataColumn(label: Text('Количество')),
+                          DataColumn(label: Text('Ед.')),
+                          DataColumn(label: Text('Действия')),
+                        ],
+                        rows: List<DataRow>.generate(
+                          _items.length,
+                          (index) {
+                            final item = _items[index];
+                            return DataRow(cells: [
+                              DataCell(Text('${index + 1}')),
+                              DataCell(Text(item.description)),
+                              DataCell(Text(item.quantity.toString())),
+                              DataCell(Text(item.unit)),
+                              DataCell(Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, size: 20),
+                                    tooltip: 'Редактировать',
+                                    onPressed: () => _editItem(item),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, size: 20),
+                                    tooltip: 'Удалить',
+                                    onPressed: () => _deleteItem(item),
+                                  ),
+                                ],
+                              )),
+                            ]);
+                          },
+                        ),
                       ),
                     ),
                   ),

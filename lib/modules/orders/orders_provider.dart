@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert'; // jsonDecode
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'material_model.dart';
 import 'order_model.dart';
 import 'product_model.dart';
 
@@ -77,6 +77,14 @@ class OrdersProvider with ChangeNotifier {
     required DateTime orderDate,
     required DateTime dueDate,
     required ProductModel product,
+    List<String> additionalParams = const [],
+    String handle = '-',
+    String cardboard = 'нет',
+    MaterialModel? material,
+    double makeready = 0,
+    double val = 0,
+    String? pdfUrl,
+    String? stageTemplateId,
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
@@ -87,6 +95,14 @@ class OrdersProvider with ChangeNotifier {
       orderDate: orderDate,
       dueDate: dueDate,
       product: product,
+      additionalParams: additionalParams,
+      handle: handle,
+      cardboard: cardboard,
+      material: material,
+      makeready: makeready,
+      val: val,
+      pdfUrl: pdfUrl,
+      stageTemplateId: stageTemplateId,
       contractSigned: contractSigned,
       paymentDone: paymentDone,
       comments: comments,
@@ -112,6 +128,8 @@ class OrdersProvider with ChangeNotifier {
         _orders[idx] = created;
         notifyListeners();
       }
+      // Логируем создание заказа
+      await _logOrderEvent(created.id, 'Создание', 'Создан заказ');
       return created;
     } catch (e, st) {
       _orders.removeWhere((o) => o.id == newOrder.id); // откат
@@ -137,6 +155,8 @@ class OrdersProvider with ChangeNotifier {
           .eq('id', updated.id)
           .select()
           .single();
+      // Логируем обновление заказа
+      await _logOrderEvent(updated.id, 'Обновление', 'Изменён заказ');
     } catch (e, st) {
       _orders[index] = prev; // откат
       notifyListeners();
@@ -160,6 +180,45 @@ class OrdersProvider with ChangeNotifier {
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
       rethrow;
+    }
+  }
+
+  // ===== История заказов =====
+
+  /// Записывает событие в историю заказов.
+  /// [eventType] — тип события (например, "Создание", "Обновление", "Изменение статуса").
+  /// [description] — описание события для отображения в UI.
+  Future<void> _logOrderEvent(
+    String orderId,
+    String eventType,
+    String description, {
+    String? user,
+  }) async {
+    try {
+      await _supabase.from('order_history').insert({
+        'order_id': orderId,
+        'event_type': eventType,
+        'description': description,
+        'user': user,
+      });
+    } catch (e, st) {
+      debugPrint('❌ logOrderEvent error: $e\n$st');
+    }
+  }
+
+  /// Возвращает список событий истории по идентификатору заказа.
+  /// События сортируются по возрастанию даты (от старых к новым).
+  Future<List<Map<String, dynamic>>> fetchOrderHistory(String orderId) async {
+    try {
+      final rows = await _supabase
+          .from('order_history')
+          .select()
+          .eq('order_id', orderId)
+          .order('created_at', ascending: true);
+      return List<Map<String, dynamic>>.from(rows);
+    } catch (e, st) {
+      debugPrint('❌ fetchOrderHistory error: $e\n$st');
+      return [];
     }
   }
 

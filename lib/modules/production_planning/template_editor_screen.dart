@@ -7,7 +7,7 @@ import 'planned_stage_model.dart';
 import 'template_provider.dart';
 
 class TemplateEditorScreen extends StatefulWidget {
-  final TemplateModel? template;
+  final TemplateModel? template; // Важно: параметр называется template
   const TemplateEditorScreen({super.key, this.template});
 
   @override
@@ -24,134 +24,148 @@ class _TemplateEditorScreenState extends State<TemplateEditorScreen> {
     final tpl = widget.template;
     if (tpl != null) {
       _nameCtrl.text = tpl.name;
-      _stages.addAll(tpl.stages.map((s) =>
-          PlannedStage(stageId: s.stageId, stageName: s.stageName, comment: s.comment)));
+      _stages.addAll(tpl.stages.map(
+        (s) => PlannedStage(stageId: s.stageId, stageName: s.stageName, comment: s.comment),
+      ));
     }
   }
 
   Future<void> _addStage() async {
     final personnel = context.read<PersonnelProvider>();
     String? selectedId;
+
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Выберите этап'),
-        content: DropdownButtonFormField<String>(
-          items: [
-            for (final w in personnel.workplaces)
-              DropdownMenuItem(value: w.id, child: Text(w.name)),
-          ],
-          onChanged: (val) => selectedId = val,
+        content: SizedBox(
+          width: 480,
+          child: ListView(
+            shrinkWrap: true,
+            children: personnel.workplaces.map((WorkplaceModel w) {
+              return RadioListTile<String>(
+                value: w.id,
+                groupValue: selectedId,
+                title: Text(w.name),
+                onChanged: (v) => setState(() => selectedId = v),
+              );
+            }).toList(),
+          ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          FilledButton(
+            onPressed: () {
+              if (selectedId == null) return;
+              final w = personnel.workplaces.firstWhere((e) => e.id == selectedId);
+              setState(() {
+                _stages.add(PlannedStage(stageId: w.id, stageName: w.name));
+              });
+              Navigator.pop(ctx);
+            },
             child: const Text('Добавить'),
           ),
         ],
       ),
     );
-    if (selectedId != null) {
-      final w = personnel.workplaces.firstWhere((w) => w.id == selectedId);
-      setState(() {
-        _stages.add(PlannedStage(stageId: w.id, stageName: w.name));
-      });
+  }
+
+  Future<void> _save() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Введите название')));
+      return;
     }
+    if (_stages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Добавьте хотя бы один этап')));
+      return;
+    }
+
+    final provider = context.read<TemplateProvider>();
+
+    if (widget.template == null) {
+      await provider.createTemplate(name: name, stages: _stages);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Шаблон создан')));
+      }
+    } else {
+      await provider.updateTemplate(id: widget.template!.id, name: name, stages: _stages);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Шаблон обновлён')));
+      }
+    }
+    if (mounted) Navigator.pop(context, true);
   }
 
   @override
   Widget build(BuildContext context) {
-    final personnel = context.watch<PersonnelProvider>();
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.template == null ? 'Новый шаблон' : 'Редактировать шаблон'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
+      appBar: AppBar(title: Text(widget.template == null ? 'Новый шаблон' : 'Редактировать шаблон')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: TextField(
               controller: _nameCtrl,
               decoration: const InputDecoration(
                 labelText: 'Название шаблона',
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ReorderableListView(
-                onReorder: (oldIndex, newIndex) {
-                  setState(() {
-                    if (newIndex > oldIndex) newIndex--;
-                    final item = _stages.removeAt(oldIndex);
-                    _stages.insert(newIndex, item);
-                  });
-                },
-                children: [
-                  for (int i = 0; i < _stages.length; i++)
-                    ListTile(
-                      key: ValueKey(_stages[i].stageId),
-                      title: Text(personnel.workplaces
-                          .firstWhere(
-                              (w) => w.id == _stages[i].stageId,
-                              orElse: () => WorkplaceModel(
-                                  id: _stages[i].stageId,
-                                  name: _stages[i].stageName,
-                                  positionIds: []))
-                          .name),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => setState(() => _stages.removeAt(i)),
-                      ),
-                    ),
-                ],
-              ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              itemCount: _stages.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (_, i) {
+                final s = _stages[i];
+                return ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: Theme.of(context).dividerColor),
+                  ),
+                  title: Text(s.stageName),
+                  subtitle: s.comment?.isNotEmpty == true ? Text(s.comment!) : null,
+                  trailing: IconButton(
+                    tooltip: 'Удалить',
+                    onPressed: () => setState(() => _stages.removeAt(i)),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _addStage,
-                icon: const Icon(Icons.add),
-                label: const Text('Добавить этап'),
-              ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: _addStage,
+                    child: const Text('Добавить этап'),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  if (_nameCtrl.text.isEmpty) return;
-                  final provider = context.read<TemplateProvider>();
-                  if (widget.template == null) {
-                    await provider.createTemplate(
-                        name: _nameCtrl.text, stages: _stages);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Шаблон создан')));
-                    }
-                  } else {
-                    await provider.updateTemplate(
-                        id: widget.template!.id,
-                        name: _nameCtrl.text,
-                        stages: _stages);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Шаблон обновлён')));
-                    }
-                  }
-                  if (mounted) Navigator.pop(context);
-                },
-                icon: const Icon(Icons.save),
-                label: const Text('Сохранить'),
-              ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _save,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Сохранить'),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

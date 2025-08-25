@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/add_entry_dialog.dart';
+import 'tmc_history_screen.dart';
 
 /// Экран для отображения таблицы прихода бумаги.
 /// Данные загружаются из [WarehouseProvider] и выводятся в виде [DataTable]
@@ -17,6 +18,14 @@ class PaperTable extends StatefulWidget {
 
 class _PaperTableState extends State<PaperTable> {
   List<TmcModel> _papers = [];
+
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -39,6 +48,18 @@ class _PaperTableState extends State<PaperTable> {
         title: const Text('Бумага'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'История',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const TmcHistoryScreen(type: 'Бумага'),
+                ),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.add),
             onPressed: _openAddDialog,
           ),
@@ -54,52 +75,103 @@ class _PaperTableState extends State<PaperTable> {
                   padding: const EdgeInsets.all(8.0),
                   child: SizedBox(
                     width: double.infinity,
-                    child: DataTable(
-                      columnSpacing: 24,
-                      columns: const [
-                        DataColumn(label: Text('№')),
-                        DataColumn(label: Text('Наименование')),
-                        DataColumn(label: Text('Количество')),
-                        DataColumn(label: Text('Ед.')),
-                        DataColumn(label: Text('Действия')),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Поиск…',
+                            prefixIcon: const Icon(Icons.search),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                        const SizedBox(height: 12),
+                        // Wrap the table in a horizontal scroll view so that all columns remain visible
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: DataTable(
+                            columnSpacing: 24,
+                            columns: const [
+                              DataColumn(label: Text('№')),
+                              DataColumn(label: Text('Наименование')),
+                              DataColumn(label: Text('Формат')),
+                              DataColumn(label: Text('Грамаж')),
+                              DataColumn(label: Text('Вес')),
+                              DataColumn(label: Text('Количество')),
+                              DataColumn(label: Text('Ед.')),
+                              DataColumn(label: Text('Действия')),
+                            ],
+                            rows: List<DataRow>.generate(
+                              _papers
+                                  .where((item) {
+                                    final q = _searchController.text.toLowerCase();
+                                    if (q.isEmpty) return true;
+                                    return item.description.toLowerCase().contains(q) ||
+                                        (item.format ?? '').toLowerCase().contains(q) ||
+                                        (item.grammage ?? '').toLowerCase().contains(q) ||
+                                        (item.weight?.toString() ?? '').toLowerCase().contains(q) ||
+                                        item.quantity.toString().toLowerCase().contains(q);
+                                  })
+                                  .toList()
+                                  .length,
+                              (rowIndex) {
+                                final filtered = _papers
+                                    .where((item) {
+                                      final q = _searchController.text.toLowerCase();
+                                      if (q.isEmpty) return true;
+                                      return item.description.toLowerCase().contains(q) ||
+                                          (item.format ?? '').toLowerCase().contains(q) ||
+                                          (item.grammage ?? '').toLowerCase().contains(q) ||
+                                          (item.weight?.toString() ?? '')
+                                              .toLowerCase()
+                                              .contains(q) ||
+                                          item.quantity.toString().toLowerCase().contains(q);
+                                    })
+                                    .toList();
+                                final item = filtered[rowIndex];
+                                return DataRow(cells: [
+                                  DataCell(Text('${rowIndex + 1}')),
+                                  DataCell(Text(item.description)),
+                                  DataCell(Text(item.format ?? '')),
+                                  DataCell(Text(item.grammage ?? '')),
+                                  DataCell(Text(item.weight?.toString() ?? '')),
+                                  DataCell(Text(item.quantity.toString())),
+                                  DataCell(Text(item.unit)),
+                                  DataCell(Row(
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 20),
+                                        tooltip: 'Редактировать',
+                                        onPressed: () {
+                                          _editItem(item);
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                        tooltip: 'Списать',
+                                        onPressed: () {
+                                          _writeOffItem(item);
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, size: 20),
+                                        tooltip: 'Удалить',
+                                        onPressed: () {
+                                          _deleteItem(item);
+                                        },
+                                      ),
+                                    ],
+                                  )),
+                                ]);
+                              },
+                            ),
+                          ),
+                        ),
                       ],
-                      rows: List<DataRow>.generate(
-                        _papers.length,
-                        (index) {
-                          final item = _papers[index];
-                          return DataRow(cells: [
-                            DataCell(Text('${index + 1}')),
-                            DataCell(Text(item.description)),
-                            DataCell(Text(item.quantity.toString())),
-                            DataCell(Text(item.unit)),
-                            DataCell(Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit, size: 20),
-                                  tooltip: 'Редактировать',
-                                  onPressed: () {
-                                    _editItem(item);
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                  tooltip: 'Списать',
-                                  onPressed: () {
-                                    _writeOffItem(item);
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, size: 20),
-                                  tooltip: 'Удалить',
-                                  onPressed: () {
-                                    _deleteItem(item);
-                                  },
-                                ),
-                              ],
-                            )),
-                          ]);
-                        },
-                      ),
                     ),
                   ),
                 ),

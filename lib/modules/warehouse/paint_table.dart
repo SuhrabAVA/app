@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/add_entry_dialog.dart';
+import 'tmc_history_screen.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 
 /// Экран для отображения записей типа "Краска".
 ///
@@ -19,6 +21,14 @@ class PaintTable extends StatefulWidget {
 
 class _PaintTableState extends State<PaintTable> {
   List<TmcModel> _items = [];
+  // Контроллер для поиска
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -144,6 +154,19 @@ class _PaintTableState extends State<PaintTable> {
       appBar: AppBar(
         title: const Text('Краски'),
         actions: [
+          // Кнопка истории изменений
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'История',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => TmcHistoryScreen(type: 'Краска'),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: _openAddDialog,
@@ -160,80 +183,142 @@ class _PaintTableState extends State<PaintTable> {
                   padding: const EdgeInsets.all(8.0),
                   child: SizedBox(
                     width: double.infinity,
-                    child: DataTable(
-                      columnSpacing: 24,
-                      // Увеличиваем высоту строк, чтобы изображения были лучше видны
-                      dataRowHeight: 80,
-                      headingRowHeight: 56,
-                      columns: const [
-                        DataColumn(label: Text('№')),
-                        DataColumn(label: Text('Фото')),
-                        DataColumn(label: Text('Название')),
-                        DataColumn(label: Text('Количество')),
-                        DataColumn(label: Text('Ед.')),
-                        DataColumn(label: Text('Действия')),
-                      ],
-                      rows: List<DataRow>.generate(
-                        _items.length,
-                        (index) {
-                          final item = _items[index];
-                          return DataRow(cells: [
-                            DataCell(Text('${index + 1}')),
-                            DataCell(
-                              () {
-                                // Сначала пытаемся отобразить изображение из base64,
-                                // затем пробуем загрузить по URL, иначе показываем иконку
-                                if (item.imageBase64 != null) {
-                                  try {
-                                    final bytes = base64Decode(item.imageBase64!);
-                                    return SizedBox(
-                                      width: 60,
-                                      height: 60,
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: Image.memory(bytes, fit: BoxFit.cover),
-                                      ),
-                                    );
-                                  } catch (_) {}
-                                }
-                                if (item.imageUrl != null) {
-                                  return SizedBox(
-                                    width: 60,
-                                    height: 60,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.network(item.imageUrl!, fit: BoxFit.cover),
-                                    ),
-                                  );
-                                }
-                                return const Icon(Icons.image_not_supported);
-                              }(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Поле поиска
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Поиск…',
+                            prefixIcon: const Icon(Icons.search),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            DataCell(Text(item.description)),
-                            DataCell(Text(item.quantity.toString())),
-                            DataCell(Text(item.unit)),
-                            DataCell(Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit, size: 20),
-                                  tooltip: 'Редактировать',
-                                  onPressed: () => _editItem(item),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                  tooltip: 'Списать',
-                                  onPressed: () => _writeOffItem(item),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, size: 20),
-                                  tooltip: 'Удалить',
-                                  onPressed: () => _deleteItem(item),
-                                ),
-                              ],
-                            )),
-                          ]);
-                        },
-                      ),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                        const SizedBox(height: 12),
+                        // Wrap the DataTable in a horizontal scroll view so that
+                        // wide tables are scrollable on small screens.
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: DataTable(
+                            columnSpacing: 24,
+                            // Increase row heights so images are clearly visible
+                            dataRowHeight: 140,
+                            headingRowHeight: 56,
+                            columns: const [
+                              DataColumn(label: Text('№')),
+                              DataColumn(label: Text('Фото')),
+                              DataColumn(label: Text('Название')),
+                              DataColumn(label: Text('Количество')),
+                              DataColumn(label: Text('Ед.')),
+                              DataColumn(label: Text('Действия')),
+                            ],
+                            rows: List<DataRow>.generate(
+                              _items
+                                  .where((item) {
+                                    final query = _searchController.text.toLowerCase();
+                                    if (query.isEmpty) return true;
+                                    return item.description.toLowerCase().contains(query) ||
+                                        item.unit.toLowerCase().contains(query) ||
+                                        item.quantity
+                                            .toString()
+                                            .toLowerCase()
+                                            .contains(query);
+                                  })
+                                  .toList()
+                                  .length,
+                              (rowIndex) {
+                                final filtered = _items
+                                    .where((item) {
+                                      final query = _searchController.text.toLowerCase();
+                                      if (query.isEmpty) return true;
+                                      return item.description.toLowerCase().contains(query) ||
+                                          item.unit.toLowerCase().contains(query) ||
+                                          item.quantity
+                                              .toString()
+                                              .toLowerCase()
+                                              .contains(query);
+                                    })
+                                    .toList();
+                                final item = filtered[rowIndex];
+                                return DataRow(cells: [
+                                  DataCell(Text('${rowIndex + 1}')),
+                                  DataCell(
+                                    // On tap, show the image in a fullscreen dialog.
+                                    Builder(builder: (context) {
+                                      Widget preview;
+                                      Uint8List? bytes;
+                                      if (item.imageBase64 != null) {
+                                        try {
+                                          bytes = base64Decode(item.imageBase64!);
+                                        } catch (_) {}
+                                      }
+                                      if (bytes != null && bytes.isNotEmpty) {
+                                        preview = ClipRRect(
+                                          borderRadius: BorderRadius.circular(4),
+                                          child: Image.memory(bytes, width: 110, height: 110, fit: BoxFit.cover),
+                                        );
+                                      } else if (item.imageUrl != null) {
+                                        preview = ClipRRect(
+                                          borderRadius: BorderRadius.circular(4),
+                                          child: Image.network(item.imageUrl!, width: 110, height: 110, fit: BoxFit.cover),
+                                        );
+                                      } else {
+                                        preview = const Icon(Icons.image_not_supported);
+                                      }
+                                      return GestureDetector(
+                                        onTap: () {
+                                          if (bytes == null && item.imageUrl == null) return;
+                                          showDialog(
+                                            context: context,
+                                            builder: (_) {
+                                              return Dialog(
+                                                child: SizedBox(
+                                                  width: 300,
+                                                  height: 300,
+                                                  child: bytes != null
+                                                      ? Image.memory(bytes!, fit: BoxFit.contain)
+                                                      : Image.network(item.imageUrl!, fit: BoxFit.contain),
+                                                ),
+                                              );
+                                            },
+                                          );
+                                        },
+                                        child: preview,
+                                      );
+                                    }),
+                                  ),
+                                  DataCell(Text(item.description)),
+                                  DataCell(Text(item.quantity.toString())),
+                                  DataCell(Text(item.unit)),
+                                  DataCell(Row(
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 20),
+                                        tooltip: 'Редактировать',
+                                        onPressed: () => _editItem(item),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                        tooltip: 'Списать',
+                                        onPressed: () => _writeOffItem(item),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, size: 20),
+                                        tooltip: 'Удалить',
+                                        onPressed: () => _deleteItem(item),
+                                      ),
+                                    ],
+                                  )),
+                                ]);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

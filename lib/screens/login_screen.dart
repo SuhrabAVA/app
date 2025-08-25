@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'modules/personnel/personnel_provider.dart';
-import 'modules/personnel/employee_workspace_screen.dart';
-import 'modules/manager/manager_workspace_screen.dart';
+// Import only once from the correct relative location. The `modules` folder
+// lives at the same level as `screens`, so we need to go up one directory.
 import '../modules/personnel/personnel_provider.dart';
 import '../modules/personnel/employee_workspace_screen.dart';
 import '../modules/manager/manager_workspace_screen.dart';
@@ -114,7 +113,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             final fio =
                                 '${e.lastName} ${e.firstName} ${e.patronymic}'
                                     .toLowerCase();
-                            final login = (e.login ?? '').toLowerCase();
+                            // `login` in EmployeeModel is non-nullable so we can call toLowerCase() directly.
+                            final login = e.login.toLowerCase();
                             return fio.contains(query) || login.contains(query);
                           })
                           .toList();
@@ -161,8 +161,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             title: Text(
                               fio.isEmpty
-                                  ? (e.login?.trim().isNotEmpty == true
-                                      ? e.login!.trim()
+                                  ? (e.login.trim().isNotEmpty
+                                      ? e.login.trim()
                                       : 'Сотрудник')
                                   : fio,
                             ),

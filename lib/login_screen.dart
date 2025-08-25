@@ -7,9 +7,7 @@ import 'modules/manager/manager_workspace_screen.dart';
 import 'admin_panel.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
-import 'modules/personnel/position_model.dart';
 import 'utils/auth_helper.dart';
-
 import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
 
 
@@ -23,7 +21,8 @@ bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
   if (mgr != null && ids.contains(mgr.id)) return true;
 
   // 3) По логину (email у модели нет)
-  final loginLower = (emp.login ?? '').toLowerCase();
+  // EmployeeModel.login is non-nullable, so we can safely call toLowerCase directly.
+  final loginLower = emp.login.toLowerCase();
   if (loginLower.contains('manager') || loginLower.contains('менедж')) return true;
 
   return false;
@@ -35,7 +34,8 @@ bool isWarehouseHeadUser(EmployeeModel emp, PersonnelProvider pr) {
   final wh = pr.findWarehouseHeadPosition();
   if (wh != null && ids.contains(wh.id)) return true;
 
-  final loginLower = (emp.login ?? '').toLowerCase();
+  // EmployeeModel.login is non-nullable, so we can safely call toLowerCase directly.
+  final loginLower = emp.login.toLowerCase();
   if (loginLower.contains('warehouse') || loginLower.contains('склад')) return true;
 
   return false;
@@ -54,6 +54,20 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    // After the first frame, ensure mandatory positions exist and load employees.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final pr = context.read<PersonnelProvider>();
+      // Guarantee that manager and warehouse head positions exist in the provider.
+      await pr.ensureManagerPosition();
+      await pr.ensureWarehouseHeadPosition();
+      // Fetch employees once to populate the list immediately. The provider also listens to realtime updates.
+      await pr.fetchEmployees();
+    });
+  }
 
   @override
   void dispose() {

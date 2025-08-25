@@ -8,13 +8,21 @@ class WorkplaceModel {
     required this.name,
     required this.positionIds,
   });
-   /// Преобразование модели рабочего места в Map для Firebase.
+  /// Преобразование модели рабочего места в [Map] для сохранения в базе данных.
+  ///
+  /// В Supabase это представление используется для вставки или обновления
+  /// строки в таблице `workplaces`. Значения id и name будут
+  /// сериализованы в JSON.
   Map<String, dynamic> toMap() => {
         'name': name,
         'positionIds': positionIds,
       };
 
-  /// Создание модели из Map, полученного из Firebase.
+  /// Создание модели из [Map], полученного из базы данных.
+  ///
+  /// Supabase возвращает строки из таблицы `workplaces` в виде [Map],
+  /// поэтому этот конструктор выделяет необходимые поля и формирует
+  /// корректный экземпляр модели.
   factory WorkplaceModel.fromMap(Map<String, dynamic> map, String id) =>
       WorkplaceModel(
         id: id,

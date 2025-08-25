@@ -5,9 +5,9 @@ import 'analytics_record.dart';
 
 /// Провайдер для хранения и обработки записей аналитики.
 ///
-/// Мониторит узел `analytics` в Realtime Database и обеспечивает
-/// возможность добавлять новые записи. Записи читаются в реальном времени
-/// и отсортированы по временной метке.
+/// Мониторит таблицу `analytics` в Supabase и обеспечивает возможность
+/// добавлять новые записи. Записи читаются в реальном времени и
+/// отсортированы по временной метке.
 class AnalyticsProvider with ChangeNotifier {
     final SupabaseClient _supabase = Supabase.instance.client;
 

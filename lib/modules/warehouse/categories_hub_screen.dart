@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
 
+import '../products/products_provider.dart';
 import 'type_table_tabs_screen.dart';
 
 class CategoriesHubScreen extends StatefulWidget {
@@ -65,12 +67,22 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
                 mainAxisSpacing: 8,
                 childAspectRatio: 1,
                 children: [
-                  for (final t in _types)
-                    _card(context, t, TypeTableTabsScreen(
-                      type: t,
-                      title: t,
-                      enablePhoto: _isPaint(t),
-                    )),
+                  // Собираем уникальные категории: объединяем типы TMC и виды
+                  // продуктов из модуля продукции. Таким образом на складе
+                  // отображаются как стандартные категории (Бумага, Канцелярия, Краска),
+                  // так и изделия, добавленные в разделе продукции.
+                  ...(() {
+                    final products = context.watch<ProductsProvider>().products;
+                    final set = <String>{..._types, ...products};
+                    final list = set.toList()..sort((a, b) => a.compareTo(b));
+                    return list.map((t) {
+                      return _card(context, t, TypeTableTabsScreen(
+                        type: t,
+                        title: t,
+                        enablePhoto: _isPaint(t),
+                      ));
+                    });
+                  })(),
                 ],
               ),
             ),

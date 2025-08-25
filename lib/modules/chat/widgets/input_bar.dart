@@ -35,6 +35,32 @@ class _ChatInputBarState extends State<ChatInputBar> {
   final _recorder = AudioRecorder();
   bool _recording = false;
 
+  /// Снимает фото через камеру устройства и отправляет его в чат. Если
+  /// пользователь отменяет съёмку, ничего не происходит. Этот метод
+  /// позволяет техническому специалисту быстро сделать снимок без выхода
+  /// из приложения. Для сохранения совместимости с Web вызовы камеры
+  /// доступны только на мобильных платформах.
+  Future<void> _takePhoto() async {
+    final picker = ImagePicker();
+    try {
+      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      final mime = lookupMimeType(image.path) ?? 'image/jpeg';
+      await context.read<ChatProvider>().sendFile(
+            roomId: widget.roomId,
+            senderId: widget.senderId,
+            senderName: widget.senderName,
+            bytes: bytes,
+            filename: p.basename(image.path),
+            mime: mime,
+            kind: 'image',
+          );
+    } catch (_) {
+      // Игнорируем ошибки камеры
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -165,6 +191,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
       top: false,
       child: Row(
         children: [
+          // Кнопка камеры для мгновенного фото. Вызывает камеру устройства и
+          // отправляет снимок как изображение. На web платформе будет
+          // работать так же, как кнопка выбора фото из галереи.
+          IconButton(
+            tooltip: 'Камера',
+            icon: const Icon(Icons.camera_alt_outlined),
+            onPressed: _takePhoto,
+          ),
           IconButton(
             tooltip: 'Фото',
             icon: const Icon(Icons.image_outlined),

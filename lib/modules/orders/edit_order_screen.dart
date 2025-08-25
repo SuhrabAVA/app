@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:open_filex/open_filex.dart';
 
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
+import 'material_model.dart';
 import '../products/products_provider.dart';
-
+import '../production_planning/template_provider.dart';
+import '../warehouse/warehouse_provider.dart';
+import '../warehouse/tmc_model.dart';
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
 class EditOrderScreen extends StatefulWidget {
@@ -29,6 +34,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _contractSigned = false;
   bool _paymentDone = false;
   late ProductModel _product;
+  List<String> _selectedParams = [];
+  String _selectedHandle = '-';
+  String _selectedCardboard = 'нет';
+  double _makeready = 0;
+  double _val = 0;
+  String? _stageTemplateId;
+  MaterialModel? _selectedMaterial;
+  TmcModel? _selectedMaterialTmc;
+  TmcModel? _stockExtraItem;
+  double? _stockExtra;
+  PlatformFile? _pickedPdf;
+  bool _lengthExceeded = false;
+
+  // Параметры для выбора краски
+  TmcModel? _selectedPaintTmc;
+  double? _paintQuantity;
+  bool _paintExceeded = false;
 
   @override
   void initState() {
@@ -40,6 +62,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _dueDate = order?.dueDate;
     _contractSigned = order?.contractSigned ?? false;
     _paymentDone = order?.paymentDone ?? false;
+    _selectedParams = order?.additionalParams ?? [];
+    _selectedHandle = order?.handle ?? '-';
+    _selectedCardboard = order?.cardboard ?? 'нет';
+    _makeready = order?.makeready ?? 0;
+    _val = order?.val ?? 0;
+    _stageTemplateId = order?.stageTemplateId;
+    _selectedMaterial = order?.material;
     if (order != null) {
       final p = order.product;
       _product = ProductModel(
@@ -50,6 +79,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         height: p.height,
         depth: p.depth,
         parameters: p.parameters,
+        roll: p.roll,
+        widthB: p.widthB,
+        length: p.length,
+        leftover: p.leftover,
       );
     } else {
       _product = ProductModel(
@@ -60,8 +93,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         height: 0,
         depth: 0,
         parameters: '',
+        roll: null,
+        widthB: null,
+        length: null,
+        leftover: null,
       );
     }
+    _customerController.addListener(_updateStockExtra);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
   }
 
   /// Удаляет продукт из списка.
@@ -70,6 +109,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _customerController.dispose();
     _commentsController.dispose();
     super.dispose();
+  }
+  void _updateStockExtra() {
+    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+    final customer = _customerController.text.trim();
+    final type = _product.type;
+    final items = warehouse.allTmc.where((t) =>
+        t.type == 'Готовая продукция' &&
+        t.description == type &&
+        (t.supplier ?? '') == customer);
+    if (items.isNotEmpty) {
+      setState(() {
+        _stockExtraItem = items.first;
+        _stockExtra = items.first.quantity;
+      });
+    } else {
+      setState(() {
+        _stockExtraItem = null;
+        _stockExtra = null;
+      });
+    }
+  }
+
+  void _selectMaterial(TmcModel tmc) {
+    _selectedMaterialTmc = tmc;
+    _selectedMaterial = MaterialModel(
+      id: tmc.id,
+      name: tmc.description,
+      format: tmc.format ?? '',
+      grammage: tmc.grammage ?? '',
+      weight: tmc.weight,
+    );
+    if (_product.length != null) {
+      _lengthExceeded = _product.length! > tmc.quantity;
+    }
+    setState(() {});
+  }
+
+  Future<void> _pickPdf() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (result != null && result.files.isNotEmpty) {
+      setState(() {
+        _pickedPdf = result.files.first;
+      });
+    }
   }
 
   Future<void> _pickOrderDate(BuildContext context) async {
@@ -114,14 +200,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ));
       return;
     }
+    if (_lengthExceeded) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Недостаточно материала на складе'),
+      ));
+      return;
+    }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
+    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     if (widget.order == null) {
       // Создание нового заказа
-      provider.createOrder(
+      await provider.createOrder(
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate!,
         product: _product,
+        additionalParams: _selectedParams,
+        handle: _selectedHandle,
+        cardboard: _selectedCardboard,
+        material: _selectedMaterial,
+        makeready: _makeready,
+        val: _val,
+        pdfUrl: _pickedPdf?.path,
+        stageTemplateId: _stageTemplateId,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
@@ -134,12 +235,46 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         orderDate: _orderDate!,
         dueDate: _dueDate!,
         product: _product,
+        additionalParams: _selectedParams,
+        handle: _selectedHandle,
+        cardboard: _selectedCardboard,
+        material: _selectedMaterial,
+        makeready: _makeready,
+        val: _val,
+        pdfUrl: _pickedPdf?.path ?? widget.order!.pdfUrl,
+        stageTemplateId: _stageTemplateId,
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
         status: widget.order!.status,
       );
       await provider.updateOrder(updated);
+    }
+    if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
+      final newQty = _selectedMaterialTmc!.quantity - (_product.length ?? 0);
+      await warehouse.updateTmcQuantity(
+          id: _selectedMaterialTmc!.id, newQuantity: newQty);
+    }
+    if (_stockExtraItem != null && _stockExtra != null && _stockExtra! > 0) {
+      final used =
+          (_product.quantity.toDouble() < _stockExtra!) ? _product.quantity.toDouble() : _stockExtra!;
+      final newQty = _stockExtraItem!.quantity - used;
+      await warehouse.updateTmcQuantity(
+          id: _stockExtraItem!.id, newQuantity: newQty);
+    }
+
+    // Списание краски, если указано
+    if (_selectedPaintTmc != null && _paintQuantity != null && _paintQuantity! > 0) {
+      final newQty = _selectedPaintTmc!.quantity - _paintQuantity!;
+      await warehouse.updateTmcQuantity(
+          id: _selectedPaintTmc!.id, newQuantity: newQty);
+      // Добавляем информацию о краске в параметры продукта
+      final info = 'Краска: ${_selectedPaintTmc!.description} ${_paintQuantity!.toStringAsFixed(2)} кг';
+      if (_product.parameters.isNotEmpty) {
+        _product.parameters = '${_product.parameters}; $info';
+      } else {
+        _product.parameters = info;
+      }
     }
     Navigator.of(context).pop();
   }
@@ -302,6 +437,118 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
             const SizedBox(height: 8),
             _buildProductCard(_product),
+            const SizedBox(height: 16),
+            Text(
+              'Дополнительные параметры',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            Consumer<ProductsProvider>(
+              builder: (context, provider, _) {
+                final params = provider.parameters;
+                return Column(
+                  children: params.map((p) {
+                    final selected = _selectedParams.contains(p);
+                    return CheckboxListTile(
+                      value: selected,
+                      title: Text(p),
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedParams.add(p);
+                          } else {
+                            _selectedParams.remove(p);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            Consumer<ProductsProvider>(
+              builder: (context, provider, _) {
+                // Build a list of handle options and ensure each value only appears once.
+                // A default '-' option is always provided at the start. If the provider
+                // happens to contain '-' or duplicate handles, those values are
+                // filtered out so the dropdown will have unique values, preventing
+                // `There should be exactly one item with [DropdownButton]'s value` errors.
+                final uniqueHandles = <String>{}..addAll(provider.handles.where((h) => h != '-'));
+                final handles = ['-'] + uniqueHandles.toList();
+                return DropdownButtonFormField<String>(
+                  value: handles.contains(_selectedHandle) ? _selectedHandle : '-',
+                  decoration: const InputDecoration(
+                    labelText: 'Ручки',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: handles
+                      .map((h) => DropdownMenuItem(value: h, child: Text(h)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _selectedHandle = val ?? '-'),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _selectedCardboard,
+              decoration: const InputDecoration(
+                labelText: 'Картон',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'нет', child: Text('нет')),
+                DropdownMenuItem(value: 'офсет', child: Text('офсет')),
+              ],
+              onChanged: (val) => setState(() => _selectedCardboard = val ?? 'нет'),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: _makeready > 0 ? '$_makeready' : '',
+                    decoration: const InputDecoration(
+                      labelText: 'Приладка',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _makeready = double.tryParse(v) ?? 0,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: _val > 0 ? '$_val' : '',
+                    decoration: const InputDecoration(
+                      labelText: 'ВАЛ',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _val = double.tryParse(v) ?? 0,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Consumer<TemplateProvider>(
+              builder: (context, provider, _) {
+                final templates = provider.templates;
+                return DropdownButtonFormField<String>(
+                  value: _stageTemplateId,
+                  decoration: const InputDecoration(
+                    labelText: 'Выберите очередь',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: templates
+                      .map((t) => DropdownMenuItem(
+                            value: t.id,
+                            child: Text(t.name),
+                          ))
+                      .toList(),
+                  onChanged: (val) => setState(() => _stageTemplateId = val),
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -330,7 +577,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 Expanded(
                   child: Consumer<ProductsProvider>(
                     builder: (context, provider, _) {
-                      final items = provider.products;
+                      // Ensure there are no duplicate product names. Use a Set which
+                      // preserves insertion order to build a unique list of items.
+                      final items = <String>{...provider.products}.toList();
                       final value =
                           items.contains(product.type) ? product.type : null;
                       return DropdownButtonFormField<String>(
@@ -345,8 +594,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                   child: Text(p),
                                 ))
                             .toList(),
-                        onChanged: (val) =>
-                            setState(() => product.type = val ?? product.type),
+                        onChanged: (val) {
+                          setState(() => product.type = val ?? product.type);
+                          _updateStockExtra();
+                        },
                       );
                     },
                   ),
@@ -426,6 +677,242 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     },
                   ),
                 ),
+              ],
+            ),
+            // Выбор краски и количества (необязательно)
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Autocomplete<TmcModel>(
+                    optionsBuilder: (text) {
+                      final provider = Provider.of<WarehouseProvider>(context, listen: false);
+                      final list = provider.getTmcByType('Краска');
+                      final query = text.text.toLowerCase();
+                      if (query.isEmpty) return list;
+                      return list.where((t) =>
+                          t.description.toLowerCase().contains(query));
+                    },
+                    displayStringForOption: (tmc) => tmc.description,
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4,
+                          child: SizedBox(
+                            height: 200,
+                            child: ListView(
+                              padding: EdgeInsets.zero,
+                              children: options
+                                  .map((tmc) => ListTile(
+                                        title: Text(tmc.description),
+                                        subtitle: Text('Кол-во: ${tmc.quantity.toString()}'),
+                                        onTap: () => onSelected(tmc),
+                                      ))
+                                  .toList(),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    fieldViewBuilder:
+                        (context, controller, focusNode, onFieldSubmitted) {
+                      if (_selectedPaintTmc != null) {
+                        controller.text = _selectedPaintTmc!.description;
+                      }
+                      return TextFormField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: const InputDecoration(
+                          labelText: 'Краска (необязательно)',
+                          border: OutlineInputBorder(),
+                        ),
+                      );
+                    },
+                    onSelected: (tmc) {
+                      setState(() {
+                        _selectedPaintTmc = tmc;
+                        // Проверяем превышение при существующем количестве
+                        if (_paintQuantity != null) {
+                          _paintExceeded = _paintQuantity! > tmc.quantity;
+                        } else {
+                          _paintExceeded = false;
+                        }
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    decoration: InputDecoration(
+                      labelText: 'Кол-во (кг)',
+                      border: const OutlineInputBorder(),
+                      errorText: _paintExceeded ? 'Недостаточно' : null,
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) {
+                      final qty = double.tryParse(val);
+                      setState(() {
+                        _paintQuantity = qty;
+                        if (_selectedPaintTmc != null && qty != null) {
+                          _paintExceeded = qty > _selectedPaintTmc!.quantity;
+                        } else {
+                          _paintExceeded = false;
+                        }
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Autocomplete<TmcModel>(
+                    optionsBuilder: (text) {
+                      final provider =
+                          Provider.of<WarehouseProvider>(context, listen: false);
+                      final list = provider.getTmcByType('Бумага');
+                      final query = text.text.toLowerCase();
+                      if (query.isEmpty) return list;
+                      return list.where((t) =>
+                          t.description.toLowerCase().contains(query) ||
+                          (t.grammage?.toLowerCase().contains(query) ?? false));
+                    },
+                    displayStringForOption: (tmc) => tmc.description,
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4,
+                          child: SizedBox(
+                            height: 200,
+                            child: ListView(
+                              padding: EdgeInsets.zero,
+                              children: options
+                                  .map((tmc) => ListTile(
+                                        title: Text(tmc.description),
+                                        subtitle: tmc.grammage != null && tmc.grammage!.isNotEmpty
+                                            ? Text('Граммаж: ${tmc.grammage}')
+                                            : null,
+                                        onTap: () => onSelected(tmc),
+                                      ))
+                                  .toList(),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    fieldViewBuilder:
+                        (context, controller, focusNode, onFieldSubmitted) {
+                      if (_selectedMaterial?.name != null) {
+                        controller.text = _selectedMaterial!.name;
+                      }
+                      return TextFormField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: const InputDecoration(
+                          labelText: 'Материал',
+                          border: OutlineInputBorder(),
+                        ),
+                      );
+                    },
+                    onSelected: (tmc) => _selectMaterial(tmc),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Плотность',
+                      border: OutlineInputBorder(),
+                    ),
+                    controller: TextEditingController(
+                        text: _selectedMaterial?.grammage ?? ''),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              readOnly: true,
+              decoration: const InputDecoration(
+                labelText: 'Лишнее на складе',
+                border: OutlineInputBorder(),
+              ),
+              controller: TextEditingController(
+                  text: _stockExtra != null ? _stockExtra.toString() : '-'),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.roll?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Ролл',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) => product.roll = double.tryParse(val),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.widthB?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Ширина b',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) => product.widthB = double.tryParse(val),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.length?.toString() ?? '',
+                    decoration: InputDecoration(
+                      labelText: 'Длина L',
+                      border: const OutlineInputBorder(),
+                      errorText: _lengthExceeded ? 'Недостаточно' : null,
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) {
+                      final d = double.tryParse(val);
+                      setState(() {
+                        product.length = d;
+                        if (_selectedMaterialTmc != null && d != null) {
+                          _lengthExceeded = d > _selectedMaterialTmc!.quantity;
+                        } else {
+                          _lengthExceeded = false;
+                        }
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _pickPdf,
+                  icon: const Icon(Icons.attach_file),
+                  label: Text(
+                      _pickedPdf == null ? 'Прикрепить PDF' : _pickedPdf!.name),
+                ),
+                if (_pickedPdf != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: () => OpenFilex.open(_pickedPdf!.path!),
+                  ),
+                ]
               ],
             ),
             const SizedBox(height: 8),

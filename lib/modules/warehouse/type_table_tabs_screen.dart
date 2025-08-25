@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -32,6 +33,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen> with TickerPr
   bool _sortDesc = true;
   String _query = '';
 
+  // Контроллер для поля поиска. Позволяет фильтровать записи без
+  // всплывающего диалога.
+  final TextEditingController _searchController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -42,6 +47,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen> with TickerPr
   @override
   void dispose() {
     _tabs.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -123,24 +129,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen> with TickerPr
             ],
             icon: const Icon(Icons.sort),
           ),
+          // Иконка очистки строки поиска. Ранее открывала отдельный диалог,
+          // теперь сбрасывает текущий фильтр.
           IconButton(
             icon: const Icon(Icons.search),
-            onPressed: () async {
-              final text = await showDialog<String?>(
-                context: context,
-                builder: (_) {
-                  final c = TextEditingController(text: _query);
-                  return AlertDialog(
-                    title: const Text('Поиск'),
-                    content: TextField(controller: c, decoration: const InputDecoration(hintText: 'Имя или количество')), 
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(context, null), child: const Text('Отмена')),
-                      FilledButton(onPressed: () => Navigator.pop(context, c.text), child: const Text('Искать')),
-                    ],
-                  );
-                },
-              );
-              if (text != null) setState(() => _query = text);
+            tooltip: 'Очистить поиск',
+            onPressed: () {
+              setState(() {
+                _query = '';
+                _searchController.clear();
+              });
             },
           ),
           IconButton(
@@ -170,68 +168,138 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen> with TickerPr
 
   Widget _listTab() {
     final items = _applyFilter(List<TmcModel>.from(_items));
-    if (items.isEmpty) return const Center(child: Text('Нет данных'));
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Card(
         elevation: 2,
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(8),
-          child: DataTable(
-            columnSpacing: 24,
-            columns: [
-              const DataColumn(label: Text('№')),
-              const DataColumn(label: Text('Наименование')),
-              const DataColumn(label: Text('Кол-во')),
-              const DataColumn(label: Text('Ед.')),
-              if (widget.enablePhoto) const DataColumn(label: Text('Фото')),
-              const DataColumn(label: Text('Действия')),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Поле поиска. Ранее поиск осуществлялся через всплывающее окно.
+              // Теперь пользователь может ввести текст прямо в эту строку,
+              // и фильтрация применяется автоматически.
+              TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Поиск…',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onChanged: (val) {
+                  setState(() {
+                    _query = val;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              if (items.isEmpty)
+                const Center(child: Text('Нет данных'))
+              else
+                // Wrap the main list table in a horizontal scroll view so long
+                // rows remain visible.
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columnSpacing: 24,
+                    columns: [
+                      const DataColumn(label: Text('№')),
+                      const DataColumn(label: Text('Наименование')),
+                      const DataColumn(label: Text('Кол-во')),
+                      const DataColumn(label: Text('Ед.')),
+                      if (widget.enablePhoto) const DataColumn(label: Text('Фото')),
+                      const DataColumn(label: Text('Действия')),
+                    ],
+                    rows: List<DataRow>.generate(
+                      items.length,
+                      (i) {
+                        final item = items[i];
+                        return DataRow(cells: [
+                          DataCell(Text('${i + 1}')),
+                          DataCell(Text(item.description)),
+                          DataCell(Text(item.quantity.toString())),
+                          DataCell(Text(item.unit)),
+                      if (widget.enablePhoto)
+                            // Показываем превью фотографии (если есть) и кнопку смены
+                            DataCell(
+                              Row(
+                                children: [
+                                  Builder(builder: (context) {
+                                    // Подготовим превью изображения: сначала пробуем base64, затем URL
+                                    Uint8List? bytes;
+                                    if (item.imageBase64 != null) {
+                                      try {
+                                        bytes = base64Decode(item.imageBase64!);
+                                      } catch (_) {}
+                                    }
+                                    Widget preview;
+                                    if (bytes != null && bytes.isNotEmpty) {
+                                      preview = ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.memory(
+                                          bytes,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    } else if (item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                                      preview = ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          item.imageUrl!,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    } else {
+                                      preview = const Icon(Icons.image_not_supported);
+                                    }
+                                    return preview;
+                                  }),
+                                  IconButton(
+                                    icon: const Icon(Icons.add_a_photo),
+                                    tooltip: 'Сменить фото',
+                                    onPressed: () => _changePhoto(item),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          DataCell(Row(children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, size: 20),
+                              tooltip: 'Редактировать',
+                              onPressed: () => _editItem(item),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add, size: 20),
+                              tooltip: 'Пополнить',
+                              onPressed: () => _increase(item),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline, size: 20),
+                              tooltip: 'Списать',
+                              onPressed: () => _writeOff(item),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.inventory_2_outlined, size: 20),
+                              tooltip: 'Инвентаризация',
+                              onPressed: () => _inventory(item),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, size: 20),
+                              tooltip: 'Удалить',
+                              onPressed: () => _deleteItem(item),
+                            ),
+                          ])),
+                        ]);
+                      },
+                    ),
+                  ),
+                ),
             ],
-            rows: List<DataRow>.generate(
-              items.length,
-              (i) {
-                final item = items[i];
-                return DataRow(cells: [
-                  DataCell(Text('${i + 1}')),
-                  DataCell(Text(item.description)),
-                  DataCell(Text(item.quantity.toString())),
-                  DataCell(Text(item.unit)),
-                  if (widget.enablePhoto)
-                    DataCell(IconButton(
-                      icon: const Icon(Icons.add_a_photo),
-                      tooltip: 'Сменить фото',
-                      onPressed: () => _changePhoto(item),
-                    )),
-                  DataCell(Row(children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit, size: 20),
-                      tooltip: 'Редактировать',
-                      onPressed: () => _editItem(item),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add, size: 20),
-                      tooltip: 'Пополнить',
-                      onPressed: () => _increase(item),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline, size: 20),
-                      tooltip: 'Списать',
-                      onPressed: () => _writeOff(item),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.inventory_2_outlined, size: 20),
-                      tooltip: 'Инвентаризация',
-                      onPressed: () => _inventory(item),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, size: 20),
-                      tooltip: 'Удалить',
-                      onPressed: () => _deleteItem(item),
-                    ),
-                  ])),
-                ]);
-              },
-            ),
           ),
         ),
       ),
@@ -257,29 +325,32 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen> with TickerPr
         elevation: 2,
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(8),
-          child: DataTable(
-            columnSpacing: 24,
-            columns: const [
-              DataColumn(label: Text('№')),
-              DataColumn(label: Text('Наименование')),
-              DataColumn(label: Text('Кол-во')),
-              DataColumn(label: Text('Ед.')),
-              DataColumn(label: Text('Дата')),
-              DataColumn(label: Text('Комментарий')),
-            ],
-            rows: List<DataRow>.generate(
-              rows.length,
-              (i) {
-                final r = rows[i];
-                return DataRow(cells: [
-                  DataCell(Text('${i + 1}')),
-                  DataCell(Text(r.description)),
-                  DataCell(Text(r.quantity.toString())),
-                  DataCell(Text(r.unit)),
-                  DataCell(Text(_fmtDate(r.date))),
-                  DataCell(Text(r.note ?? '')),
-                ]);
-              },
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columnSpacing: 24,
+              columns: const [
+                DataColumn(label: Text('№')),
+                DataColumn(label: Text('Наименование')),
+                DataColumn(label: Text('Кол-во')),
+                DataColumn(label: Text('Ед.')),
+                DataColumn(label: Text('Дата')),
+                DataColumn(label: Text('Комментарий')),
+              ],
+              rows: List<DataRow>.generate(
+                rows.length,
+                (i) {
+                  final r = rows[i];
+                  return DataRow(cells: [
+                    DataCell(Text('${i + 1}')),
+                    DataCell(Text(r.description)),
+                    DataCell(Text(r.quantity.toString())),
+                    DataCell(Text(r.unit)),
+                    DataCell(Text(_fmtDate(r.date))),
+                    DataCell(Text(r.note ?? '')),
+                  ]);
+                },
+              ),
             ),
           ),
         ),

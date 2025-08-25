@@ -6,16 +6,16 @@ import 'supplier_model.dart';
 
 /// Провайдер для управления данными поставщиков.
 ///
-/// Данные хранятся в Firebase Realtime Database по пути `suppliers`.
-/// Предоставляет методы для загрузки, добавления, обновления и удаления
-/// поставщиков, а также уведомляет слушателей о изменениях.
+/// Данные поставщиков хранятся в таблице `suppliers` Supabase. Провайдер
+/// предоставляет методы для загрузки, добавления, обновления и удаления
+/// записей, а также уведомляет слушателей о изменениях.
 class SupplierProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   List<SupplierModel> _suppliers = [];
   List<SupplierModel> get suppliers => _suppliers;
 
-  /// Загрузка списка поставщиков из Firebase.
+  /// Загрузка списка поставщиков из Supabase.
   Future<void> fetchSuppliers() async {
     final rows = await _supabase.from('suppliers').select();
     _suppliers = rows

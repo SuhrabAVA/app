@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'personnel_constants.dart'; // <-- константа kManagerId
-import 'position_model.dart';  
 import 'position_model.dart';
 import 'employee_model.dart';
 import 'workplace_model.dart';

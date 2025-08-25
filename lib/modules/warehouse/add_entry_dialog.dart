@@ -39,6 +39,10 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     'width': TextEditingController(),
     // Вес в килограммах (для красок)
     'weight': TextEditingController(),
+    // Формат бумаги
+    'format': TextEditingController(),
+    // Грамаж бумаги
+    'grammage': TextEditingController(),
     // Дополнительные характеристики (для универсальных изделий)
     'characteristics': TextEditingController(),
     // Идентификатор заказа (для готовых изделий)
@@ -139,7 +143,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   Uint8List? _imageBytes;
 
   /// Открывает галерею для выбора изображения. Выбранный файл сохраняется
-  /// в переменную [_pickedImage], чтобы затем загрузить его в Firebase.
+  /// в переменную [_pickedImage], чтобы затем загрузить его при необходимости в Supabase Storage.
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final XFile? file = await picker.pickImage(source: ImageSource.gallery);
@@ -153,7 +157,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     }
   }
 
-  // Метод загрузки в Firebase Storage удалён, так как изображения сохраняются в виде base64.
+  // Метод загрузки в облачное хранилище удалён, так как изображения
+  // сохраняются в виде base64 непосредственно в Supabase. При необходимости
+  // можно реализовать загрузку в Supabase Storage.
 
   @override
   void dispose() {
@@ -204,6 +210,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     // В режиме редактирования заполняем основные поля исходя из типа записи.
     switch (item.type) {
       case 'Бумага':
+      _controllers['name']!.text = item.description;
+        _controllers['length']!.text = item.quantity.toString();
+        _controllers['format']!.text = item.format ?? '';
+        _controllers['grammage']!.text = item.grammage ?? '';
+        _controllers['weight']!.text = item.weight?.toString() ?? '';
+        break;
       case 'Рулон':
         _controllers['name']!.text = item.description;
         _controllers['length']!.text = item.quantity.toString();
@@ -256,295 +268,363 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     if (_selectedTable == null) return;
     if (!_formKey.currentState!.validate()) return;
 
-    // Получаем провайдеры для работы с данными
+    // Получаем провайдер для работы с данными
     final warehouseProvider = Provider.of<WarehouseProvider>(context, listen: false);
 
-    // Если это режим редактирования существующей записи
-    if (widget.existing != null) {
-      final existing = widget.existing!;
-      final id = existing.id;
-      final type = existing.type;
-      final note = _controllers['note']!.text.trim();
-      switch (type) {
-        case 'Бумага':
-        case 'Рулон':
-          final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-          final newDesc = _controllers['name']!.text.trim().isNotEmpty
-              ? _controllers['name']!.text.trim()
-              : existing.description;
-          final newUnit = 'м';
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: newUnit, quantity: newLength, note: note.isNotEmpty ? note : existing.note);
-          break;
-        case 'Бобина':
-          final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-          final newDesc = _controllers['name']!.text.trim().isNotEmpty
-              ? _controllers['name']!.text.trim()
-              : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, quantity: newLength, note: note.isNotEmpty ? note : existing.note);
-          break;
-        case 'Краска':
-          final newWeight = double.tryParse(_controllers['weight']!.text.trim()) ?? existing.quantity;
-          final newDesc = _controllers['name']!.text.trim().isNotEmpty
-              ? _controllers['name']!.text.trim()
-              : existing.description;
-          // Поддержка изображений: сохраняем новое изображение в base64, если оно выбрано
-          String? imageBase64 = existing.imageBase64;
-          if (_imageBytes != null) {
-            imageBase64 = base64Encode(_imageBytes!);
-          }
-          await warehouseProvider.updateTmc(
-            id: id,
-            description: newDesc,
-            unit: 'кг',
-            quantity: newWeight,
-            note: note.isNotEmpty ? note : existing.note,
-            imageBase64: imageBase64,
-          );
-          break;
-        case 'Канцелярия':
-        case 'Универсальное изделие':
-        case 'Готовое изделие':
-          final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
-          final newDesc = _controllers['name']!.text.trim().isNotEmpty
-              ? _controllers['name']!.text.trim()
-              : existing.description;
-          final newUnit = existing.unit;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: newUnit, quantity: newQty, note: note.isNotEmpty ? note : existing.note);
-          break;
-        case 'Списание':
-          final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-          final newDesc = _controllers['name']!.text.trim().isNotEmpty
-              ? _controllers['name']!.text.trim()
-              : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: existing.unit, quantity: newLength, note: note.isNotEmpty ? note : existing.note);
-          break;
-        default:
-          final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
-          final newDesc = _controllers['name']!.text.trim().isNotEmpty
-              ? _controllers['name']!.text.trim()
-              : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, quantity: newQty, note: note.isNotEmpty ? note : existing.note);
-      }
-      Navigator.of(context).pop();
-      return;
-    }
-
-    // Если это создание новой записи
-    final table = _selectedTable!;
-    final note = _controllers['note']!.text.trim();
-    // Обработка разных типов
-    if (table == 'Бумага') {
-      // Приход бумаги: выбор существующего или создание нового вида
-      final lengthStr = _controllers['length']!.text.trim();
-      final double length = double.tryParse(lengthStr) ?? 0;
-      String description;
-      if (_isNewPaper) {
-        description = _controllers['name']!.text.trim();
-      } else {
-        description = _selectedPaper ?? '';
-      }
-      // Если выбрана существующая бумага, то обновляем количество, иначе создаём запись
-      final existingList = warehouseProvider.getTmcByType('Бумага');
-      TmcModel? existingItem;
-      for (final item in existingList) {
-        if (item.description == description) {
-          existingItem = item;
-          break;
+    // Оборачиваем логику в try/catch, чтобы в случае ошибки показать сообщение пользователю
+    try {
+      // Режим редактирования существующей записи
+      if (widget.existing != null) {
+        final existing = widget.existing!;
+        final id = existing.id;
+        final type = existing.type;
+        final note = _controllers['note']!.text.trim();
+        switch (type) {
+          case 'Бумага':
+            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            await warehouseProvider.updateTmc(
+              id: id,
+              description: newDesc,
+              unit: 'м',
+              quantity: newLength,
+              note: note.isNotEmpty ? note : existing.note,
+              format: _controllers['format']!.text.trim().isNotEmpty
+                  ? _controllers['format']!.text.trim()
+                  : existing.format,
+              grammage: _controllers['grammage']!.text.trim().isNotEmpty
+                  ? _controllers['grammage']!.text.trim()
+                  : existing.grammage,
+              weight: double.tryParse(_controllers['weight']!.text.trim()) ?? existing.weight,
+            );
+            break;
+          case 'Рулон':
+            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            final newUnit = 'м';
+            await warehouseProvider.updateTmc(
+                id: id,
+                description: newDesc,
+                unit: newUnit,
+                quantity: newLength,
+                note: note.isNotEmpty ? note : existing.note);
+            break;
+          case 'Бобина':
+            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            await warehouseProvider.updateTmc(
+              id: id,
+              description: newDesc,
+              quantity: newLength,
+              note: note.isNotEmpty ? note : existing.note,
+            );
+            break;
+          case 'Краска':
+            final newWeight = double.tryParse(_controllers['weight']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            // Поддержка изображений: сохраняем новое изображение в base64, если оно выбрано
+            String? imageBase64 = existing.imageBase64;
+            if (_imageBytes != null) {
+              imageBase64 = base64Encode(_imageBytes!);
+            }
+            await warehouseProvider.updateTmc(
+              id: id,
+              description: newDesc,
+              unit: 'кг',
+              quantity: newWeight,
+              note: note.isNotEmpty ? note : existing.note,
+              imageBase64: imageBase64,
+            );
+            break;
+          case 'Канцелярия':
+          case 'Универсальное изделие':
+          case 'Готовое изделие':
+            final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            final newUnit = existing.unit;
+            await warehouseProvider.updateTmc(
+              id: id,
+              description: newDesc,
+              unit: newUnit,
+              quantity: newQty,
+              note: note.isNotEmpty ? note : existing.note,
+            );
+            break;
+          case 'Списание':
+            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            await warehouseProvider.updateTmc(
+              id: id,
+              description: newDesc,
+              unit: existing.unit,
+              quantity: newLength,
+              note: note.isNotEmpty ? note : existing.note,
+            );
+            break;
+          default:
+            final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
+            final newDesc = _controllers['name']!.text.trim().isNotEmpty
+                ? _controllers['name']!.text.trim()
+                : existing.description;
+            await warehouseProvider.updateTmc(
+              id: id,
+              description: newDesc,
+              quantity: newQty,
+              note: note.isNotEmpty ? note : existing.note,
+            );
         }
+        Navigator.of(context).pop();
+        return;
       }
-      if (existingItem != null) {
-        final newQty = existingItem.quantity + length;
-        await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
-      } else {
+
+      // Создание новой записи
+      final table = _selectedTable!;
+      final note = _controllers['note']!.text.trim();
+      if (table == 'Бумага') {
+        final lengthStr = _controllers['length']!.text.trim();
+        final double length = double.tryParse(lengthStr) ?? 0;
+        String description;
+        if (_isNewPaper) {
+          description = _controllers['name']!.text.trim();
+        } else {
+          description = _selectedPaper ?? '';
+        }
+        final existingList = warehouseProvider.getTmcByType('Бумага');
+        TmcModel? existingItem;
+        for (final item in existingList) {
+          if (item.description == description) {
+            existingItem = item;
+            break;
+          }
+        }
+        if (existingItem != null) {
+          final newQty = existingItem.quantity + length;
+          await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
+          await warehouseProvider.updateTmc(
+            id: existingItem.id,
+            format: _controllers['format']!.text.trim().isEmpty
+                ? existingItem.format
+                : _controllers['format']!.text.trim(),
+            grammage: _controllers['grammage']!.text.trim().isEmpty
+                ? existingItem.grammage
+                : _controllers['grammage']!.text.trim(),
+            weight: double.tryParse(_controllers['weight']!.text.trim()) ?? existingItem.weight,
+          );
+        } else {
+          await warehouseProvider.addTmc(
+            type: 'Бумага',
+            description: description,
+            quantity: length,
+            unit: 'м',
+            note: note.isEmpty ? null : note,
+            format: _controllers['format']!.text.trim().isEmpty
+                ? null
+                : _controllers['format']!.text.trim(),
+            grammage: _controllers['grammage']!.text.trim().isEmpty
+                ? null
+                : _controllers['grammage']!.text.trim(),
+            weight: double.tryParse(_controllers['weight']!.text.trim()),
+          );
+        }
+        Navigator.of(context).pop();
+        return;
+      } else if (table == 'Канцелярия') {
+        final name = _controllers['name']!.text.trim();
+        final qtyStr = _controllers['quantity']!.text.trim();
+        final double qty = double.tryParse(qtyStr) ?? 0;
+        final unit = _selectedUnit ?? 'шт';
         await warehouseProvider.addTmc(
-          type: 'Бумага',
+          type: 'Канцелярия',
+          description: name,
+          quantity: qty,
+          unit: unit,
+          note: note.isEmpty ? null : note,
+        );
+        Navigator.of(context).pop();
+        return;
+      } else if (table == 'Списание') {
+        final selectedPaper = _selectedPaper ?? _controllers['name']!.text.trim();
+        final lengthStr = _controllers['length']!.text.trim();
+        final double length = double.tryParse(lengthStr) ?? 0;
+        final comment = _controllers['comment']!.text.trim();
+        final existingList = warehouseProvider.getTmcByType('Бумага');
+        TmcModel? existingItem;
+        for (final item in existingList) {
+          if (item.description == selectedPaper) {
+            existingItem = item;
+            break;
+          }
+        }
+        if (existingItem == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Такой вид бумаги отсутствует.')),
+          );
+          return;
+        }
+        if (existingItem.quantity < length) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Недостаточно бумаги для списания.')),
+          );
+          return;
+        }
+        final newQty = existingItem.quantity - length;
+        await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
+        await warehouseProvider.addTmc(
+          supplier: comment.isEmpty ? null : comment,
+          type: 'Списание',
+          description: selectedPaper,
+          quantity: length,
+          unit: 'м',
+          note: note.isEmpty ? null : note,
+        );
+        Navigator.of(context).pop();
+        return;
+      } else if (table == 'Рулон') {
+        final material = _selectedMaterial ?? _controllers['name']!.text.trim();
+        final widthStr = _controllers['width']!.text.trim();
+        final double width = double.tryParse(widthStr) ?? 0;
+        final lengthStr = _controllers['length']!.text.trim();
+        final double length = double.tryParse(lengthStr) ?? 0;
+        final description = width > 0 ? '$material ${width}м' : material;
+        await warehouseProvider.addTmc(
+          supplier: _selectedSupplierId,
+          type: 'Рулон',
           description: description,
           quantity: length,
           unit: 'м',
           note: note.isEmpty ? null : note,
         );
-      }
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Канцелярия') {
-      final name = _controllers['name']!.text.trim();
-      final qtyStr = _controllers['quantity']!.text.trim();
-      final double qty = double.tryParse(qtyStr) ?? 0;
-      final unit = _selectedUnit ?? 'шт';
-      await warehouseProvider.addTmc(
-        type: 'Канцелярия',
-        description: name,
-        quantity: qty,
-        unit: unit,
-        note: note.isEmpty ? null : note,
-      );
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Списание') {
-      // Списание бумаги: уменьшение количества в таблице Бумага
-      final selectedPaper = _selectedPaper ?? _controllers['name']!.text.trim();
-      final lengthStr = _controllers['length']!.text.trim();
-      final double length = double.tryParse(lengthStr) ?? 0;
-      final comment = _controllers['comment']!.text.trim();
-      final existingList = warehouseProvider.getTmcByType('Бумага');
-      TmcModel? existingItem;
-      for (final item in existingList) {
-        if (item.description == selectedPaper) {
-          existingItem = item;
-          break;
+        Navigator.of(context).pop();
+        return;
+      } else if (table == 'Бобина') {
+        final roll = _selectedRollId;
+        final material = _selectedMaterial ?? '';
+        final widthStr = _controllers['width']!.text.trim();
+        final double width = double.tryParse(widthStr) ?? 0;
+        final lengthStr = _controllers['length']!.text.trim();
+        final double length = double.tryParse(lengthStr) ?? 0;
+        String description = '';
+        if (roll != null) {
+          final rollItem = _rollItems.firstWhere((r) => r.id == roll, orElse: () => TmcModel(
+              id: roll,
+              date: DateTime.now().toIso8601String(),
+              supplier: null,
+              type: 'Рулон',
+              description: roll,
+              quantity: 0,
+              unit: 'м',
+              note: null,
+              imageUrl: null,
+              imageBase64: null,
+            ));
+          description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм ' : ''}(из ${rollItem.description})';
+        } else {
+          description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм' : ''}';
         }
-      }
-      if (existingItem == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Такой вид бумаги отсутствует.')),
+        await warehouseProvider.addTmc(
+          type: 'Бобина',
+          description: description.trim(),
+          quantity: length,
+          unit: 'м',
+          note: note.isEmpty ? null : note,
         );
+        Navigator.of(context).pop();
         return;
-      }
-      if (existingItem.quantity < length) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Недостаточно бумаги для списания.')),
+      } else if (table == 'Краска') {
+        final name = _controllers['name']!.text.trim();
+        final color = _selectedColor ?? '';
+        final weightStr = _controllers['weight']!.text.trim();
+        final double weight = double.tryParse(weightStr) ?? 0;
+        final description = color.isNotEmpty ? '$name $color' : name;
+        final id = const Uuid().v4();
+        String? imageBase64;
+        if (_imageBytes != null) {
+          imageBase64 = base64Encode(_imageBytes!);
+        }
+        await warehouseProvider.addTmc(
+          id: id,
+          type: 'Краска',
+          description: description,
+          quantity: weight,
+          unit: 'кг',
+          note: note.isEmpty ? null : note,
+          imageBase64: imageBase64,
         );
+        Navigator.of(context).pop();
         return;
-      }
-      final newQty = existingItem.quantity - length;
-      await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
-      await warehouseProvider.addTmc(
-        supplier: comment.isEmpty ? null : comment,
-        type: 'Списание',
-        description: selectedPaper,
-        quantity: length,
-        unit: 'м',
-        note: note.isEmpty ? null : note,
-      );
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Рулон') {
-      // Создание рулона
-      final material = _selectedMaterial ?? _controllers['name']!.text.trim();
-      final widthStr = _controllers['width']!.text.trim();
-      final double width = double.tryParse(widthStr) ?? 0;
-      final lengthStr = _controllers['length']!.text.trim();
-      final double length = double.tryParse(lengthStr) ?? 0;
-      final description = width > 0 ? '$material ${width}м' : material;
-      await warehouseProvider.addTmc(
-        supplier: _selectedSupplierId,
-        type: 'Рулон',
-        description: description,
-        quantity: length,
-        unit: 'м',
-        note: note.isEmpty ? null : note,
-      );
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Бобина') {
-      // Создание бобины
-      final roll = _selectedRollId;
-      final material = _selectedMaterial ?? '';
-      final widthStr = _controllers['width']!.text.trim();
-      final double width = double.tryParse(widthStr) ?? 0;
-      final lengthStr = _controllers['length']!.text.trim();
-      final double length = double.tryParse(lengthStr) ?? 0;
-      String description = '';
-      if (roll != null) {
-        final rollItem = _rollItems.firstWhere((r) => r.id == roll, orElse: () => TmcModel(
-            id: roll,
-            date: DateTime.now().toIso8601String(),
-            supplier: null,
-            type: 'Рулон',
-            description: roll,
-            quantity: 0,
-            unit: 'м',
-            note: null,
-          ));
-        description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм ' : ''}(из ${rollItem.description})';
+      } else if (table == 'Универсальное изделие') {
+        final name = _controllers['name']!.text.trim();
+        final qtyStr = _controllers['quantity']!.text.trim();
+        final double qty = double.tryParse(qtyStr) ?? 0;
+        final characteristics = _controllers['characteristics']!.text.trim();
+        await warehouseProvider.addTmc(
+          supplier: characteristics.isEmpty ? null : characteristics,
+          type: 'Универсальное изделие',
+          description: name,
+          quantity: qty,
+          unit: 'шт',
+          note: note.isEmpty ? null : note,
+        );
+        Navigator.of(context).pop();
+        return;
+      } else if (table == 'Готовое изделие') {
+        final productType = _selectedProductType ?? _controllers['name']!.text.trim();
+        final qtyStr = _controllers['quantity']!.text.trim();
+        final double qty = double.tryParse(qtyStr) ?? 0;
+        final orderId = _controllers['orderId']!.text.trim();
+        await warehouseProvider.addTmc(
+          supplier: orderId.isEmpty ? null : orderId,
+          type: 'Готовое изделие',
+          description: productType,
+          quantity: qty,
+          unit: 'шт',
+          note: note.isEmpty ? null : note,
+        );
+        Navigator.of(context).pop();
+        return;
       } else {
-        description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм' : ''}';
+        final name = _controllers['name']!.text.trim();
+        final qtyStr = _controllers['quantity']!.text.trim();
+        final double qty = double.tryParse(qtyStr) ?? 0;
+        await warehouseProvider.addTmc(
+          type: table,
+          description: name,
+          quantity: qty,
+          unit: 'шт',
+          note: note.isEmpty ? null : note,
+        );
+        Navigator.of(context).pop();
+        return;
       }
-      await warehouseProvider.addTmc(
-        type: 'Бобина',
-        description: description.trim(),
-        quantity: length,
-        unit: 'м',
-        note: note.isEmpty ? null : note,
+    } catch (e) {
+      // При возникновении ошибки выводим её в виде SnackBar, чтобы пользователю было понятно, что произошло
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка при сохранении: $e')),
       );
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Краска') {
-      // Создание записи для краски, сохраняем изображение в base64 при наличии
-      final name = _controllers['name']!.text.trim();
-      final color = _selectedColor ?? '';
-      final weightStr = _controllers['weight']!.text.trim();
-      final double weight = double.tryParse(weightStr) ?? 0;
-      final description = color.isNotEmpty ? '$name $color' : name;
-      final id = const Uuid().v4();
-      String? imageBase64;
-      if (_imageBytes != null) {
-        imageBase64 = base64Encode(_imageBytes!);
-      }
-      await warehouseProvider.addTmc(
-        id: id,
-        type: 'Краска',
-        description: description,
-        quantity: weight,
-        unit: 'кг',
-        note: note.isEmpty ? null : note,
-        imageBase64: imageBase64,
-      );
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Универсальное изделие') {
-      final name = _controllers['name']!.text.trim();
-      final qtyStr = _controllers['quantity']!.text.trim();
-      final double qty = double.tryParse(qtyStr) ?? 0;
-      final characteristics = _controllers['characteristics']!.text.trim();
-      await warehouseProvider.addTmc(
-        supplier: characteristics.isEmpty ? null : characteristics,
-        type: 'Универсальное изделие',
-        description: name,
-        quantity: qty,
-        unit: 'шт',
-        note: note.isEmpty ? null : note,
-      );
-      Navigator.of(context).pop();
-      return;
-    } else if (table == 'Готовое изделие') {
-      final productType = _selectedProductType ?? _controllers['name']!.text.trim();
-      final qtyStr = _controllers['quantity']!.text.trim();
-      final double qty = double.tryParse(qtyStr) ?? 0;
-      final orderId = _controllers['orderId']!.text.trim();
-      await warehouseProvider.addTmc(
-        supplier: orderId.isEmpty ? null : orderId,
-        type: 'Готовое изделие',
-        description: productType,
-        quantity: qty,
-        unit: 'шт',
-        note: note.isEmpty ? null : note,
-      );
-      Navigator.of(context).pop();
-      return;
-    } else {
-      // Для всех остальных типов, которые не были явно обработаны
-      final name = _controllers['name']!.text.trim();
-      final qtyStr = _controllers['quantity']!.text.trim();
-      final double qty = double.tryParse(qtyStr) ?? 0;
-      await warehouseProvider.addTmc(
-        type: table,
-        description: name,
-        quantity: qty,
-        unit: 'шт',
-        note: note.isEmpty ? null : note,
-      );
-      Navigator.of(context).pop();
-      return;
     }
   }
 
   Widget _buildFields() {
     switch (_selectedTable) {
       case 'Бумага':
+        // Для бумажных материалов отображаем выпадающий список существующих видов,
+        // поле для ввода нового вида (если выбран «Добавить новый вид») и
+        // обязательные поля формата, граммажа, веса и количества.
         return Column(
           children: [
-            // Выбор существующей бумаги или добавление нового вида
+            // выбор существующей бумаги или добавление нового вида
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: DropdownButtonFormField<String>(
@@ -552,6 +632,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                   labelText: 'Вид бумаги',
                   border: OutlineInputBorder(),
                 ),
+                // если пользователь выбрал «Добавить новый вид» – устанавливаем value в 'new'
                 value: _isNewPaper ? 'new' : _selectedPaper,
                 items: [
                   ..._paperNames.map((name) => DropdownMenuItem<String>(
@@ -566,10 +647,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 onChanged: (value) {
                   setState(() {
                     if (value == 'new') {
+                      // Пользователь хочет добавить новый вид – очищаем выбранную бумагу
                       _isNewPaper = true;
                       _selectedPaper = null;
                       _controllers['name']!.text = '';
                     } else {
+                      // Пользователь выбрал существующий вид бумаги
                       _isNewPaper = false;
                       _selectedPaper = value;
                       _controllers['name']!.text = value ?? '';
@@ -579,8 +662,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 validator: (val) => val == null ? 'Выберите или добавьте вид' : null,
               ),
             ),
-            if (_isNewPaper)
-              _buildField('name', 'Новый вид бумаги'),
+            // если выбран «Добавить новый вид», отображаем поле для ввода имени
+            if (_isNewPaper) _buildField('name', 'Новый вид бумаги'),
+            // формат и граммаж являются обязательными полями всегда
+            _buildField('format', 'Формат'),
+            _buildField('grammage', 'Грамаж'),
+            _buildField('weight', 'Вес (кг)'),
+            // количество метров (приход)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: TextFormField(
@@ -589,7 +677,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                   labelText: 'Количество метров (приход)',
                   border: OutlineInputBorder(),
                 ),
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 validator: (value) =>
                     (value == null || value.isEmpty) ? 'Обязательное поле' : null,
               ),
