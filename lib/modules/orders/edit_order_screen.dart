@@ -16,8 +16,11 @@ import '../warehouse/tmc_model.dart';
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
 class EditOrderScreen extends StatefulWidget {
   final OrderModel? order;
+  /// Если [initialOrder] передан, экран заполняется данными, но создаётся
+  /// новый заказ, а не редактируется существующий.
+  final OrderModel? initialOrder;
 
-  const EditOrderScreen({super.key, this.order});
+  const EditOrderScreen({super.key, this.order, this.initialOrder});
 
   @override
   State<EditOrderScreen> createState() => _EditOrderScreenState();
@@ -55,22 +58,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   @override
   void initState() {
     super.initState();
-    final order = widget.order;
-    _customerController = TextEditingController(text: order?.customer ?? '');
-    _commentsController = TextEditingController(text: order?.comments ?? '');
-    _orderDate = order?.orderDate;
-    _dueDate = order?.dueDate;
-    _contractSigned = order?.contractSigned ?? false;
-    _paymentDone = order?.paymentDone ?? false;
-    _selectedParams = order?.additionalParams ?? [];
-    _selectedHandle = order?.handle ?? '-';
-    _selectedCardboard = order?.cardboard ?? 'нет';
-    _makeready = order?.makeready ?? 0;
-    _val = order?.val ?? 0;
-    _stageTemplateId = order?.stageTemplateId;
-    _selectedMaterial = order?.material;
-    if (order != null) {
-      final p = order.product;
+    // order передан при редактировании, initialOrder — при создании на основе шаблона
+    final template = widget.order ?? widget.initialOrder;
+    _customerController = TextEditingController(text: template?.customer ?? '');
+    _commentsController = TextEditingController(text: template?.comments ?? '');
+    _orderDate = template?.orderDate;
+    _dueDate = template?.dueDate;
+    _contractSigned = template?.contractSigned ?? false;
+    _paymentDone = template?.paymentDone ?? false;
+    _selectedParams = template?.additionalParams ?? [];
+    _selectedHandle = template?.handle ?? '-';
+    _selectedCardboard = template?.cardboard ?? 'нет';
+    _makeready = template?.makeready ?? 0;
+    _val = template?.val ?? 0;
+    _stageTemplateId = template?.stageTemplateId;
+    _selectedMaterial = template?.material;
+    if (template != null) {
+      final p = template.product;
       _product = ProductModel(
         id: p.id,
         type: p.type,
