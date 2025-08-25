@@ -307,6 +307,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         });
       }
 
+      // сохраняем план этапов для отображения в модуле производства
+      await supabase.from('production_plans').upsert({
+        'order_id': createdOrUpdatedOrder.id,
+        'stages': stageMaps,
+      }, onConflict: 'order_id');
+
       // удалим прежние задачи этого заказа, чтобы не было дублей
       await supabase.from('tasks').delete().eq('orderid', createdOrUpdatedOrder.id);
 
@@ -377,8 +383,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         });
       }
+      // сохраняем план этапов
+      await supabase.from('production_plans').upsert({
+        'order_id': createdOrUpdatedOrder.id,
+        'stages': stageMaps,
+      }, onConflict: 'order_id');
       // очищаем старые задания (на случай повторного выбора шаблона)
-      await supabase.from('tasks').delete().eq('orderId', createdOrUpdatedOrder.id);
+      await supabase.from('tasks').delete().eq('orderid', createdOrUpdatedOrder.id);
       // создаём новые задания
       for (final stage in stageMaps) {
         final stageId = stage['stageId'] as String?;
