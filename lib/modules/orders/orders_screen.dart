@@ -6,6 +6,8 @@ import 'order_model.dart';
 import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
+import '../tasks/task_provider.dart';
+import '../tasks/task_model.dart';
 enum SortOption {
   orderDateAsc,
   orderDateDesc,
@@ -43,6 +45,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final p = o.product;
     return (o.stageTemplateId == null || o.stageTemplateId!.isEmpty) ||
         p.roll == null || p.widthB == null || p.length == null;
+  }
+
+  OrderStatus _deriveStatus(OrderModel order, List<TaskModel> tasks) {
+    final related = tasks.where((t) => t.orderId == order.id);
+    if (related.isEmpty) return order.statusEnum;
+    final allDone = related.every((t) => t.status == TaskStatus.completed);
+    return allDone ? OrderStatus.completed : OrderStatus.inWork;
   }
   @override
   void dispose() {
@@ -95,9 +104,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             _buildStatusTabs(),
             const SizedBox(height: 12),
             Expanded(
-              child: Consumer<OrdersProvider>(
-                builder: (context, provider, child) {
-                  final orders = _filteredOrders(provider.orders);
+              child: Consumer2<OrdersProvider, TaskProvider>(
+                builder: (context, provider, tasksProvider, child) {
+                  final tasks = tasksProvider.tasks;
+                  final orders = _filteredOrders(provider.orders, tasks);
                   if (orders.isEmpty) {
                     return const Center(child: Text('Заказы не найдены'));
                   }
@@ -123,13 +133,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final o = orders[index];
                             final product = o.product;
                             final totalQty = product.quantity;
+                            final statusEnum = _deriveStatus(o, tasks);
                             String statusLabel;
-                            switch (o.statusEnum) {
+                            switch (statusEnum) {
                               case OrderStatus.inWork:
                                 statusLabel = 'В работе';
                                 break;
                               case OrderStatus.completed:
-                                statusLabel = 'Завершен';
+                                statusLabel = 'Завершено';
                                 break;
                               case OrderStatus.newOrder:
                               default:
@@ -186,7 +197,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       child: Wrap(
                         spacing: 12,
                         runSpacing: 12,
-                        children: orders.map(_buildOrderCard).toList(),
+                        children:
+                            orders.map((o) => _buildOrderCard(o, tasks)).toList(),
                       ),
                     );
                   }
@@ -269,7 +281,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
-  List<OrderModel> _filteredOrders(List<OrderModel> all) {
+  List<OrderModel> _filteredOrders(List<OrderModel> all, List<TaskModel> tasks) {
     // Filter by search query
     final query = _searchController.text.toLowerCase();
     List<OrderModel> filtered = all.where((order) {
@@ -296,16 +308,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // Filter by status
     switch (_selectedFilter) {
       case 'new':
-        filtered =
-            filtered.where((o) => o.statusEnum == OrderStatus.newOrder).toList();
+        filtered = filtered
+            .where((o) => _deriveStatus(o, tasks) == OrderStatus.newOrder)
+            .toList();
         break;
       case 'inWork':
-        filtered =
-            filtered.where((o) => o.statusEnum == OrderStatus.inWork).toList();
+        filtered = filtered
+            .where((o) => _deriveStatus(o, tasks) == OrderStatus.inWork)
+            .toList();
         break;
       case 'completed':
         filtered = filtered
-            .where((o) => o.statusEnum == OrderStatus.completed)
+            .where((o) => _deriveStatus(o, tasks) == OrderStatus.completed)
             .toList();
         break;
       case 'all':
@@ -580,18 +594,18 @@ void _showSortOptions() {
     );
   }
   /// Строит карточку заказа для отображения в списке.
-  Widget _buildOrderCard(OrderModel order) {
+  Widget _buildOrderCard(OrderModel order, List<TaskModel> tasks) {
     // Определяем цвет и текст для статуса
     Color statusColor;
     String statusLabel;
-    switch (order.statusEnum) {
+    switch (_deriveStatus(order, tasks)) {
       case OrderStatus.inWork:
         statusColor = Colors.orange;
         statusLabel = 'В работе';
         break;
       case OrderStatus.completed:
         statusColor = Colors.green;
-        statusLabel = 'Завершен';
+        statusLabel = 'Завершено';
         break;
       case OrderStatus.newOrder:
       default:
