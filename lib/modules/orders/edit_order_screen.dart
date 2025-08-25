@@ -4,6 +4,8 @@ import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // нужно добавить
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/storage_service.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -154,11 +156,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
+      withData: true,
     );
     if (result != null && result.files.isNotEmpty) {
       setState(() {
         _pickedPdf = result.files.first;
       });
+    }
+  }
+
+  Future<void> _openPdf() async {
+    if (_pickedPdf != null && _pickedPdf!.path != null) {
+      await OpenFilex.open(_pickedPdf!.path!);
+    } else if (widget.order?.pdfUrl != null) {
+      final url = await getSignedUrl(widget.order!.pdfUrl!);
+      await launchUrl(Uri.parse(url));
     }
   }
 
@@ -229,7 +241,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       material: _selectedMaterial,
       makeready: _makeready,
       val: _val,
-      pdfUrl: _pickedPdf?.path,
       stageTemplateId: _stageTemplateId,
       contractSigned: _contractSigned,
       paymentDone: _paymentDone,
@@ -249,7 +260,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       material: _selectedMaterial,
       makeready: _makeready,
       val: _val,
-      pdfUrl: _pickedPdf?.path ?? widget.order!.pdfUrl,
+      pdfUrl: widget.order!.pdfUrl,
       stageTemplateId: _stageTemplateId,
       contractSigned: _contractSigned,
       paymentDone: _paymentDone,
@@ -268,6 +279,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       const SnackBar(content: Text('Не удалось сохранить заказ')),
     );
     return;
+  }
+
+  // Загружаем PDF при необходимости
+  if (_pickedPdf != null) {
+    final uploadedPath = await uploadPickedOrderPdf(
+      orderId: createdOrUpdatedOrder.id,
+      file: _pickedPdf!,
+    );
+    createdOrUpdatedOrder.pdfUrl = uploadedPath;
+    await provider.updateOrder(createdOrUpdatedOrder);
   }
 
   // если выбран шаблон и задания ещё не создавались — создаём их
@@ -1103,13 +1124,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   onPressed: _pickPdf,
                   icon: const Icon(Icons.attach_file),
                   label: Text(
-                      _pickedPdf == null ? 'Прикрепить PDF' : _pickedPdf!.name),
+                    _pickedPdf?.name ??
+                        (widget.order?.pdfUrl != null
+                            ? widget.order!.pdfUrl!.split('/').last
+                            : 'Прикрепить PDF'),
+                  ),
                 ),
-                if (_pickedPdf != null) ...[
+                if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
                   const SizedBox(width: 8),
                   IconButton(
                     icon: const Icon(Icons.open_in_new),
-                    onPressed: () => OpenFilex.open(_pickedPdf!.path!),
+                    onPressed: _openPdf,
                   ),
                 ]
               ],
