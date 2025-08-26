@@ -14,6 +14,7 @@ import '../products/products_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
+import '../tasks/task_provider.dart';
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
 class EditOrderScreen extends StatefulWidget {
@@ -375,6 +376,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         assignmentCreated: true,
       );
       await provider.updateOrder(withAssignment);
+      await provider.refresh();
+      await context.read<TaskProvider>().refresh();
       createdOrUpdatedOrder = withAssignment;
     }
   }
@@ -450,6 +453,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         assignmentCreated: true,
       );
       await provider.updateOrder(orderWithAssignment);
+      await provider.refresh();
+      await context.read<TaskProvider>().refresh();
     }
   }
 

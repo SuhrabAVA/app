@@ -20,6 +20,32 @@ class OrdersProvider with ChangeNotifier {
 
   List<OrderModel> get orders => List.unmodifiable(_orders);
 
+  Future<void> refresh() async {
+    try {
+      final rows = await _supabase.from('orders').select();
+      _orders
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row);
+          final p = map['product'];
+          if (p is String) {
+            try {
+              map['product'] =
+                  p.isEmpty ? <String, dynamic>{} : jsonDecode(p) as Map;
+            } catch (_) {
+              map['product'] = <String, dynamic>{};
+            }
+          } else if (p == null) {
+            map['product'] = <String, dynamic>{};
+          }
+          return OrderModel.fromMap(map);
+        }));
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('❌ refresh orders error: $e\n$st');
+    }
+  }
+
   // ===== live stream =====
   void _listenToOrders() {
     _ordersSub?.cancel();

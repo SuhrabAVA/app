@@ -5,6 +5,9 @@ import '../warehouse/warehouse_screen.dart';
 import '../chat/chat_tab.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/employee_model.dart';
+import '../analytics/analytics_provider.dart';
+import '../../utils/auth_helper.dart';
+import '../../login_screen.dart';
 
 class WarehouseManagerWorkspaceScreen extends StatelessWidget {
   final String employeeId;
@@ -41,6 +44,28 @@ class WarehouseManagerWorkspaceScreen extends StatelessWidget {
         appBar: AppBar(
           title: Text(
               fio.isEmpty ? 'Заведующий складом' : '$fio • Заведующий складом'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.logout),
+              tooltip: 'Выйти',
+              onPressed: () async {
+                final analytics = context.read<AnalyticsProvider>();
+                await analytics.logEvent(
+                  orderId: '',
+                  stageId: '',
+                  userId: emp.id,
+                  action: 'logout',
+                  category: 'warehouse',
+                );
+                AuthHelper.clear();
+                if (!context.mounted) return;
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+              },
+            ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Склад', icon: Icon(Icons.warehouse)),
