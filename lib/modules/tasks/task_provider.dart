@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -9,6 +10,7 @@ class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TaskModel> _tasks = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _tasksSub;
 
   TaskProvider() {
     _listenToTasks();
@@ -17,7 +19,8 @@ class TaskProvider with ChangeNotifier {
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
 
   void _listenToTasks() {
-    _supabase.from('tasks').stream(primaryKey: ['id']).listen((rows) {
+    _tasksSub?.cancel();
+    _tasksSub = _supabase.from('tasks').stream(primaryKey: ['id']).listen((rows) {
       _tasks
         ..clear()
         ..addAll(rows.map((row) {
@@ -26,6 +29,21 @@ class TaskProvider with ChangeNotifier {
         }));
       notifyListeners();
     });
+  }
+
+  Future<void> refresh() async {
+    try {
+      final rows = await _supabase.from('tasks').select();
+      _tasks
+        ..clear()
+        ..addAll(rows.map((row) {
+          final map = Map<String, dynamic>.from(row as Map);
+          return TaskModel.fromMap(map, map['id'].toString());
+        }));
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('❌ refresh tasks error: $e\n$st');
+    }
   }
 
   Future<void> updateStatus(String id, TaskStatus status,
@@ -60,6 +78,8 @@ class TaskProvider with ChangeNotifier {
           .from('orders')
           .update({'status': OrderStatus.completed.name}).eq('id', orderId);
     }
+
+    await refresh();
   }
 
   /// Обновляет список исполнителей для задачи. Перезаписывает существующий
@@ -118,5 +138,11 @@ class TaskProvider with ChangeNotifier {
       _tasks[index] = current.copyWith(comments: updatedComments);
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _tasksSub?.cancel();
+    super.dispose();
   }
 }
