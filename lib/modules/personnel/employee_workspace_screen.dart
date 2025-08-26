@@ -152,86 +152,90 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Рабочее пространство'),
-        actions: [
-          // Кнопка добавления сотрудника
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Добавить сотрудника',
-            onPressed: _addEmployeeTab,
-          ),
-          // Кнопка выхода из рабочего места сотрудника
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Выйти',
-            onPressed: () async {
-              final tabIndex = _employeeTabController.index;
-              final analytics = context.read<AnalyticsProvider>();
-              final userId = _employeeIds[tabIndex];
-              await analytics.logEvent(
-                orderId: '',
-                stageId: '',
-                userId: userId,
-                action: 'logout',
-                category: 'production',
-              );
-              if (_employeeIds.length > 1) {
-                // Если открыто несколько вкладок, закрываем текущую вкладку
-                setState(() {
-                  _employeeIds.removeAt(tabIndex);
-                  // Пересоздаём TabController для нового списка сотрудников
-                  _employeeTabController.dispose();
-                  _employeeTabController =
-                      TabController(length: _employeeIds.length, vsync: this);
-                  // Выставляем индекс на предыдущую вкладку, если она есть
-                  if (tabIndex > 0) {
-                    _employeeTabController.index = tabIndex - 1;
-                  }
-                });
-              } else {
-                // Если это последняя вкладка, выходим на экран входа
-                AuthHelper.clear();
-                if (!mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  (route) => false,
+    return Transform.scale(
+      scale: 1 / 1.5,
+      alignment: Alignment.topLeft,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Рабочее пространство'),
+          actions: [
+            // Кнопка добавления сотрудника
+            IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'Добавить сотрудника',
+              onPressed: _addEmployeeTab,
+            ),
+            // Кнопка выхода из рабочего места сотрудника
+            IconButton(
+              icon: const Icon(Icons.logout),
+              tooltip: 'Выйти',
+              onPressed: () async {
+                final tabIndex = _employeeTabController.index;
+                final analytics = context.read<AnalyticsProvider>();
+                final userId = _employeeIds[tabIndex];
+                await analytics.logEvent(
+                  orderId: '',
+                  stageId: '',
+                  userId: userId,
+                  action: 'logout',
+                  category: 'production',
                 );
-              }
-            },
-          ),
-        ],
-        bottom: TabBar(
-          controller: _employeeTabController,
-          isScrollable: true,
-          tabs: [
-            for (final id in _employeeIds)
-              Tab(
-                text: () {
-                  final emp = personnel.employees.firstWhere(
-                    (e) => e.id == id,
-                    orElse: () => EmployeeModel(
-                      id: '',
-                      lastName: 'Неизвестно',
-                      firstName: '',
-                      patronymic: '',
-                      iin: '',
-                      positionIds: [],
-                    ),
+                if (_employeeIds.length > 1) {
+                  // Если открыто несколько вкладок, закрываем текущую вкладку
+                  setState(() {
+                    _employeeIds.removeAt(tabIndex);
+                    // Пересоздаём TabController для нового списка сотрудников
+                    _employeeTabController.dispose();
+                    _employeeTabController =
+                        TabController(length: _employeeIds.length, vsync: this);
+                    // Выставляем индекс на предыдущую вкладку, если она есть
+                    if (tabIndex > 0) {
+                      _employeeTabController.index = tabIndex - 1;
+                    }
+                  });
+                } else {
+                  // Если это последняя вкладка, выходим на экран входа
+                  AuthHelper.clear();
+                  if (!mounted) return;
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (route) => false,
                   );
-                  return '${emp.lastName} ${emp.firstName.isNotEmpty ? emp.firstName[0] + '.' : ''}';
-                }(),
-              ),
+                }
+              },
+            ),
+          ],
+          bottom: TabBar(
+            controller: _employeeTabController,
+            isScrollable: true,
+            tabs: [
+              for (final id in _employeeIds)
+                Tab(
+                  text: () {
+                    final emp = personnel.employees.firstWhere(
+                      (e) => e.id == id,
+                      orElse: () => EmployeeModel(
+                        id: '',
+                        lastName: 'Неизвестно',
+                        firstName: '',
+                        patronymic: '',
+                        iin: '',
+                        positionIds: [],
+                      ),
+                    );
+                    return '${emp.lastName} ${emp.firstName.isNotEmpty ? emp.firstName[0] + '.' : ''}';
+                  }(),
+                ),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          controller: _employeeTabController,
+          children: [
+            for (final id in _employeeIds)
+              _EmployeeWorkspaceTab(employeeId: id),
           ],
         ),
-      ),
-      body: TabBarView(
-        controller: _employeeTabController,
-        children: [
-          for (final id in _employeeIds)
-            _EmployeeWorkspaceTab(employeeId: id),
-        ],
       ),
     );
   }
