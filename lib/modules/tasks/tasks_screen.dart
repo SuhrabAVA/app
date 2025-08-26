@@ -415,7 +415,8 @@ class _TasksScreenState extends State<TasksScreen> {
                             orderId: task.orderId,
                             stageId: task.stageId,
                             userId: id,
-                            action: 'start', // или нужное действие
+                            action: 'start',
+                            category: 'production', // или нужное действие
                           );
                         }
 
@@ -447,6 +448,7 @@ class _TasksScreenState extends State<TasksScreen> {
                           stageId: task.stageId,
                           userId: widget.employeeId,
                           action: 'finish',
+                          category: 'production',
                         );
                       }
                     : null,
@@ -590,6 +592,8 @@ class _TasksScreenState extends State<TasksScreen> {
       stageId: task.stageId,
       userId: widget.employeeId,
       action: 'pause',
+      category: 'production',
+      details: comment,
     );
   }
 
@@ -615,6 +619,8 @@ class _TasksScreenState extends State<TasksScreen> {
       stageId: task.stageId,
       userId: widget.employeeId,
       action: 'problem',
+      category: 'production',
+      details: comment,
     );
   }
 }

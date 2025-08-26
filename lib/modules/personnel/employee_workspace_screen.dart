@@ -9,7 +9,7 @@ import '../personnel/personnel_provider.dart';
 // Для выхода и возврата на экран входа
 import '../../utils/auth_helper.dart';
 import '../../login_screen.dart';
-
+import '../analytics/analytics_provider.dart';
 /// Рабочее пространство сотрудника.
 ///
 /// Экран поддерживает одновременную работу нескольких сотрудников в рамках
@@ -168,13 +168,23 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
             tooltip: 'Выйти',
             onPressed: () async {
               final tabIndex = _employeeTabController.index;
+              final analytics = context.read<AnalyticsProvider>();
+              final userId = _employeeIds[tabIndex];
+              await analytics.logEvent(
+                orderId: '',
+                stageId: '',
+                userId: userId,
+                action: 'logout',
+                category: 'production',
+              );
               if (_employeeIds.length > 1) {
                 // Если открыто несколько вкладок, закрываем текущую вкладку
                 setState(() {
                   _employeeIds.removeAt(tabIndex);
                   // Пересоздаём TabController для нового списка сотрудников
                   _employeeTabController.dispose();
-                  _employeeTabController = TabController(length: _employeeIds.length, vsync: this);
+                  _employeeTabController =
+                      TabController(length: _employeeIds.length, vsync: this);
                   // Выставляем индекс на предыдущую вкладку, если она есть
                   if (tabIndex > 0) {
                     _employeeTabController.index = tabIndex - 1;

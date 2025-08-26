@@ -10,7 +10,8 @@ import 'modules/orders/archive_orders_screen.dart';
 import 'modules/analytics/analytics_screen.dart';
 import 'services/auth_service.dart';
 import 'modules/chat/chat_tab.dart';
-
+import 'modules/analytics/analytics_provider.dart';
+import 'package:provider/provider.dart';
 // Для выхода и возврата на экран входа
 import 'utils/auth_helper.dart';
 import 'login_screen.dart';
@@ -126,7 +127,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Выйти',
-            onPressed: () {
+            onPressed: () async {
+              final analytics = context.read<AnalyticsProvider>();
+              await analytics.logEvent(
+                orderId: '',
+                stageId: '',
+                userId: meId,
+                action: 'logout',
+                category: 'manager',
+              );
               // Очищаем авторизацию и переходим на экран входа
               AuthHelper.clear();
               Navigator.of(context).pushAndRemoveUntil(
