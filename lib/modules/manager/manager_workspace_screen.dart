@@ -5,6 +5,9 @@ import '../orders/orders_screen.dart';
 import '../chat/chat_tab.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/employee_model.dart';
+import '../analytics/analytics_provider.dart';
+import '../../utils/auth_helper.dart';
+import '../../login_screen.dart';
 
 class ManagerWorkspaceScreen extends StatelessWidget {
   final String employeeId;
@@ -40,6 +43,28 @@ class ManagerWorkspaceScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: Text(fio.isEmpty ? 'Менеджер' : '$fio • Менеджер'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.logout),
+              tooltip: 'Выйти',
+              onPressed: () async {
+                final analytics = context.read<AnalyticsProvider>();
+                await analytics.logEvent(
+                  orderId: '',
+                  stageId: '',
+                  userId: emp.id,
+                  action: 'logout',
+                  category: 'manager',
+                );
+                AuthHelper.clear();
+                if (!context.mounted) return;
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+              },
+            ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Заказы', icon: Icon(Icons.assignment)),

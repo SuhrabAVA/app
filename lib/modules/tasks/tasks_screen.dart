@@ -87,15 +87,7 @@ class _TasksScreenState extends State<TasksScreen> {
   backgroundColor: Colors.white,
   foregroundColor: Colors.black,
   elevation: 0.5,
-  actions: [
-    IconButton(
-      icon: const Icon(Icons.logout),
-      tooltip: 'Назад',
-      onPressed: () {
-        Navigator.of(context).pop(); // Возврат на предыдущий экран
-      },
-    ),
-  ],
+  
 ),
 
       body: Padding(
@@ -108,23 +100,7 @@ class _TasksScreenState extends State<TasksScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Рабочее место:'),
-                  const SizedBox(height: 8),
-                  DropdownButton<String>(
-                    value: _selectedWorkplaceId,
-                    items: [
-                      for (final w in workplaces)
-                        DropdownMenuItem(
-                            value: w.id, child: Text(w.name)),
-                    ],
-                    onChanged: (val) {
-                      setState(() {
-                        _selectedWorkplaceId = val;
-                        _selectedTask = null;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 24),
+                  
                   Expanded(
                     child: Container(
                       padding: const EdgeInsets.all(12),
@@ -184,6 +160,23 @@ class _TasksScreenState extends State<TasksScreen> {
                         ],
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text('Рабочее место:'),
+                  const SizedBox(height: 8),
+                  DropdownButton<String>(
+                    value: _selectedWorkplaceId,
+                    items: [
+                      for (final w in workplaces)
+                        DropdownMenuItem(
+                            value: w.id, child: Text(w.name)),
+                    ],
+                    onChanged: (val) {
+                      setState(() {
+                        _selectedWorkplaceId = val;
+                        _selectedTask = null;
+                      });
+                    },
                   ),
                 ],
               ),

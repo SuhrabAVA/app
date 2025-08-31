@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'dart:async';
 import 'template_model.dart';
 import 'planned_stage_model.dart';
 
@@ -10,27 +10,26 @@ class TemplateProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TemplateModel> _templates = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _sub;
   List<TemplateModel> get templates => List.unmodifiable(_templates);
 
   TemplateProvider() {
-    fetchTemplates();
+    _listenTemplates();
   }
 
-  Future<void> fetchTemplates() async {
-    // Без дженериков: возвращается dynamic -> приводим к List<Map<String, dynamic>>
-    final dynamic res = await _supabase
+  void _listenTemplates() {
+    _sub?.cancel();
+    _sub = _supabase
         .from('plan_templates')
-        .select('*')
-        .order('created_at', ascending: false);
-
-    final rows = (res as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-
-    _templates
-      ..clear()
-      ..addAll(rows.map((row) => TemplateModel.fromMap(row)));
-    notifyListeners();
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false)
+        .listen((rows) {
+      _templates
+        ..clear()
+        ..addAll(rows.map((row) =>
+            TemplateModel.fromMap(Map<String, dynamic>.from(row))));
+      notifyListeners();
+    });
   }
 
   Future<void> createTemplate({
@@ -39,8 +38,7 @@ class TemplateProvider with ChangeNotifier {
   }) async {
     final id = _uuid.v4();
 
-    _templates.insert(0, TemplateModel(id: id, name: name, stages: stages));
-    notifyListeners();
+    
 
     await _supabase.from('plan_templates').insert({
       'id': id,
@@ -48,7 +46,7 @@ class TemplateProvider with ChangeNotifier {
       'stages': stages.map((s) => s.toMap()).toList(),
     });
 
-    await fetchTemplates();
+    
   }
 
   Future<void> updateTemplate({
@@ -56,11 +54,7 @@ class TemplateProvider with ChangeNotifier {
     required String name,
     required List<PlannedStage> stages,
   }) async {
-    final i = _templates.indexWhere((t) => t.id == id);
-    if (i != -1) {
-      _templates[i] = TemplateModel(id: id, name: name, stages: stages);
-      notifyListeners();
-    }
+    
 
     await _supabase
         .from('plan_templates')
@@ -70,12 +64,16 @@ class TemplateProvider with ChangeNotifier {
         })
         .eq('id', id);
 
-    await fetchTemplates();
+    
   }
 
   Future<void> deleteTemplate(String id) async {
-    _templates.removeWhere((t) => t.id == id);
-    notifyListeners();
+    
     await _supabase.from('plan_templates').delete().eq('id', id);
+  }
+   @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
   }
 }
