@@ -1,0 +1,180 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import 'warehouse_provider.dart';
+import 'tmc_model.dart';
+import 'add_entry_dialog.dart';
+
+/// Экран, отображающий сводную таблицу всех текущих запасов на складе.
+///
+/// Позволяет искать по названию/описанию, фильтровать по единице измерения
+/// и добавлять новые записи. Также предоставляет действия для редактирования
+/// и удаления существующих строк.
+class StocksScreen extends StatefulWidget {
+  const StocksScreen({super.key});
+
+  @override
+  State<StocksScreen> createState() => _StocksScreenState();
+}
+
+class _StocksScreenState extends State<StocksScreen> {
+  String _searchQuery = '';
+  String? _selectedUnit;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<WarehouseProvider>(context, listen: false).fetchTmc();
+    });
+  }
+
+  void _openAddDialog({TmcModel? existing}) {
+    showDialog(
+      context: context,
+      builder: (_) => AddEntryDialog(
+        initialTable: null,
+        existing: existing,
+      ),
+    ).then((_) {
+      Provider.of<WarehouseProvider>(context, listen: false).fetchTmc();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Запасы'),
+      ),
+      body: Consumer<WarehouseProvider>(
+        builder: (context, provider, _) {
+          final allStocks = provider.allTmc;
+          // Собираем уникальные единицы измерения
+          final units = <String>{};
+          for (final item in allStocks) {
+            units.add(item.unit);
+          }
+          // Фильтруем по поиску и единице измерения
+          final filtered = allStocks.where((e) {
+            final matchesSearch = _searchQuery.isEmpty ||
+                e.description.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                e.type.toLowerCase().contains(_searchQuery.toLowerCase());
+            final matchesUnit = _selectedUnit == null || e.unit == _selectedUnit;
+            return matchesSearch && matchesUnit;
+          }).toList();
+          return Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Поисковая строка
+                    Expanded(
+                      child: TextField(
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          hintText: 'Поиск запасов...',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (val) => setState(() => _searchQuery = val),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Фильтр по единицам измерения
+                    DropdownButton<String>(
+                      value: _selectedUnit,
+                      hint: const Text('Все единицы'),
+                      items: [
+                        const DropdownMenuItem<String>(value: null, child: Text('Все единицы')),
+                        ...units.map((u) => DropdownMenuItem<String>(value: u, child: Text(u))),
+                      ],
+                      onChanged: (val) => setState(() => _selectedUnit = val),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () => _openAddDialog(),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Добавить запись'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Card(
+                    elevation: 2,
+                    child: filtered.isEmpty
+                        ? const Center(child: Text('Нет данных'))
+                        : SingleChildScrollView(
+                            child: DataTable(
+                              columnSpacing: 16,
+                              columns: const [
+                                DataColumn(label: Text('ID')),
+                                DataColumn(label: Text('Наименование')),
+                                DataColumn(label: Text('Характеристики')),
+                                DataColumn(label: Text('Ед. измерения')),
+                                DataColumn(label: Text('Количество')),
+                                DataColumn(label: Text('Действия')),
+                              ],
+                              rows: List<DataRow>.generate(
+                                filtered.length,
+                                (index) {
+                                  final item = filtered[index];
+                                  final characteristics = item.supplier ?? '';
+                                  return DataRow(cells: [
+                                    DataCell(Text('${index + 1}')),
+                                    DataCell(Text(item.description)),
+                                    DataCell(Text(characteristics.isEmpty ? '-' : characteristics)),
+                                    DataCell(Text(item.unit)),
+                                    DataCell(Text(item.quantity.toString())),
+                                    DataCell(Row(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.edit, size: 20),
+                                          onPressed: () => _openAddDialog(existing: item),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete, size: 20),
+                                          onPressed: () async {
+                                            final confirm = await showDialog<bool>(
+                                              context: context,
+                                              builder: (ctx) => AlertDialog(
+                                                title: const Text('Удалить запись?'),
+                                                content: Text('Вы уверены, что хотите удалить ${item.description}?'),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () => Navigator.of(ctx).pop(false),
+                                                    child: const Text('Отмена'),
+                                                  ),
+                                                  TextButton(
+                                                    onPressed: () => Navigator.of(ctx).pop(true),
+                                                    child: const Text('Удалить'),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                            if (confirm == true) {
+                                              await Provider.of<WarehouseProvider>(context, listen: false)
+                                                  .deleteTmc(item.id);
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    )),
+                                  ]);
+                                },
+                              ),
+                            ),
+                  ),
+                ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}

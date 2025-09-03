@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1066189756651",
+    "firebase_url": "https://sheets-40e7c-default-rtdb.firebaseio.com",
+    "project_id": "sheets-40e7c",
+    "storage_bucket": "sheets-40e7c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1066189756651:android:2b8d5bd64e5aadc49cc6ae",
+        "android_client_info": {
+          "package_name": "com.example.sheet_clone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqwCu6BnKIC5jkx3HpVEDpkhJZq37cPug"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
