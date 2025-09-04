@@ -40,6 +40,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     'orderId': TextEditingController(),
     // Причина или комментарий (для списания)
     'comment': TextEditingController(),
+    'note': TextEditingController(),
   };
 
   // Список типов ТМЦ, доступных для создания. Добавлены новые типы согласно ТЗ.
@@ -191,6 +192,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     }
     // Сохраняем поставщика в качестве выбранного, если он есть
     _selectedSupplierId = item.supplier;
+    _controllers['note']!.text = item.note ?? '';
   }
 
   Future<void> _submit() async {
@@ -206,6 +208,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       final existing = widget.existing!;
       final id = existing.id;
       final type = existing.type;
+      final note = _controllers['note']!.text.trim();
       switch (type) {
         case 'Бумага':
         case 'Рулон':
@@ -214,21 +217,21 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               ? _controllers['name']!.text.trim()
               : existing.description;
           final newUnit = 'м';
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: newUnit, quantity: newLength);
+          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: newUnit, quantity: newLength, note: note.isNotEmpty ? note : existing.note);
           break;
         case 'Бобина':
           final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
           final newDesc = _controllers['name']!.text.trim().isNotEmpty
               ? _controllers['name']!.text.trim()
               : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, quantity: newLength);
+          await warehouseProvider.updateTmc(id: id, description: newDesc, quantity: newLength, note: note.isNotEmpty ? note : existing.note);
           break;
         case 'Краска':
           final newWeight = double.tryParse(_controllers['weight']!.text.trim()) ?? existing.quantity;
           final newDesc = _controllers['name']!.text.trim().isNotEmpty
               ? _controllers['name']!.text.trim()
               : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: 'кг', quantity: newWeight);
+          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: 'кг', quantity: newWeight, note: note.isNotEmpty ? note : existing.note);
           break;
         case 'Канцелярия':
         case 'Универсальное изделие':
@@ -238,21 +241,21 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               ? _controllers['name']!.text.trim()
               : existing.description;
           final newUnit = existing.unit;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: newUnit, quantity: newQty);
+          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: newUnit, quantity: newQty, note: note.isNotEmpty ? note : existing.note);
           break;
         case 'Списание':
           final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
           final newDesc = _controllers['name']!.text.trim().isNotEmpty
               ? _controllers['name']!.text.trim()
               : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: existing.unit, quantity: newLength);
+          await warehouseProvider.updateTmc(id: id, description: newDesc, unit: existing.unit, quantity: newLength, note: note.isNotEmpty ? note : existing.note);
           break;
         default:
           final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
           final newDesc = _controllers['name']!.text.trim().isNotEmpty
               ? _controllers['name']!.text.trim()
               : existing.description;
-          await warehouseProvider.updateTmc(id: id, description: newDesc, quantity: newQty);
+          await warehouseProvider.updateTmc(id: id, description: newDesc, quantity: newQty, note: note.isNotEmpty ? note : existing.note);
       }
       Navigator.of(context).pop();
       return;
@@ -260,6 +263,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
 
     // Если это создание новой записи
     final table = _selectedTable!;
+    final note = _controllers['note']!.text.trim();
     // Обработка разных типов
     if (table == 'Бумага') {
       // Приход бумаги: выбор существующего или создание нового вида
@@ -289,6 +293,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           description: description,
           quantity: length,
           unit: 'м',
+          note: note.isEmpty ? null : note,
         );
       }
       Navigator.of(context).pop();
@@ -303,6 +308,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: name,
         quantity: qty,
         unit: unit,
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -340,6 +346,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: selectedPaper,
         quantity: length,
         unit: 'м',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -357,6 +364,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: description,
         quantity: length,
         unit: 'м',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -378,6 +386,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             description: roll,
             quantity: 0,
             unit: 'м',
+            note: null,
           ));
         description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм ' : ''}(из ${rollItem.description})';
       } else {
@@ -388,6 +397,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: description.trim(),
         quantity: length,
         unit: 'м',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -402,6 +412,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: description,
         quantity: weight,
         unit: 'кг',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -416,6 +427,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: name,
         quantity: qty,
         unit: 'шт',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -430,6 +442,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: productType,
         quantity: qty,
         unit: 'шт',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -443,6 +456,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         description: name,
         quantity: qty,
         unit: 'шт',
+        note: note.isEmpty ? null : note,
       );
       Navigator.of(context).pop();
       return;
@@ -504,6 +518,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                     (value == null || value.isEmpty) ? 'Обязательное поле' : null,
               ),
             ),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Канцелярия':
@@ -541,6 +556,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 validator: (val) => val == null ? 'Выберите единицу' : null,
               ),
             ),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Списание':
@@ -573,6 +589,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             _buildField('length', 'Количество метров (списание)'),
             _buildField('comment', 'Комментарий (причина)'),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Рулон':
@@ -621,6 +638,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             _buildField('width', 'Ширина (м)'),
             // Длина
             _buildField('length', 'Длина (м)'),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Бобина':
@@ -664,6 +682,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             _buildField('width', 'Ширина (м)'),
             // Длина
             _buildField('length', 'Длина (м)'),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Краска':
@@ -686,6 +705,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               ),
             ),
             _buildField('weight', 'Вес (кг)'),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Универсальное изделие':
@@ -694,6 +714,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             _buildField('name', 'Наименование'),
             _buildField('characteristics', 'Характеристики'),
             _buildField('quantity', 'Количество (шт)'),
+            _buildField('note', 'Заметки'),
           ],
         );
       case 'Готовое изделие':
@@ -716,6 +737,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             _buildField('orderId', 'ID заказа'),
             _buildField('quantity', 'Количество (шт)'),
+            _buildField('note', 'Заметки'),
           ],
         );
       default:
@@ -723,6 +745,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           children: [
             _buildField('name', 'Название'),
             _buildField('quantity', 'Количество'),
+            _buildField('note', 'Заметки'),
           ],
         );
     }
@@ -737,7 +760,10 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           labelText: label,
           border: const OutlineInputBorder(),
         ),
-        validator: (value) => (value == null || value.isEmpty) ? 'Обязательное поле' : null,
+        validator: (value) {
+          if (key == 'note') return null;
+          return (value == null || value.isEmpty) ? 'Обязательное поле' : null;
+        },
       ),
     );
   }

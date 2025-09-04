@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-
+import 'package:firebase_database/firebase_database.dart';
 import 'position_model.dart';
 import 'employee_model.dart';
 import 'workplace_model.dart';
@@ -11,13 +11,19 @@ import 'terminal_model.dart';
 /// слушателей при изменениях.
 class PersonnelProvider with ChangeNotifier {
   final _uuid = const Uuid();
+   final DatabaseReference _employeesRef =
+      FirebaseDatabase.instance.ref('employees');
+
+  PersonnelProvider() {
+    _listenToEmployees();
+  }
 
   // Список должностей
   /// Начальный список должностей. Здесь собраны все типы должностей,
   /// которые используются в системе. Дополнять список при необходимости
   /// можно динамически через экран «Должности».
   final List<PositionModel> _positions = [
-    PositionModel(id: 'bab', name: 'Бабинорезчик'),
+    PositionModel(id: 'bob_cutter', name: 'Бобинорезчик'),
     PositionModel(id: 'print', name: 'Печатник'),
     PositionModel(id: 'cut_sheet', name: 'Листорезчик'),
     PositionModel(id: 'bag_collector', name: 'Пакетосборщик'),
@@ -40,7 +46,7 @@ class PersonnelProvider with ChangeNotifier {
   /// упрощают начальную конфигурацию системы.
   final List<WorkplaceModel> _workplaces = [
     // 1. Бобинорезка — работает бабинорезчик
-    WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bab']),
+    WorkplaceModel(id: 'w_bobiner', name: 'Бобинорезка', positionIds: ['bob_cutter']),
     // 2. Флексопечать — печатник
     WorkplaceModel(id: 'w_flexoprint', name: 'Флексопечать', positionIds: ['print']),
     // 3–4. Листорезка (старая и новая) — листорезчик
@@ -101,7 +107,19 @@ class PersonnelProvider with ChangeNotifier {
     _positions.add(PositionModel(id: id, name: name));
     notifyListeners();
   }
-
+  void _listenToEmployees() {
+    _employeesRef.onValue.listen((event) {
+      final data = event.snapshot.value;
+      _employees.clear();
+      if (data is Map) {
+        data.forEach((key, value) {
+          final map = Map<String, dynamic>.from(value as Map);
+          _employees.add(EmployeeModel.fromJson(map, key));
+        });
+      }
+      notifyListeners();
+    });
+  }
   // Добавление сотрудника
   void addEmployee({
     required String lastName,
@@ -112,9 +130,11 @@ class PersonnelProvider with ChangeNotifier {
     required List<String> positionIds,
     bool isFired = false,
     String comments = '',
+    String login = '',
+    String password = '',
   }) {
     final id = _uuid.v4();
-    _employees.add(EmployeeModel(
+    final employee = EmployeeModel(
       id: id,
       lastName: lastName,
       firstName: firstName,
@@ -124,8 +144,42 @@ class PersonnelProvider with ChangeNotifier {
       positionIds: positionIds,
       isFired: isFired,
       comments: comments,
-    ));
+      login: login,
+      password: password,
+    );
+    _employees.add(employee);
     notifyListeners();
+    _employeesRef.child(id).set(employee.toJson());
+  }
+
+ // Обновление существующего сотрудника
+  void updateEmployee({
+    required String id,
+    required String lastName,
+    required String firstName,
+    required String patronymic,
+    required String iin,
+    String? photoUrl,
+    required List<String> positionIds,
+    bool isFired = false,
+    String comments = '',
+  }) {
+    final index = _employees.indexWhere((e) => e.id == id);
+    if (index == -1) return;
+    final updated = EmployeeModel(
+      id: id,
+      lastName: lastName,
+      firstName: firstName,
+      patronymic: patronymic,
+      iin: iin,
+      photoUrl: photoUrl,
+      positionIds: positionIds,
+      isFired: isFired,
+      comments: comments,
+    );
+    _employees[index] = updated;
+    notifyListeners();
+    _employeesRef.child(id).set(updated.toJson());
   }
 
   // Добавление рабочего места

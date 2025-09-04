@@ -8,6 +8,8 @@ class EmployeeModel {
   final List<String> positionIds;
   bool isFired;
   final String comments;
+  final String login;
+  final String password;
 
   EmployeeModel({
     required this.id,
@@ -19,6 +21,8 @@ class EmployeeModel {
     required this.positionIds,
     this.isFired = false,
     this.comments = '',
+    this.login = '',
+    this.password = '',
   });
 
   Map<String, dynamic> toJson() => {
@@ -43,6 +47,8 @@ class EmployeeModel {
       positionIds: List<String>.from(json['positionIds'] ?? []),
       isFired: json['isFired'] ?? false,
       comments: json['comments'] ?? '',
+      login: json['login'] ?? '',
+      password: json['password'] ?? '',
     );
   }
 }

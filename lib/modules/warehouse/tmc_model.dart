@@ -6,6 +6,7 @@ class TmcModel {
   final String description;
   final double quantity;
   final String unit;
+  final String? note;
 
   TmcModel({
     required this.id,
@@ -15,6 +16,7 @@ class TmcModel {
     required this.description,
     required this.quantity,
     required this.unit,
+    this.note,
   });
 
   // Для преобразования из Firebase Map
@@ -27,6 +29,7 @@ class TmcModel {
       description: map['description'] ?? '',
       quantity: (map['quantity'] as num).toDouble(),
       unit: map['unit'] ?? '',
+      note: map['note'],
     );
   }
 
@@ -40,6 +43,7 @@ class TmcModel {
       'description': description,
       'quantity': quantity,
       'unit': unit,
+      'note': note,
     };
   }
 }
