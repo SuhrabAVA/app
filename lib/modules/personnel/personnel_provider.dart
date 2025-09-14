@@ -13,13 +13,16 @@ import 'terminal_model.dart';
 /// Провайдер персонала, работающий через коллекции в `documents`:
 /// employees / positions / workplaces / terminals
 class PersonnelProvider extends ChangeNotifier {
-  PersonnelProvider() {
-    // Инициализация: загружаем данные и подписываемся на realtime.
-    _bootstrap();
+  PersonnelProvider({DocDB? docDb, bool bootstrap = true})
+      : _db = docDb ?? DocDB() {
+    if (bootstrap) {
+      // Инициализация: загружаем данные и подписываемся на realtime.
+      _bootstrap();
+    }
   }
 
   final _uuid = const Uuid();
-  final DocDB _db = DocDB();
+  final DocDB _db;
 
   // локальные кэши под UI — заполняются из documents
   final List<EmployeeModel> _employees = <EmployeeModel>[];
@@ -396,13 +399,16 @@ class PersonnelProvider extends ChangeNotifier {
     int maxConcurrentWorkers = 1,
   }) async {
     final id = _genId();
+
     final workplace = WorkplaceModel(
+
       id: id,
       name: name.trim(),
       positionIds: positionIds,
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
     );
+
     _workplaces.add(workplace);
     _safeNotify();
 
@@ -411,6 +417,7 @@ class PersonnelProvider extends ChangeNotifier {
     } catch (e) {
       // Если вставка в documents не удалась, откатываем локальный список,
       // чтобы не вводить пользователя в заблуждение.
+
       _workplaces.removeWhere((w) => w.id == id);
       _safeNotify();
       rethrow;
