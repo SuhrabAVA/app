@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
+import '../../services/doc_db.dart';
 
 import 'chat_message.dart';
 
@@ -13,6 +14,7 @@ import 'chat_message.dart';
 /// Хранилище: bucket 'chat'
 class ChatProvider with ChangeNotifier {
   final SupabaseClient _sb = Supabase.instance.client;
+  final DocDB _docDb = DocDB();
   final _uuid = const Uuid();
 
   // roomId -> messages
@@ -32,14 +34,18 @@ class ChatProvider with ChangeNotifier {
     if (_subs.containsKey(roomId)) return;
 
     final stream = _sb
-        .from('chat_messages')
+        .from('documents')
         .stream(primaryKey: ['id'])
-        .eq('room_id', roomId)
+        .eq('collection', 'chat_messages')
+        .eq('data->>room_id', roomId)
         .order('created_at');
 
     final sub = stream.listen((rows) async {
-      // Базовый список
-      var list = rows.map(ChatMessage.fromMap).toList()
+      var list = rows.map((row) {
+        final data = Map<String, dynamic>.from(row['data'] ?? {});
+        data['id'] = row['id'];
+        return ChatMessage.fromMap(data);
+      }).toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
       // Собираем id отправителей с пустым именем и которых ещё нет в кешe
@@ -56,17 +62,18 @@ class ChatProvider with ChangeNotifier {
       if (missing.isNotEmpty) {
         try {
           final res = await _sb
-              .from('employees')
-              .select('id, firstName, lastName, patronymic')
+              .from('documents')
+              .select('id, data')
+              .eq('collection', 'employees')
               .inFilter('id', missing.toList());
           if (res is List) {
             for (final row in res) {
-              final r = Map<String, dynamic>.from(row);
-              final id = (r['id'] ?? '').toString();
+              final data = Map<String, dynamic>.from(row['data'] ?? {});
+              final id = (row['id'] ?? '').toString();
               final full = _fullName(
-                r['lastName']?.toString(),
-                r['firstName']?.toString(),
-                r['patronymic']?.toString(),
+                data['lastName']?.toString(),
+                data['firstName']?.toString(),
+                data['patronymic']?.toString(),
               );
               if (id.isNotEmpty && full.isNotEmpty) {
                 _namesCache[id] = full;
@@ -105,15 +112,19 @@ class ChatProvider with ChangeNotifier {
     required String text,
   }) async {
     final id = _uuid.v4();
-    await _sb.from('chat_messages').insert({
-      'id': id,
-      'room_id': roomId,
-      'sender_id': senderId,
-      'sender_name': (senderName ?? '').trim().isEmpty ? 'Сотрудник' : senderName,
-      'kind': 'text',
-      'body': text.trim(),
-      'created_at': DateTime.now().toIso8601String(),
-    });
+    await _docDb.insert(
+      'chat_messages',
+      {
+        'room_id': roomId,
+        'sender_id': senderId,
+        'sender_name':
+            (senderName ?? '').trim().isEmpty ? 'Сотрудник' : senderName,
+        'kind': 'text',
+        'body': text.trim(),
+        'created_at': DateTime.now().toIso8601String(),
+      },
+      explicitId: id,
+    );
   }
 
   /// Файл/медиа
@@ -141,24 +152,32 @@ class ChatProvider with ChangeNotifier {
     );
     final publicUrl = storage.getPublicUrl(path);
 
-    await _sb.from('chat_messages').insert({
-      'id': id,
-      'room_id': roomId,
-      'sender_id': senderId,
-      'sender_name': (senderName ?? '').trim().isEmpty ? 'Сотрудник' : senderName,
-      'kind': kind,
-      'file_url': publicUrl,
-      'file_mime': mime,
-      'duration_ms': durationMs,
-      'width': width,
-      'height': height,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+    await _docDb.insert(
+      'chat_messages',
+      {
+        'room_id': roomId,
+        'sender_id': senderId,
+        'sender_name':
+            (senderName ?? '').trim().isEmpty ? 'Сотрудник' : senderName,
+        'kind': kind,
+        'file_url': publicUrl,
+        'file_mime': mime,
+        'duration_ms': durationMs,
+        'width': width,
+        'height': height,
+        'created_at': DateTime.now().toIso8601String(),
+      },
+      explicitId: id,
+    );
   }
 
   /// Полная очистка комнаты
   Future<void> clearRoom(String roomId) async {
-    await _sb.from('chat_messages').delete().eq('room_id', roomId);
+    await _sb
+        .from('documents')
+        .delete()
+        .eq('collection', 'chat_messages')
+        .eq('data->>room_id', roomId);
   }
 
   /// Удалить за период
@@ -167,7 +186,11 @@ class ChatProvider with ChangeNotifier {
     DateTime? from,
     DateTime? to,
   }) async {
-    var q = _sb.from('chat_messages').delete().eq('room_id', roomId);
+    var q = _sb
+        .from('documents')
+        .delete()
+        .eq('collection', 'chat_messages')
+        .eq('data->>room_id', roomId);
     if (from != null) q = q.gte('created_at', from.toIso8601String());
     if (to != null) q = q.lt('created_at', to.toIso8601String());
     await q;

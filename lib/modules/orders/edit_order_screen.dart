@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/storage_service.dart';
@@ -429,25 +428,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           });
         }
 
-        // remove previous tasks for this order via Supabase tasks table
-        final supabase = Supabase.instance.client;
-        await supabase
-            .from('tasks')
-            .delete()
-            .eq('orderid', createdOrUpdatedOrder.id);
+        // remove previous tasks for this order from documents collection
+        final old = await _docDb.whereEq('tasks', 'orderId', createdOrUpdatedOrder.id);
+        for (final row in old) {
+          await _docDb.deleteById(row['id'] as String);
+        }
         // create new tasks for each stage
         for (final sm in stageMaps) {
           final stageId =
               (sm['stageId'] as String?) ?? (sm['stageid'] as String?);
           if (stageId == null || stageId.isEmpty) continue;
           final taskId = _uuid.v4();
-          await supabase.from('tasks').insert({
-            'id': taskId,
-            'orderid': createdOrUpdatedOrder.id, // column names in DB
-            'stageid': stageId,
-            'status': 'waiting',
-            'createdat': DateTime.now().millisecondsSinceEpoch,
-          });
+          await _docDb.insert(
+            'tasks',
+            {
+              'orderId': createdOrUpdatedOrder.id,
+              'stageId': stageId,
+              'status': 'waiting',
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            explicitId: taskId,
+          );
         }
         // update order status to inWork and mark assignment
         final withAssignment = OrderModel(

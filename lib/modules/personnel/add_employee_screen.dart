@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../services/doc_db.dart';
 
 class AddEmployeeScreen extends StatefulWidget {
   const AddEmployeeScreen({super.key});
@@ -124,23 +125,33 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
       final id = const Uuid().v4();
 
       final filePath = 'employee_photos/$id.jpg';
-      await client.storage.from('employee_photos').upload(filePath, _selectedImage!);
-      final photoUrl = client.storage.from('employee_photos').getPublicUrl(filePath);
+      await client.storage
+          .from('employee_photos')
+          .upload(filePath, _selectedImage!);
+      final photoUrl =
+          client.storage.from('employee_photos').getPublicUrl(filePath);
 
-      await client.from('employees').insert({
-        'id': id,
-        'lastName': lastName,
-        'firstName': firstName,
-        'patronymic': patronymic,
-        'iin': iin,
-        'photoUrl': photoUrl,
-        'positionIds': _positionIds,
-        'isFired': false,
-        'comments': comments,
-        'login': login,
-        'password': password,
+      final docDb = DocDB();
+      await docDb.insert(
+        'employees',
+        {
+          'lastName': lastName,
+          'firstName': firstName,
+          'patronymic': patronymic,
+          'iin': iin,
+          'photoUrl': photoUrl,
+          'positionIds': _positionIds,
+          'isFired': false,
+          'comments': comments,
+          'login': login,
+          'password': password,
+        },
+        explicitId: id,
+      );
+      await docDb.insert('workspaces', {
+        'employee_id': id,
+        'tasks': [],
       });
-      await client.from('workspaces').insert({'employee_id': id, 'tasks': []});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сотрудник успешно добавлен')),

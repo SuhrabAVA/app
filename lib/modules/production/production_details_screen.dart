@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/doc_db.dart';
 
 import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
@@ -66,16 +66,13 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   Future<void> _loadPlan() async {
     
     try {
-      final data = await Supabase.instance.client
-          .from('production_plans')
-          .select()
-          .eq('order_id', widget.order.id)
-          .maybeSingle();
+      final rows =
+          await DocDB().whereEq('production_plans', 'order_id', widget.order.id);
       List<PlannedStage> stages = [];
-      if (data != null) {
+      if (rows.isNotEmpty) {
+        final data = Map<String, dynamic>.from(rows.first['data'] ?? {});
         final value = data['stages'];
         stages = decodePlannedStages(value);
-      
       }
       if (mounted) {
         setState(() {
@@ -84,7 +81,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         });
       }
     } catch (_) {
-      // В случае ошибки загрузки просто выставляем пустой список
       if (mounted) {
         setState(() {
           _plannedStages = [];
