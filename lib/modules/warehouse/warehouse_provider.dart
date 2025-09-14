@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'dart:convert'; // base64Decode
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../services/doc_db.dart';
 import 'package:uuid/uuid.dart';
 
 import 'tmc_model.dart';
@@ -12,8 +11,6 @@ class WarehouseProvider with ChangeNotifier {
   /// Supabase client is retained only for Storage operations and auth access.
   final SupabaseClient _supabase = Supabase.instance.client;
 
-  /// DocDB instance to interact with the universal `documents` table.
-  final DocDB _db = DocDB();
 
   /// All TMC items cached in memory.
   final List<TmcModel> _allTmc = [];
@@ -28,32 +25,58 @@ class WarehouseProvider with ChangeNotifier {
   }
 
   // =========================================================
-  // SAFE INSERT into public.documents (collection, data, [explicitId])
+  // SAFE INSERT into table with jsonb `data` column
   // - добавляет created_by, если есть сессия
   // - не трогает created_at/updated_at (их ставят дефолты/триггеры в БД)
-  // - возвращает всю строку (id, collection, data, created_by, created_at, updated_at)
+  // - возвращает всю строку (id, data, created_by, created_at, updated_at)
   // =========================================================
-  Future<Map<String, dynamic>> _insertDocSafe({
-    required String collection,
+  Future<Map<String, dynamic>> _insertRow({
+    required String table,
     required Map<String, dynamic> data,
     String? explicitId,
   }) async {
     final uid = _supabase.auth.currentUser?.id;
 
     final payload = <String, dynamic>{
-      'collection': collection,
-      'data': data,
       if (explicitId != null) 'id': explicitId, // ДОЛЖЕН быть UUID, если указываешь
-      if (uid != null) 'created_by': uid,       // иначе триггер в БД подставит системный
+      'data': data,
+      if (uid != null) 'created_by': uid, // иначе триггер в БД подставит системный
     };
 
     final row = await _supabase
-        .from('documents')
+        .from(table)
         .insert(payload)
-        .select('id, collection, data, created_by, created_at, updated_at')
+        .select('id, data, created_by, created_at, updated_at')
         .single();
 
     return Map<String, dynamic>.from(row);
+  }
+
+  Future<void> _patchRow(String table, String id, Map<String, dynamic> patch) async {
+    final res = await _supabase
+        .from(table)
+        .select('data')
+        .eq('id', id)
+        .single();
+    final oldData = Map<String, dynamic>.from(res['data'] as Map? ?? {});
+    final newData = {...oldData, ...patch};
+    await _supabase
+        .from(table)
+        .update({
+          'data': newData,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', id);
+  }
+
+  Future<Map<String, dynamic>?> _getRowById(String table, String id) async {
+    final res = await _supabase
+        .from(table)
+        .select('id, data, created_at, updated_at')
+        .eq('id', id)
+        .maybeSingle();
+    if (res == null) return null;
+    return Map<String, dynamic>.from(res);
   }
 
   /// Создаёт запись в истории изменений ТМЦ.
@@ -74,7 +97,7 @@ class WarehouseProvider with ChangeNotifier {
         if (userId != null) 'user_id': userId,
       };
       // вставляем напрямую (без DocDB), чтобы гарантированно не падало по created_by
-      await _insertDocSafe(collection: 'tmc_history', data: data);
+      await _insertRow(table: 'tmc_history', data: data);
     } catch (e) {
       debugPrint('⚠️ tmc_history insert error: $e');
     }
@@ -84,18 +107,22 @@ class WarehouseProvider with ChangeNotifier {
   Future<List<Map<String, dynamic>>> fetchHistoryByType(String type) async {
     final ids = _allTmc.where((e) => e.type == type).map((e) => e.id).toList();
     if (ids.isEmpty) return [];
-    final rows = await _db.list('tmc_history');
+    final rows = await _supabase
+        .from('tmc_history')
+        .select('data')
+        .inFilter('data->>tmc_id', ids);
     return rows
-        .where((e) => ids.contains((e['data'] as Map<String, dynamic>)['tmc_id']))
         .map((e) => Map<String, dynamic>.from(e['data'] as Map<String, dynamic>))
         .toList();
   }
 
   /// История по конкретному ТМЦ.
   Future<List<Map<String, dynamic>>> fetchHistoryForItem(String tmcId) async {
-    final rows = await _db.list('tmc_history');
+    final rows = await _supabase
+        .from('tmc_history')
+        .select('data')
+        .eq('data->>tmc_id', tmcId);
     return rows
-        .where((e) => (e['data'] as Map<String, dynamic>)['tmc_id'] == tmcId)
         .map((e) => Map<String, dynamic>.from(e['data'] as Map<String, dynamic>))
         .toList()
       ..sort((a, b) {
@@ -106,16 +133,24 @@ class WarehouseProvider with ChangeNotifier {
       });
   }
 
-  // ------ live-стрим из DocDB ------
+  // ------ live-стрим из таблицы Supabase ------
   void _listenTmc() {
     if (_channel != null) {
       _supabase.removeChannel(_channel!);
       _channel = null;
     }
     fetchTmc();
-    _channel = _db.listenCollection('tmc', (row, eventType) async {
-      await fetchTmc();
-    });
+    _channel = _supabase
+        .channel('public:tmc')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'tmc',
+          callback: (payload) async {
+            await fetchTmc();
+          },
+        )
+        .subscribe();
   }
 
   @override
@@ -139,8 +174,8 @@ class WarehouseProvider with ChangeNotifier {
         grammage: m['grammage'] as String?,
         weight: (m['weight'] as num?)?.toDouble(),
         note: m['note'] as String?,
-        imageUrl: m['imageUrl'] as String?,
-        imageBase64: m['imageBase64'] as String?,
+        imageUrl: m['image_url'] as String? ?? m['imageUrl'] as String?,
+        imageBase64: m['image_base64'] as String? ?? m['imageBase64'] as String?,
         lowThreshold: (m['low_threshold'] ?? m['lowThreshold']) is num
             ? (m['low_threshold'] ?? m['lowThreshold']).toDouble()
             : null,
@@ -153,15 +188,18 @@ class WarehouseProvider with ChangeNotifier {
 
   // ------ ручная подгрузка ------
   Future<void> fetchTmc() async {
-    final rows = await _db.list('tmc');
+    final rows = await _supabase
+        .from('tmc')
+        .select('id, data, created_at, updated_at')
+        .order('created_at', ascending: false);
     _allTmc
       ..clear()
       ..addAll(rows.map((e) {
         final data = Map<String, dynamic>.from(e['data'] as Map);
-        // переносим системные поля, если DocDB их возвращает
-        if (e.containsKey('created_at')) data['created_at'] = e['created_at'];
-        if (e.containsKey('updated_at')) data['updated_at'] = e['updated_at'];
-        data['id'] = e['id']; // id из documents
+        // переносим системные поля
+        if (e['created_at'] != null) data['created_at'] = e['created_at'];
+        if (e['updated_at'] != null) data['updated_at'] = e['updated_at'];
+        data['id'] = e['id'];
         return _rowToTmc(data);
       }));
     notifyListeners();
@@ -218,7 +256,6 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     final data = <String, dynamic>{
-      'id': newId, // храним для удобства маппинга
       'date': DateTime.now().toIso8601String(),
       'supplier': supplier,
       'type': type,
@@ -229,16 +266,16 @@ class WarehouseProvider with ChangeNotifier {
       if (grammage != null) 'grammage': grammage,
       if (weight != null) 'weight': weight,
       'note': note,
-      if (finalBase64 != null) 'imageBase64': finalBase64,
-      if (finalImageUrl != null) 'imageUrl': finalImageUrl,
+      if (finalBase64 != null) 'image_base64': finalBase64,
+      if (finalImageUrl != null) 'image_url': finalImageUrl,
       if (lowThreshold != null) 'low_threshold': lowThreshold,
       if (criticalThreshold != null) 'critical_threshold': criticalThreshold,
     };
 
     try {
-      // ❗ Важно: вставляем напрямую через Supabase, чтобы created_by не был NULL.
-      final inserted = await _insertDocSafe(
-        collection: 'tmc',
+      // ❗ Важно: вставляем напрямую в таблицу `tmc`, чтобы created_by не был NULL.
+      final inserted = await _insertRow(
+        table: 'tmc',
         data: data,
         explicitId: newId, // uuid из Uuid().v4()
       );
@@ -320,8 +357,8 @@ class WarehouseProvider with ChangeNotifier {
       }
     }
 
-    if (finalBase64 != null) updates['imageBase64'] = finalBase64;
-    if (finalImageUrl != null) updates['imageUrl'] = finalImageUrl;
+    if (finalBase64 != null) updates['image_base64'] = finalBase64;
+    if (finalImageUrl != null) updates['image_url'] = finalImageUrl;
 
     if (updates.isEmpty) return;
 
@@ -341,8 +378,8 @@ class WarehouseProvider with ChangeNotifier {
         grammage: updates['grammage'] ?? prev.grammage,
         weight: (updates['weight'] as double?) ?? prev.weight,
         note: updates['note'] ?? prev.note,
-        imageUrl: updates['imageUrl'] ?? prev.imageUrl,
-        imageBase64: updates['imageBase64'] ?? prev.imageBase64,
+        imageUrl: updates['image_url'] ?? prev.imageUrl,
+        imageBase64: updates['image_base64'] ?? prev.imageBase64,
         lowThreshold: (updates['low_threshold'] as double?) ?? prev.lowThreshold,
         criticalThreshold: (updates['critical_threshold'] as double?) ?? prev.criticalThreshold,
         createdAt: prev.createdAt,
@@ -353,7 +390,7 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     try {
-      await _db.patchById(id, updates);
+      await _patchRow('tmc', id, updates);
 
       if (prev != null && updates.containsKey('quantity')) {
         final double oldQty = prev.quantity;
@@ -370,12 +407,12 @@ class WarehouseProvider with ChangeNotifier {
         }
       }
 
-      final fresh = await _db.getById(id);
+      final fresh = await _getRowById('tmc', id);
       if (fresh != null) {
         final map = Map<String, dynamic>.from(fresh['data'] as Map);
         map['id'] = fresh['id'];
-        if (fresh.containsKey('created_at')) map['created_at'] = fresh['created_at'];
-        if (fresh.containsKey('updated_at')) map['updated_at'] = fresh['updated_at'];
+        if (fresh['created_at'] != null) map['created_at'] = fresh['created_at'];
+        if (fresh['updated_at'] != null) map['updated_at'] = fresh['updated_at'];
         if (idx != -1) {
           _allTmc[idx] = _rowToTmc(map);
           notifyListeners();
@@ -409,7 +446,7 @@ class WarehouseProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _db.deleteById(id);
+      await _supabase.from('tmc').delete().eq('id', id);
       await _logTmcEvent(
         tmcId: id,
         eventType: 'delete',
@@ -438,7 +475,7 @@ class WarehouseProvider with ChangeNotifier {
       'document': document,
       'date': DateTime.now().toIso8601String(),
     };
-    await _insertDocSafe(collection: 'shipments', data: data);
+    await _insertRow(table: 'shipments', data: data);
   }
 
   Future<void> registerReturn({
@@ -458,7 +495,7 @@ class WarehouseProvider with ChangeNotifier {
       'note': note,
       'date': DateTime.now().toIso8601String(),
     };
-    await _insertDocSafe(collection: 'returns', data: data);
+    await _insertRow(table: 'returns', data: data);
   }
 
   // =========================================================
@@ -483,13 +520,13 @@ class WarehouseProvider with ChangeNotifier {
   /// Удаляет всю таблицу (тип) со склада: удаляет все записи tmc с данным [type].
   Future<void> deleteType(String type) async {
     try {
-      final rows = await _db.list('tmc');
+      final rows = await _supabase
+          .from('tmc')
+          .select('id')
+          .eq('data->>type', type);
       for (final row in rows) {
-        final data = row['data'] as Map<String, dynamic>;
         final rid = row['id'] as String;
-        if (data['type'] == type) {
-          await _db.deleteById(rid);
-        }
+        await _supabase.from('tmc').delete().eq('id', rid);
       }
       _allTmc.removeWhere((e) => e.type == type);
       notifyListeners();

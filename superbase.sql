@@ -841,6 +841,66 @@ begin
   end if;
 end $$;
 
+create table if not exists public.tmc_history (
+  id text primary key,
+  data jsonb default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
+);
+alter table public.tmc_history enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'tmc_history'
+      and policyname = 'tmc_history_read'
+  ) then
+    create policy tmc_history_read on public.tmc_history
+      for select
+      using (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'tmc_history'
+      and policyname = 'tmc_history_insert'
+  ) then
+    create policy tmc_history_insert on public.tmc_history
+      for insert
+      with check (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'tmc_history'
+      and policyname = 'tmc_history_update'
+  ) then
+    create policy tmc_history_update on public.tmc_history
+      for update
+      using (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'tmc_history'
+      and policyname = 'tmc_history_delete'
+  ) then
+    create policy tmc_history_delete on public.tmc_history
+      for delete
+      using (auth.uid() is not null);
+  end if;
+end $$;
+
 create table if not exists public.workspaces (
   id text primary key,
   data jsonb default '{}'::jsonb,
