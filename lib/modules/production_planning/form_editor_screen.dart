@@ -11,6 +11,7 @@ import '../orders/orders_provider.dart';
 import 'planned_stage_model.dart';
 import 'template_provider.dart';
 import 'template_model.dart';
+import '../../services/doc_db.dart';
 
 /// A form editor for building and saving a production plan for a specific order.
 ///
@@ -33,6 +34,7 @@ class FormEditorScreen extends StatefulWidget {
 class _FormEditorScreenState extends State<FormEditorScreen> {
   final List<PlannedStage> _stages = [];
     final SupabaseClient _supabase = Supabase.instance.client;
+  final DocDB _docDb = DocDB();
   String? _photoUrl;
 
   @override
@@ -57,12 +59,10 @@ Future<void> _pickOrderImage() async {
 
   /// Loads an existing plan from Firebase if one exists for the current order.
   Future<void> _loadExistingPlan() async {
-    final data = await _supabase
-        .from('production_plans')
-        .select()
-        .eq('order_id', widget.order.id)
-        .maybeSingle();
-    if (data == null) return;
+    final rows =
+        await _docDb.whereEq('production_plans', 'order_id', widget.order.id);
+    if (rows.isEmpty) return;
+    final data = Map<String, dynamic>.from(rows.first['data'] ?? {});
     final loaded = decodePlannedStages(data['stages']);
     if (!mounted) return;
     setState(() {
@@ -161,24 +161,39 @@ Future<void> _pickOrderImage() async {
     final orderId = widget.order.id;
 
     final stageMaps = _stages.map((stage) => stage.toMap()).toList();
-    await _supabase.from('production_plans').upsert({
-      'order_id': orderId,
-      'stages': stageMaps,
-      if (_photoUrl != null) 'photo_url': _photoUrl,
-    }, onConflict: 'order_id');
-    
-    await _supabase.from('tasks').delete().eq('orderId', orderId);
+    final existing =
+        await _docDb.whereEq('production_plans', 'order_id', orderId);
+    if (existing.isNotEmpty) {
+      await _docDb.updateById(existing.first['id'] as String, {
+        'order_id': orderId,
+        'stages': stageMaps,
+        if (_photoUrl != null) 'photo_url': _photoUrl,
+      });
+    } else {
+      await _docDb.insert('production_plans', {
+        'order_id': orderId,
+        'stages': stageMaps,
+        if (_photoUrl != null) 'photo_url': _photoUrl,
+      });
+    }
+
+    final oldTasks = await _docDb.whereEq('tasks', 'orderId', orderId);
+    for (final row in oldTasks) {
+      await _docDb.deleteById(row['id'] as String);
+    }
 
     for (final stage in _stages) {
       final taskId = const Uuid().v4();
-      await _supabase.from('tasks').insert({
-        'id': taskId,
-        'orderid': orderId,                    // было orderId
-        'stageid': stage.stageId,             // было stageId
-        'status': 'waiting',
-        'createdat': DateTime.now().millisecondsSinceEpoch, // было createdAt
-      });
-
+      await _docDb.insert(
+        'tasks',
+        {
+          'orderId': orderId,
+          'stageId': stage.stageId,
+          'status': 'waiting',
+          'createdAt': DateTime.now().millisecondsSinceEpoch,
+        },
+        explicitId: taskId,
+      );
     }
 
     // После сохранения плана и создания задач формируем идентификатор производственного

@@ -53,15 +53,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
         final String? email = user.email as String?;
         final String? uid = user.id as String?;
 
-        // Ищем по login = email ИЛИ по id = uid
         final rows = await client
-            .from('employees')
-            .select('firstName, lastName, patronymic, login, id')
-            .or('login.eq.${email ?? ''},id.eq.${uid ?? ''}')
+            .from('documents')
+            .select('id, data')
+            .eq('collection', 'employees')
+            .or('data->>login.eq.${email ?? ''},data->>userId.eq.${uid ?? ''}')
             .limit(1);
 
         if (rows is List && rows.isNotEmpty) {
-          final r = Map<String, dynamic>.from(rows.first);
+          final r = Map<String, dynamic>.from(rows.first['data'] ?? {});
           final last = (r['lastName'] ?? '').toString().trim();
           final first = (r['firstName'] ?? '').toString().trim();
           final patr = (r['patronymic'] ?? '').toString().trim();
