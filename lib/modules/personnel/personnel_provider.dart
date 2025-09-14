@@ -13,13 +13,16 @@ import 'terminal_model.dart';
 /// Провайдер персонала, работающий через коллекции в `documents`:
 /// employees / positions / workplaces / terminals
 class PersonnelProvider extends ChangeNotifier {
-  PersonnelProvider() {
-    // Инициализация: загружаем данные и подписываемся на realtime.
-    _bootstrap();
+  PersonnelProvider({DocDB? docDb, bool bootstrap = true})
+      : _db = docDb ?? DocDB() {
+    if (bootstrap) {
+      // Инициализация: загружаем данные и подписываемся на realtime.
+      _bootstrap();
+    }
   }
 
   final _uuid = const Uuid();
-  final DocDB _db = DocDB();
+  final DocDB _db;
 
   // локальные кэши под UI — заполняются из documents
   final List<EmployeeModel> _employees = [];
@@ -389,29 +392,36 @@ class PersonnelProvider extends ChangeNotifier {
 
   // -------------------- Workplaces --------------------
 
-  void addWorkplace({
+  Future<void> addWorkplace({
     required String name,
     required List<String> positionIds,
     bool hasMachine = false,
     int maxConcurrentWorkers = 1,
-  }) {
+  }) async {
     final id = _genId();
-    _workplaces.add(WorkplaceModel(
+    final model = WorkplaceModel(
       id: id,
       name: name.trim(),
       positionIds: positionIds,
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
-    ));
+    );
+    _workplaces.add(model);
     _safeNotify();
 
-    unawaited(_db.insert('workplaces', {
-      'id': id,
-      'name': name.trim(),
-      'positionIds': positionIds,
-      'has_machine': hasMachine,
-      'max_concurrent_workers': maxConcurrentWorkers,
-    }, explicitId: id));
+    try {
+      await _db.insert('workplaces', {
+        'id': id,
+        'name': name.trim(),
+        'positionIds': positionIds,
+        'has_machine': hasMachine,
+        'max_concurrent_workers': maxConcurrentWorkers,
+      }, explicitId: id);
+    } catch (e) {
+      _workplaces.removeWhere((w) => w.id == id);
+      _safeNotify();
+      rethrow;
+    }
   }
 
   Future<void> updateWorkplace({
