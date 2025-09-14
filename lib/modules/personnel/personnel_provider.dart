@@ -9,6 +9,7 @@ import 'employee_model.dart';
 import 'workplace_model.dart';
 import 'terminal_model.dart';
 
+
 /// Провайдер персонала, работающий через коллекции в `documents`:
 /// employees / positions / workplaces / terminals
 class PersonnelProvider extends ChangeNotifier {
@@ -26,9 +27,72 @@ class PersonnelProvider extends ChangeNotifier {
   final List<WorkplaceModel> _workplaces = [];
   final List<TerminalModel> _terminals = [];
 
+  // NOTE: Added default seeds for positions and workplaces. These seeds were
+  // extracted from the legacy application (lib.zip) and are used to initialize
+  // the Supabase "documents" collections upon first launch. They ensure that
+  // all standard job positions and workplaces are available without manual
+  // creation. The seeds are injected via ensureDefaultPositions() and
+  // ensureDefaultWorkplaces() during bootstrapping.
+
+  /// List of default positions taken from the old project. Each map contains
+  /// an "id" and a human-readable "name". These will be inserted into the
+  /// `positions` collection only if a position with the same name does not
+  /// already exist.
+  static const List<Map<String, String>> _defaultPositionSeeds = [
+    {'id': 'bob_cutter', 'name': 'Бобинорезчик'},
+    {'id': 'print', 'name': 'Печатник'},
+    {'id': 'cut_sheet', 'name': 'Листорезчик'},
+    {'id': 'bag_collector', 'name': 'Пакетосборщик'},
+    {'id': 'cutter', 'name': 'Резчик'},
+    {'id': 'bottom_gluer', 'name': 'Дносклейщик'},
+    {'id': 'handle_gluer', 'name': 'Склейщик ручек'},
+    {'id': 'die_cutter', 'name': 'Оператор высечки'},
+    {'id': 'assembler', 'name': 'Сборщик'},
+    {'id': 'rope_operator', 'name': 'Оператор веревок'},
+    {'id': 'handle_operator', 'name': 'Оператор ручек'},
+    {'id': 'muffin_operator', 'name': 'Оператор маффинов'},
+    {'id': 'single_point_gluer', 'name': 'Склейка одной точки'},
+  ];
+
+  /// List of default workplaces taken from the old project. Each record
+  /// defines an "id", a "name", and the list of position IDs allowed to
+  /// work there. Additional fields `hasMachine` and `maxConcurrentWorkers`
+  /// were absent in the legacy code, so defaults (false and 1) are used.
+  static const List<Map<String, dynamic>> _defaultWorkplaceSeeds = [
+    {'id': 'w_bobiner', 'name': 'Бобинорезка', 'positionIds': ['bob_cutter']},
+    {'id': 'w_flexoprint', 'name': 'Флексопечать', 'positionIds': ['print']},
+    {'id': 'w_sheet_old', 'name': 'Листорезка 1 (старая)', 'positionIds': ['cut_sheet']},
+    {'id': 'w_sheet_new', 'name': 'Листорезка 2 (новая)', 'positionIds': ['cut_sheet']},
+    {'id': 'w_auto_p_assembly', 'name': 'Автоматическая П-сборка', 'positionIds': ['bag_collector']},
+    {'id': 'w_auto_p_pipe', 'name': 'Автоматическая П-сборка (труба)', 'positionIds': ['bag_collector']},
+    {'id': 'w_auto_v1', 'name': 'Автоматическая В-сборка 1 (фри, уголки)', 'positionIds': ['bag_collector']},
+    {'id': 'w_auto_v2', 'name': 'Автоматическая В-сборка 2 (окошко)', 'positionIds': ['bag_collector']},
+    {'id': 'w_cutting', 'name': 'Резка', 'positionIds': ['cutter']},
+    {'id': 'w_bottom_glue_cold', 'name': 'Холодная дно-склейка', 'positionIds': ['bottom_gluer']},
+    {'id': 'w_bottom_glue_hot', 'name': 'Горячая дно-склейка', 'positionIds': ['bottom_gluer']},
+    {'id': 'w_handle_glue_auto', 'name': 'Автоматическая ручка-склейка', 'positionIds': ['handle_gluer']},
+    {'id': 'w_handle_glue_semi', 'name': 'Полуавтоматическая ручка-склейка', 'positionIds': ['handle_gluer']},
+    {'id': 'w_die_cut_a1', 'name': 'Высечка A1', 'positionIds': ['die_cutter']},
+    {'id': 'w_die_cut_a2', 'name': 'Высечка A2', 'positionIds': ['die_cutter']},
+    {'id': 'w_tape_glue', 'name': 'Приклейка скотча', 'positionIds': ['assembler']},
+    {'id': 'w_two_sheet', 'name': 'Сборка с 2-х листов', 'positionIds': ['assembler']},
+    {'id': 'w_pipe_assembly', 'name': 'Сборка трубы', 'positionIds': ['assembler']},
+    {'id': 'w_bottom_card', 'name': 'Сборка дна + картон', 'positionIds': ['assembler']},
+    {'id': 'w_bottom_glue_manual', 'name': 'Склейка дна (ручная)', 'positionIds': ['assembler']},
+    {'id': 'w_card_laying', 'name': 'Укладка картона на дно', 'positionIds': ['assembler']},
+    {'id': 'w_rope_maker', 'name': 'Изготовление верёвок (2 шт.)', 'positionIds': ['rope_operator']},
+    {'id': 'w_rope_reel', 'name': 'Перемотка верёвок в бухты', 'positionIds': ['rope_operator']},
+    {'id': 'w_handle_maker', 'name': 'Станок для изготовления ручек', 'positionIds': ['handle_operator']},
+    {'id': 'w_press', 'name': 'Пресс', 'positionIds': ['cutter']},
+    {'id': 'w_tart_maker', 'name': 'Станок для изготовления тарталеток', 'positionIds': ['muffin_operator']},
+    {'id': 'w_muffin_bord', 'name': 'Станок для маффинов с бортиками', 'positionIds': ['muffin_operator']},
+    {'id': 'w_muffin_no_bord', 'name': 'Станок для маффинов без бортиков', 'positionIds': ['muffin_operator']},
+    {'id': 'w_tulip_maker', 'name': 'Станок для изготовления тюльпанов', 'positionIds': ['muffin_operator']},
+    {'id': 'w_single_point', 'name': 'Склейка одной точки', 'positionIds': ['single_point_gluer']},
+  ];
+
   // realtime канал (dynamic — для совместимости с разными SDK)
   dynamic _empChan;
-
   bool _disposed = false;
 
   void _safeNotify() {
@@ -59,6 +123,9 @@ class PersonnelProvider extends ChangeNotifier {
     // 2) Гарантируем наличие обязательных ролей в базе
     await ensureManagerPosition();
     await ensureWarehouseHeadPosition();
+    // Создаём стандартные должности и рабочие места
+    await ensureDefaultPositions();
+    await ensureDefaultWorkplaces();
     // 3) Если были добавлены новые должности — перечитываем список
     await _loadPositionsFromDocuments();
     // 4) Загружаем сотрудников, рабочие места и терминалы
@@ -79,6 +146,8 @@ class PersonnelProvider extends ChangeNotifier {
     await _loadPositionsFromDocuments();
     await ensureManagerPosition();
     await ensureWarehouseHeadPosition();
+    await ensureDefaultPositions();
+    await ensureDefaultWorkplaces();
     await _loadPositionsFromDocuments();
     await _loadEmployeesFromDocuments();
     await _loadWorkplacesFromDocuments();
@@ -446,6 +515,60 @@ class PersonnelProvider extends ChangeNotifier {
       }
     } catch (_) {
       // игнорируем ошибки
+    }
+  }
+
+  /// Creates default positions in Supabase documents if they are missing.
+  ///
+  /// Iterates through [_defaultPositionSeeds] and, for each seed, checks if a
+  /// position with the same name exists. If not, it inserts a new record into
+  /// the `positions` collection with the provided id and name. Any errors
+  /// during insertion are ignored to avoid blocking bootstrapping.
+  Future<void> ensureDefaultPositions() async {
+    for (final seed in _defaultPositionSeeds) {
+      final name = seed['name'] ?? '';
+      final id = seed['id'] ?? _genId();
+      try {
+        final exists = (await _db.whereEq('positions', 'name', name)).isNotEmpty;
+        if (!exists) {
+          await _db.insert('positions', {
+            'id': id,
+            'name': name,
+          }, explicitId: id);
+        }
+      } catch (_) {
+        // ignore errors during seeding
+      }
+    }
+  }
+
+  /// Creates default workplaces in Supabase documents if they are missing.
+  ///
+  /// Iterates through [_defaultWorkplaceSeeds] and, for each seed, checks if a
+  /// workplace with the same name exists. If not, it inserts a new record
+  /// into the `workplaces` collection with the provided id, name, and
+  /// positionIds. Additional fields `has_machine` and
+  /// `max_concurrent_workers` default to false and 1 respectively. Errors are
+  /// ignored to ensure bootstrapping continues.
+  Future<void> ensureDefaultWorkplaces() async {
+    for (final seed in _defaultWorkplaceSeeds) {
+      final name = seed['name'] ?? '';
+      final id = seed['id'] ?? _genId();
+      final positionIds = (seed['positionIds'] as List?)?.cast<String>() ?? const <String>[];
+      try {
+        final exists = (await _db.whereEq('workplaces', 'name', name)).isNotEmpty;
+        if (!exists) {
+          await _db.insert('workplaces', {
+            'id': id,
+            'name': name,
+            'positionIds': positionIds,
+            'has_machine': false,
+            'max_concurrent_workers': 1,
+          }, explicitId: id);
+        }
+      } catch (_) {
+        // ignore errors during seeding
+      }
     }
   }
 
