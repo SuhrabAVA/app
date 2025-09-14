@@ -29,6 +29,12 @@ class PersonnelProvider extends ChangeNotifier {
   // realtime канал (dynamic — для совместимости с разными SDK)
   dynamic _empChan;
 
+  bool _disposed = false;
+
+  void _safeNotify() {
+    if (!_disposed) notifyListeners();
+  }
+
   // getters для UI
   List<EmployeeModel> get employees => List.unmodifiable(_employees);
   List<PositionModel> get positions => List.unmodifiable(_positions);
@@ -89,7 +95,7 @@ class PersonnelProvider extends ChangeNotifier {
           final id = (r['id'] as String?) ?? (data['id'] as String?) ?? _genId();
           return EmployeeModel.fromJson(data, id);
         }));
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       debugPrint('❌ load employees failed: $e');
     }
@@ -108,7 +114,7 @@ class PersonnelProvider extends ChangeNotifier {
           final id = (r['id'] as String?) ?? (m['id'] as String?) ?? _genId();
           return PositionModel(id: id, name: (m['name'] ?? '').toString());
         }));
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       debugPrint('❌ load positions failed: $e');
     }
@@ -130,7 +136,7 @@ class PersonnelProvider extends ChangeNotifier {
             maxConcurrentWorkers: (m['max_concurrent_workers'] as int?) ?? 1,
           );
         }));
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       debugPrint('❌ load workplaces failed: $e');
     }
@@ -150,7 +156,7 @@ class PersonnelProvider extends ChangeNotifier {
             workplaceIds: (m['workplaceIds'] as List?)?.cast<String>() ?? [],
           );
         }));
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       debugPrint('❌ load terminals failed: $e');
     }
@@ -206,7 +212,7 @@ class PersonnelProvider extends ChangeNotifier {
     );
 
     _employees.add(employee);
-    notifyListeners();
+    _safeNotify();
 
     try {
       // сохраняем данные сотрудника в коллекции employees
@@ -216,7 +222,7 @@ class PersonnelProvider extends ChangeNotifier {
       }, explicitId: id);
     } catch (e) {
       _employees.removeWhere((x) => x.id == id);
-      notifyListeners();
+      _safeNotify();
       rethrow;
     }
   }
@@ -252,7 +258,7 @@ class PersonnelProvider extends ChangeNotifier {
       password: password.trim(),
     );
     _employees[index] = updated;
-    notifyListeners();
+    _safeNotify();
 
     try {
       await _db.updateById(id, {
@@ -260,7 +266,7 @@ class PersonnelProvider extends ChangeNotifier {
       });
     } catch (e) {
       _employees[index] = prev;
-      notifyListeners();
+      _safeNotify();
       rethrow;
     }
   }
@@ -271,7 +277,7 @@ class PersonnelProvider extends ChangeNotifier {
     final id = _genId();
     final model = PositionModel(id: id, name: name.trim());
     _positions.add(model);
-    notifyListeners();
+    _safeNotify();
     try {
       await _db.insert('positions', {
         'id': id,
@@ -279,7 +285,7 @@ class PersonnelProvider extends ChangeNotifier {
       }, explicitId: id);
     } catch (e) {
       _positions.removeWhere((p) => p.id == id);
-      notifyListeners();
+      _safeNotify();
       rethrow;
     }
   }
@@ -296,7 +302,7 @@ class PersonnelProvider extends ChangeNotifier {
       });
       final i = _positions.indexWhere((p) => p.id == id);
       if (i != -1) _positions[i] = PositionModel(id: id, name: name.trim());
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       rethrow;
     }
@@ -306,7 +312,7 @@ class PersonnelProvider extends ChangeNotifier {
     try {
       await _db.deleteById(id);
       _positions.removeWhere((p) => p.id == id);
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       rethrow;
     }
@@ -328,7 +334,7 @@ class PersonnelProvider extends ChangeNotifier {
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
     ));
-    notifyListeners();
+    _safeNotify();
 
     unawaited(_db.insert('workplaces', {
       'id': id,
@@ -371,7 +377,7 @@ class PersonnelProvider extends ChangeNotifier {
           maxConcurrentWorkers: maxConcurrentWorkers ?? old.maxConcurrentWorkers,
         );
       }
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       rethrow;
     }
@@ -381,7 +387,7 @@ class PersonnelProvider extends ChangeNotifier {
     try {
       await _db.deleteById(id);
       _workplaces.removeWhere((w) => w.id == id);
-      notifyListeners();
+      _safeNotify();
     } catch (e) {
       rethrow;
     }
@@ -392,7 +398,7 @@ class PersonnelProvider extends ChangeNotifier {
   void addTerminal({required String name, required List<String> workplaceIds}) {
     final id = _genId();
     _terminals.add(TerminalModel(id: id, name: name.trim(), workplaceIds: workplaceIds));
-    notifyListeners();
+    _safeNotify();
 
     unawaited(_db.insert('terminals', {
       'id': id,
@@ -404,9 +410,8 @@ class PersonnelProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    try {
-      try { _empChan?.unsubscribe(); } catch (_) {}
-    } catch (_) {}
+    _disposed = true;
+    try { _empChan?.unsubscribe(); } catch (_) {}
     super.dispose();
   }
 
