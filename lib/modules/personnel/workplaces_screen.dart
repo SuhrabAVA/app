@@ -148,12 +148,19 @@ class WorkplacesScreen extends StatelessWidget {
     );
     if (ok == true && nameC.text.trim().isNotEmpty) {
       final int? maxWorkers = int.tryParse(maxWorkersC.text.trim());
-      context.read<PersonnelProvider>().addWorkplace(
-        name: nameC.text.trim(),
-        positionIds: selectedPositions.toList(),
-        hasMachine: hasMachine,
-        maxConcurrentWorkers: maxWorkers ?? 1,
-      );
+      try {
+        await context.read<PersonnelProvider>().addWorkplace(
+          name: nameC.text.trim(),
+          positionIds: selectedPositions.toList(),
+          hasMachine: hasMachine,
+          maxConcurrentWorkers: maxWorkers ?? 1,
+        );
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Ошибка сохранения: $e')));
+        }
+      }
     }
   }
 

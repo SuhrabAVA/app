@@ -22,10 +22,10 @@ class PersonnelProvider extends ChangeNotifier {
   final DocDB _db = DocDB();
 
   // локальные кэши под UI — заполняются из documents
-  final List<EmployeeModel> _employees = [];
-  final List<PositionModel> _positions = [];
-  final List<WorkplaceModel> _workplaces = [];
-  final List<TerminalModel> _terminals = [];
+  final List<EmployeeModel> _employees = <EmployeeModel>[];
+  final List<PositionModel> _positions = <PositionModel>[];
+  final List<WorkplaceModel> _workplaces = <WorkplaceModel>[];
+  final List<TerminalModel> _terminals = <TerminalModel>[];
 
   // NOTE: Added default seeds for positions and workplaces. These seeds were
   // extracted from the legacy application (lib.zip) and are used to initialize
@@ -389,29 +389,32 @@ class PersonnelProvider extends ChangeNotifier {
 
   // -------------------- Workplaces --------------------
 
-  void addWorkplace({
+  Future<void> addWorkplace({
     required String name,
     required List<String> positionIds,
     bool hasMachine = false,
     int maxConcurrentWorkers = 1,
-  }) {
+  }) async {
     final id = _genId();
-    _workplaces.add(WorkplaceModel(
+    final workplace = WorkplaceModel(
       id: id,
       name: name.trim(),
       positionIds: positionIds,
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
-    ));
+    );
+    _workplaces.add(workplace);
     _safeNotify();
 
-    unawaited(_db.insert('workplaces', {
-      'id': id,
-      'name': name.trim(),
-      'positionIds': positionIds,
-      'has_machine': hasMachine,
-      'max_concurrent_workers': maxConcurrentWorkers,
-    }, explicitId: id));
+    try {
+      await _db.insert('workplaces', workplace.toMap(), explicitId: id);
+    } catch (e) {
+      // Если вставка в documents не удалась, откатываем локальный список,
+      // чтобы не вводить пользователя в заблуждение.
+      _workplaces.removeWhere((w) => w.id == id);
+      _safeNotify();
+      rethrow;
+    }
   }
 
   Future<void> updateWorkplace({
