@@ -1094,35 +1094,39 @@ class _TasksScreenState extends State<TasksScreen>
                     Future<void> onFinish() async {
                       final qty = await _askQuantity(context);
                       if (qty == null) return;
+                      final taskProvider = context.read<TaskProvider>();
                       if (jointGroup != null) {
                         // JOINT: split quantity and COMPLETE immediately
                         final per =
                             (qty / (jointGroup.isEmpty ? 1 : jointGroup.length))
                                 .floor();
-                        await context.read<TaskProvider>().addCommentAutoUser(
+                        await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_team_total',
                             text: qty.toString(),
                             userIdOverride: widget.employeeId);
                         for (final id in jointGroup) {
-                          await context.read<TaskProvider>().addComment(
+                          await taskProvider.addComment(
                               taskId: task.id,
                               type: 'quantity_share',
                               text: per.toString(),
                               userId: id);
                         }
-                        await context.read<TaskProvider>().addCommentAutoUser(
+                        await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'user_done',
                             text: 'done',
                             userIdOverride: widget.employeeId);
-                        final _secs = _elapsed(task).inSeconds;
-                        await context.read<TaskProvider>().updateStatus(
-                            task.id, TaskStatus.completed,
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final _secs = _elapsed(latestTask).inSeconds;
+                        await taskProvider.updateStatus(task.id, TaskStatus.completed,
                             spentSeconds: _secs, startedAt: null);
                         final note = await _askFinishNote(context);
                         if (note != null && note.isNotEmpty) {
-                          await context.read<TaskProvider>().addCommentAutoUser(
+                          await taskProvider.addCommentAutoUser(
                               taskId: task.id,
                               type: 'finish_note',
                               text: note,
@@ -1131,21 +1135,25 @@ class _TasksScreenState extends State<TasksScreen>
                         return;
                       } else {
                         // SEPARATE: write personal qty, require ALL separate-mode assignees to finish
-                        await context.read<TaskProvider>().addCommentAutoUser(
+                        await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_done',
                             text: qty.toString(),
                             userIdOverride: widget.employeeId);
-                        await context.read<TaskProvider>().addCommentAutoUser(
+                        await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'user_done',
                             text: 'done',
                             userIdOverride: widget.employeeId);
 
                         // Collect only assignees in 'separate' mode
-                        final separateIds = task.assignees
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final separateIds = latestTask.assignees
                             .where((id) =>
-                                _execModeForUser(task, id) ==
+                                _execModeForUser(latestTask, id) ==
                                 ExecutionMode.separate)
                             .toList();
                         // Ensure current user is included (in case he wasn't listed yet)
@@ -1155,7 +1163,7 @@ class _TasksScreenState extends State<TasksScreen>
 
                         bool allDone = true;
                         for (final id in separateIds) {
-                          final has = task.comments.any(
+                          final has = latestTask.comments.any(
                               (c) => c.type == 'user_done' && c.userId == id);
                           if (!has) {
                             allDone = false;
@@ -1163,19 +1171,16 @@ class _TasksScreenState extends State<TasksScreen>
                           }
                         }
                         if (allDone) {
-                          final _secs = _elapsed(task).inSeconds;
-                          await context.read<TaskProvider>().updateStatus(
-                              task.id, TaskStatus.completed,
+                          final _secs = _elapsed(latestTask).inSeconds;
+                          await taskProvider.updateStatus(task.id, TaskStatus.completed,
                               spentSeconds: _secs, startedAt: null);
                           final note = await _askFinishNote(context);
                           if (note != null && note.isNotEmpty) {
-                            await context
-                                .read<TaskProvider>()
-                                .addCommentAutoUser(
-                                    taskId: task.id,
-                                    type: 'finish_note',
-                                    text: note,
-                                    userIdOverride: widget.employeeId);
+                            await taskProvider.addCommentAutoUser(
+                                taskId: task.id,
+                                type: 'finish_note',
+                                text: note,
+                                userIdOverride: widget.employeeId);
                           }
                         } else {
                           if (context.mounted) {
@@ -1510,7 +1515,16 @@ class _TasksScreenState extends State<TasksScreen>
 
   // Нормализация: если timestamp в секундах — переводим в миллисекунды.
   int _normTs(int ts) {
-    if (ts < 2000000000000) return ts * 1000; // < ~2033 в миллисекундах
+    // Значения меньше ~2 млрд считаем заданными в секундах (UNIX time),
+    // всё остальное — уже миллисекунды. Отдельно обрабатываем редкий случай
+    // микросекунд, чтобы не завышать длительности настройки.
+    if (ts > 10000000000000) {
+      // микросекунды -> миллисекунды
+      return ts ~/ 1000;
+    }
+    if (ts < 2000000000) {
+      return ts * 1000;
+    }
     return ts;
   }
 
