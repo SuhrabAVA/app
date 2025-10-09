@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
 import 'tmc_model.dart';
+import '../../utils/kostanay_time.dart';
 
 class StockListScreen extends StatefulWidget {
   const StockListScreen({super.key});
@@ -81,7 +82,15 @@ class _StockListScreenState extends State<StockListScreen> {
                 final String thresholds =
                     'Пороги: ${tmc.lowThreshold?.toString() ?? '-'} / ${tmc.criticalThreshold?.toString() ?? '-'}';
                 final String dateStr = tmc.createdAt ?? tmc.date;
-                final String dateDisplay = dateStr.split('T').first;
+                final formatted = formatKostanayTimestamp(dateStr);
+                final dateDisplay = () {
+                  if (formatted == '—') return formatted;
+                  final dateParts = formatted.split(' ').first.split('-');
+                  if (dateParts.length == 3) {
+                    return '${dateParts[2]}.${dateParts[1]}.${dateParts[0]}';
+                  }
+                  return formatted.split(' ').first;
+                }();
                 return Card(
                   margin:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

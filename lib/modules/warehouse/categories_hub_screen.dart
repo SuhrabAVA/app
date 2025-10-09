@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../utils/auth_helper.dart';
+import '../../utils/kostanay_time.dart';
 
 class CategoriesHubScreen extends StatefulWidget {
   const CategoriesHubScreen({super.key});
@@ -665,7 +667,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final r = _writeoffs[i];
                     final title = nameById[r['item_id'].toString()] ?? '—';
                     final qty = (r['qty'] ?? 0).toString();
-                    final dt = (r['created_at'] ?? '').toString();
+                    final dtIso = (r['created_at'] ?? '').toString();
+                    final dt = formatKostanayTimestamp(dtIso);
                     final reason = (r['reason'] ?? '').toString();
                     return ListTile(
                       title: Text('$title • −$qty'),
@@ -682,7 +685,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final r = _inventories[i];
                     final title = nameById[r['item_id'].toString()] ?? '—';
                     final qty = (r['counted_qty'] ?? 0).toString();
-                    final dt = (r['created_at'] ?? '').toString();
+                    final dtIso = (r['created_at'] ?? '').toString();
+                    final dt = formatKostanayTimestamp(dtIso);
                     final note = (r['note'] ?? '').toString();
                     return ListTile(
                       title: Text('$title • $qty'),
