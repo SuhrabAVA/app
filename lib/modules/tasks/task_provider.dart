@@ -473,93 +473,87 @@ class TaskProvider with ChangeNotifier {
 
   // ---- Helpers for last-stage quantity propagation to orders.actual_qty ----
   Future<bool> _isLastStage(String orderId, String stageId) async {
-    // Try new schema: production.*
-    try {
-      final plan = await _supabase
-          .from('production.plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('production.plan_stages')
-            .select('*')
-            .eq('plan_id', plan['id'].toString());
-        if (rows is List && rows.isNotEmpty) {
-          // find max 'order' value
-          int maxOrder = 0;
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi > maxOrder) maxOrder = oi;
-          }
-          // collect stage_ids with max order
-          final lastIds = <String>{};
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi == maxOrder) {
-              final sid =
-                  (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
-              if (sid.isNotEmpty) lastIds.add(sid);
+    Future<bool?> fromPlan(String planTable, String stagesTable) async {
+      try {
+        final plan = await _supabase
+            .from(planTable)
+            .select('id')
+            .eq('order_id', orderId)
+            .maybeSingle();
+        if (plan != null && plan is Map && plan['id'] != null) {
+          final rows = await _supabase
+              .from(stagesTable)
+              .select('*')
+              .eq('plan_id', plan['id'].toString());
+          if (rows is List && rows.isNotEmpty) {
+            int maxOrder = 0;
+            for (final r in rows) {
+              final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
+              final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
+              if (oi > maxOrder) maxOrder = oi;
             }
+            final lastIds = <String>{};
+            for (final r in rows) {
+              final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
+              final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
+              if (oi == maxOrder) {
+                final sid =
+                    (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
+                if (sid.isNotEmpty) lastIds.add(sid);
+              }
+            }
+            return lastIds.contains(stageId);
           }
-          return lastIds.contains(stageId);
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+      return null;
+    }
 
-    // Fallback to legacy public.*
+    final prodPlanResult =
+        await fromPlan('production.plans', 'production.plan_stages');
+    if (prodPlanResult != null) return prodPlanResult;
+
+    final legacyPlanResult = await fromPlan('prod_plans', 'prod_plan_stages');
+    if (legacyPlanResult != null) return legacyPlanResult;
+
+    // Fallback: consider stage last if there are no other stages in work/pending.
     try {
-      final plan = await _supabase
-          .from('prod_plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('prod_plan_stages')
-            .select('*')
-            .eq('plan_id', plan['id'].toString());
-        if (rows is List && rows.isNotEmpty) {
-          int maxOrder = 0;
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi > maxOrder) maxOrder = oi;
+      final rows = await _supabase
+          .from('tasks')
+          .select('stage_id, status')
+          .eq('order_id', orderId);
+      bool hasPendingOtherStage = false;
+      if (rows is List) {
+        for (final r in rows) {
+          final sid = (r['stage_id'] ?? r['stageId'] ?? '').toString();
+          if (sid.isEmpty || sid == stageId) continue;
+          final statusRaw = (r['status'] ?? '').toString().toLowerCase();
+          if (statusRaw != 'completed') {
+            hasPendingOtherStage = true;
+            break;
           }
-          final lastIds = <String>{};
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi == maxOrder) {
-              final sid =
-                  (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
-              if (sid.isNotEmpty) lastIds.add(sid);
-            }
-          }
-          return lastIds.contains(stageId);
         }
       }
+      if (!hasPendingOtherStage) return true;
     } catch (_) {}
 
     return false;
   }
 
-  int _parseIntSafe(dynamic v) {
+  double _parseQtySafe(dynamic v) {
     if (v == null) return 0;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
+    if (v is num) return v.toDouble();
     if (v is String) {
-      final s = v.trim();
-      return int.tryParse(s) ??
-          int.tryParse(s.replaceAll(RegExp(r'[^0-9-]'), '')) ??
-          0;
+      final normalized = v.replaceAll(',', '.').trim();
+      final parsed = double.tryParse(normalized);
+      if (parsed != null) return parsed;
+      final digits = normalized.replaceAll(RegExp(r'[^0-9.-]'), '');
+      return double.tryParse(digits) ?? 0;
     }
     return 0;
   }
 
-  Future<int> _sumLastStageQuantity(String orderId, String stageId) async {
+  Future<double> _sumLastStageQuantity(String orderId, String stageId) async {
     // get all tasks for this order & stage
     final rows = await _supabase
         .from('tasks')
@@ -567,7 +561,7 @@ class TaskProvider with ChangeNotifier {
         .eq('order_id', orderId)
         .eq('stage_id', stageId);
 
-    int total = 0;
+    double total = 0;
     if (rows is List) {
       for (final r in rows) {
         // comments can be list or map
@@ -590,14 +584,14 @@ class TaskProvider with ChangeNotifier {
               ((a['timestamp'] ?? 0) as int) >= ((b['timestamp'] ?? 0) as int)
                   ? a
                   : b);
-          total += _parseIntSafe(last['text']);
+          total += _parseQtySafe(last['text']);
           continue;
         }
         // Else sum 'quantity_done' (separate executors)
         final parts =
             comments.where((m) => (m['type'] ?? '') == 'quantity_done');
         for (final m in parts) {
-          total += _parseIntSafe(m['text']);
+          total += _parseQtySafe(m['text']);
         }
       }
     }

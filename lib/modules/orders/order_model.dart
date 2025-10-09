@@ -99,6 +99,8 @@ class OrderModel {
   bool paymentDone;
   String comments;
 
+  double? actualQty;
+
   /// Храним строкой (name), чтобы не падать на незнакомых значениях
   String status;
   String? assignmentId;
@@ -130,6 +132,7 @@ class OrderModel {
     String? status,
     this.assignmentId,
     bool? assignmentCreated,
+    this.actualQty,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -172,6 +175,7 @@ class OrderModel {
         'status': status,
         if (assignmentId != null) 'assignment_id': assignmentId,
         'assignment_created': assignmentCreated,
+        if (actualQty != null) 'actual_qty': actualQty,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -207,6 +211,22 @@ class OrderModel {
     final String? formCodeVal =
         (_pickAny(map, const ['form_code', 'formCode']) as String?);
 
+    double? _parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) {
+        final s = value.trim();
+        if (s.isEmpty) return null;
+        final normalized = s.replaceAll(',', '.');
+        final parsed = double.tryParse(normalized);
+        if (parsed != null) return parsed;
+        final fallback =
+            double.tryParse(normalized.replaceAll(RegExp(r'[^0-9.-]'), ''));
+        if (fallback != null) return fallback;
+      }
+      return null;
+    }
+
     return OrderModel(
       id: (_pickAny(map, const ['id']) as String?) ?? '',
       manager: (_pickAny(map, const ['manager']) as String?) ?? '',
@@ -239,6 +259,8 @@ class OrderModel {
       assignmentId:
           (_pickAny(map, const ['assignment_id', 'assignmentId']) as String?),
       assignmentCreated: assignmentCreatedBool,
+      actualQty: _parseDouble(
+          _pickAny(map, const ['actual_qty', 'actualQty', 'actualQuantity'])),
     );
   }
 }
