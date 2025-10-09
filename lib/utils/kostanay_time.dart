@@ -42,7 +42,28 @@ String formatKostanayTimestamp(String? isoString, {String fallback = '—'}) {
   final parsed = DateTime.tryParse(raw);
   if (parsed == null) return raw;
 
-  final utc = parsed.isUtc ? parsed : parsed.toUtc();
+  final normalizedRaw = raw.replace(' ', 'T');
+  final hasExplicitOffset = normalizedRaw.endsWith('Z') ||
+      RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(normalizedRaw);
+
+  DateTime utc;
+  if (parsed.isUtc) {
+    utc = parsed;
+  } else if (hasExplicitOffset) {
+    utc = parsed.toUtc();
+  } else {
+    utc = DateTime.utc(
+      parsed.year,
+      parsed.month,
+      parsed.day,
+      parsed.hour,
+      parsed.minute,
+      parsed.second,
+      parsed.millisecond,
+      parsed.microsecond,
+    );
+  }
+
   final kostanay = utc.add(kKostanayUtcOffset);
 
   return '${kostanay.year}-${_twoDigits(kostanay.month)}-${_twoDigits(kostanay.day)} '
