@@ -9,6 +9,10 @@ import '../warehouse/type_table_screen.dart';
 class StockTables extends StatelessWidget {
   const StockTables({super.key});
 
+  /// Публичный список типов изделий из модуля склада
+  static List<String> get categoryTypes =>
+      _categories.map((e) => e['type']!).toList(growable: false);
+
   static const List<Map<String, String>> _categories = [
     {
       'type': 'Пакеты с П дном',

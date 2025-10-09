@@ -53,7 +53,8 @@ class WarehouseDashboard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Низкий остаток:', style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text('Низкий остаток:',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 4,
@@ -61,17 +62,24 @@ class WarehouseDashboard extends StatelessWidget {
                         children: low.map((t) {
                           Color bg;
                           if (t.type == 'Бумага') {
-                            bg = t.quantity <= 5000 ? Colors.red.shade200 : Colors.yellow.shade200;
+                            bg = t.quantity <= 5000
+                                ? Colors.red.shade200
+                                : Colors.yellow.shade200;
                           } else {
-                            bg = t.quantity <= 5 ? Colors.red.shade200 : Colors.yellow.shade200;
+                            bg = t.quantity <= 5
+                                ? Colors.red.shade200
+                                : Colors.yellow.shade200;
                           }
                           return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: bg,
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: Text('${t.description}: ${t.quantity}${t.unit ?? ''}', style: const TextStyle(fontSize: 12)),
+                            child: Text(
+                                '${t.description}: ${t.quantity}${t.unit ?? ''}',
+                                style: const TextStyle(fontSize: 12)),
                           );
                         }).toList(),
                       ),
@@ -87,11 +95,24 @@ class WarehouseDashboard extends StatelessWidget {
                 mainAxisSpacing: 8,
                 childAspectRatio: 1,
                 children: [
-                  _card(context, '📄\nБумага', const TypeTableTabsScreen(type: 'Бумага', title: 'Бумага')),
-                  _card(context, '✏️\nКанцелярия', const TypeTableTabsScreen(type: 'Канцелярия', title: 'Канцелярия')),
-                  _card(context, '🎨\nКраски', const TypeTableTabsScreen(type: 'Краска', title: 'Краски', enablePhoto: true)),
+                  _card(
+                      context,
+                      '📄\nБумага',
+                      const TypeTableTabsScreen(
+                          type: 'Бумага', title: 'Бумага')),
+                  _card(
+                      context,
+                      '✏️\nКанцелярия',
+                      const TypeTableTabsScreen(
+                          type: 'Канцелярия', title: 'Канцелярия')),
+                  _card(
+                      context,
+                      '🎨\nКраски',
+                      const TypeTableTabsScreen(
+                          type: 'Краска', title: 'Краски', enablePhoto: true)),
                   _card(context, '🧾\nФорма', const FormsScreen()),
-                  _card(context, '🖊️\nРучки', const TypeTableTabsScreen(type: 'Ручки', title: 'Ручки')),
+                  _card(context, '🖊️\nРучки',
+                      const TypeTableTabsScreen(type: 'Ручки', title: 'Ручки')),
                   _card(context, '📦\nКатегории', const CategoriesHubScreen()),
                   _card(context, '🏷️\nПоставщики', const SuppliersScreen()),
                 ],
@@ -118,7 +139,8 @@ class WarehouseDashboard extends StatelessWidget {
           child: Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3),
+            style: const TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, height: 1.3),
           ),
         ),
       ),

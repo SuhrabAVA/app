@@ -1,28 +1,24 @@
+// lib/modules/warehouse/type_table_tabs_screen.dart
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'warehouse_provider.dart';
 import '../../services/doc_db.dart';
 import 'tmc_model.dart';
+import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
-/// Для каждой категории («таблицы») отображаются три вкладки:
-/// 1) Основной список – текущие остатки;
-/// 2) Списания – лог всех списаний для этой позиции;
-/// 3) Инвентаризация – лог инвентаризаций с фактическим количеством и заметкой.
-///
-/// Кроме просмотра данных, здесь можно:
-/// - создать новую запись (только на вкладке «Список»),
-/// - отредактировать, удалить или пополнить существующую запись,
-/// - выполнить операцию списания или инвентаризации,
-/// - изменить фотографию (если `enablePhoto = true`),
-/// - удалить всю таблицу (удаляются все записи данного типа).
+/// Вкладки:
+/// 1) Список – текущие остатки;
+/// 2) Списания – лог списаний;
+/// 3) Инвентаризация – лог инвентаризаций.
 class TypeTableTabsScreen extends StatefulWidget {
   final String type;
   final String title;
@@ -41,10 +37,136 @@ class TypeTableTabsScreen extends StatefulWidget {
 
 class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     with TickerProviderStateMixin {
+  // === Paper: multi-filter ===
+  final Set<String> _fltPaperNames = {};
+  final Set<String> _fltPaperFormats = {};
+  final Set<String> _fltPaperGrammages = {};
+  List<String> _allPaperNames = [];
+  List<String> _allPaperFormats = [];
+  List<String> _allPaperGrammages = [];
+
+  void _rebuildPaperFilterDicts() {
+    final names = <String>{};
+    final formats = <String>{};
+    final grammages = <String>{};
+    for (final p in _items) {
+      if (p.description.trim().isNotEmpty) names.add(p.description.trim());
+      final f = (p.format ?? '').trim();
+      final g = (p.grammage ?? '').trim();
+      if (f.isNotEmpty) formats.add(f);
+      if (g.isNotEmpty) grammages.add(g);
+    }
+    _allPaperNames = names.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    _allPaperFormats = formats.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    _allPaperGrammages = grammages.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  List<TmcModel> _applyPaperMultiFilters(List<TmcModel> src) {
+    return src.where((e) {
+      final okN =
+          _fltPaperNames.isEmpty || _fltPaperNames.contains(e.description);
+      final okF = _fltPaperFormats.isEmpty ||
+          ((e.format ?? '').isNotEmpty && _fltPaperFormats.contains(e.format));
+      final okG = _fltPaperGrammages.isEmpty ||
+          ((e.grammage ?? '').isNotEmpty &&
+              _fltPaperGrammages.contains(e.grammage));
+      return okN && okF && okG;
+    }).toList();
+  }
+
+  void _openPaperFilters() {
+    _rebuildPaperFilterDicts();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            left: 16,
+            right: 16,
+            top: 16,
+          ),
+          child: StatefulBuilder(
+            builder: (ctx, setSt) {
+              Widget chips(List<String> all, Set<String> sel, String title) =>
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        for (final v in all)
+                          FilterChip(
+                            label: Text(v),
+                            selected: sel.contains(v),
+                            onSelected: (on) => setSt(() {
+                              if (on) {
+                                sel.add(v);
+                              } else {
+                                sel.remove(v);
+                              }
+                            }),
+                          ),
+                      ]),
+                    ],
+                  );
+              return SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    chips(_allPaperNames, _fltPaperNames, 'Названия'),
+                    const SizedBox(height: 12),
+                    chips(_allPaperFormats, _fltPaperFormats, 'Форматы'),
+                    const SizedBox(height: 12),
+                    chips(_allPaperGrammages, _fltPaperGrammages, 'Грамажи'),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            setSt(() {
+                              _fltPaperNames.clear();
+                              _fltPaperFormats.clear();
+                              _fltPaperGrammages.clear();
+                            });
+                          },
+                          child: const Text('Сбросить'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {});
+                            Navigator.pop(ctx);
+                          },
+                          child: const Text('Применить'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
   late final TabController _tabs;
+  RealtimeChannel? _rt;
+  // Основные позиции
   List<TmcModel> _items = [];
-  List<TmcModel> _writeoffs = [];
-  List<TmcModel> _inventories = [];
+
+  // Логи
+  List<_LogRow> _writeoffs = [];
+  List<_LogRow> _inventories = [];
+  List<_LogRow> _arrivals = [];
 
   String _sortField = 'date';
   bool _sortDesc = true;
@@ -52,80 +174,694 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   final TextEditingController _searchController = TextEditingController();
 
+  // ====== Мапы соответствий типа -> таблицы Supabase и названия FK/полей ======
+  static const Map<String, Map<String, String>> _woMap = {
+    'paint': {
+      'table': 'paints_writeoffs',
+      'fk': 'paint_id',
+      'qty': 'qty',
+      'note': 'reason'
+    },
+    'material': {
+      'table': 'materials_writeoffs',
+      'fk': 'material_id',
+      'qty': 'qty',
+      'note': 'reason'
+    },
+    'paper': {
+      'table': 'papers_writeoffs',
+      'fk': 'paper_id',
+      'qty': 'qty',
+      'note': 'reason'
+    },
+    'stationery': {
+      'table': 'warehouse_stationery_writeoffs',
+      'fk': 'item_id',
+      'qty': 'qty',
+      'note': 'reason'
+    },
+    'pens': {
+      'table': 'warehouse_pens_writeoffs',
+      'fk': 'item_id',
+      'qty': 'qty',
+      'note': 'reason'
+    },
+  };
+
+  static const Map<String, Map<String, String>> _invMap = {
+    'paint': {
+      'table': 'paint_inventories',
+      'fk': 'paint_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'material': {
+      'table': 'material_inventories',
+      'fk': 'material_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'paper': {
+      'table': 'paper_inventories',
+      'fk': 'paper_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'stationery': {
+      'table': 'warehouse_stationery_inventories',
+      'fk': 'item_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'pens': {
+      'table': 'warehouse_pens_inventories',
+      'fk': 'item_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+  };
+
+  // Карта таблиц для «Приходов» (arrivals)
+  static const Map<String, Map<String, String>> _arrMap = {
+    'paint': {
+      'table': 'paints_arrivals',
+      'fk': 'paint_id',
+      'qty': 'qty',
+      'note': 'note'
+    },
+    'material': {
+      'table': 'materials_arrivals',
+      'fk': 'material_id',
+      'qty': 'qty',
+      'note': 'note'
+    },
+    'paper': {
+      'table': 'papers_arrivals',
+      'fk': 'paper_id',
+      'qty': 'qty',
+      'note': 'note'
+    },
+    'stationery': {
+      'table': 'warehouse_stationery_arrivals',
+      'fk': 'item_id',
+      'qty': 'qty',
+      'note': 'note'
+    },
+    'pens': {
+      'table': 'warehouse_pens_arrivals',
+      'fk': 'item_id',
+      'qty': 'qty',
+      'note': 'note'
+    },
+  };
+
+  String _normalizeType(String raw) {
+    final t = raw.trim().toLowerCase();
+    if (t.startsWith('краск')) return 'paint';
+    if (t.startsWith('матер')) return 'material';
+    if (t.startsWith('бума')) return 'paper';
+    if (t.startsWith('канц')) return 'stationery';
+    if (t.startsWith('руч') || t.startsWith('pens')) return 'pens';
+    if (_woMap.containsKey(t) || _invMap.containsKey(t)) return t;
+    return t;
+  }
+
+  /// Возможные названия базовой таблицы (для enrich логов)
+  List<String> _baseTables(String typeKey) {
+    switch (typeKey) {
+      case 'paint':
+        return const ['paints', 'paint'];
+      case 'material':
+        return const ['materials', 'material'];
+      case 'paper':
+        return const ['papers', 'paper'];
+      case 'stationery':
+        return const [
+          'warehouse_stationery',
+          'stationery',
+          'warehouse_stationeries'
+        ];
+      case 'pens':
+        return const ['warehouse_pens', 'pens'];
+      default:
+        return const ['papers'];
+    }
+  }
+
+  /// Кандидаты таблиц для логов списаний
+  List<String> _writeoffTables(String typeKey) {
+    final hint = _woMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
+      if (typeKey == 'pens') 'warehouse_pens_writeoffs',
+      if (typeKey == 'paper') 'paper_writeoffs',
+      if (typeKey == 'paint') 'paint_writeoffs',
+      if (typeKey == 'material') 'material_writeoffs',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  /// Кандидаты таблиц для логов инвентаризаций
+  List<String> _inventoryTables(String typeKey) {
+    final hint = _invMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'paper') 'paper_inventories',
+      if (typeKey == 'paint') 'paint_inventories',
+      if (typeKey == 'material') 'material_inventories',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  /// Кандидаты таблиц для логов приходов
+  List<String> _arrivalTables(String typeKey) {
+    final hint = _arrMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
+      if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'stationery') 'stationery_arrivals',
+      'arrivals',
+      if (typeKey == 'paper') 'papers_arrivals',
+      if (typeKey == 'paint') 'paints_arrivals',
+      if (typeKey == 'material') 'materials_arrivals',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  /// Поля базовой таблицы, которые нужно вытаскивать для обогащения логов.
+  String _baseSelectFieldsForLogs(String typeKey) {
+    if (typeKey == 'paper') {
+      return 'id, description, unit, format, grammage';
+    }
+    return 'id, description, unit';
+  }
+
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final t = widget.type.toLowerCase();
+      context.read<WarehouseProvider>().setStationeryKey(
+            (t.startsWith('руч') || t.startsWith('pens'))
+                ? 'ручки'
+                : 'канцелярия',
+          );
+    });
+    _tabs = TabController(length: 4, vsync: this);
+    _tabs.addListener(() {
+      if (mounted) setState(() {});
+    });
     _loadAll();
+    _setupRealtime();
+  }
+
+  Future<void> _loadAll() async {
+    final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    try {
+      await provider.fetchTmc();
+    } catch (_) {}
+
+    final items = provider.getTmcByType(widget.type);
+    final typeKey = _normalizeType(widget.type);
+
+    final writeoffs = await _fetchWriteoffs(typeKey);
+    final inventories = await _fetchInventories(typeKey);
+    final arrivals = await _fetchArrivals(typeKey);
+
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _writeoffs = writeoffs;
+      _inventories = inventories;
+      _arrivals = arrivals;
+    });
+    _notifyThresholds();
+    _resort();
+  }
+
+  void _setupRealtime() {
+    try {
+      final s = Supabase.instance.client;
+      _rt?.unsubscribe();
+
+      final typeKey = _normalizeType(widget.type);
+      final bases = _baseTables(typeKey);
+      final woTables = _writeoffTables(typeKey);
+      final invTables = _inventoryTables(typeKey);
+
+      final ch = s.channel('wh_${DateTime.now().millisecondsSinceEpoch}');
+      for (final t in [...bases, ...woTables, ...invTables]) {
+        ch.onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: t,
+          callback: (payload) => _loadAll(),
+        );
+        ch.onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: t,
+          callback: (payload) => _loadAll(),
+        );
+        ch.onPostgresChanges(
+          event: PostgresChangeEvent.delete,
+          schema: 'public',
+          table: t,
+          callback: (payload) => _loadAll(),
+        );
+      }
+      ch.subscribe();
+      _rt = ch;
+    } catch (_) {}
+  }
+
+  @override
+  void didUpdateWidget(covariant TypeTableTabsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.type != widget.type) {
+      _setupRealtime();
+      _loadAll();
+    }
   }
 
   @override
   void dispose() {
+    try {
+      _rt?.unsubscribe();
+    } catch (_) {}
     _tabs.dispose();
-    _searchController.dispose();
     super.dispose();
   }
 
-  /// Загружает текущие записи для категории и связанные списания/инвентаризации.
-  Future<void> _loadAll() async {
-    final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    await provider.fetchTmc();
-    final items = provider.getTmcByType(widget.type);
-    final allWriteoffs = provider.getTmcByType('Списание');
-    final allInventories = provider.getTmcByType('Инвентаризация');
-    // Фильтруем логи: выбираем только те, чьё описание совпадает с исходной позицией.
-    final names = items.map((e) => e.description).toSet();
-    setState(() {
-      _items = items;
-      _writeoffs =
-          allWriteoffs.where((e) => names.contains(e.description)).toList();
-      _inventories =
-          allInventories.where((e) => names.contains(e.description)).toList();
-    });
-    _resort();
+  // ------- ВСПОМОГАТЕЛЬНЫЕ ПАРСЕРЫ / СЕЛЕКТЫ -------
+  num? _pickNumDynamic(Map<String, dynamic> e, List<String?> keys) {
+    for (final k in keys) {
+      if (k == null) continue;
+      final v = e[k];
+      if (v is num) return v;
+      if (v is String) {
+        final d = double.tryParse(v.replaceAll(',', '.'));
+        if (d != null) return d;
+      }
+    }
+    return null;
   }
 
-  /// Сортировка списка по выбранному полю и направлению.
-  void _resort() {
-    int cmpNum(double a, double b) => a.compareTo(b);
-    int cmpDate(String a, String b) =>
-        DateTime.parse(a).compareTo(DateTime.parse(b));
+  String? _pickStr(Map<String, dynamic> e, List<String?> keys) {
+    for (final k in keys) {
+      if (k == null) continue;
+      final v = e[k];
+      if (v == null) continue;
+      return v.toString();
+    }
+    return null;
+  }
 
-    int Function(TmcModel, TmcModel) comparator;
+  String? _pickId(Map<String, dynamic> e, List<String?> keys) {
+    for (final k in keys) {
+      if (k == null) continue;
+      final v = e[k];
+      if (v == null) continue;
+      return v.toString();
+    }
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _selectAnyTable({
+    required List<String> tables,
+    required String selectFields,
+    String? orderBy,
+    bool ascending = true,
+  }) async {
+    final s = Supabase.instance.client;
+    for (final t in tables) {
+      try {
+        final q = s.from(t).select(selectFields);
+        final data = orderBy == null
+            ? await q
+            : await q.order(orderBy, ascending: ascending);
+        return (data as List).cast<Map<String, dynamic>>();
+      } catch (_) {
+        // попробуем следующий
+      }
+    }
+    return [];
+  }
+
+  /// Универсальный выбор по списку id (пытается по списку таблиц)
+  Future<List<Map<String, dynamic>>> _selectByIdsAny({
+    required List<String> tables,
+    required String fk,
+    required List ids,
+    String orderBy = 'description',
+    bool ascending = true,
+    String selectFields = '*',
+  }) async {
+    final s = Supabase.instance.client;
+    for (final table in tables) {
+      try {
+        final b = s.from(table).select(selectFields);
+        final data = ids.isEmpty
+            ? await b.order(orderBy, ascending: ascending)
+            : await b
+                .or(ids.map((e) => '$fk.eq.$e').join(','))
+                .order(orderBy, ascending: ascending);
+        return (data as List).cast<Map<String, dynamic>>();
+      } catch (_) {
+        // следующая таблица
+      }
+    }
+    return [];
+  }
+
+  /// Получить все списания по типу и обогатить описанием/единицей/форматом/граммажом.
+  Future<List<_LogRow>> _fetchWriteoffs(String typeKey) async {
+    final woTables = _writeoffTables(typeKey);
+    final logs = <Map<String, dynamic>>[];
+
+    for (final table in woTables) {
+      final part = await _selectAnyTable(
+        tables: [table],
+        selectFields: '*',
+        orderBy: 'created_at',
+        ascending: false,
+      );
+      if (part.isNotEmpty) logs.addAll(part);
+    }
+    if (logs.isEmpty) return [];
+
+    final fkCandidates = <String?>[
+      _woMap[typeKey]?['fk'],
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id'
+    ];
+
+    final ids = logs
+        .map((e) => _pickId(e, fkCandidates))
+        .where((v) => v != null)
+        .toSet()
+        .toList();
+
+    final baseRows = await _selectByIdsAny(
+      tables: _baseTables(typeKey),
+      fk: 'id',
+      ids: ids,
+      selectFields: _baseSelectFieldsForLogs(typeKey),
+    );
+    final baseMap = {for (final r in baseRows) r['id']: r};
+
+    return logs.map((e) {
+      final id = (e['id'] ?? '').toString();
+      final baseId = _pickId(e, fkCandidates);
+      final baseRow = baseMap[baseId] ?? {};
+      final descr = (baseRow['description'] ?? '').toString();
+      final unit = (baseRow['unit'] ?? '').toString();
+      final fmt = baseRow['format']?.toString();
+      final gram = baseRow['grammage']?.toString();
+      final qty = _pickNumDynamic(e, [
+            _woMap[typeKey]?['qty'],
+            'quantity',
+            'qty',
+            'amount',
+            'count'
+          ]) ??
+          0;
+      final dateIso =
+          (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
+      final note =
+          _pickStr(e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment']);
+      final by = _pickStr(e, [
+        'by_name',
+        'byName',
+        'by',
+        'user_name',
+        'employee_name',
+        'operator',
+        'who'
+      ]);
+      return _LogRow(
+        id: id,
+        description: descr,
+        quantity: qty.toDouble(),
+        unit: unit,
+        dateIso: dateIso,
+        note: note,
+        format: fmt,
+        grammage: gram,
+        byName: by,
+      );
+    }).toList();
+  }
+
+  /// Получить инвентаризации по типу и обогатить описанием/единицей/форматом/граммажом.
+  Future<List<_LogRow>> _fetchInventories(String typeKey) async {
+    final invTables = _inventoryTables(typeKey);
+    final logs = <Map<String, dynamic>>[];
+
+    for (final table in invTables) {
+      final part = await _selectAnyTable(
+        tables: [table],
+        selectFields: '*',
+        orderBy: 'created_at',
+        ascending: false,
+      );
+      if (part.isNotEmpty) logs.addAll(part);
+    }
+    if (logs.isEmpty) return [];
+
+    final fkCandidates = <String?>[
+      _invMap[typeKey]?['fk'],
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id'
+    ];
+
+    final ids = logs
+        .map((e) => _pickId(e, fkCandidates))
+        .where((v) => v != null)
+        .toSet()
+        .toList();
+
+    final baseRows = await _selectByIdsAny(
+      tables: _baseTables(typeKey),
+      fk: 'id',
+      ids: ids,
+      selectFields: _baseSelectFieldsForLogs(typeKey),
+    );
+    final baseMap = {for (final r in baseRows) r['id']: r};
+
+    return logs.map((e) {
+      final id = (e['id'] ?? '').toString();
+      final baseId = _pickId(e, fkCandidates);
+      final baseRow = baseMap[baseId] ?? {};
+      final descr = (baseRow['description'] ?? '').toString();
+      final unit = (baseRow['unit'] ?? '').toString();
+      final fmt = baseRow['format']?.toString();
+      final gram = baseRow['grammage']?.toString();
+      final qty = _pickNumDynamic(e,
+              [_invMap[typeKey]?['qty'], 'counted_qty', 'quantity', 'qty']) ??
+          0;
+      final dateIso =
+          (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
+      final note =
+          _pickStr(e, [_invMap[typeKey]?['note'], 'note', 'reason', 'comment']);
+      final by = _pickStr(e, [
+        'by_name',
+        'byName',
+        'by',
+        'user_name',
+        'employee_name',
+        'operator',
+        'who'
+      ]);
+      return _LogRow(
+        id: id,
+        description: descr,
+        quantity: qty.toDouble(),
+        unit: unit,
+        dateIso: dateIso,
+        note: note,
+        format: fmt,
+        grammage: gram,
+        byName: by,
+      );
+    }).toList();
+  }
+
+  /// Получить приходы по типу и обогатить описанием/единицей/форматом/граммажом.
+  Future<List<_LogRow>> _fetchArrivals(String typeKey) async {
+    final arrTables = _arrivalTables(typeKey);
+    final logs = <Map<String, dynamic>>[];
+
+    for (final table in arrTables) {
+      final part = await _selectAnyTable(
+        tables: [table],
+        selectFields: '*',
+        orderBy: 'created_at',
+        ascending: false,
+      );
+      if (part.isNotEmpty) logs.addAll(part);
+    }
+    if (logs.isEmpty) return [];
+
+    final fkCandidates = <String?>[
+      _arrMap[typeKey]?['fk'],
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id',
+      'base_id',
+    ];
+    final ids =
+        logs.map((e) => _pickId(e, fkCandidates)).whereType<String>().toList();
+
+    final baseRows = await _selectByIdsAny(
+      tables: _baseTables(typeKey),
+      fk: 'id',
+      ids: ids,
+      selectFields: _baseSelectFieldsForLogs(typeKey),
+    );
+    final baseMap = {for (final r in baseRows) r['id']: r};
+
+    return logs.map((e) {
+      final id = (e['id'] ?? '').toString();
+      final baseId = _pickId(e, fkCandidates);
+      final baseRow = baseMap[baseId] ?? {};
+      final descr = (baseRow['description'] ?? '').toString();
+      final unit = (baseRow['unit'] ?? '').toString();
+      final fmt = baseRow['format']?.toString();
+      final gram = baseRow['grammage']?.toString();
+      final qty = _pickNumDynamic(e, [
+            _arrMap[typeKey]?['qty'],
+            'quantity',
+            'qty',
+            'amount',
+            'added_qty',
+          ]) ??
+          0;
+      final dateIso =
+          (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
+      final note =
+          _pickStr(e, [_arrMap[typeKey]?['note'], 'note', 'comment', 'reason']);
+      final by = _pickStr(e, [
+        'by_name',
+        'byName',
+        'by',
+        'user_name',
+        'employee_name',
+        'operator',
+        'who'
+      ]);
+      return _LogRow(
+        id: id,
+        description: descr,
+        quantity: qty.toDouble(),
+        unit: unit,
+        dateIso: dateIso,
+        note: note,
+        format: fmt,
+        grammage: gram,
+        byName: by,
+      );
+    }).toList();
+  }
+
+  // --- сортировка ---
+  void _resort() {
+    int cmpNum(num? a, num? b) => (a ?? -1e9).compareTo((b ?? -1e9));
+    int cmpDate(String a, String b) {
+      late DateTime pa, pb;
+      try {
+        pa = DateTime.parse(a);
+      } catch (_) {
+        pa = DateTime.fromMillisecondsSinceEpoch(0);
+      }
+      try {
+        pb = DateTime.parse(b);
+      } catch (_) {
+        pb = DateTime.fromMillisecondsSinceEpoch(0);
+      }
+      return pa.compareTo(pb);
+    }
+
+    int Function(TmcModel, TmcModel) itemComparator;
     switch (_sortField) {
       case 'quantity':
-        comparator = (a, b) => cmpNum(a.quantity, b.quantity);
+        itemComparator = (a, b) => cmpNum(a.quantity, b.quantity);
         break;
       case 'date':
       default:
-        comparator = (a, b) => cmpDate(a.date, b.date);
+        itemComparator = (a, b) => cmpDate(a.date, b.date);
         break;
     }
+
+    int Function(_LogRow, _LogRow) logComparator;
+    switch (_sortField) {
+      case 'quantity':
+        logComparator = (a, b) => cmpNum(a.quantity, b.quantity);
+        break;
+      case 'date':
+      default:
+        logComparator = (a, b) => cmpDate(a.dateIso, b.dateIso);
+        break;
+    }
+
     setState(() {
-      _items.sort(comparator);
-      _writeoffs.sort(comparator);
-      _inventories.sort(comparator);
+      _items.sort(itemComparator);
+      _writeoffs.sort(logComparator);
+      _inventories.sort(logComparator);
+      _arrivals.sort(logComparator);
       if (_sortDesc) {
         _items = _items.reversed.toList();
         _writeoffs = _writeoffs.reversed.toList();
         _inventories = _inventories.reversed.toList();
+        _arrivals = _arrivals.reversed.toList();
       }
     });
   }
 
-  /// Применяет текстовый фильтр _query к переданному списку.
-  List<TmcModel> _applyFilter(List<TmcModel> src) {
+  /// Фильтр по тексту для позиций
+  List<TmcModel> _applyFilterItems(List<TmcModel> src) {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return src;
-    final numVal = double.tryParse(q.replaceAll(',', '.'));
-    return src.where((e) {
-      final byName = e.description.toLowerCase().contains(q);
-      final byQty = numVal != null && e.quantity >= numVal;
-      return byName || byQty;
-    }).toList();
+    return src
+        .where((e) =>
+            e.description.toLowerCase().contains(q) ||
+            (e.note ?? '').toLowerCase().contains(q))
+        .toList();
   }
 
-  /// Удаляет всю таблицу: все записи типа [widget.type].
+  /// Фильтр по тексту для логов
+  List<_LogRow> _applyFilterLogs(List<_LogRow> src) {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return src;
+    return src
+        .where((e) =>
+            e.description.toLowerCase().contains(q) ||
+            (e.note ?? '').toLowerCase().contains(q))
+        .toList();
+  }
+
   Future<void> _deleteTable() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -144,10 +880,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ),
     );
     if (ok == true) {
-      // 1) Удаляем все записи TMC указанного типа
       await Provider.of<WarehouseProvider>(context, listen: false)
           .deleteType(widget.type);
-      // 2) Удаляем запись о типе из коллекции warehouse_types
       try {
         final db = DocDB();
         final rows = await db.whereEq('warehouse_types', 'name', widget.type);
@@ -155,11 +889,32 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           final rid = row['id'] as String?;
           if (rid != null) await db.deleteById(rid);
         }
-      } catch (_) {
-        // ignore errors when cleaning up warehouse_types
-      }
+      } catch (_) {}
       if (mounted) Navigator.of(context).pop();
     }
+  }
+
+  Widget _scrollableTable(Widget table) {
+    final vertical = ScrollController();
+    final horizontal = ScrollController();
+    return Scrollbar(
+      controller: vertical,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: vertical,
+        child: Scrollbar(
+          controller: horizontal,
+          thumbVisibility: true,
+          notificationPredicate: (notif) =>
+              notif.metrics.axis == Axis.horizontal,
+          child: SingleChildScrollView(
+            controller: horizontal,
+            scrollDirection: Axis.horizontal,
+            child: table,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -172,20 +927,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           tabs: const [
             Tab(text: 'Список'),
             Tab(text: 'Списания'),
+            Tab(text: 'Приходы'),
             Tab(text: 'Инвентаризация'),
           ],
         ),
         actions: [
-          // Кнопка сортировки: меняет направление
-          IconButton(
-            icon: Icon(_sortDesc ? Icons.south : Icons.north),
-            tooltip: _sortDesc ? 'По убыванию' : 'По возрастанию',
-            onPressed: () {
-              setState(() => _sortDesc = !_sortDesc);
-              _resort();
-            },
-          ),
-          // Меню выбора поля сортировки
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
@@ -198,7 +944,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
             ],
             icon: const Icon(Icons.sort),
           ),
-          // Сброс поиска
           IconButton(
             icon: const Icon(Icons.search),
             tooltip: 'Очистить поиск',
@@ -210,227 +955,330 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
             },
           ),
           IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Обновить данные',
-            onPressed: _loadAll,
-          ),
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Обновить данные',
+              onPressed: _loadAll),
           IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Удалить таблицу',
-            onPressed: _deleteTable,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Удалить таблицу',
+              onPressed: _deleteTable),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Поиск…',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: (_normalizeType(widget.type) == 'paper')
+                    ? IconButton(
+                        icon: const Icon(Icons.filter_list),
+                        onPressed: _openPaperFilters)
+                    : null,
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onChanged: (val) => setState(() => _query = val),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _listTab(),
+                _writeoffsTab(),
+                _arrivalsTab(),
+                _inventoryTab(),
+              ],
+            ),
           ),
         ],
       ),
-      body: TabBarView(
-        controller: _tabs,
-        children: [
-          _listTab(),
-          _writeoffsTab(),
-          _inventoryTab(),
-        ],
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openAddDialog,
+        icon: const Icon(Icons.add),
+        label: const Text('Добавить'),
       ),
-      floatingActionButton: _tabs.index == 0
-          ? FloatingActionButton.extended(
-              onPressed: _openAddDialog,
-              icon: const Icon(Icons.add),
-              label: Text('Добавить в "${widget.title}"'),
-            )
-          : null,
     );
   }
 
-  /// Виджет первой вкладки (Список): показывает текущие остатки.
+  /// --- Вкладка «Список» ---
   Widget _listTab() {
-    final items = _applyFilter(List<TmcModel>.from(_items));
+    final base = _normalizeType(widget.type) == 'paper'
+        ? _applyPaperMultiFilters(List<TmcModel>.from(_items))
+        : List<TmcModel>.from(_items);
+    final items = _applyFilterItems(base);
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Card(
         elevation: 2,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Поиск…',
-                  prefixIcon: const Icon(Icons.search),
-                  border:
-                      OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                onChanged: (val) {
-                  setState(() {
-                    _query = val;
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              if (items.isEmpty)
-                const Center(child: Text('Нет данных'))
-              else
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: items.isEmpty
+              ? const Center(child: Text('Нет данных'))
+              : _scrollableTable(
+                  DataTable(
                     columnSpacing: 24,
                     columns: [
                       const DataColumn(label: Text('№')),
                       const DataColumn(label: Text('Наименование')),
                       const DataColumn(label: Text('Кол-во')),
                       const DataColumn(label: Text('Ед.')),
+                      if (items.any((i) =>
+                          i.format != null && i.format!.trim().isNotEmpty))
+                        const DataColumn(label: Text('Формат')),
+                      if (items.any((i) =>
+                          i.grammage != null && i.grammage!.trim().isNotEmpty))
+                        const DataColumn(label: Text('Граммаж')),
+                      if (_normalizeType(widget.type) != 'paper' &&
+                          items.any((i) => i.weight != null))
+                        const DataColumn(label: Text('Вес (кг)')),
+                      if (items.any(
+                          (i) => i.note != null && i.note!.trim().isNotEmpty))
+                        const DataColumn(label: Text('Заметки')),
                       if (widget.enablePhoto)
                         const DataColumn(label: Text('Фото')),
                       const DataColumn(label: Text('Действия')),
                     ],
-                    rows: List<DataRow>.generate(
-                      items.length,
-                      (i) {
-                        final item = items[i];
-                        return DataRow(cells: [
-                          DataCell(Text('${i + 1}')),
-                          DataCell(Text(item.description)),
-                          DataCell(Text(item.quantity.toString())),
-                          DataCell(Text(item.unit)),
-                          if (widget.enablePhoto)
-                            DataCell(Row(
-                              children: [
-                                Builder(builder: (context) {
-                                  Uint8List? bytes;
-                                  if (item.imageBase64 != null) {
-                                    try {
-                                      bytes = base64Decode(item.imageBase64!);
-                                    } catch (_) {}
-                                  }
-                                  Widget preview;
-                                  if (bytes != null && bytes.isNotEmpty) {
-                                    preview = ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.memory(
-                                        bytes,
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    );
-                                  } else if (item.imageUrl != null &&
-                                      item.imageUrl!.isNotEmpty) {
-                                    preview = ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.network(
-                                        item.imageUrl!,
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    );
-                                  } else {
-                                    preview = const Icon(Icons.image_not_supported);
-                                  }
-                                  return preview;
-                                }),
-                                IconButton(
-                                  icon: const Icon(Icons.add_a_photo),
-                                  tooltip: 'Сменить фото',
-                                  onPressed: () => _changePhoto(item),
-                                ),
-                              ],
-                            )),
+                    rows: List<DataRow>.generate(items.length, (i) {
+                      final item = items[i];
+                      String fmtNum(num? v, {int frac = 2}) => v == null
+                          ? ''
+                          : (v is int
+                              ? '$v'
+                              : (v as double).toStringAsFixed(frac));
+                      return DataRow(cells: [
+                        DataCell(Text('${i + 1}')),
+                        DataCell(Text(item.description)),
+                        DataCell(Text(fmtNum(item.quantity, frac: 2))),
+                        DataCell(Text(item.unit)),
+                        if (items.any((i) =>
+                            i.format != null && i.format!.trim().isNotEmpty))
+                          DataCell(Text(item.format ?? '')),
+                        if (items.any((i) =>
+                            i.grammage != null &&
+                            i.grammage!.trim().isNotEmpty))
+                          DataCell(Text(item.grammage ?? '')),
+                        if (_normalizeType(widget.type) != 'paper' &&
+                            items.any((i) => i.weight != null))
+                          DataCell(Text(fmtNum(item.weight, frac: 2))),
+                        if (items.any(
+                            (i) => i.note != null && i.note!.trim().isNotEmpty))
+                          DataCell(Text(item.note ?? '')),
+                        if (widget.enablePhoto)
                           DataCell(Row(children: [
+                            Builder(builder: (context) {
+                              Uint8List? bytes;
+                              try {
+                                if (item.imageBase64 != null &&
+                                    item.imageBase64!.isNotEmpty) {
+                                  bytes = base64Decode(item.imageBase64!);
+                                }
+                              } catch (_) {}
+                              Widget preview;
+                              if (bytes != null && bytes.isNotEmpty) {
+                                preview = ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.memory(bytes,
+                                      width: 50, height: 50, fit: BoxFit.cover),
+                                );
+                              } else if (item.imageUrl != null &&
+                                  item.imageUrl!.isNotEmpty) {
+                                preview = ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.network(item.imageUrl!,
+                                      width: 50, height: 50, fit: BoxFit.cover),
+                                );
+                              } else {
+                                preview = const Icon(Icons.image_not_supported);
+                              }
+                              return preview;
+                            }),
                             IconButton(
+                                icon: const Icon(Icons.add_a_photo),
+                                tooltip: 'Сменить фото',
+                                onPressed: () => _changePhoto(item)),
+                          ])),
+                        DataCell(Row(children: [
+                          IconButton(
                               icon: const Icon(Icons.edit, size: 20),
                               tooltip: 'Редактировать',
-                              onPressed: () => _editItem(item),
-                            ),
-                            IconButton(
+                              onPressed: () => _editItem(item)),
+                          IconButton(
                               icon: const Icon(Icons.add, size: 20),
                               tooltip: 'Пополнить',
-                              onPressed: () => _increase(item),
-                            ),
-                            IconButton(
-                              icon:
-                                  const Icon(Icons.remove_circle_outline, size: 20),
+                              onPressed: () => _increase(item)),
+                          IconButton(
+                              icon: const Icon(Icons.remove_circle_outline,
+                                  size: 20),
                               tooltip: 'Списать',
-                              onPressed: () => _writeOff(item),
-                            ),
-                            IconButton(
-                              icon:
-                                  const Icon(Icons.inventory_2_outlined, size: 20),
+                              onPressed: () => _writeOff(item)),
+                          IconButton(
+                              icon: const Icon(Icons.inventory_2_outlined,
+                                  size: 20),
                               tooltip: 'Инвентаризация',
-                              onPressed: () => _inventory(item),
-                            ),
-                            IconButton(
+                              onPressed: () => _inventory(item)),
+                          IconButton(
                               icon: const Icon(Icons.delete, size: 20),
                               tooltip: 'Удалить',
-                              onPressed: () => _deleteItem(item),
-                            ),
-                          ])),
-                        ]);
-                      },
-                    ),
+                              onPressed: () => _deleteItem(item)),
+                        ])),
+                      ]);
+                    }),
                   ),
                 ),
-            ],
-          ),
         ),
       ),
     );
   }
 
-  /// Виджет вкладки «Списания».
+  /// --- Вкладка «Списания» ---
   Widget _writeoffsTab() {
-    final rows = _applyFilter(List<TmcModel>.from(_writeoffs));
-    if (rows.isEmpty) {
-      return const Center(child: Text('Нет списаний'));
-    }
-    return _logTable(rows, title: 'Списано');
-  }
+    final rows = _applyFilterLogs(List<_LogRow>.from(_writeoffs));
+    final showFmt = rows.any((r) => (r.format ?? '').trim().isNotEmpty);
+    final showGram = rows.any((r) => (r.grammage ?? '').trim().isNotEmpty);
 
-  /// Виджет вкладки «Инвентаризация».
-  Widget _inventoryTab() {
-    final rows = _applyFilter(List<TmcModel>.from(_inventories));
-    if (rows.isEmpty) {
-      return const Center(child: Text('Нет инвентаризаций'));
-    }
-    return _logTable(rows, title: 'Факт. кол-во');
-  }
+    final columns = <DataColumn>[
+      const DataColumn(label: Text('№')),
+      const DataColumn(label: Text('Наименование')),
+      const DataColumn(label: Text('Кол-во')),
+      const DataColumn(label: Text('Ед.')),
+      if (showFmt) const DataColumn(label: Text('Формат')),
+      if (showGram) const DataColumn(label: Text('Граммаж')),
+      const DataColumn(label: Text('Дата')),
+      const DataColumn(label: Text('Комментарий')),
+      const DataColumn(label: Text('Сотрудник')),
+    ];
 
-  /// Универсальный виджет таблицы логов (списания/инвентаризации).
-  Widget _logTable(List<TmcModel> rows, {required String title}) {
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Card(
         elevation: 2,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(8),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columnSpacing: 24,
-              columns: const [
-                DataColumn(label: Text('№')),
-                DataColumn(label: Text('Наименование')),
-                DataColumn(label: Text('Кол-во')),
-                DataColumn(label: Text('Ед.')),
-                DataColumn(label: Text('Дата')),
-                DataColumn(label: Text('Комментарий')),
-              ],
-              rows: List<DataRow>.generate(
-                rows.length,
-                (i) {
-                  final r = rows[i];
-                  return DataRow(cells: [
-                    DataCell(Text('${i + 1}')),
-                    DataCell(Text(r.description)),
-                    DataCell(Text(r.quantity.toString())),
-                    DataCell(Text(r.unit)),
-                    DataCell(Text(_fmtDate(r.date))),
-                    DataCell(Text(r.note ?? '')),
-                  ]);
-                },
+        child: rows.isEmpty
+            ? const Center(heightFactor: 4, child: Text('Нет списаний'))
+            : _scrollableTable(
+                DataTable(
+                  columnSpacing: 24,
+                  columns: columns,
+                  rows: List<DataRow>.generate(rows.length, (i) {
+                    final r = rows[i];
+                    final cells = <DataCell>[
+                      DataCell(Text('${i + 1}')),
+                      DataCell(Text(r.description)),
+                      DataCell(Text(r.quantity.toStringAsFixed(2))),
+                      DataCell(Text(r.unit)),
+                      if (showFmt) DataCell(Text(r.format ?? '')),
+                      if (showGram) DataCell(Text(r.grammage ?? '')),
+                      DataCell(Text(_fmtDate(r.dateIso))),
+                      DataCell(Text(r.note ?? '')),
+                      DataCell(Text(r.byName ?? '')),
+                    ];
+                    return DataRow(cells: cells);
+                  }),
+                ),
               ),
-            ),
-          ),
-        ),
+      ),
+    );
+  }
+
+  /// --- Вкладка «Приходы» ---
+  Widget _arrivalsTab() {
+    final rows = _applyFilterLogs(List<_LogRow>.from(_arrivals));
+    final showFmt = rows.any((r) => (r.format ?? '').trim().isNotEmpty);
+    final showGram = rows.any((r) => (r.grammage ?? '').trim().isNotEmpty);
+
+    final columns = <DataColumn>[
+      const DataColumn(label: Text('№')),
+      const DataColumn(label: Text('Наименование')),
+      const DataColumn(label: Text('Кол-во')),
+      const DataColumn(label: Text('Ед.')),
+      if (showFmt) const DataColumn(label: Text('Формат')),
+      if (showGram) const DataColumn(label: Text('Граммаж')),
+      const DataColumn(label: Text('Дата')),
+      const DataColumn(label: Text('Комментарий')),
+      const DataColumn(label: Text('Сотрудник')),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Card(
+        elevation: 2,
+        child: rows.isEmpty
+            ? const Center(heightFactor: 4, child: Text('Нет приходов'))
+            : _scrollableTable(
+                DataTable(
+                  columnSpacing: 24,
+                  columns: columns,
+                  rows: List<DataRow>.generate(rows.length, (i) {
+                    final r = rows[i];
+                    final cells = <DataCell>[
+                      DataCell(Text('${i + 1}')),
+                      DataCell(Text(r.description)),
+                      DataCell(Text(r.quantity.toStringAsFixed(2))),
+                      DataCell(Text(r.unit)),
+                      if (showFmt) DataCell(Text(r.format ?? '')),
+                      if (showGram) DataCell(Text(r.grammage ?? '')),
+                      DataCell(Text(_fmtDate(r.dateIso))),
+                      DataCell(Text(r.note ?? '')),
+                      DataCell(Text(r.byName ?? '')),
+                    ];
+                    return DataRow(cells: cells);
+                  }),
+                ),
+              ),
+      ),
+    );
+  }
+
+  /// --- Вкладка «Инвентаризация» ---
+  Widget _inventoryTab() {
+    final rows = _applyFilterLogs(List<_LogRow>.from(_inventories));
+    final showFmt = rows.any((r) => (r.format ?? '').trim().isNotEmpty);
+    final showGram = rows.any((r) => (r.grammage ?? '').trim().isNotEmpty);
+
+    final columns = <DataColumn>[
+      const DataColumn(label: Text('№')),
+      const DataColumn(label: Text('Наименование')),
+      const DataColumn(label: Text('Кол-во')),
+      const DataColumn(label: Text('Ед.')),
+      if (showFmt) const DataColumn(label: Text('Формат')),
+      if (showGram) const DataColumn(label: Text('Граммаж')),
+      const DataColumn(label: Text('Дата')),
+      const DataColumn(label: Text('Заметка')),
+      const DataColumn(label: Text('Сотрудник')),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Card(
+        elevation: 2,
+        child: rows.isEmpty
+            ? const Center(heightFactor: 4, child: Text('Нет инвентаризаций'))
+            : _scrollableTable(
+                DataTable(
+                  columnSpacing: 24,
+                  columns: columns,
+                  rows: List<DataRow>.generate(rows.length, (i) {
+                    final r = rows[i];
+                    final cells = <DataCell>[
+                      DataCell(Text('${i + 1}')),
+                      DataCell(Text(r.description)),
+                      DataCell(Text(r.quantity.toStringAsFixed(2))),
+                      DataCell(Text(r.unit)),
+                      if (showFmt) DataCell(Text(r.format ?? '')),
+                      if (showGram) DataCell(Text(r.grammage ?? '')),
+                      DataCell(Text(_fmtDate(r.dateIso))),
+                      DataCell(Text(r.note ?? '')),
+                      DataCell(Text(r.byName ?? '')),
+                    ];
+                    return DataRow(cells: cells);
+                  }),
+                ),
+              ),
       ),
     );
   }
@@ -446,47 +1294,28 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
-  /// Открывает диалог добавления новой записи.
+  /// Диалог добавления новой записи.
   Future<void> _openAddDialog() async {
     await showDialog(
-      context: context,
-      builder: (_) => AddEntryDialog(initialTable: widget.type),
-    );
+        context: context,
+        builder: (_) => AddEntryDialog(initialTable: widget.type));
     await _loadAll();
   }
 
-  /// Открывает диалог редактирования существующей записи.
+  /// Диалог редактирования.
   Future<void> _editItem(TmcModel item) async {
-    await showDialog(context: context, builder: (_) => AddEntryDialog(existing: item));
+    await showDialog(
+        context: context, builder: (_) => AddEntryDialog(existing: item));
     await _loadAll();
   }
 
-  /// Подтверждает и удаляет запись.
-  Future<void> _deleteItem(TmcModel item) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Удалить запись?'),
-        content: Text('Вы уверены, что хотите удалить ${item.description}?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Отмена')),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Удалить')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      await provider.deleteTmc(item.id);
-      await _loadAll();
-    }
-  }
-
-  /// Увеличивает количество записи на указанную величину.
+  /// Пополнение.
   Future<void> _increase(TmcModel item) async {
+    final typeKey = _normalizeType(widget.type);
+    if (typeKey == 'paper') {
+      await _increasePaper(item);
+      return;
+    }
     final c = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
@@ -510,13 +1339,272 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (ok == true) {
       final v = double.tryParse(c.text.replaceAll(',', '.')) ?? 0;
       if (v <= 0) return;
-      final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      await provider.updateTmcQuantity(id: item.id, newQuantity: item.quantity + v);
+
+      try {
+        await _logArrival(
+            typeKey: _normalizeType(widget.type), itemId: item.id, qty: v);
+      } catch (_) {}
       await _loadAll();
     }
   }
 
-  /// Выполняет списание: уменьшает количество и создаёт лог записи типа 'Списание'.
+  /// Лог прихода (универсально по типу)
+  Future<void> _logArrival({
+    required String typeKey,
+    required String itemId,
+    required double qty,
+    String? note,
+  }) async {
+    final s = Supabase.instance.client;
+    final tables = _arrivalTables(typeKey);
+    final fkCandidates = <String>[
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id',
+      if (_arrMap[typeKey]?['fk'] != null) _arrMap[typeKey]!['fk']!
+    ];
+    final qtyCandidates = <String>[
+      'qty',
+      'quantity',
+      'amount',
+      'count',
+      if (_arrMap[typeKey]?['qty'] != null) _arrMap[typeKey]!['qty']!
+    ];
+    final noteCandidates = <String>[
+      'note',
+      'comment',
+      'reason',
+      if (_arrMap[typeKey]?['note'] != null) _arrMap[typeKey]!['note']!
+    ];
+
+    for (final t in tables) {
+      for (final fk in fkCandidates) {
+        try {
+          final payload = <String, dynamic>{fk: itemId};
+          final __by = (AuthHelper.currentUserName ?? '').trim().isEmpty
+              ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+              : AuthHelper.currentUserName!;
+          payload['by_name'] = __by;
+          bool setQty = false;
+          for (final q in qtyCandidates) {
+            if (!setQty) {
+              payload[q] = qty;
+              setQty = true;
+            }
+          }
+          if (note != null && note.isNotEmpty) {
+            bool setNote = false;
+            for (final n in noteCandidates) {
+              if (!setNote) {
+                payload[n] = note;
+                setNote = true;
+              }
+            }
+          }
+          try {
+            await s.from(t).insert(payload);
+            return;
+          } on PostgrestException catch (e) {
+            if ((e.message ?? '').contains('by_name') ||
+                (e.code ?? '') == '42703') {
+              final p2 = Map<String, dynamic>.from(payload)..remove('by_name');
+              await s.from(t).insert(p2);
+              return;
+            }
+            rethrow;
+          }
+        } catch (_) {
+          // try next combination
+        }
+      }
+    }
+  }
+
+  Future<void> _increasePaper(TmcModel item) async {
+    String method = 'meters';
+    final metersC = TextEditingController();
+    final weightC = TextEditingController();
+    final diameterC = TextEditingController();
+    double? format = double.tryParse((item.format ?? '').replaceAll(',', '.'));
+    double? grammage =
+        double.tryParse((item.grammage ?? '').replaceAll(',', '.'));
+    final formKey = GlobalKey<FormState>();
+
+    double? _computeFromWeight(double wKg, double fmt, double g) {
+      return ((wKg * 1000) / g) / (fmt / 100.0);
+    }
+
+    double? _computeFromDiameter(double d, double fmt, double g, bool isWhite) {
+      final r_m = (d / 2.0) / 100.0;
+      final area_m2 = r_m * r_m * 3.14;
+      final k = (isWhite ? 8.8 : 7.75) * fmt;
+      final res = ((area_m2 * k) * 1000.0) / g / (fmt / 100.0);
+      return res;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Text('Пополнить бумагу: ${item.description}'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: method,
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'meters', child: Text('Ввести метры')),
+                      DropdownMenuItem(
+                          value: 'weight', child: Text('По весу (кг)')),
+                      DropdownMenuItem(
+                          value: 'diameter', child: Text('По диаметру (см)')),
+                    ],
+                    onChanged: (v) => setS(() => method = v ?? 'meters'),
+                    decoration: const InputDecoration(labelText: 'Способ'),
+                  ),
+                  SizedBox(height: 8),
+                  if (method == 'meters')
+                    TextFormField(
+                      controller: metersC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Метров'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите метры' : null;
+                      },
+                    ),
+                  if (method == 'weight') ...[
+                    TextFormField(
+                      controller: weightC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Вес (кг)'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите вес' : null;
+                      },
+                    ),
+                    SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.format ?? ''),
+                      onChanged: (v) =>
+                          format = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Формат (см)'),
+                    ),
+                    SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.grammage ?? ''),
+                      onChanged: (v) =>
+                          grammage = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Грамаж (г/м²)'),
+                    ),
+                  ],
+                  if (method == 'diameter') ...[
+                    TextFormField(
+                      controller: diameterC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Диаметр (см)'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите диаметр' : null;
+                      },
+                    ),
+                    SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.format ?? ''),
+                      onChanged: (v) =>
+                          format = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Формат (см)'),
+                    ),
+                    SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.grammage ?? ''),
+                      onChanged: (v) =>
+                          grammage = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Грамаж (г/м²)'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () {
+                  if (!formKey.currentState!.validate()) return;
+                  Navigator.pop(ctx, true);
+                },
+                child: const Text('Пополнить')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+
+    double addMeters = 0;
+    final nameLow = item.description.toLowerCase();
+    final isWhite = nameLow.contains('белый') || nameLow.contains(' бел');
+    final isBrown = nameLow.contains('коричнев');
+
+    if (method == 'meters') {
+      addMeters = double.tryParse(metersC.text.replaceAll(',', '.')) ?? 0;
+    } else if (method == 'weight') {
+      if (format == null || format == 0 || grammage == null || grammage == 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Укажите формат и грамаж')));
+        }
+        return;
+      }
+      final w = double.tryParse(weightC.text.replaceAll(',', '.')) ?? 0;
+      addMeters = _computeFromWeight(w, format!, grammage!) ?? 0;
+    } else if (method == 'diameter') {
+      if (format == null || format == 0 || grammage == null || grammage == 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Укажите формат и грамаж')));
+        }
+        return;
+      }
+      final d = double.tryParse(diameterC.text.replaceAll(',', '.')) ?? 0;
+      final white = isWhite && !isBrown;
+      addMeters = _computeFromDiameter(d, format!, grammage!, white) ?? 0;
+    }
+    if (addMeters <= 0) return;
+    final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    await provider.addPaperArrival(paperId: item.id, qty: addMeters);
+    await _loadAll();
+  }
+
   Future<void> _writeOff(TmcModel item) async {
     final qtyC = TextEditingController();
     final commentC = TextEditingController();
@@ -536,7 +1624,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
             const SizedBox(height: 8),
             TextField(
               controller: commentC,
-              decoration: const InputDecoration(labelText: 'Комментарий (необязательно)'),
+              decoration: const InputDecoration(
+                  labelText: 'Комментарий (необязательно)'),
             ),
           ],
         ),
@@ -545,43 +1634,66 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               onPressed: () => Navigator.of(ctx).pop(null),
               child: const Text('Отмена')),
           TextButton(
-              onPressed: () {
-                final v = double.tryParse(qtyC.text.replaceAll(',', '.'));
-                Navigator.of(ctx).pop(v);
-              },
-              child: const Text('Списать')),
+            onPressed: () {
+              final v = double.tryParse(qtyC.text.replaceAll(',', '.'));
+              Navigator.of(ctx).pop(v);
+            },
+            child: const Text('Списать'),
+          ),
         ],
       ),
     );
-    if (result != null && result > 0) {
-      final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      final newQty = item.quantity - result;
-      if (newQty < 0) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Нельзя списать больше, чем есть')));
-        }
-        return;
+
+    if (result == null || result <= 0) return;
+    // Не позволяем списать больше, чем есть (для канцтоваров/ручек)
+    final __t = _normalizeType(widget.type);
+    if ((__t == 'stationery' || __t == 'pens') && result > item.quantity) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нельзя списать больше, чем на складе')),
+        );
       }
-      await provider.updateTmcQuantity(id: item.id, newQuantity: newQty);
-      await provider.addTmc(
-        supplier: item.supplier,
-        type: 'Списание',
-        description: item.description,
-        quantity: result,
-        unit: item.unit,
-        note: commentC.text.trim().isEmpty
-            ? null
-            : commentC.text.trim(),
-        imageUrl: item.imageUrl,
-      );
-      await _loadAll();
+      return;
     }
+
+    final typeKey = _normalizeType(widget.type);
+    try {
+      if (typeKey == 'stationery' || typeKey == 'pens') {
+        final provider = Provider.of<WarehouseProvider>(context, listen: false);
+        await provider.writeOff(
+          itemId: item.id,
+          qty: result,
+          reason: commentC.text.trim().isEmpty ? null : commentC.text.trim(),
+        );
+      } else {
+        final provider = Provider.of<WarehouseProvider>(context, listen: false);
+        await provider.registerShipment(
+          id: item.id,
+          type: widget.type,
+          qty: result,
+          reason: commentC.text.trim().isEmpty ? null : commentC.text.trim(),
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content:
+                  Text('Списано ${result.toStringAsFixed(2)} ${item.unit}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Ошибка списания: $e')));
+      }
+    }
+
+    await _loadAll();
   }
 
-  /// Выполняет инвентаризацию: устанавливает новое количество и записывает лог.
+  /// Инвентаризация
   Future<void> _inventory(TmcModel item) async {
-    final qtyC = TextEditingController(text: item.quantity.toString());
+    final qtyC = TextEditingController(text: item.quantity.toStringAsFixed(2));
     final noteC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
@@ -615,58 +1727,198 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         ],
       ),
     );
-    if (ok == true) {
-      final newQty =
-          double.tryParse(qtyC.text.replaceAll(',', '.'));
-      if (newQty == null || newQty < 0) return;
-      final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      final delta = newQty - item.quantity;
-      await provider.updateTmcQuantity(id: item.id, newQuantity: newQty);
-      await provider.addTmc(
-        supplier: item.supplier,
-        type: 'Инвентаризация',
-        description: item.description,
-        quantity: newQty,
-        unit: item.unit,
-        note: noteC.text.trim().isEmpty
-            ? 'delta: ${delta.toStringAsFixed(2)}'
-            : '${noteC.text.trim()} • delta: ${delta.toStringAsFixed(2)}',
-        imageUrl: item.imageUrl,
-      );
-      await _loadAll();
+
+    if (ok != true) return;
+    final factual = double.tryParse(qtyC.text.replaceAll(',', '.'));
+    if (factual == null || factual < 0) return;
+
+    final typeKey = _normalizeType(widget.type);
+    try {
+      if (typeKey == 'stationery' || typeKey == 'pens') {
+        final provider = Provider.of<WarehouseProvider>(context, listen: false);
+        await provider.inventorySet(
+          itemId: item.id,
+          newQty: factual,
+          note: noteC.text.trim().isEmpty ? null : noteC.text.trim(),
+        );
+      } else {
+        final provider = Provider.of<WarehouseProvider>(context, listen: false);
+        await provider.updateTmcQuantity(id: item.id, newQuantity: factual);
+
+        final s = Supabase.instance.client;
+        final tableCandidates = _inventoryTables(typeKey);
+        final fkCandidates = <String>[
+          'item_id',
+          'stationery_id',
+          'paper_id',
+          'paint_id',
+          'material_id',
+          'tmc_id',
+          'fk_id',
+          if (_invMap[typeKey]?['fk'] != null) _invMap[typeKey]!['fk']!
+        ];
+        final qtyCandidates = <String>[
+          'counted_qty',
+          'quantity',
+          'qty',
+          if (_invMap[typeKey]?['qty'] != null) _invMap[typeKey]!['qty']!
+        ];
+        final noteCandidates = <String>[
+          'note',
+          'reason',
+          'comment',
+          if (_invMap[typeKey]?['note'] != null) _invMap[typeKey]!['note']!
+        ];
+
+        bool inserted = false;
+        for (final table in tableCandidates) {
+          for (final fk in fkCandidates) {
+            for (final qtyCol in qtyCandidates) {
+              try {
+                final payload = <String, dynamic>{
+                  fk: item.id,
+                  'by_name': ((AuthHelper.currentUserName ?? '').trim().isEmpty
+                      ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+                      : AuthHelper.currentUserName!),
+                  qtyCol: factual,
+                };
+                final note = noteC.text.trim();
+                if (note.isNotEmpty) {
+                  payload[noteCandidates.first] = note;
+                }
+                try {
+                  await s.from(table).insert(payload);
+                  inserted = true;
+                } on PostgrestException catch (e) {
+                  if ((e.message ?? '').contains('by_name') ||
+                      (e.code ?? '') == '42703') {
+                    final p2 = Map<String, dynamic>.from(payload)
+                      ..remove('by_name');
+                    await s.from(table).insert(p2);
+                    inserted = true;
+                  } else {
+                    rethrow;
+                  }
+                }
+                break;
+              } catch (_) {}
+            }
+            if (inserted) break;
+          }
+          if (inserted) break;
+        }
+
+        if (!inserted) {
+          throw Exception(
+              'Не удалось вставить лог инвентаризации: нет подходящей таблицы/колонок');
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                  'Инвентаризация сохранена (${factual.toStringAsFixed(2)} ${item.unit})')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Ошибка инвентаризации: $e')));
+      }
     }
+
+    await _loadAll();
   }
 
-  /// Смена фотографии через галерею или камеру.
+  /// Смена фотографии.
   Future<void> _changePhoto(TmcModel item) async {
     final picker = ImagePicker();
     final src = await showModalBottomSheet<ImageSource>(
       context: context,
       builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
               leading: const Icon(Icons.photo),
               title: const Text('Галерея'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-            ListTile(
+              onTap: () => Navigator.pop(context, ImageSource.gallery)),
+          ListTile(
               leading: const Icon(Icons.photo_camera),
               title: const Text('Камера'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-          ],
-        ),
+              onTap: () => Navigator.pop(context, ImageSource.camera)),
+        ]),
       ),
     );
     if (src == null) return;
-    final xf =
-        await picker.pickImage(source: src, imageQuality: 80, maxWidth: 2000);
-    if (xf == null) return;
-    final bytes = await xf.readAsBytes();
-    final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    await provider.updateTmc(id: item.id, imageBytes: bytes);
-    await _loadAll();
+    final img = await picker.pickImage(source: src, imageQuality: 85);
+    if (img == null) return;
+    final bytes = await img.readAsBytes();
+
+    try {
+      await Provider.of<WarehouseProvider>(context, listen: false).updateTmc(
+        id: item.id,
+        imageBytes: bytes,
+        imageContentType: 'image/jpeg',
+      );
+      await _loadAll();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось обновить фото: $e')));
+      }
+    }
   }
+
+  Future<void> _deleteItem(TmcModel item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить запись?'),
+        content: Text('Будет удалена «${item.description}».'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Удалить')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await Provider.of<WarehouseProvider>(context, listen: false)
+          .deleteTmc(item.id);
+      await _loadAll();
+    }
+  }
+
+  /// Уведомления о низком остатке (пока без логики порогов – заглушка, чтобы не падала сборка).
+  void _notifyThresholds() {
+    // TODO: сюда можно добавить проверку порогов и показ SnackBar/диалога.
+    // Метод оставлен пустым намеренно, чтобы убрать ошибку "не определён".
+  }
+}
+
+class _LogRow {
+  final String id;
+  final String description;
+  final double quantity;
+  final String unit;
+  final String dateIso;
+  final String? note;
+  final String? format;
+  final String? grammage;
+  final String? byName;
+
+  const _LogRow({
+    required this.id,
+    required this.description,
+    required this.quantity,
+    required this.unit,
+    required this.dateIso,
+    this.note,
+    this.format,
+    this.grammage,
+    this.byName,
+  });
 }

@@ -1,21 +1,33 @@
+// lib/modules/production/production_details_screen.dart
+//
+// Полный файл без урезаний. НИЧЕГО лишнего не создаю.
+// Исправление: загрузка этапов теперь основана на СУЩЕСТВУЮЩИХ таблицах
+//   1) public.prod_plans -> public.prod_plan_stages  (основной путь)
+//   2) public.v_order_plan_stages                     (если есть)
+//   3) public.production_plans.stages (JSON, старый вариант) — фоллбек
+// Плюс обязательная авторизация перед запросами (RLS).
+//
+// Требуется: services/app_auth.dart с AppAuth.ensureSignedIn().
+//
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../../services/storage_service.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../production_planning/compat.dart' as pcompat;
+import '../orders/orders_repository.dart';
 import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
-import '../production_planning/planned_stage_model.dart';
+// УДАЛЕНО: import '../production_planning/planned_stage_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
+import '../../services/app_auth.dart';
+import '../common/pdf_view_screen.dart'; // <= добавлено для встроенного просмотра PDF
 
-/// Статус заказа на основе всех его задач. Дублируется здесь, поскольку
-/// оригинальное определение является приватным в production_screen.dart.
 enum _AggregatedStatus { production, paused, problem, completed, waiting }
 
-/// Отображаемые подписи для агрегированных статусов. Используется для
-/// отображения заголовков и кнопок в деталях заказа.
 const Map<_AggregatedStatus, String> _statusLabels = {
   _AggregatedStatus.production: 'Производство',
   _AggregatedStatus.paused: 'На паузе',
@@ -24,7 +36,6 @@ const Map<_AggregatedStatus, String> _statusLabels = {
   _AggregatedStatus.waiting: 'Ожидание',
 };
 
-/// Цвета для индикаторов агрегированных статусов.
 const Map<_AggregatedStatus, Color> _statusColors = {
   _AggregatedStatus.production: Colors.blue,
   _AggregatedStatus.paused: Colors.orange,
@@ -33,25 +44,286 @@ const Map<_AggregatedStatus, Color> _statusColors = {
   _AggregatedStatus.waiting: Colors.grey,
 };
 
-/// Страница подробностей производственного задания.
-///
-/// Эта страница отображает детальную информацию о выбранном заказе,
-/// включая список этапов производства и их состояние. Информация
-/// о плане этапов подгружается из таблицы `production_plans` Supabase.
-/// Для каждого этапа отображаются начальное и конечное время (если
-/// задание уже выполнялось), а также количество комментариев.
 class ProductionDetailsScreen extends StatefulWidget {
   final OrderModel order;
   const ProductionDetailsScreen({super.key, required this.order});
 
   @override
-  State<ProductionDetailsScreen> createState() => _ProductionDetailsScreenState();
+  State<ProductionDetailsScreen> createState() =>
+      _ProductionDetailsScreenState();
 }
 
 class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
-  /// Загруженный список запланированных этапов для текущего заказа.
-  List<PlannedStage> _plannedStages = [];
+  List<pcompat.PlannedStage> _plannedStages = [];
   bool _loadingPlan = true;
+
+  Widget _buildOrderInfoCard(OrderModel o) {
+    final dateFmt = DateFormat('dd.MM.yyyy');
+    String d(DateTime? dt) => dt == null ? '—' : dateFmt.format(dt);
+
+    final p = o.product;
+    final material = o.material;
+
+    Widget _tile(String label, String value, [IconData? icon]) {
+      return ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: icon != null ? Icon(icon, color: Colors.blueGrey) : null,
+        title: Text(label,
+            style: const TextStyle(fontSize: 13, color: Colors.black54)),
+        subtitle: Text(value, style: const TextStyle(fontSize: 15)),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Информация по заказу',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+
+          // Основное
+          _tile('Менеджер', o.manager, Icons.person_outline),
+          _tile('Заказчик', o.customer, Icons.business_outlined),
+          Row(
+            children: [
+              Expanded(
+                  child: _tile('Дата заказа', d(o.orderDate), Icons.event)),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: _tile('Срок выполнения', d(o.dueDate),
+                      Icons.schedule_outlined)),
+            ],
+          ),
+
+          const Divider(height: 24),
+
+          // Продукт
+          const Text('Продукт',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          _tile('Наименование изделия', p.type, Icons.widgets_outlined),
+          Row(children: [
+            Expanded(
+                child: _tile('Тираж', p.quantity.toString(), Icons.numbers)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile('Параметры',
+                    p.parameters.isEmpty ? '—' : p.parameters, Icons.tune)),
+          ]),
+          Row(children: [
+            Expanded(
+                child: _tile('Ширина (мм)', p.width.toStringAsFixed(0),
+                    Icons.straighten)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile('Высота (мм)', p.height.toStringAsFixed(0),
+                    Icons.straighten)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile('Глубина (мм)', p.depth.toStringAsFixed(0),
+                    Icons.straighten)),
+          ]),
+          Row(children: [
+            Expanded(
+                child: _tile('Ролл', p.roll?.toStringAsFixed(2) ?? '—',
+                    Icons.view_stream)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile('Ширина b', p.widthB?.toStringAsFixed(2) ?? '—',
+                    Icons.swap_horiz)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile('Длина L', p.length?.toStringAsFixed(2) ?? '—',
+                    Icons.swap_vert)),
+          ]),
+
+          const Divider(height: 24),
+
+          // Материал
+          const Text('Материал',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          _tile('Материал', material?.name ?? '—', Icons.layers_outlined),
+          Row(children: [
+            Expanded(
+                child:
+                    _tile('Формат', material?.format ?? '—', Icons.crop_5_4)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile(
+                    'Плотность', material?.grammage ?? '—', Icons.texture)),
+          ]),
+
+          const Divider(height: 24),
+
+          // Краски
+          const Text('Краски',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: OrdersRepository().getPaints(o.id),
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const SizedBox.shrink();
+              }
+              final items = snap.data ?? const [];
+              if (items.isEmpty) {
+                return const Text('Не указаны',
+                    style: TextStyle(color: Colors.black54));
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: items.map((m) {
+                  final name =
+                      (m['name'] ?? m['paint_name'] ?? 'краска').toString();
+                  final info = (m['info'] ?? '').toString();
+                  final qty = (m['qty'] ?? m['quantity'] ?? '').toString();
+                  final parts = [
+                    name,
+                    if (info.isNotEmpty) info,
+                    if (qty.isNotEmpty) 'x$qty'
+                  ];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.color_lens_outlined, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(parts.join(' · '))),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+
+          const Divider(height: 24),
+          // Прочее
+          _tile('Ручки', o.handle.isEmpty ? '-' : o.handle,
+              Icons.handyman_outlined),
+          _tile('Картон', o.cardboard, Icons.inbox_outlined),
+          Row(children: [
+            Expanded(
+                child: _tile('Приладка', o.makeready.toStringAsFixed(2),
+                    Icons.calculate_outlined)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile(
+                    'ВАЛ', o.val.toStringAsFixed(2), Icons.calculate_outlined)),
+          ]),
+          if (o.additionalParams.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children:
+                  o.additionalParams.map((s) => Chip(label: Text(s))).toList(),
+            ),
+          ],
+
+          const SizedBox(height: 8),
+
+          // PDF и вложения
+          Builder(builder: (context) {
+            final hasPdf = (o.pdfUrl != null && o.pdfUrl!.isNotEmpty);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Вложения',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                if (hasPdf)
+                  Row(
+                    children: [
+                      const Icon(Icons.picture_as_pdf_outlined,
+                          color: Colors.redAccent),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          child: Text(o.pdfUrl!.split('/').last,
+                              overflow: TextOverflow.ellipsis)),
+                      TextButton.icon(
+                        onPressed: () async {
+                          final url = await getSignedUrl(o.pdfUrl!);
+                          if (!mounted) return;
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  PdfViewScreen(url: url, title: 'PDF заказа'),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Открыть'),
+                      ),
+                    ],
+                  )
+                else
+                  const Text('PDF не прикреплён',
+                      style: TextStyle(color: Colors.black54)),
+                const SizedBox(height: 4),
+                // Дополнительные файлы из метаданных, если есть
+                FutureBuilder<List<Map<String, dynamic>>>(
+                  future: listOrderFiles(o.id),
+                  builder: (context, snap) {
+                    if (snap.connectionState != ConnectionState.done) {
+                      return const SizedBox.shrink();
+                    }
+                    final items = snap.data ?? const [];
+                    if (items.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      children: items.map((it) {
+                        final fname =
+                            (it['fileName'] ?? it['name'] ?? 'file').toString();
+                        final path =
+                            (it['path'] ?? it['objectPath'] ?? '').toString();
+                        return Row(
+                          children: [
+                            const Icon(Icons.attachment_outlined),
+                            const SizedBox(width: 8),
+                            Expanded(
+                                child: Text(fname,
+                                    overflow: TextOverflow.ellipsis)),
+                            TextButton.icon(
+                              onPressed: path.isEmpty
+                                  ? null
+                                  : () async {
+                                      final url = await getSignedUrl(path);
+                                      if (!mounted) return;
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => PdfViewScreen(
+                                              url: url, title: 'Вложение'),
+                                        ),
+                                      );
+                                    },
+                              icon: const Icon(Icons.open_in_new),
+                              label: const Text('Открыть'),
+                            ),
+                          ],
+                        );
+                      }).toList(),
+                    );
+                  },
+                ),
+              ],
+            );
+          }),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -59,24 +331,87 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     _loadPlan();
   }
 
-  /// Загружает список этапов производства для заказа из базы данных.
-  /// Данные хранятся в таблице `production_plans`, и поле `stages`
-  /// может быть сохранено как массив или словарь. Если план отсутствует,
-  /// список будет пустым.
   Future<void> _loadPlan() async {
-    
     try {
-      final data = await Supabase.instance.client
-          .from('production_plans')
-          .select()
-          .eq('order_id', widget.order.id)
-          .maybeSingle();
-      List<PlannedStage> stages = [];
-      if (data != null) {
-        final value = data['stages'];
-        stages = decodePlannedStages(value);
-      
+      final sb = Supabase.instance.client;
+      await AppAuth.ensureSignedIn(); // важно для RLS
+
+      final orderId = widget.order.id;
+      final orderCode = widget.order.assignmentId ?? orderId;
+
+      // ========== ПУТЬ 1: prod_plans -> prod_plan_stages ==========
+      List<pcompat.PlannedStage> stages = [];
+      try {
+        final plan = await sb
+            .from('prod_plans')
+            .select('id')
+            .eq('order_id', orderId)
+            .maybeSingle();
+
+        if (plan != null && plan is Map && plan['id'] != null) {
+          final String planId = plan['id'] as String;
+          final rows = await sb
+              .from('prod_plan_stages')
+              .select('id, name, seq')
+              .eq('plan_id', planId)
+              .order('seq', ascending: true);
+
+          if (rows is List && rows.isNotEmpty) {
+            for (final r in rows) {
+              final m = (r as Map<String, dynamic>);
+              final id = (m['id'] ?? '').toString();
+              final name = (m['name'] ?? 'Этап').toString();
+              if (id.isNotEmpty) {
+                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // игнорируем и перейдём к следующему источнику
       }
+
+      // ========== ПУТЬ 2: public.v_order_plan_stages (если есть) ==========
+      if (stages.isEmpty) {
+        try {
+          final rows = await sb
+              .from('v_order_plan_stages')
+              .select('stage_id, stage_name, step_no, order_id, order_code')
+              .or('order_id.eq.$orderId,order_code.eq.$orderCode')
+              .order('step_no', ascending: true);
+
+          if (rows is List && rows.isNotEmpty) {
+            for (final r in rows) {
+              final m = (r as Map<String, dynamic>);
+              final id = (m['stage_id'] ?? '').toString();
+              final name = (m['stage_name'] ?? 'Этап').toString();
+              if (id.isNotEmpty) {
+                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
+              }
+            }
+          }
+        } catch (_) {
+          // нет представления — идём дальше
+        }
+      }
+
+      // ========== ПУТЬ 3: production_plans.stages (JSON, старый) ==========
+      if (stages.isEmpty) {
+        try {
+          final planJson = await sb
+              .from('production_plans')
+              .select('stages')
+              .eq('order_id', orderId)
+              .maybeSingle();
+
+          if (planJson != null &&
+              planJson is Map &&
+              planJson['stages'] != null) {
+            stages = pcompat.decodePlannedStages(planJson['stages']);
+          }
+        } catch (_) {}
+      }
+
       if (mounted) {
         setState(() {
           _plannedStages = stages;
@@ -84,7 +419,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         });
       }
     } catch (_) {
-      // В случае ошибки загрузки просто выставляем пустой список
       if (mounted) {
         setState(() {
           _plannedStages = [];
@@ -94,15 +428,13 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
   }
 
-  /// Вычисляет агрегированный статус по списку задач. Этот метод
-  /// копирует логику из модуля production_screen.dart для вычисления
-  /// общего состояния заказа.
   _AggregatedStatus _computeAggregatedStatus(List<TaskModel> tasks) {
     if (tasks.isEmpty) return _AggregatedStatus.waiting;
     final hasProblem = tasks.any((t) => t.status == TaskStatus.problem);
     if (hasProblem) return _AggregatedStatus.problem;
     final hasPaused = tasks.any((t) => t.status == TaskStatus.paused);
-    final allCompleted = tasks.isNotEmpty && tasks.every((t) => t.status == TaskStatus.completed);
+    final allCompleted = tasks.isNotEmpty &&
+        tasks.every((t) => t.status == TaskStatus.completed);
     if (allCompleted) return _AggregatedStatus.completed;
     if (hasPaused) return _AggregatedStatus.paused;
     final hasInProgress = tasks.any((t) => t.status == TaskStatus.inProgress);
@@ -112,16 +444,14 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return _AggregatedStatus.production;
   }
 
-  /// Возвращает виджет кнопки для управления агрегированным статусом
-  /// заказа. При нажатии изменяет статус всех задач согласно выбранному
-  /// состоянию.
-  Widget _buildStatusButton(
-      {required String label,
-      required Color color,
-      required _AggregatedStatus targetStatus,
-      required _AggregatedStatus currentStatus,
-      required List<TaskModel> tasks,
-      required TaskProvider provider}) {
+  Widget _buildStatusButton({
+    required String label,
+    required Color color,
+    required _AggregatedStatus targetStatus,
+    required _AggregatedStatus currentStatus,
+    required List<TaskModel> tasks,
+    required TaskProvider provider,
+  }) {
     final bool selected = currentStatus == targetStatus;
     return Expanded(
       child: Padding(
@@ -130,9 +460,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
           onPressed: selected
               ? null
               : () async {
-                  // Обновляем статус всех задач заказа.
                   for (final t in tasks) {
-                    // Вычисляем новое состояние для каждой задачи.
                     TaskStatus newStatus;
                     switch (targetStatus) {
                       case _AggregatedStatus.production:
@@ -151,24 +479,26 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                         newStatus = TaskStatus.waiting;
                         break;
                     }
-                    // При изменении статуса сохраняем потраченное время и сбрасываем
-                    // start time для оконченных/остановленных задач.
                     final seconds = _elapsed(t).inSeconds;
-                    await provider.updateStatus(t.id, newStatus,
-                        spentSeconds: newStatus == TaskStatus.inProgress
-                            ? t.spentSeconds
-                            : seconds,
-                        startedAt: newStatus == TaskStatus.inProgress
-                            ? DateTime.now().millisecondsSinceEpoch
-                            : null);
+                    await provider.updateStatus(
+                      t.id,
+                      newStatus,
+                      spentSeconds: newStatus == TaskStatus.inProgress
+                          ? t.spentSeconds
+                          : seconds,
+                      startedAt: newStatus == TaskStatus.inProgress
+                          ? DateTime.now().millisecondsSinceEpoch
+                          : null,
+                    );
                   }
                 },
           style: ElevatedButton.styleFrom(
             backgroundColor:
                 selected ? color.withOpacity(0.8) : color.withOpacity(0.2),
             foregroundColor: color,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
           child: Text(label, textAlign: TextAlign.center),
         ),
@@ -176,18 +506,15 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     );
   }
 
-  /// Вычисляет затраченное время для задачи. Если задача находится в
-  /// процессе, добавляет время с начала выполнения.
   Duration _elapsed(TaskModel task) {
     var seconds = task.spentSeconds;
     if (task.status == TaskStatus.inProgress && task.startedAt != null) {
-      seconds += (DateTime.now().millisecondsSinceEpoch - task.startedAt!) ~/
-          1000;
+      seconds +=
+          (DateTime.now().millisecondsSinceEpoch - task.startedAt!) ~/ 1000;
     }
     return Duration(seconds: seconds);
   }
 
-  /// Форматирует длительность для отображения в формате HH:MM.
   String _formatTime(DateTime? dt) {
     if (dt == null) return '';
     final formatter = DateFormat('yyyy-MM-dd HH:mm');
@@ -198,16 +525,14 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   Widget build(BuildContext context) {
     final taskProvider = context.watch<TaskProvider>();
     final personnel = context.watch<PersonnelProvider>();
-    // Отбираем задачи, относящиеся к текущему заказу.
-    final tasks = taskProvider.tasks
-        .where((t) => t.orderId == widget.order.id)
-        .toList();
-    // Группируем задачи по идентификатору этапа.
+    final tasks =
+        taskProvider.tasks.where((t) => t.orderId == widget.order.id).toList();
+
     final Map<String, List<TaskModel>> tasksByStage = {};
     for (final t in tasks) {
       tasksByStage.putIfAbsent(t.stageId, () => []).add(t);
     }
-    // Определяем агрегированный статус заказа.
+
     final aggStatus = _computeAggregatedStatus(tasks);
 
     return Scaffold(
@@ -226,6 +551,9 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Информация по заказу (для сотрудника)
+                    _buildOrderInfoCard(widget.order),
+                    const SizedBox(height: 16),
                     // Карточка с общей информацией и управлением статусом
                     Container(
                       padding: const EdgeInsets.all(16),
@@ -243,14 +571,20 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(widget.order.customer,
-                              style: const TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.bold)),
+                          Text(
+                            widget.order.customer,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                           const SizedBox(height: 4),
                           Text(
-                            widget.order.assignmentId ?? widget.order.id,
+                            widget.order.customer,
                             style: TextStyle(
-                                color: Colors.grey.shade600, fontSize: 14),
+                              color: Colors.grey.shade600,
+                              fontSize: 14,
+                            ),
                           ),
                           const SizedBox(height: 2),
                           Text(
@@ -260,16 +594,25 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              const Icon(Icons.layers,
-                                  size: 16, color: Colors.grey),
+                              const Icon(
+                                Icons.layers,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
                               const SizedBox(width: 4),
                               Text('${widget.order.product.quantity} шт.'),
                               const SizedBox(width: 16),
-                              const Icon(Icons.calendar_today,
-                                  size: 16, color: Colors.grey),
+                              const Icon(
+                                Icons.calendar_today,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
                               const SizedBox(width: 4),
                               Text(
-                                  'до ${DateFormat('dd.MM.yyyy').format(widget.order.dueDate)}'),
+                                widget.order.dueDate == null
+                                    ? 'без срока'
+                                    : 'до ${DateFormat('dd.MM.yyyy').format(widget.order.dueDate!)}',
+                              ),
                             ],
                           ),
                           const SizedBox(height: 8),
@@ -312,235 +655,270 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                           ),
                           const SizedBox(height: 12),
                           // Список комментариев к заказу
-                          const Text('Комментарии',
-                              style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.bold)),
+                          const Text(
+                            'Комментарии',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                           const SizedBox(height: 4),
-                          Builder(builder: (context) {
-                            // Собираем все комментарии из задач, сортируем по времени
-                            final comments = <TaskComment>[];
-                            for (final t in tasks) {
-                              comments.addAll(t.comments);
-                            }
-                            comments.sort(
-                                (a, b) => a.timestamp.compareTo(b.timestamp));
-                            if (comments.isEmpty) {
-                              return const Text('Нет комментариев',
-                                  style: TextStyle(color: Colors.grey));
-                            }
-                            return Column(
-                              children: [
-                                for (final c in comments)
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 2),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Icon(
-                                          c.type == 'problem'
-                                              ? Icons.error_outline
-                                              : c.type == 'pause'
-                                                  ? Icons.pause_circle_outline
-                                                  : Icons.info_outline,
-                                          size: 18,
-                                          color: c.type == 'problem'
-                                              ? Colors.redAccent
-                                              : c.type == 'pause'
-                                                  ? Colors.orange
-                                                  : Colors.blueGrey,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Expanded(
-                                          child: Text(
-                                            c.text,
-                                            style: const TextStyle(
-                                                fontSize: 14),
+                          Builder(
+                            builder: (context) {
+                              final comments = <TaskComment>[];
+                              for (final t in tasks) {
+                                comments.addAll(t.comments);
+                              }
+                              comments.sort(
+                                (a, b) => a.timestamp.compareTo(b.timestamp),
+                              );
+                              if (comments.isEmpty) {
+                                return const Text(
+                                  'Нет комментариев',
+                                  style: TextStyle(color: Colors.grey),
+                                );
+                              }
+                              return Column(
+                                children: [
+                                  for (final c in comments)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 2,
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(
+                                            c.type == 'problem'
+                                                ? Icons.error_outline
+                                                : c.type == 'pause'
+                                                    ? Icons.pause_circle_outline
+                                                    : Icons.info_outline,
+                                            size: 18,
+                                            color: c.type == 'problem'
+                                                ? Colors.redAccent
+                                                : c.type == 'pause'
+                                                    ? Colors.orange
+                                                    : Colors.blueGrey,
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(
+                                              c.text,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                              ],
-                            );
-                          }),
+                                ],
+                              );
+                            },
+                          ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 16),
                     // Этапы производства
-                    Text('Этапы производства',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Этапы производства',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     if (_plannedStages.isEmpty)
-                      const Text('План этапов отсутствует',
-                          style: TextStyle(color: Colors.grey))
+                      const Text(
+                        'План этапов отсутствует',
+                        style: TextStyle(color: Colors.grey),
+                      )
                     else
                       Column(
                         children: [
                           for (final planned in _plannedStages)
-                            Builder(builder: (context) {
-                              final stageId = planned.stageId;
-                              final stage = personnel.workplaces.firstWhere(
+                            Builder(
+                              builder: (context) {
+                                final stageId = planned.stageId;
+                                final stage = personnel.workplaces.firstWhere(
                                   (s) => s.id == stageId,
                                   orElse: () => WorkplaceModel(
-                                      id: stageId,
-                                      name: planned.stageName,
-                                      positionIds: []));
-                              final stageTasks = tasksByStage[stageId] ?? [];
-                              // Определяем статус этапа по задачам: если все завершены — completed,
-                              // если есть проблемы — problem, если есть в работе — inProgress,
-                              // если есть паузы — paused, иначе waiting.
-                              TaskStatus? stageStatus;
-                              if (stageTasks.isEmpty) {
-                                stageStatus = null;
-                              } else if (stageTasks
-                                  .every((t) => t.status == TaskStatus.completed)) {
-                                stageStatus = TaskStatus.completed;
-                              } else if (stageTasks
-                                  .any((t) => t.status == TaskStatus.problem)) {
-                                stageStatus = TaskStatus.problem;
-                              } else if (stageTasks
-                                  .any((t) => t.status == TaskStatus.inProgress)) {
-                                stageStatus = TaskStatus.inProgress;
-                              } else if (stageTasks
-                                  .any((t) => t.status == TaskStatus.paused)) {
-                                stageStatus = TaskStatus.paused;
-                              } else {
-                                stageStatus = TaskStatus.waiting;
-                              }
-                              Color bgColor;
-                              switch (stageStatus) {
-                                case TaskStatus.completed:
-                                  bgColor = Colors.green.withOpacity(0.2);
-                                  break;
-                                case TaskStatus.inProgress:
-                                  bgColor = Colors.blue.withOpacity(0.2);
-                                  break;
-                                case TaskStatus.paused:
-                                  bgColor = Colors.orange.withOpacity(0.2);
-                                  break;
-                                case TaskStatus.problem:
-                                  bgColor = Colors.redAccent.withOpacity(0.2);
-                                  break;
-                                case TaskStatus.waiting:
-                                default:
-                                  bgColor = Colors.yellow.withOpacity(0.2);
-                                  break;
-                              }
-                              // Вычисляем начало и завершение для первого (если несколько) задания этапа.
-                              DateTime? start;
-                              DateTime? end;
-                              if (stageTasks.isNotEmpty) {
-                                // Находим минимальное startedAt и максимальное завершённое время.
-                                for (final t in stageTasks) {
-                                  if (t.startedAt != null) {
-                                    final st = DateTime.fromMillisecondsSinceEpoch(
-                                        t.startedAt!);
-                                    if (start == null || st.isBefore(start!)) {
-                                      start = st;
-                                    }
-                                    final spent = _elapsed(t);
-                                    if (spent.inSeconds > 0) {
-                                      final en = st.add(spent);
-                                      if (end == null || en.isAfter(end!)) {
-                                        end = en;
+                                    id: stageId,
+                                    name: planned.stageName,
+                                    positionIds: [],
+                                  ),
+                                );
+                                final stageTasks = tasksByStage[stageId] ?? [];
+                                TaskStatus? stageStatus;
+                                if (stageTasks.isEmpty) {
+                                  stageStatus = null;
+                                } else if (stageTasks.every(
+                                  (t) => t.status == TaskStatus.completed,
+                                )) {
+                                  stageStatus = TaskStatus.completed;
+                                } else if (stageTasks.any(
+                                  (t) => t.status == TaskStatus.problem,
+                                )) {
+                                  stageStatus = TaskStatus.problem;
+                                } else if (stageTasks.any(
+                                  (t) => t.status == TaskStatus.inProgress,
+                                )) {
+                                  stageStatus = TaskStatus.inProgress;
+                                } else if (stageTasks.any(
+                                  (t) => t.status == TaskStatus.paused,
+                                )) {
+                                  stageStatus = TaskStatus.paused;
+                                } else {
+                                  stageStatus = TaskStatus.waiting;
+                                }
+                                Color bgColor;
+                                switch (stageStatus) {
+                                  case TaskStatus.completed:
+                                    bgColor = Colors.green.withOpacity(0.2);
+                                    break;
+                                  case TaskStatus.inProgress:
+                                    bgColor = Colors.blue.withOpacity(0.2);
+                                    break;
+                                  case TaskStatus.paused:
+                                    bgColor = Colors.orange.withOpacity(0.2);
+                                    break;
+                                  case TaskStatus.problem:
+                                    bgColor = Colors.redAccent.withOpacity(0.2);
+                                    break;
+                                  case TaskStatus.waiting:
+                                  default:
+                                    bgColor = Colors.yellow.withOpacity(0.2);
+                                    break;
+                                }
+                                DateTime? start;
+                                DateTime? end;
+                                if (stageTasks.isNotEmpty) {
+                                  for (final t in stageTasks) {
+                                    if (t.startedAt != null) {
+                                      final st =
+                                          DateTime.fromMillisecondsSinceEpoch(
+                                        t.startedAt!,
+                                      );
+                                      if (start == null ||
+                                          st.isBefore(start!)) {
+                                        start = st;
+                                      }
+                                      final spent = _elapsed(t);
+                                      if (spent.inSeconds > 0) {
+                                        final en = st.add(spent);
+                                        if (end == null || en.isAfter(end!)) {
+                                          end = en;
+                                        }
                                       }
                                     }
                                   }
                                 }
-                              }
-                              return Container(
-                                margin: const EdgeInsets.symmetric(
-                                    vertical: 4),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: bgColor,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Номер этапа
-                                    CircleAvatar(
-                                      radius: 12,
-                                      backgroundColor: Colors.white,
-                                      child: Text(
-                                        '${_plannedStages.indexOf(planned) + 1}',
-                                        style: const TextStyle(
+                                return Container(
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: bgColor,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 12,
+                                        backgroundColor: Colors.white,
+                                        child: Text(
+                                          '${_plannedStages.indexOf(planned) + 1}',
+                                          style: const TextStyle(
                                             fontWeight: FontWeight.bold,
-                                            fontSize: 12),
+                                            fontSize: 12,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(stage.name,
-                                              style: const TextStyle(
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.bold)),
-                                          Text(
-                                            stageTasks.isNotEmpty
-                                                ? 'Исполнители: ${stageTasks.first.assignees.join(', ')}'
-                                                : '',
-                                            style: const TextStyle(
-                                                fontSize: 14,
-                                                color: Colors.black87),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          // Начало
-                                          Text(
-                                            start != null
-                                                ? 'Начало: ${_formatTime(start)}'
-                                                : 'Начало: —',
-                                            style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.black54),
-                                          ),
-                                          Text(
-                                            end != null
-                                                ? 'Завершение: ${_formatTime(end)}'
-                                                : stageStatus == TaskStatus.completed
-                                                    ? 'Завершено'
-                                                    : stageStatus == TaskStatus.inProgress
-                                                        ? 'В процессе'
-                                                        : 'Плановое завершение: —',
-                                            style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.black54),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    // Количество комментариев
-                                    if (stageTasks.isNotEmpty)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(left: 8.0),
-                                        child: Row(
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
-                                            const Icon(Icons.message_outlined,
-                                                size: 16,
-                                                color: Colors.grey),
-                                            const SizedBox(width: 2),
                                             Text(
-                                              '${stageTasks.fold<int>(0, (p, t) => p + t.comments.length)}',
+                                              stage.name,
                                               style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.black54),
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            Text(
+                                              stageTasks.isNotEmpty
+                                                  ? 'Исполнители: ${stageTasks.first.assignees.join(', ')}'
+                                                  : '',
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              start != null
+                                                  ? 'Начало: ${_formatTime(start)}'
+                                                  : 'Начало: —',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.black54,
+                                              ),
+                                            ),
+                                            Text(
+                                              end != null
+                                                  ? 'Завершение: ${_formatTime(end)}'
+                                                  : stageStatus ==
+                                                          TaskStatus.completed
+                                                      ? 'Завершено'
+                                                      : stageStatus ==
+                                                              TaskStatus
+                                                                  .inProgress
+                                                          ? 'В процессе'
+                                                          : 'Плановое завершение: —',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.black54,
+                                              ),
                                             ),
                                           ],
                                         ),
                                       ),
-                                  ],
-                                ),
-                              );
-                            }),
+                                      if (stageTasks.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 8.0,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              const Icon(
+                                                Icons.message_outlined,
+                                                size: 16,
+                                                color: Colors.grey,
+                                              ),
+                                              const SizedBox(width: 2),
+                                              Text(
+                                                '${stageTasks.fold<int>(0, (p, t) => p + t.comments.length)}',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.black54,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                         ],
                       ),
                   ],

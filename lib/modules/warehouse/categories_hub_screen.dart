@@ -1,140 +1,175 @@
 import 'package:flutter/material.dart';
-import 'package:uuid/uuid.dart';
-import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../utils/auth_helper.dart';
 
-import '../../services/doc_db.dart';
-import 'warehouse_provider.dart';
-
-import 'type_table_tabs_screen.dart';
-
-/// Хаб категорий склада.
-/// Здесь отображаются как стандартные категории (Бумага, Канцелярия, Краска),
-/// так и пользовательские типы, созданные администратором.
-/// Пользователь может добавлять новые «таблицы» (типы) — достаточно указать название.
 class CategoriesHubScreen extends StatefulWidget {
   const CategoriesHubScreen({super.key});
-
   @override
   State<CategoriesHubScreen> createState() => _CategoriesHubScreenState();
 }
 
 class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
-  final DocDB _db = DocDB();
-  late Future<List<String>> _typesFuture;
+  final _sb = Supabase.instance.client;
+  bool _loading = true;
+  List<Map<String, dynamic>> _items = []; // {id, code, title, has_subtables}
 
   @override
   void initState() {
     super.initState();
-    _typesFuture = _loadCustomTypes();
+    _load();
   }
 
-  /// Удаляет пользовательский тип (таблицу) из коллекции `warehouse_types` и
-  /// удаляет все связанные записи TMC через [[WarehouseProvider.deleteType]].
-  Future<void> _deleteType(String type) async {
+  Future<void> _ensureAuthed() async {
+    final auth = _sb.auth;
+    if (auth.currentUser == null) {
+      await auth.signInAnonymously();
+    }
+  }
+
+  String _slug(String s) {
+    final base = s.trim().toLowerCase();
+    final cleaned = base
+        .replaceAll(RegExp(r'[^\p{L}\p{N}\s\-_]', unicode: true), '')
+        .replaceAll(RegExp(r'\s+'), '_');
+    return cleaned.isEmpty
+        ? 'cat_${DateTime.now().millisecondsSinceEpoch}'
+        : cleaned;
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    await _ensureAuthed();
+
+    final rows = await _sb.from('warehouse_categories').select();
+    _items = ((rows as List?) ?? [])
+        .cast<Map<String, dynamic>>()
+        .map((r) => {
+              'id': r['id'],
+              'code': r['code'],
+              'title': (r['title'] ?? r['code'] ?? '').toString(),
+              'has_subtables': (r['has_subtables'] ?? false) as bool,
+            })
+        .toList()
+      ..sort((a, b) => a['title'].toString().compareTo(b['title'].toString()));
+
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _addCategoryDialog() async {
+    final name = TextEditingController();
+    bool hasSub = false;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Удалить таблицу?'),
-        content: Text(
-            'Все записи типа: "$type" будут удалены безвозвратно. Вы уверены?'),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Text('Новая категория'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: name,
+                decoration:
+                    const InputDecoration(labelText: 'Название категории'),
+              ),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                value: hasSub,
+                onChanged: (v) => setS(() => hasSub = v ?? false),
+                title: const Text('Использовать под-таблицы (table_key)'),
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Добавить')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final title = name.text.trim();
+    if (title.isEmpty) return;
+
+    await _sb.from('warehouse_categories').insert({
+      'code': _slug(title),
+      'title': title,
+      'has_subtables': hasSub,
+    });
+    await _load();
+  }
+
+  Future<void> _renameCategory(Map<String, dynamic> it) async {
+    final ctrl = TextEditingController(text: it['title'] ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Переименовать категорию'),
+        content: TextField(
+          controller: ctrl,
+          decoration: const InputDecoration(labelText: 'Новое название'),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: () => Navigator.pop(context, false),
               child: const Text('Отмена')),
-          ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Сохранить')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final title = ctrl.text.trim();
+    if (title.isEmpty) return;
+
+    await _sb.from('warehouse_categories').update({'title': title}).match({
+      'id': it['id'],
+    });
+    await _load();
+  }
+
+  Future<void> _deleteCategory(Map<String, dynamic> it) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить категорию?'),
+        content:
+            const Text('Все позиции внутри будут удалены (ON DELETE CASCADE).'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
               child: const Text('Удалить')),
         ],
       ),
     );
     if (ok != true) return;
-    try {
-      // Находим документы с данным названием и удаляем их
-      final rows = await _db.whereEq('warehouse_types', 'name', type);
-      for (final row in rows) {
-        final rid = row['id'] as String?;
-        if (rid != null) await _db.deleteById(rid);
-      }
-      // Удаляем все записи склада данного типа через provider
-      if (mounted) {
-        final provider = context.read<WarehouseProvider>();
-        await provider.deleteType(type);
-      }
-      if (mounted) {
-        setState(() {
-          _typesFuture = _loadCustomTypes();
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Таблица "$type" удалена')));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Ошибка: $e')));
-    }
+
+    await _sb.from('warehouse_categories').delete().match({
+      'id': it['id'],
+    });
+    await _load();
   }
 
-  /// Загружает список пользовательских типов из коллекции `warehouse_types` в documents.
-  Future<List<String>> _loadCustomTypes() async {
-    final rows = await _db.list('warehouse_types');
-    final names = <String>[];
-    for (final row in rows) {
-      final data = row['data'] as Map<String, dynamic>?;
-      final name = data?['name'];
-      if (name is String) {
-        names.add(name);
-      }
-    }
-    names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return names;
-  }
-
-  /// Показывает диалог создания нового типа и сохраняет его.
-  Future<void> _createTypeDialog() async {
-    final c = TextEditingController();
-    final res = await showDialog<String?>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Новая таблица (тип)'),
-        content: TextField(
-          controller: c,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Название таблицы',
-            hintText: 'Например: Упаковка, Вкладыши, Тесьма...',
-            border: OutlineInputBorder(),
-          ),
+  void _open(Map<String, dynamic> it) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GenericCategoryItemsScreen(
+          categoryId: it['id'] as String,
+          categoryTitle: (it['title'] ?? '').toString(),
+          hasSubtables: (it['has_subtables'] ?? false) as bool,
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Создать')),
-        ],
       ),
     );
-    final name = (res ?? '').trim();
-    if (name.isEmpty) return;
-    try {
-      final id = const Uuid().v4();
-      await _db.insert('warehouse_types', {
-        'id': id,
-        'name': name,
-      }, explicitId: id);
-      if (!mounted) return;
-      setState(() {
-        _typesFuture = _loadCustomTypes();
-      });
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Таблица «$name» создана')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Ошибка: $e')));
-    }
-  }
-
-  /// Открывает экран списка для выбранного типа TMC.
-  void _openType(String type) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => TypeTableTabsScreen(type: type, title: type)));
   }
 
   @override
@@ -144,65 +179,519 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
         title: const Text('Категории'),
         actions: [
           IconButton(
-            onPressed: _createTypeDialog,
-            tooltip: 'Добавить таблицу',
+              onPressed: _addCategoryDialog, icon: const Icon(Icons.add)),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: _items.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (_, i) {
+                final it = _items[i];
+                final title = (it['title'] ?? '').toString();
+                return ListTile(
+                  title: Text(title),
+                  onTap: () => _open(it),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (v) {
+                      if (v == 'rename') _renameCategory(it);
+                      if (v == 'delete') _deleteCategory(it);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                          value: 'rename', child: Text('Переименовать')),
+                      PopupMenuItem(value: 'delete', child: Text('Удалить')),
+                    ],
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+/* ============================================================
+   Общий экран позиций категории с тремя вкладками:
+   Список / Списания / Инвентаризация
+   Таблицы:
+   - warehouse_category_items
+   - warehouse_category_writeoffs
+   - warehouse_category_inventories
+   ============================================================ */
+class GenericCategoryItemsScreen extends StatefulWidget {
+  final String categoryId;
+  final String categoryTitle;
+  final bool hasSubtables;
+  const GenericCategoryItemsScreen({
+    super.key,
+    required this.categoryId,
+    required this.categoryTitle,
+    required this.hasSubtables,
+  });
+
+  @override
+  State<GenericCategoryItemsScreen> createState() =>
+      _GenericCategoryItemsScreenState();
+}
+
+class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
+    with SingleTickerProviderStateMixin {
+  final _sb = Supabase.instance.client;
+
+  late final TabController _tabs;
+
+  bool _loading = true;
+
+  // items
+  List<Map<String, dynamic>> _items =
+      []; // id, description, quantity, table_key
+  // logs
+  List<Map<String, dynamic>> _writeoffs =
+      []; // id, item_id, qty, reason, created_at
+  List<Map<String, dynamic>> _inventories =
+      []; // id, item_id, counted_qty, note, created_at
+
+  // subtables
+  String? _tableKey;
+  List<String> _tableKeys = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 3, vsync: this);
+    _loadAll();
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  // ======== loading ========
+  Future<void> _loadAll() async {
+    setState(() => _loading = true);
+    try {
+      final itemsRes = await _sb.from('warehouse_category_items').select();
+      final allItems = ((itemsRes as List?) ?? []).cast<Map<String, dynamic>>();
+
+      // uniq table_key
+      if (widget.hasSubtables) {
+        final s = <String>{};
+        for (final r in allItems) {
+          if (r['category_id']?.toString() == widget.categoryId) {
+            final k = (r['table_key'] ?? '').toString();
+            if (k.isNotEmpty) s.add(k);
+          }
+        }
+        _tableKeys = s.toList()..sort();
+        _tableKey ??= _tableKeys.isNotEmpty ? _tableKeys.first : 'общая';
+      }
+
+      // items for this category (+table_key if needed)
+      _items = allItems
+          .where((r) {
+            final sameCat = r['category_id']?.toString() == widget.categoryId;
+            if (!sameCat) return false;
+            if (widget.hasSubtables) {
+              return (r['table_key'] ?? '').toString() == (_tableKey ?? '');
+            }
+            return true;
+          })
+          .map((r) => {
+                'id': r['id'],
+                'description': r['description'],
+                'quantity': r['quantity'],
+                'table_key': r['table_key'],
+              })
+          .toList()
+        ..sort((a, b) => (a['description'] ?? '')
+            .toString()
+            .compareTo((b['description'] ?? '').toString()));
+
+      // load logs
+      final wrRes = await _sb.from('warehouse_category_writeoffs').select();
+      final invRes = await _sb.from('warehouse_category_inventories').select();
+      final itemIds = _items.map((e) => e['id'].toString()).toSet();
+
+      _writeoffs = ((wrRes as List?) ?? [])
+          .cast<Map<String, dynamic>>()
+          .where((r) => itemIds.contains(r['item_id']?.toString()))
+          .map((r) => {
+                'id': r['id'],
+                'item_id': r['item_id'],
+                'qty': r['qty'],
+                'reason': r['reason'],
+                'created_at': r['created_at'],
+              })
+          .toList()
+        ..sort((a, b) => (b['created_at'] ?? '')
+            .toString()
+            .compareTo((a['created_at'] ?? '').toString()));
+
+      _inventories = ((invRes as List?) ?? [])
+          .cast<Map<String, dynamic>>()
+          .where((r) => itemIds.contains(r['item_id']?.toString()))
+          .map((r) => {
+                'id': r['id'],
+                'item_id': r['item_id'],
+                'counted_qty': r['counted_qty'],
+                'note': r['note'],
+                'created_at': r['created_at'],
+              })
+          .toList()
+        ..sort((a, b) => (b['created_at'] ?? '')
+            .toString()
+            .compareTo((a['created_at'] ?? '').toString()));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ======== helpers ========
+  Map<String, String> get _itemNameById {
+    final m = <String, String>{};
+    for (final it in _items) {
+      m[it['id'].toString()] = (it['description'] ?? '').toString();
+    }
+    return m;
+  }
+
+  // ======== CRUD: items ========
+  Future<void> _addOrEditItem({Map<String, dynamic>? existing}) async {
+    final name =
+        TextEditingController(text: existing?['description']?.toString() ?? '');
+    final qty =
+        TextEditingController(text: (existing?['quantity'] ?? 0).toString());
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title:
+            Text(existing == null ? 'Новая позиция' : 'Редактировать позицию'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: 'Название')),
+            TextField(
+                controller: qty,
+                decoration: const InputDecoration(labelText: 'Количество'),
+                keyboardType: TextInputType.number),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Сохранить')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final payload = {
+      'category_id': widget.categoryId,
+      'table_key': widget.hasSubtables ? _tableKey : null,
+      'description': name.text.trim(),
+      'quantity': double.tryParse(qty.text.trim()) ?? 0,
+    };
+
+    if (existing == null) {
+      await _sb.from('warehouse_category_items').insert(payload);
+    } else {
+      await _sb
+          .from('warehouse_category_items')
+          .update(payload)
+          .match({'id': existing['id']});
+    }
+    await _loadAll();
+  }
+
+  Future<void> _deleteItem(String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить позицию?'),
+        content: const Text('Действие нельзя отменить.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Удалить')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _sb.from('warehouse_category_items').delete().match({'id': id});
+      await _loadAll();
+    }
+  }
+
+  // ======== writeoffs (по конкретной позиции) ========
+  Future<void> _writeoffItem(String itemId) async {
+    final item = _items.firstWhere((e) => e['id'].toString() == itemId,
+        orElse: () => {});
+    if (item.isEmpty) return;
+
+    final qty = TextEditingController(text: '1');
+    final reason = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Списать: ${(item['description'] ?? '').toString()}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+                controller: qty,
+                decoration: const InputDecoration(labelText: 'Количество'),
+                keyboardType: TextInputType.number),
+            TextField(
+                controller: reason,
+                decoration: const InputDecoration(labelText: 'Причина')),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Списать')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final q = (double.tryParse(qty.text.trim()) ?? 0).abs();
+
+    await _sb.from('warehouse_category_writeoffs').insert({
+      'item_id': itemId,
+      'qty': q,
+      'reason': reason.text.trim(),
+      'by_name': AuthHelper.currentUserName ?? '',
+    });
+
+    final newQty = (((item['quantity'] as num?) ?? 0).toDouble() - q);
+    await _sb
+        .from('warehouse_category_items')
+        .update({'quantity': newQty}).match({'id': itemId});
+
+    await _loadAll();
+  }
+
+  // ======== inventories (по конкретной позиции) ========
+  Future<void> _inventoryItem(String itemId) async {
+    final item = _items.firstWhere((e) => e['id'].toString() == itemId,
+        orElse: () => {});
+    if (item.isEmpty) return;
+
+    final counted =
+        TextEditingController(text: ((item['quantity'] ?? 0).toString()));
+    final note = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title:
+            Text('Инвентаризация: ${(item['description'] ?? '').toString()}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+                controller: counted,
+                decoration:
+                    const InputDecoration(labelText: 'Фактическое количество'),
+                keyboardType: TextInputType.number),
+            TextField(
+                controller: note,
+                decoration: const InputDecoration(labelText: 'Примечание')),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Сохранить')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final q = (double.tryParse(counted.text.trim()) ?? 0);
+
+    await _sb.from('warehouse_category_inventories').insert({
+      'item_id': itemId,
+      'counted_qty': q,
+      'note': note.text.trim(),
+      'by_name': AuthHelper.currentUserName ?? '',
+    });
+
+    await _sb
+        .from('warehouse_category_items')
+        .update({'quantity': q}).match({'id': itemId});
+
+    await _loadAll();
+  }
+
+  // ======== UI helpers ========
+  ListTile _itemTile(Map<String, dynamic> r) {
+    final id = r['id'].toString();
+    final name = (r['description'] ?? '').toString();
+    final qty = (r['quantity'] ?? 0).toString();
+
+    return ListTile(
+      title: Text(name),
+      subtitle: Text('Количество: $qty'),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Списать',
+            icon: const Icon(Icons.remove_circle_outline),
+            onPressed: () => _writeoffItem(id),
+          ),
+          IconButton(
+            tooltip: 'Инвентаризация',
+            icon: const Icon(Icons.inventory_2_outlined),
+            onPressed: () => _inventoryItem(id),
+          ),
+          IconButton(
+            tooltip: 'Редактировать',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () => _addOrEditItem(existing: r),
+          ),
+          IconButton(
+            tooltip: 'Удалить',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => _deleteItem(id),
+          ),
+        ],
+      ),
+      onTap: () => _addOrEditItem(existing: r),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nameById = _itemNameById;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.categoryTitle),
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: const [
+            Tab(text: 'Список'),
+            Tab(text: 'Списания'),
+            Tab(text: 'Инвентаризация'),
+          ],
+        ),
+        actions: [
+          if (widget.hasSubtables) ...[
+            DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _tableKey,
+                items: (_tableKeys.isEmpty
+                        ? <String>[_tableKey ?? 'общая']
+                        : _tableKeys)
+                    .map((k) => DropdownMenuItem(value: k, child: Text(k)))
+                    .toList(),
+                onChanged: (v) async {
+                  _tableKey = v;
+                  await _loadAll();
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+          ],
+          IconButton(
+            tooltip: _tabs.index == 0
+                ? 'Добавить позицию'
+                : _tabs.index == 1
+                    ? 'Новое списание'
+                    : 'Новая инвентаризация',
+            onPressed: () {
+              if (_tabs.index == 0) _addOrEditItem();
+              if (_tabs.index == 1) {
+                if (_items.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Нет позиций для списания')));
+                } else {
+                  _writeoffItem(_items.first['id'].toString());
+                }
+              }
+              if (_tabs.index == 2) {
+                if (_items.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Нет позиций для инвентаризации')));
+                } else {
+                  _inventoryItem(_items.first['id'].toString());
+                }
+              }
+            },
             icon: const Icon(Icons.add),
           ),
         ],
       ),
-      body: FutureBuilder<List<String>>(
-        future: _typesFuture,
-        builder: (context, snap) {
-          final types = snap.data ?? const <String>[];
-          return GridView.count(
-            crossAxisCount: 3,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            padding: const EdgeInsets.all(12),
-            children: [
-              // Три стандартные категории отображаются всегда и не могут быть удалены
-              _card('Бумага', onTap: () => _openType('Бумага'), deletable: false),
-              _card('Канцелярия', onTap: () => _openType('Канцелярия'), deletable: false),
-              _card('Краска', onTap: () => _openType('Краска'), deletable: false),
-              // Пользовательские категории можно удалить длинным нажатием
-              for (final t in types) _card(t, onTap: () => _openType(t), deletable: true),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  /// Карточка для категории.
-  /// [deletable] определяет, можно ли удалить таблицу длинным нажатием.
-  Widget _card(String title,
-      {VoidCallback? onTap, bool deletable = false}) {
-    return InkWell(
-      onTap: onTap,
-      onLongPress: deletable
-          ? () {
-              // Если разрешено удалять, вызываем диалог подтверждения
-              _deleteType(title);
-            }
-          : null,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.blueGrey.shade100),
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Center(
-          child: Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                height: 1.3),
-          ),
-        ),
-      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabs,
+              children: [
+                // ======== Список ========
+                ListView.separated(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _items.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, i) => _itemTile(_items[i]),
+                ),
+                // ======== Списания ========
+                ListView.separated(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _writeoffs.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final r = _writeoffs[i];
+                    final title = nameById[r['item_id'].toString()] ?? '—';
+                    final qty = (r['qty'] ?? 0).toString();
+                    final dt = (r['created_at'] ?? '').toString();
+                    final reason = (r['reason'] ?? '').toString();
+                    return ListTile(
+                      title: Text('$title • −$qty'),
+                      subtitle: Text(reason.isEmpty ? dt : '$dt  •  $reason'),
+                    );
+                  },
+                ),
+                // ======== Инвентаризация ========
+                ListView.separated(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _inventories.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final r = _inventories[i];
+                    final title = nameById[r['item_id'].toString()] ?? '—';
+                    final qty = (r['counted_qty'] ?? 0).toString();
+                    final dt = (r['created_at'] ?? '').toString();
+                    final note = (r['note'] ?? '').toString();
+                    return ListTile(
+                      title: Text('$title • $qty'),
+                      subtitle: Text(note.isEmpty ? dt : '$dt  •  $note'),
+                    );
+                  },
+                ),
+              ],
+            ),
     );
   }
 }

@@ -118,8 +118,10 @@ class TaskModel {
   }
 
   // поля с разными названиями
-  final orderId = (pick(['orderId','order_id','orderid']) as String?) ?? '';
-  final stageId = (pick(['stageId','stage_id','stageid']) as String?) ?? '';
+  // orderId и stageId могут быть как строками, так и числами в исходных данных,
+  // поэтому приводим найденное значение к строке через `toString()`.
+  final orderId = pick(['orderId', 'order_id', 'orderid'])?.toString() ?? '';
+  final stageId = pick(['stageId', 'stage_id', 'stageid'])?.toString() ?? '';
 
   final statusStr = (map['status'] as String?) ?? 'waiting';
   TaskStatus status;

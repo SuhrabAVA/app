@@ -1,24 +1,30 @@
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../warehouse/warehouse_provider.dart';
-import '../warehouse/tmc_model.dart';
-import '../warehouse/supplier_provider.dart';
-import 'package:uuid/uuid.dart';
-import 'dart:typed_data';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
+
+import '../warehouse/supplier_provider.dart';
+import '../warehouse/tmc_model.dart';
+import '../warehouse/warehouse_provider.dart';
+
+class PaperOption {
+  final String name;
+  final String? format;
+  final String? grammage;
+
+  const PaperOption({required this.name, this.format, this.grammage});
+  String get key => '${name}|${format ?? ''}|${grammage ?? ''}';
+  String get display =>
+      '$name • ${format == null || format!.isEmpty ? '-' : format} • ${grammage == null || grammage!.isEmpty ? '-' : grammage}';
+}
 
 class AddEntryDialog extends StatefulWidget {
-  /// Если задан [initialTable], выбор таблицы пользователем блокируется,
-  /// и диалог будет использовать только указанную таблицу.
   final String? initialTable;
-
-  /// Существующая запись для редактирования. Если передана, диалог
-  /// работает в режиме редактирования и предварительно заполняет поля
-  /// данными из этой записи.
   final TmcModel? existing;
-
   const AddEntryDialog({super.key, this.initialTable, this.existing});
 
   @override
@@ -26,39 +32,38 @@ class AddEntryDialog extends StatefulWidget {
 }
 
 class _AddEntryDialogState extends State<AddEntryDialog> {
-  String? _selectedTable;
   final _formKey = GlobalKey<FormState>();
+  String? _selectedTable;
+  bool get _isEdit => widget.existing != null;
+
+  bool _isSaving = false;
 
   final Map<String, TextEditingController> _controllers = {
+    'view': TextEditingController(),
+    'color': TextEditingController(),
+    'pairs': TextEditingController(),
+    'low': TextEditingController(),
+    'critical': TextEditingController(),
+    'note': TextEditingController(),
     'name': TextEditingController(),
-    // Общее количество (используется для канцелярии, универсальных и готовых изделий)
     'quantity': TextEditingController(),
-    // Длина в метрах (для рулонов и бобин)
     'length': TextEditingController(),
-    // Ширина в метрах (для рулонов и бобин)
     'width': TextEditingController(),
-    // Вес в килограммах (для красок)
     'weight': TextEditingController(),
-    // Формат бумаги
+    'diameter': TextEditingController(),
     'format': TextEditingController(),
-    // Грамаж бумаги
     'grammage': TextEditingController(),
-    // Дополнительные характеристики (для универсальных изделий)
     'characteristics': TextEditingController(),
-    // Идентификатор заказа (для готовых изделий)
     'orderId': TextEditingController(),
-    // Причина или комментарий (для списания)
     'comment': TextEditingController(),
     'note': TextEditingController(),
-    // пороги остатков
     'lowThreshold': TextEditingController(),
     'criticalThreshold': TextEditingController(),
-    // для категории "Ручки"
     'color': TextEditingController(),
+    'counted': TextEditingController(),
   };
 
-  // Список типов ТМЦ, доступных для создания. Добавлены новые типы согласно ТЗ.
-  final List<String> _tables = [
+  final List<String> _tables = const [
     'Рулон',
     'Бобина',
     'Краска',
@@ -67,18 +72,30 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     'Бумага',
     'Канцелярия',
     'Списание',
-    // новые категории
+    'Инвентаризация',
     'Форма',
     'Ручки',
   ];
 
-  // Дополнительные состояния для работы с бумагой и канцелярией
-  List<String> _paperNames = [];
-  String? _selectedPaper;
+  final List<PaperOption> _paperOptions = <PaperOption>[];
+  // Уникальные списки для каскадного выбора бумаги
+  List<String> _paperNameChoices = [];
+  List<String> _formatChoices = [];
+  List<String> _grammageChoices = [];
+  String? _selectedName;
+  String? _selectedFormat;
+  String? _selectedGrammage;
+  bool _manualFormat = false;
+  bool _manualGrammage = false;
+
+  final Map<String, PaperOption> _paperMap = <String, PaperOption>{};
+  String? _selectedPaperKey;
   bool _isNewPaper = false;
-  // Выбор единицы измерения для канцелярских товаров
+
+  String _paperMethod = 'meters'; // meters | weight | diameter
+
   String? _selectedUnit;
-  final List<String> _units = [
+  final List<String> _units = const [
     'коробка',
     'шт',
     'лист',
@@ -90,15 +107,689 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     'мешков',
   ];
 
-  // Список материалов для рулонов/бобин. По хорошему должно загружаться из справочника.
-  final List<String> _materials = [
+  final List<String> _materials = const [
     'Бел',
     'Кор',
     'Материал X',
     'Материал Y',
   ];
+  String? _selectedMaterial;
+  String? _selectedSupplierId;
+  String? _selectedColor;
+  String? _selectedRollId;
+  String? _selectedProductType;
 
-  /// Виджет для двух полей пороговых остатков (низкий и критически низкий).
+  List<TmcModel> _rollItems = [];
+
+  XFile? _pickedImage;
+  String? _existingImageUrl;
+  Uint8List? _imageBytes;
+
+  final List<String> _colors = const [
+    'Красный',
+    'Синий',
+    'Зелёный',
+    'Жёлтый',
+    'Оранжевый',
+    'Фиолетовый',
+    'Розовый',
+    'Коричневый',
+    'Чёрный',
+    'Белый',
+    'Серый',
+    'Голубой',
+    'Бежевый',
+    'Бирюзовый',
+    'Лаймовый',
+    'Золотой',
+    'Серебряный',
+    'Малиновый',
+    'Индиго',
+    'Песочный',
+  ];
+
+  final List<String> _productTypes = const [
+    'п-пакет',
+    'v-пакет',
+    'уголок',
+    'листы',
+    'тарталетка',
+    'мафин',
+    'тюльпан',
+    'рулонная печать',
+  ];
+
+  bool get _needSuppliers =>
+      _selectedTable == 'Рулон' || _selectedTable == 'Бобина';
+
+  Future<void> _ensureSuppliersLoaded() async {
+    if (!_needSuppliers) return;
+    final sp = Provider.of<SupplierProvider>(context, listen: false);
+    if (sp.suppliers.isEmpty) {
+      await sp.fetchSuppliers();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final wh = Provider.of<WarehouseProvider>(context, listen: false);
+      await wh.fetchTmc();
+
+      if (widget.initialTable == 'Ручки') {
+        wh.setStationeryKey('pens');
+      }
+
+      final papers = wh.getTmcByType('Бумага');
+      final rolls = wh.getTmcByType('Рулон');
+
+      final Set<String> seen = <String>{};
+      for (final e in papers) {
+        final opt = PaperOption(
+          name: e.description,
+          format: e.format,
+          grammage: e.grammage,
+        );
+        if (seen.add(opt.key)) {
+          _paperOptions.add(opt);
+          _paperMap[opt.key] = opt;
+        }
+      }
+
+      // сформировать уникальные названия
+      _paperNameChoices = _paperOptions.map((e) => e.name).toSet().toList()
+        ..sort();
+
+      // Список уникальных названий без дублей
+      _paperNameChoices = _paperOptions.map((o) => o.name).toSet().toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      setState(() {
+        _rollItems = rolls;
+      });
+    });
+
+    if (_isEdit) {
+      _selectedTable = _mapTypeToUi(widget.existing!.type);
+      _populateForEdit(widget.existing!);
+
+      if (widget.existing!.imageBase64 != null) {
+        try {
+          _imageBytes = base64Decode(widget.existing!.imageBase64!);
+        } catch (_) {}
+      }
+      _existingImageUrl = widget.existing!.imageUrl;
+    } else if (widget.initialTable != null) {
+      _selectedTable = widget.initialTable;
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _onTableChanged(String? value) async {
+    setState(() => _selectedTable = value);
+    await _ensureSuppliersLoaded();
+    if (value == 'Ручки') {
+      final wh = Provider.of<WarehouseProvider>(context, listen: false);
+      wh.setStationeryKey('pens');
+    }
+  }
+
+  String _mapTypeToUi(String type) {
+    final t = type.toLowerCase();
+    if (t.contains('paper') || t.contains('бумага')) return 'Бумага';
+    if (t.contains('paint') || t.contains('краска')) return 'Краска';
+    if (t.contains('stationery') || t.contains('канцеляр')) return 'Канцелярия';
+    if (t.contains('рулон')) return 'Рулон';
+    if (t.contains('бобина')) return 'Бобина';
+    if (t.contains('инвент')) return 'Инвентаризация';
+    if (t.contains('спис')) return 'Списание';
+    if (t.contains('форма')) return 'Форма';
+    if (t.contains('готов')) return 'Готовое изделие';
+    if (t.contains('универс')) return 'Универсальное изделие';
+    return type;
+  }
+
+  void _populateForEdit(TmcModel item) {
+    final uiType = _mapTypeToUi(item.type);
+    switch (uiType) {
+      case 'Бумага':
+        _controllers['name']!.text = item.description;
+        _controllers['format']!.text = item.format ?? '';
+        _controllers['grammage']!.text = item.grammage ?? '';
+        _controllers['length']!.text = item.quantity.toString();
+        break;
+      case 'Рулон':
+        _controllers['name']!.text = item.description;
+        _controllers['length']!.text = item.quantity.toString();
+        final parts = item.description.split(' ');
+        if (parts.length >= 2) {
+          final widthPart = parts.last;
+          final w = double.tryParse(
+            widthPart.replaceAll(RegExp(r'[^0-9\.,]'), ''),
+          );
+          if (w != null) _controllers['width']!.text = w.toString();
+        }
+        break;
+      case 'Бобина':
+        _controllers['name']!.text = item.description;
+        _controllers['length']!.text = item.quantity.toString();
+        break;
+      case 'Краска':
+        _controllers['name']!.text = item.description;
+        _controllers['weight']!.text = item.quantity.toString();
+        break;
+      case 'Канцелярия':
+      case 'Универсальное изделие':
+      case 'Готовое изделие':
+        _controllers['name']!.text = item.description;
+        _controllers['quantity']!.text = item.quantity.toString();
+        _selectedUnit = item.unit;
+        break;
+      case 'Списание':
+        _controllers['name']!.text = item.description;
+        _controllers['length']!.text = item.quantity.toString();
+        break;
+      default:
+        _controllers['name']!.text = item.description;
+        _controllers['quantity']!.text = item.quantity.toString();
+    }
+    _controllers['note']!.text = item.note ?? '';
+    if (item.lowThreshold != null) {
+      _controllers['lowThreshold']!.text = item.lowThreshold.toString();
+    }
+    if (item.criticalThreshold != null) {
+      _controllers['criticalThreshold']!.text =
+          item.criticalThreshold.toString();
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final XFile? file = await picker.pickImage(source: ImageSource.gallery);
+    if (file != null) {
+      final bytes = await file.readAsBytes();
+      setState(() {
+        _pickedImage = file;
+        _imageBytes = bytes;
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_selectedTable == null) return;
+    if (!_formKey.currentState!.validate()) return;
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+
+    final wh = Provider.of<WarehouseProvider>(context, listen: false);
+
+    double? lowTh;
+    double? critTh;
+    final s1 = _controllers['lowThreshold']!.text.trim();
+    if (s1.isNotEmpty) lowTh = double.tryParse(s1.replaceAll(',', '.'));
+    final s2 = _controllers['criticalThreshold']!.text.trim();
+    if (s2.isNotEmpty) critTh = double.tryParse(s2.replaceAll(',', '.'));
+
+    try {
+      if (_isEdit) {
+        final item = widget.existing!;
+        final note = _controllers['note']!.text.trim();
+        final uiType = _mapTypeToUi(item.type);
+
+        switch (uiType) {
+          case 'Бумага':
+            await wh.updateTmc(
+              id: item.id,
+              description: _controllers['name']!.text.trim().isNotEmpty
+                  ? _controllers['name']!.text.trim()
+                  : item.description,
+              unit: 'м',
+              quantity: double.tryParse(_controllers['length']!
+                      .text
+                      .trim()
+                      .replaceAll(',', '.')) ??
+                  item.quantity,
+              note: note.isNotEmpty ? note : item.note,
+              format: _controllers['format']!.text.trim().isNotEmpty
+                  ? _controllers['format']!.text.trim()
+                  : item.format,
+              grammage: _controllers['grammage']!.text.trim().isNotEmpty
+                  ? _controllers['grammage']!.text.trim()
+                  : item.grammage,
+              lowThreshold: lowTh,
+              criticalThreshold: critTh,
+            );
+            break;
+
+          case 'Рулон':
+            await wh.updateTmc(
+              id: item.id,
+              description: _controllers['name']!.text.trim().isNotEmpty
+                  ? _controllers['name']!.text.trim()
+                  : item.description,
+              unit: 'м',
+              quantity: double.tryParse(_controllers['length']!
+                      .text
+                      .trim()
+                      .replaceAll(',', '.')) ??
+                  item.quantity,
+              note: note.isNotEmpty ? note : item.note,
+              lowThreshold: lowTh,
+              criticalThreshold: critTh,
+            );
+            break;
+
+          case 'Бобина':
+            await wh.updateTmc(
+              id: item.id,
+              description: _controllers['name']!.text.trim().isNotEmpty
+                  ? _controllers['name']!.text.trim()
+                  : item.description,
+              quantity: double.tryParse(_controllers['length']!
+                      .text
+                      .trim()
+                      .replaceAll(',', '.')) ??
+                  item.quantity,
+              note: note.isNotEmpty ? note : item.note,
+              lowThreshold: lowTh,
+              criticalThreshold: critTh,
+            );
+            break;
+
+          case 'Краска':
+            String? imageBase64 = item.imageBase64;
+            if (_imageBytes != null) imageBase64 = base64Encode(_imageBytes!);
+            await wh.updateTmc(
+              id: item.id,
+              description: _controllers['name']!.text.trim().isNotEmpty
+                  ? _controllers['name']!.text.trim()
+                  : item.description,
+              unit: 'кг',
+              quantity: double.tryParse(_controllers['weight']!
+                      .text
+                      .trim()
+                      .replaceAll(',', '.')) ??
+                  item.quantity,
+              note: note.isNotEmpty ? note : item.note,
+              imageBase64: imageBase64,
+              lowThreshold: lowTh,
+              criticalThreshold: critTh,
+            );
+            break;
+
+          default:
+            await wh.updateTmc(
+              id: item.id,
+              description: _controllers['name']!.text.trim().isNotEmpty
+                  ? _controllers['name']!.text.trim()
+                  : item.description,
+              quantity: double.tryParse(_controllers['quantity']!
+                      .text
+                      .trim()
+                      .replaceAll(',', '.')) ??
+                  item.quantity,
+              note: note.isNotEmpty ? note : item.note,
+              lowThreshold: lowTh,
+              criticalThreshold: critTh,
+            );
+        }
+
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      // ===== Create =====
+      final table = _selectedTable!;
+      final note = _controllers['note']!.text.trim();
+
+      if (table == 'Инвентаризация') {
+        final selectedKey = _selectedPaperKey ?? '';
+        final opt = _paperMap[selectedKey];
+        final counted = double.tryParse(
+                _controllers['counted']!.text.trim().replaceAll(',', '.')) ??
+            0;
+
+        final papers = wh.getTmcByType('Бумага');
+        final existing = papers.firstWhere(
+          (e) =>
+              e.description ==
+                  (opt?.name ?? _controllers['name']!.text.trim()) &&
+              (e.format ?? '') ==
+                  (opt?.format ?? _controllers['format']!.text.trim()) &&
+              (e.grammage ?? '') ==
+                  (opt?.grammage ?? _controllers['grammage']!.text.trim()),
+          orElse: () => TmcModel(
+            id: '',
+            date: '',
+            supplier: null,
+            type: 'Бумага',
+            description: '',
+            quantity: 0,
+            unit: 'м',
+            note: null,
+            imageUrl: null,
+            imageBase64: null,
+            format: null,
+            grammage: null,
+            weight: null,
+            lowThreshold: null,
+            criticalThreshold: null,
+          ),
+        );
+        if (existing.id.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Такой вид бумаги отсутствует.')),
+          );
+          return;
+        }
+        await wh.updateTmc(
+          id: existing.id,
+          quantity: counted,
+          note: note.isEmpty ? existing.note : note,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Бумага') {
+        final formatStr = _controllers['format']!.text.trim();
+        final grammageStr = _controllers['grammage']!.text.trim();
+        final note = _controllers['note']!.text.trim();
+
+        final format = double.tryParse(formatStr.replaceAll(',', '.')) ?? 0.0;
+        final grammage =
+            double.tryParse(grammageStr.replaceAll(',', '.')) ?? 0.0;
+        double length = 0.0;
+
+        double? fromWeight(double wKg) =>
+            ((wKg * 1000) / grammage) / (format / 100.0);
+
+        double? fromDiameter(double d, bool isWhite) {
+          final r_m = (d / 2.0) / 100.0;
+          final area_m2 = r_m * r_m * math.pi;
+          final k = (isWhite ? 8.8 : 7.75) * format;
+          return ((area_m2 * k) * 1000.0) / grammage / (format / 100.0);
+        }
+
+        String selectedName = _controllers['name']!.text.trim();
+        String selectedFormat = formatStr;
+        String selectedGrammage = grammageStr;
+        PaperOption? sel;
+        if (!_isNewPaper &&
+            (_selectedPaperKey != null && _selectedPaperKey!.isNotEmpty)) {
+          sel = _paperMap[_selectedPaperKey!];
+          if (sel != null) {
+            selectedName = sel.name;
+            selectedFormat = sel.format ?? selectedFormat;
+            selectedGrammage = sel.grammage ?? selectedGrammage;
+          }
+        }
+
+        if (_paperMethod == 'meters') {
+          length = double.tryParse(
+                  _controllers['length']!.text.replaceAll(',', '.')) ??
+              0.0;
+        } else if (_paperMethod == 'weight') {
+          final w = double.tryParse(
+                  _controllers['weight']!.text.replaceAll(',', '.')) ??
+              0.0;
+          length = fromWeight(w) ?? 0.0;
+        } else if (_paperMethod == 'diameter') {
+          final d = double.tryParse(
+                  _controllers['diameter']!.text.replaceAll(',', '.')) ??
+              0.0;
+          final srcName =
+              (sel?.name ?? _controllers['name']!.text).toLowerCase();
+          final isWhite = srcName.contains('бел') || srcName.contains('white');
+          length = fromDiameter(d, isWhite) ?? 0.0;
+        }
+
+        if (length <= 0 || format <= 0 || grammage <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Проверьте формат/грамаж и количество')),
+          );
+          return;
+        }
+
+        // ЕДИНСТВЕННЫЙ вызов — провайдер сам разрулит (arrival_add)
+        await wh.addTmc(
+          type: 'Бумага',
+          description: selectedName,
+          quantity: length,
+          unit: 'м',
+          note: note.isEmpty ? null : note,
+          format: selectedFormat.isEmpty ? null : selectedFormat,
+          grammage: selectedGrammage.isEmpty ? null : selectedGrammage,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Списание') {
+        final selectedKey = _selectedPaperKey ?? '';
+        final opt = _paperMap[selectedKey];
+        final length = double.tryParse(
+                _controllers['length']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        final comment = _controllers['comment']!.text.trim();
+
+        final papers = wh.getTmcByType('Бумага');
+        final existing = papers.where((e) {
+          return e.description ==
+                  (opt?.name ?? _controllers['name']!.text.trim()) &&
+              (e.format ?? '') ==
+                  (opt?.format ?? _controllers['format']!.text.trim()) &&
+              (e.grammage ?? '') ==
+                  (opt?.grammage ?? _controllers['grammage']!.text.trim());
+        }).toList();
+
+        if (existing.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Такой вид бумаги отсутствует.')),
+          );
+          return;
+        }
+        if (existing.first.quantity < length) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Недостаточно бумаги для списания.')),
+          );
+          return;
+        }
+
+        await wh.registerShipment(
+          id: existing.first.id,
+          type: 'Бумага',
+          qty: length,
+          reason: comment.isEmpty ? null : comment,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Канцелярия') {
+        await wh.addTmc(
+          type: table,
+          description: _controllers['name']!.text.trim(),
+          quantity: double.tryParse(
+                  _controllers['quantity']!.text.trim().replaceAll(',', '.')) ??
+              0,
+          unit: _selectedUnit ?? 'шт',
+          note: note.isEmpty ? null : note,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Ручки') {
+        final name = _controllers['name']!.text.trim();
+        final color = _controllers['color']!.text.trim();
+        final desc = [name, color].where((s) => s.isNotEmpty).join(' • ');
+        await wh.addTmc(
+          type: table,
+          description: desc,
+          quantity: double.tryParse(
+                  _controllers['quantity']!.text.trim().replaceAll(',', '.')) ??
+              0,
+          unit: 'пар', // фиксированная единица измерения
+          note: note.isEmpty ? null : note,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Рулон') {
+        final material = _selectedMaterial ?? _controllers['name']!.text.trim();
+        final width = double.tryParse(
+                _controllers['width']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        final length = double.tryParse(
+                _controllers['length']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        final description = width > 0 ? '$material ${width}м' : material;
+
+        await wh.addTmc(
+          supplier: _selectedSupplierId,
+          type: 'Рулон',
+          description: description,
+          quantity: length,
+          unit: 'м',
+          note: note.isEmpty ? null : note,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Бобина') {
+        final roll = _selectedRollId;
+        final material = _selectedMaterial ?? '';
+        final width = double.tryParse(
+                _controllers['width']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        final length = double.tryParse(
+                _controllers['length']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        String description;
+        if (roll != null) {
+          final rollItem = _rollItems.firstWhere(
+            (r) => r.id == roll,
+            orElse: () => TmcModel(
+              id: roll,
+              date: DateTime.now().toIso8601String(),
+              supplier: null,
+              type: 'Рулон',
+              description: roll,
+              quantity: 0,
+              unit: 'м',
+              note: null,
+              imageUrl: null,
+              imageBase64: null,
+              format: null,
+              grammage: null,
+              weight: null,
+              lowThreshold: null,
+              criticalThreshold: null,
+            ),
+          );
+          description =
+              '${material.isNotEmpty ? '$material ' : ''}${width > 0 ? '$widthм ' : ''}(из ${rollItem.description})';
+        } else {
+          description =
+              '${material.isNotEmpty ? '$material ' : ''}${width > 0 ? '$widthм' : ''}';
+        }
+        await wh.addTmc(
+          type: 'Бобина',
+          description: description.trim(),
+          quantity: length,
+          unit: 'м',
+          note: note.isEmpty ? null : note,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Краска') {
+        final name = _controllers['name']!.text.trim();
+        final color = _selectedColor ?? '';
+        final weight = double.tryParse(
+                _controllers['weight']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        final description = color.isNotEmpty ? '$name $color' : name;
+
+        if (_imageBytes == null || _imageBytes!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Для краски обязательно приложить фото')),
+          );
+          return;
+        }
+
+        await wh.addTmc(
+          id: const Uuid().v4(),
+          type: 'Краска',
+          description: description,
+          quantity: weight,
+          unit: 'кг',
+          note: note.isEmpty ? null : note,
+          imageBytes: _imageBytes,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      if (table == 'Универсальное изделие' ||
+          table == 'Форма' ||
+          table == 'Готовое изделие') {
+        final name = _controllers['name']!.text.trim();
+        final qty = double.tryParse(
+                _controllers['quantity']!.text.trim().replaceAll(',', '.')) ??
+            0;
+        final supplierLike = table == 'Готовое изделие'
+            ? _controllers['orderId']!.text.trim()
+            : _controllers['characteristics']!.text.trim();
+
+        await wh.addTmc(
+          supplier: supplierLike.isEmpty ? null : supplierLike,
+          type: 'Рулон',
+          description: name.isEmpty ? table : name,
+          quantity: qty,
+          unit: 'шт',
+          note: note.isEmpty ? null : note,
+          lowThreshold: lowTh,
+          criticalThreshold: critTh,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ошибка при сохранении: $e')));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
   Widget _buildThresholdFields() {
     return Column(
       children: [
@@ -127,672 +818,236 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       ],
     );
   }
-  // Список Pantone цветов. Должно загружаться из справочника.
-  final List<String> _colors = [
-    'Красный',
-    'Синий',
-    'Зелёный',
-    'Жёлтый',
-    'Оранжевый',
-    'Фиолетовый',
-    'Розовый',
-    'Коричневый',
-    'Чёрный',
-    'Белый',
-    'Серый',
-    'Голубой',
-    'Бежевый',
-    'Бирюзовый',
-    'Лаймовый',
-    'Золотой',
-    'Серебряный',
-    'Малиновый',
-    'Индиго',
-    'Песочный',
 
-  ];
-  // Список типов готовой продукции, согласно ТЗ
-  final List<String> _productTypes = [
-    'п-пакет',
-    'v-пакет',
-    'уголок',
-    'листы',
-    'тарталетка',
-    'мафин',
-    'тюльпан',
-    'рулонная печать',
-  ];
-
-  // Выбранные значения для новых типов ТМЦ
-  String? _selectedMaterial;
-  String? _selectedSupplierId;
-  String? _selectedColor;
-  String? _selectedRollId;
-  String? _selectedProductType;
-
-  // Список рулонов для выбора при создании бобины
-  List<TmcModel> _rollItems = [];
-
-  // Хранит выбранное изображение для типа "Краска".
-  XFile? _pickedImage;
-  // При редактировании существующей записи сохраняем URL изображения.
-  String? _existingImageUrl;
-  // Байтовое представление выбранного изображения для корректного отображения на вебе.
-  Uint8List? _imageBytes;
-
-  /// Открывает галерею для выбора изображения. Выбранный файл сохраняется
-  /// в переменную [_pickedImage], чтобы затем загрузить его при необходимости в Supabase Storage.
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final XFile? file = await picker.pickImage(source: ImageSource.gallery);
-    if (file != null) {
-      // Считываем байты изображения для корректного отображения в веб-приложении
-      final bytes = await file.readAsBytes();
-      setState(() {
-        _pickedImage = file;
-        _imageBytes = bytes;
-      });
-    }
-  }
-
-  // Метод загрузки в облачное хранилище удалён, так как изображения
-  // сохраняются в виде base64 непосредственно в Supabase. При необходимости
-  // можно реализовать загрузку в Supabase Storage.
-
-  @override
-  void dispose() {
-    for (var controller in _controllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    // После первой отрисовки загружаем данные, необходимые для работы формы
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final warehouseProvider = Provider.of<WarehouseProvider>(context, listen: false);
-      final supplierProvider = Provider.of<SupplierProvider>(context, listen: false);
-      await Future.wait([
-        warehouseProvider.fetchTmc(),
-        supplierProvider.fetchSuppliers(),
-      ]);
-      final papers = warehouseProvider.getTmcByType('Бумага');
-      final rolls = warehouseProvider.getTmcByType('Рулон');
-      setState(() {
-        _paperNames = papers.map((e) => e.description).toSet().toList();
-        _rollItems = rolls;
-      });
-    });
-    // Предварительно выбираем таблицу
-    if (widget.existing != null) {
-      _selectedTable = widget.existing!.type;
-      _populateForEdit(widget.existing!);
-      // Если запись содержит изображение в base64, подготавливаем байты для превью
-      if (widget.existing!.imageBase64 != null) {
-        try {
-          final bytes = base64Decode(widget.existing!.imageBase64!);
-          _imageBytes = bytes;
-        } catch (_) {}
-      }
-      // сохраняем ссылку на url изображения (если использовался url)
-      _existingImageUrl = widget.existing!.imageUrl;
-    } else if (widget.initialTable != null) {
-      _selectedTable = widget.initialTable;
-    }
-  }
-
-  /// Заполняет поля формы данными существующей записи при редактировании.
-  void _populateForEdit(TmcModel item) {
-    // В режиме редактирования заполняем основные поля исходя из типа записи.
-    switch (item.type) {
-      case 'Бумага':
-      _controllers['name']!.text = item.description;
-        _controllers['length']!.text = item.quantity.toString();
-        _controllers['format']!.text = item.format ?? '';
-        _controllers['grammage']!.text = item.grammage ?? '';
-        _controllers['weight']!.text = item.weight?.toString() ?? '';
-        break;
-      case 'Рулон':
-        _controllers['name']!.text = item.description;
-        _controllers['length']!.text = item.quantity.toString();
-        // Попробуем извлечь ширину из описания, если формат соответствует "Материал Xм"
-        final parts = item.description.split(' ');
-        if (parts.length >= 2) {
-          final widthPart = parts.last;
-          final w = double.tryParse(widthPart.replaceAll(RegExp('[^0-9,\.]'), ''));
-          if (w != null) {
-            _controllers['width']!.text = w.toString();
-          }
-        }
-        break;
-      case 'Бобина':
-        _controllers['name']!.text = item.description;
-        _controllers['length']!.text = item.quantity.toString();
-        break;
-      case 'Краска':
-        _controllers['name']!.text = item.description;
-        _controllers['weight']!.text = item.quantity.toString();
-        break;
-      case 'Универсальное изделие':
-        _controllers['name']!.text = item.description;
-        _controllers['quantity']!.text = item.quantity.toString();
-        break;
-      case 'Готовое изделие':
-        _controllers['name']!.text = item.description;
-        _controllers['quantity']!.text = item.quantity.toString();
-        break;
-      case 'Канцелярия':
-        _controllers['name']!.text = item.description;
-        _controllers['quantity']!.text = item.quantity.toString();
-        _selectedUnit = item.unit;
-        break;
-      case 'Списание':
-        _controllers['name']!.text = item.description;
-        _controllers['length']!.text = item.quantity.toString();
-        break;
-      default:
-        _controllers['name']!.text = item.description;
-        _controllers['quantity']!.text = item.quantity.toString();
-    }
-    // Сохраняем поставщика в качестве выбранного, если он есть
-    _selectedSupplierId = item.supplier;
-    _controllers['note']!.text = item.note ?? '';
-
-    // Заполняем пороги, если они заданы
-    if (item.lowThreshold != null) {
-      _controllers['lowThreshold']!.text = item.lowThreshold.toString();
-    }
-    if (item.criticalThreshold != null) {
-      _controllers['criticalThreshold']!.text = item.criticalThreshold.toString();
-    }
-  }
-
-  Future<void> _submit() async {
-    // Не продолжаем, если не выбрана таблица или форма не прошла валидацию
-    if (_selectedTable == null) return;
-    if (!_formKey.currentState!.validate()) return;
-
-    // Получаем провайдер для работы с данными
-    final warehouseProvider = Provider.of<WarehouseProvider>(context, listen: false);
-
-    // Значения порогов (необязательные)
-    double? lowThreshold;
-    double? criticalThreshold;
-    final lowStr = _controllers['lowThreshold']!.text.trim();
-    if (lowStr.isNotEmpty) {
-      final val = double.tryParse(lowStr);
-      if (val != null) lowThreshold = val;
-    }
-    final criticalStr = _controllers['criticalThreshold']!.text.trim();
-    if (criticalStr.isNotEmpty) {
-      final val = double.tryParse(criticalStr);
-      if (val != null) criticalThreshold = val;
-    }
-
-    // Оборачиваем логику в try/catch, чтобы в случае ошибки показать сообщение пользователю
-    try {
-      // Режим редактирования существующей записи
-      if (widget.existing != null) {
-        final existing = widget.existing!;
-        final id = existing.id;
-        final type = existing.type;
-        final note = _controllers['note']!.text.trim();
-        switch (type) {
-          case 'Бумага':
-            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            await warehouseProvider.updateTmc(
-              id: id,
-              description: newDesc,
-              unit: 'м',
-              quantity: newLength,
-              note: note.isNotEmpty ? note : existing.note,
-              format: _controllers['format']!.text.trim().isNotEmpty
-                  ? _controllers['format']!.text.trim()
-                  : existing.format,
-              grammage: _controllers['grammage']!.text.trim().isNotEmpty
-                  ? _controllers['grammage']!.text.trim()
-                  : existing.grammage,
-              weight: double.tryParse(_controllers['weight']!.text.trim()) ?? existing.weight,
-              lowThreshold: lowThreshold,
-              criticalThreshold: criticalThreshold,
-            );
-            break;
-          case 'Рулон':
-            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            final newUnit = 'м';
-            await warehouseProvider.updateTmc(
-                id: id,
-                description: newDesc,
-                unit: newUnit,
-                quantity: newLength,
-                note: note.isNotEmpty ? note : existing.note,
-                lowThreshold: lowThreshold,
-                criticalThreshold: criticalThreshold);
-            break;
-          case 'Бобина':
-            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            await warehouseProvider.updateTmc(
-              id: id,
-              description: newDesc,
-              quantity: newLength,
-              note: note.isNotEmpty ? note : existing.note,
-              lowThreshold: lowThreshold,
-              criticalThreshold: criticalThreshold,
-            );
-            break;
-          case 'Краска':
-            final newWeight = double.tryParse(_controllers['weight']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            // Поддержка изображений: сохраняем новое изображение в base64, если оно выбрано
-            String? imageBase64 = existing.imageBase64;
-            if (_imageBytes != null) {
-              imageBase64 = base64Encode(_imageBytes!);
-            }
-            await warehouseProvider.updateTmc(
-              id: id,
-              description: newDesc,
-              unit: 'кг',
-              quantity: newWeight,
-              note: note.isNotEmpty ? note : existing.note,
-              imageBase64: imageBase64,
-              lowThreshold: lowThreshold,
-              criticalThreshold: criticalThreshold,
-            );
-            break;
-          case 'Канцелярия':
-          case 'Универсальное изделие':
-          case 'Готовое изделие':
-            final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            final newUnit = existing.unit;
-            await warehouseProvider.updateTmc(
-              id: id,
-              description: newDesc,
-              unit: newUnit,
-              quantity: newQty,
-              note: note.isNotEmpty ? note : existing.note,
-              lowThreshold: lowThreshold,
-              criticalThreshold: criticalThreshold,
-            );
-            break;
-          case 'Списание':
-            final newLength = double.tryParse(_controllers['length']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            await warehouseProvider.updateTmc(
-              id: id,
-              description: newDesc,
-              unit: existing.unit,
-              quantity: newLength,
-              note: note.isNotEmpty ? note : existing.note,
-              lowThreshold: lowThreshold,
-              criticalThreshold: criticalThreshold,
-            );
-            break;
-          default:
-            final newQty = double.tryParse(_controllers['quantity']!.text.trim()) ?? existing.quantity;
-            final newDesc = _controllers['name']!.text.trim().isNotEmpty
-                ? _controllers['name']!.text.trim()
-                : existing.description;
-            await warehouseProvider.updateTmc(
-              id: id,
-              description: newDesc,
-              quantity: newQty,
-              note: note.isNotEmpty ? note : existing.note,
-              lowThreshold: lowThreshold,
-              criticalThreshold: criticalThreshold,
-            );
-        }
-        Navigator.of(context).pop();
-        return;
-      }
-
-      // Создание новой записи
-      final table = _selectedTable!;
-      final note = _controllers['note']!.text.trim();
-      if (table == 'Бумага') {
-        final lengthStr = _controllers['length']!.text.trim();
-        final double length = double.tryParse(lengthStr) ?? 0;
-        String description;
-        if (_isNewPaper) {
-          description = _controllers['name']!.text.trim();
-        } else {
-          description = _selectedPaper ?? '';
-        }
-        final existingList = warehouseProvider.getTmcByType('Бумага');
-        TmcModel? existingItem;
-        for (final item in existingList) {
-          if (item.description == description) {
-            existingItem = item;
-            break;
-          }
-        }
-        if (existingItem != null) {
-          final newQty = existingItem.quantity + length;
-          await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
-          await warehouseProvider.updateTmc(
-            id: existingItem.id,
-            format: _controllers['format']!.text.trim().isEmpty
-                ? existingItem.format
-                : _controllers['format']!.text.trim(),
-            grammage: _controllers['grammage']!.text.trim().isEmpty
-                ? existingItem.grammage
-                : _controllers['grammage']!.text.trim(),
-            weight: double.tryParse(_controllers['weight']!.text.trim()) ?? existingItem.weight,
-          );
-        } else {
-          await warehouseProvider.addTmc(
-            type: 'Бумага',
-            description: description,
-            quantity: length,
-            unit: 'м',
-            note: note.isEmpty ? null : note,
-            format: _controllers['format']!.text.trim().isEmpty
-                ? null
-                : _controllers['format']!.text.trim(),
-            grammage: _controllers['grammage']!.text.trim().isEmpty
-                ? null
-                : _controllers['grammage']!.text.trim(),
-            weight: double.tryParse(_controllers['weight']!.text.trim()),
-            lowThreshold: lowThreshold,
-            criticalThreshold: criticalThreshold,
-          );
-        }
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Канцелярия') {
-        final name = _controllers['name']!.text.trim();
-        final qtyStr = _controllers['quantity']!.text.trim();
-        final double qty = double.tryParse(qtyStr) ?? 0;
-        final unit = _selectedUnit ?? 'шт';
-        await warehouseProvider.addTmc(
-          type: 'Канцелярия',
-          description: name,
-          quantity: qty,
-          unit: unit,
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Списание') {
-        final selectedPaper = _selectedPaper ?? _controllers['name']!.text.trim();
-        final lengthStr = _controllers['length']!.text.trim();
-        final double length = double.tryParse(lengthStr) ?? 0;
-        final comment = _controllers['comment']!.text.trim();
-        final existingList = warehouseProvider.getTmcByType('Бумага');
-        TmcModel? existingItem;
-        for (final item in existingList) {
-          if (item.description == selectedPaper) {
-            existingItem = item;
-            break;
-          }
-        }
-        if (existingItem == null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Такой вид бумаги отсутствует.')),
-          );
-          return;
-        }
-        if (existingItem.quantity < length) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Недостаточно бумаги для списания.')),
-          );
-          return;
-        }
-        final newQty = existingItem.quantity - length;
-        await warehouseProvider.updateTmcQuantity(id: existingItem.id, newQuantity: newQty);
-        await warehouseProvider.addTmc(
-          supplier: comment.isEmpty ? null : comment,
-          type: 'Списание',
-          description: selectedPaper,
-          quantity: length,
-          unit: 'м',
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Рулон') {
-        final material = _selectedMaterial ?? _controllers['name']!.text.trim();
-        final widthStr = _controllers['width']!.text.trim();
-        final double width = double.tryParse(widthStr) ?? 0;
-        final lengthStr = _controllers['length']!.text.trim();
-        final double length = double.tryParse(lengthStr) ?? 0;
-        final description = width > 0 ? '$material ${width}м' : material;
-        await warehouseProvider.addTmc(
-          supplier: _selectedSupplierId,
-          type: 'Рулон',
-          description: description,
-          quantity: length,
-          unit: 'м',
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Бобина') {
-        final roll = _selectedRollId;
-        final material = _selectedMaterial ?? '';
-        final widthStr = _controllers['width']!.text.trim();
-        final double width = double.tryParse(widthStr) ?? 0;
-        final lengthStr = _controllers['length']!.text.trim();
-        final double length = double.tryParse(lengthStr) ?? 0;
-        String description = '';
-        if (roll != null) {
-          final rollItem = _rollItems.firstWhere((r) => r.id == roll, orElse: () => TmcModel(
-              id: roll,
-              date: DateTime.now().toIso8601String(),
-              supplier: null,
-              type: 'Рулон',
-              description: roll,
-              quantity: 0,
-              unit: 'м',
-              note: null,
-              imageUrl: null,
-              imageBase64: null,
-            ));
-          description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм ' : ''}(из ${rollItem.description})';
-        } else {
-          description = '${material.isNotEmpty ? material + ' ' : ''}${width > 0 ? '$widthм' : ''}';
-        }
-        await warehouseProvider.addTmc(
-          type: 'Бобина',
-          description: description.trim(),
-          quantity: length,
-          unit: 'м',
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Краска') {
-        final name = _controllers['name']!.text.trim();
-        final color = _selectedColor ?? '';
-        final weightStr = _controllers['weight']!.text.trim();
-        final double weight = double.tryParse(weightStr) ?? 0;
-        final description = color.isNotEmpty ? '$name $color' : name;
-        final id = const Uuid().v4();
-        String? imageBase64;
-        if (_imageBytes != null) {
-          imageBase64 = base64Encode(_imageBytes!);
-        }
-        await warehouseProvider.addTmc(
-          id: id,
-          type: 'Краска',
-          description: description,
-          quantity: weight,
-          unit: 'кг',
-          note: note.isEmpty ? null : note,
-          imageBase64: imageBase64,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Универсальное изделие') {
-        final name = _controllers['name']!.text.trim();
-        final qtyStr = _controllers['quantity']!.text.trim();
-        final double qty = double.tryParse(qtyStr) ?? 0;
-        final characteristics = _controllers['characteristics']!.text.trim();
-        await warehouseProvider.addTmc(
-          supplier: characteristics.isEmpty ? null : characteristics,
-          type: 'Универсальное изделие',
-          description: name,
-          quantity: qty,
-          unit: 'шт',
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else if (table == 'Готовое изделие') {
-        final productType = _selectedProductType ?? _controllers['name']!.text.trim();
-        final qtyStr = _controllers['quantity']!.text.trim();
-        final double qty = double.tryParse(qtyStr) ?? 0;
-        final orderId = _controllers['orderId']!.text.trim();
-        await warehouseProvider.addTmc(
-          supplier: orderId.isEmpty ? null : orderId,
-          type: 'Готовое изделие',
-          description: productType,
-          quantity: qty,
-          unit: 'шт',
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      } else {
-        final name = _controllers['name']!.text.trim();
-        final qtyStr = _controllers['quantity']!.text.trim();
-        final double qty = double.tryParse(qtyStr) ?? 0;
-        await warehouseProvider.addTmc(
-          type: table,
-          description: name,
-          quantity: qty,
-          unit: 'шт',
-          note: note.isEmpty ? null : note,
-          lowThreshold: lowThreshold,
-          criticalThreshold: criticalThreshold,
-        );
-        Navigator.of(context).pop();
-        return;
-      }
-    } catch (e) {
-      // При возникновении ошибки выводим её в виде SnackBar, чтобы пользователю было понятно, что произошло
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при сохранении: $e')),
-      );
-    }
+  Widget _buildField(String key, String label, {TextInputType? keyboardType}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: TextFormField(
+        controller: _controllers[key],
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        keyboardType: keyboardType,
+        validator: (value) {
+          if (key == 'note') return null;
+          return (value == null || value.isEmpty) ? 'Обязательное поле' : null;
+        },
+      ),
+    );
   }
 
   Widget _buildFields() {
     switch (_selectedTable) {
       case 'Бумага':
-        // Для бумажных материалов отображаем выпадающий список существующих видов,
-        // поле для ввода нового вида (если выбран «Добавить новый вид») и
-        // обязательные поля формата, граммажа, веса и количества.
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // выбор существующей бумаги или добавление нового вида
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6.0),
-              child: DropdownButtonFormField<String>(
+            if (_isEdit)
+              _buildField('name', 'Вид бумаги')
+            else
+              DropdownButtonFormField<String>(
+                value: _selectedName,
+                items: [
+                  ..._paperNameChoices.map(
+                    (n) => DropdownMenuItem<String>(value: n, child: Text(n)),
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: '__new__',
+                    child: Text('Добавить новый вид'),
+                  ),
+                ],
+                onChanged: (v) {
+                  setState(() {
+                    if (v == '__new__') {
+                      _isNewPaper = true;
+                      _selectedName = null;
+                      _controllers['name']?.text = '';
+                      _formatChoices = [];
+                      _grammageChoices = [];
+                      _selectedFormat = null;
+                      _selectedGrammage = null;
+                    } else {
+                      _isNewPaper = false;
+                      _selectedName = v;
+                      _controllers['name']?.text = v ?? '';
+                      final seenF = <String>{};
+                      _formatChoices = _paperOptions
+                          .where((o) => o.name == v)
+                          .map((o) => o.format ?? '')
+                          .where((s) => s.isNotEmpty && seenF.add(s))
+                          .toList()
+                        ..sort((a, b) =>
+                            a.toLowerCase().compareTo(b.toLowerCase()));
+                      _grammageChoices = [];
+                      _selectedFormat = null;
+                      _selectedGrammage = null;
+                    }
+                  });
+                },
                 decoration: const InputDecoration(
                   labelText: 'Вид бумаги',
                   border: OutlineInputBorder(),
                 ),
-                // если пользователь выбрал «Добавить новый вид» – устанавливаем value в 'new'
-                value: _isNewPaper ? 'new' : _selectedPaper,
-                items: [
-                  ..._paperNames.map((name) => DropdownMenuItem<String>(
-                        value: name,
-                        child: Text(name),
-                      )),
-                  const DropdownMenuItem<String>(
-                    value: 'new',
-                    child: Text('Добавить новый вид'),
+                validator: (value) => _isNewPaper
+                    ? null
+                    : (value == null || value.isEmpty
+                        ? 'Обязательное поле'
+                        : null),
+              ),
+            const SizedBox(height: 8),
+            // ФОРМАТ
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: _selectedFormat,
+                  items: [
+                    ..._formatChoices.map(
+                      (f) => DropdownMenuItem<String>(value: f, child: Text(f)),
+                    ),
+                    const DropdownMenuItem<String>(
+                      value: '__manual__',
+                      child: Text('Ввести вручную'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    setState(() {
+                      if (v == '__manual__') {
+                        _manualFormat = true;
+                        _selectedFormat = null;
+                        _controllers['format']?.text = '';
+                        _grammageChoices = [];
+                        _selectedGrammage = null;
+                      } else {
+                        _manualFormat = false;
+                        _selectedFormat = v;
+                        _controllers['format']?.text = v ?? '';
+                        final seenG = <String>{};
+                        _grammageChoices = _paperOptions
+                            .where(
+                                (o) => o.name == _selectedName && o.format == v)
+                            .map((o) => o.grammage ?? '')
+                            .where((s) => s.isNotEmpty && seenG.add(s))
+                            .toList()
+                          ..sort((a, b) =>
+                              a.toLowerCase().compareTo(b.toLowerCase()));
+                        _selectedGrammage = null;
+                      }
+                    });
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Формат',
+                    border: OutlineInputBorder(),
                   ),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    if (value == 'new') {
-                      // Пользователь хочет добавить новый вид – очищаем выбранную бумагу
-                      _isNewPaper = true;
-                      _selectedPaper = null;
-                      _controllers['name']!.text = '';
-                    } else {
-                      // Пользователь выбрал существующий вид бумаги
-                      _isNewPaper = false;
-                      _selectedPaper = value;
-                      _controllers['name']!.text = value ?? '';
-                    }
-                  });
-                },
-                validator: (val) => val == null ? 'Выберите или добавьте вид' : null,
-              ),
-            ),
-            // если выбран «Добавить новый вид», отображаем поле для ввода имени
-            if (_isNewPaper) _buildField('name', 'Новый вид бумаги'),
-            // формат и граммаж являются обязательными полями всегда
-            _buildField('format', 'Формат'),
-            _buildField('grammage', 'Грамаж'),
-            _buildField('weight', 'Вес (кг)'),
-            // количество метров (приход)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6.0),
-              child: TextFormField(
-                controller: _controllers['length'],
-                decoration: const InputDecoration(
-                  labelText: 'Количество метров (приход)',
-                  border: OutlineInputBorder(),
+                  validator: (value) {
+                    if (_isNewPaper) return null;
+                    if (_manualFormat) return null;
+                    return (value == null || value.isEmpty)
+                        ? 'Обязательное поле'
+                        : null;
+                  },
                 ),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (value) =>
-                    (value == null || value.isEmpty) ? 'Обязательное поле' : null,
-              ),
+                if (_manualFormat) const SizedBox(height: 8),
+                if (_manualFormat) _buildField('format', 'Формат'),
+              ],
             ),
+            const SizedBox(height: 8),
+            // ГРАМАЖ
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: _selectedGrammage,
+                  items: [
+                    ..._grammageChoices.map(
+                      (g) => DropdownMenuItem<String>(value: g, child: Text(g)),
+                    ),
+                    const DropdownMenuItem<String>(
+                      value: '__manual__',
+                      child: Text('Ввести вручную'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    setState(() {
+                      if (v == '__manual__') {
+                        _manualGrammage = true;
+                        _selectedGrammage = null;
+                        _controllers['grammage']?.text = '';
+                      } else {
+                        _manualGrammage = false;
+                        _selectedGrammage = v;
+                        _controllers['grammage']?.text = v ?? '';
+                      }
+                    });
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Грамаж',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if (_isNewPaper) return null;
+                    if (_manualGrammage) return null;
+                    return (value == null || value.isEmpty)
+                        ? 'Обязательное поле'
+                        : null;
+                  },
+                ),
+                if (_manualGrammage) const SizedBox(height: 8),
+                if (_manualGrammage) _buildField('grammage', 'Грамаж'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Способ ввода',
+                border: OutlineInputBorder(),
+              ),
+              value: _paperMethod,
+              items: const [
+                DropdownMenuItem(value: 'meters', child: Text('Ввести метры')),
+                DropdownMenuItem(value: 'weight', child: Text('По весу (кг)')),
+                DropdownMenuItem(
+                    value: 'diameter', child: Text('По диаметру (см)')),
+              ],
+              onChanged: (v) => setState(() => _paperMethod = v ?? 'meters'),
+            ),
+            const SizedBox(height: 8),
+            if (_paperMethod == 'meters')
+              _buildField(
+                'length',
+                'Количество метров (приход)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+            if (_paperMethod == 'weight')
+              _buildField(
+                'weight',
+                'Вес (кг)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+            if (_paperMethod == 'diameter')
+              _buildField(
+                'diameter',
+                'Диаметр (см)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
       case 'Канцелярия':
         return Column(
           children: [
             _buildField('name', 'Наименование'),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6.0),
-              child: TextFormField(
-                controller: _controllers['quantity'],
-                decoration: const InputDecoration(
-                  labelText: 'Количество (приход)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
-                validator: (value) =>
-                    (value == null || value.isEmpty) ? 'Обязательное поле' : null,
+            _buildField(
+              'quantity',
+              'Количество',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
             ),
             Padding(
@@ -804,21 +1059,39 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 ),
                 value: _selectedUnit,
                 items: _units
-                    .map((u) => DropdownMenuItem<String>(
-                          value: u,
-                          child: Text(u),
-                        ))
+                    .map((u) =>
+                        DropdownMenuItem<String>(value: u, child: Text(u)))
                     .toList(),
-                onChanged: (val) => setState(() => _selectedUnit = val),
-                validator: (val) => val == null ? 'Выберите единицу' : null,
+                onChanged: (v) {
+                  setState(() => _selectedUnit = v);
+                },
               ),
             ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
+      case 'Ручки':
+        // Спец-форма: Вид / Цвет / Кол-во пар / пороги / комментарий
+        return Column(
+          children: [
+            _buildField('name', 'Вид'),
+            _buildField('color', 'Цвет'),
+            _buildField(
+              'quantity',
+              'Количество пар',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
+            // Единица измерения фиксирована как 'пар' — селектор не показываем
+            _buildThresholdFields(),
+            _buildField('note', 'Комментарий'),
+          ],
+        );
+
       case 'Списание':
-        // Списание: выбираем существующую бумагу из списка, указываем количество и комментарий
         return Column(
           children: [
             Padding(
@@ -828,33 +1101,85 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                   labelText: 'Название из таблицы Бумага',
                   border: OutlineInputBorder(),
                 ),
-                value: _selectedPaper,
-                items: _paperNames
-                    .map((name) => DropdownMenuItem<String>(
-                          value: name,
-                          child: Text(name),
-                        ))
+                value: _selectedName,
+                items: _paperOptions
+                    .map(
+                      (o) => DropdownMenuItem<String>(
+                        value: o.key,
+                        child: Text(o.display),
+                      ),
+                    )
                     .toList(),
-                onChanged: (value) {
+                onChanged: (v) {
                   setState(() {
-                    _selectedPaper = value;
-                    // также обновляем текстовое поле name, чтобы его можно было использовать
-                    _controllers['name']!.text = value ?? '';
+                    _selectedPaperKey = v;
+                    final opt = v == null ? null : _paperMap[v];
+                    _controllers['name']!.text = opt?.name ?? '';
+                    _controllers['format']!.text = opt?.format ?? '';
+                    _controllers['grammage']!.text = opt?.grammage ?? '';
                   });
                 },
                 validator: (val) => val == null ? 'Выберите бумагу' : null,
               ),
             ),
-            _buildField('length', 'Количество метров (списание)'),
+            _buildField(
+              'length',
+              'Количество метров (списание)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildField('comment', 'Комментарий (причина)'),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
+      case 'Инвентаризация':
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6.0),
+              child: DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Название из таблицы Бумага',
+                  border: OutlineInputBorder(),
+                ),
+                value: _selectedName,
+                items: _paperOptions
+                    .map(
+                      (o) => DropdownMenuItem<String>(
+                        value: o.key,
+                        child: Text(o.display),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  setState(() {
+                    _selectedPaperKey = v;
+                    final opt = v == null ? null : _paperMap[v];
+                    _controllers['name']!.text = opt?.name ?? '';
+                    _controllers['format']!.text = opt?.format ?? '';
+                    _controllers['grammage']!.text = opt?.grammage ?? '';
+                  });
+                },
+                validator: (val) => val == null ? 'Выберите бумагу' : null,
+              ),
+            ),
+            _buildField(
+              'counted',
+              'Фактическое количество метров',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
+            _buildField('note', 'Заметки'),
+          ],
+        );
+
       case 'Рулон':
         return Column(
           children: [
-            // Выбор материала
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: DropdownButtonFormField<String>(
@@ -864,16 +1189,16 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 ),
                 value: _selectedMaterial,
                 items: _materials
-                    .map((m) => DropdownMenuItem<String>(value: m, child: Text(m)))
+                    .map(
+                      (m) => DropdownMenuItem<String>(value: m, child: Text(m)),
+                    )
                     .toList(),
-                onChanged: (val) => setState(() => _selectedMaterial = val),
+                onChanged: (v) => setState(() => _selectedMaterial = v),
                 validator: (val) => val == null ? 'Выберите материал' : null,
               ),
             ),
-            // Выбор поставщика (необязательный)
             Consumer<SupplierProvider>(
-              builder: (context, supplierProvider, _) {
-                final suppliers = supplierProvider.suppliers;
+              builder: (context, sp, _) {
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6.0),
                   child: DropdownButtonFormField<String>(
@@ -882,29 +1207,41 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                       border: OutlineInputBorder(),
                     ),
                     value: _selectedSupplierId,
-                    items: suppliers
-                        .map((s) => DropdownMenuItem<String>(
-                              value: s.id,
-                              child: Text(s.name),
-                            ))
+                    items: sp.suppliers
+                        .map(
+                          (s) => DropdownMenuItem<String>(
+                            value: s.id,
+                            child: Text(s.name),
+                          ),
+                        )
                         .toList(),
-                    onChanged: (val) => setState(() => _selectedSupplierId = val),
+                    onChanged: (v) => setState(() => _selectedSupplierId = v),
                   ),
                 );
               },
             ),
-            // Ширина
-            _buildField('width', 'Ширина (м)'),
-            // Длина
-            _buildField('length', 'Длина (м)'),
+            _buildField(
+              'width',
+              'Ширина (м)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
+            _buildField(
+              'length',
+              'Длина (м)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
       case 'Бобина':
         return Column(
           children: [
-            // Выбор рулона-источника
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: DropdownButtonFormField<String>(
@@ -914,16 +1251,17 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 ),
                 value: _selectedRollId,
                 items: _rollItems
-                    .map((r) => DropdownMenuItem<String>(
-                          value: r.id,
-                          child: Text(r.description),
-                        ))
+                    .map(
+                      (r) => DropdownMenuItem<String>(
+                        value: r.id,
+                        child: Text(r.description),
+                      ),
+                    )
                     .toList(),
-                onChanged: (val) => setState(() => _selectedRollId = val),
+                onChanged: (v) => setState(() => _selectedRollId = v),
                 validator: (val) => val == null ? 'Выберите рулон' : null,
               ),
             ),
-            // Материал
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: DropdownButtonFormField<String>(
@@ -933,24 +1271,36 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 ),
                 value: _selectedMaterial,
                 items: _materials
-                    .map((m) => DropdownMenuItem<String>(value: m, child: Text(m)))
+                    .map(
+                      (m) => DropdownMenuItem<String>(value: m, child: Text(m)),
+                    )
                     .toList(),
-                onChanged: (val) => setState(() => _selectedMaterial = val),
+                onChanged: (v) => setState(() => _selectedMaterial = v),
               ),
             ),
-            // Ширина
-            _buildField('width', 'Ширина (м)'),
-            // Длина
-            _buildField('length', 'Длина (м)'),
+            _buildField(
+              'width',
+              'Ширина (м)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
+            _buildField(
+              'length',
+              'Длина (м)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
       case 'Краска':
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Просмотр выбранного изображения или существующего URL
             if (_imageBytes != null)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6.0),
@@ -977,15 +1327,16 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                   ),
                 ),
               ),
-            // Кнопка выбора изображения
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: ElevatedButton.icon(
                 onPressed: _pickImage,
                 icon: const Icon(Icons.photo_library),
-                label: Text(_pickedImage != null || _existingImageUrl != null
-                    ? 'Изменить фото'
-                    : 'Добавить фото'),
+                label: Text(
+                  _pickedImage != null || _existingImageUrl != null
+                      ? 'Изменить фото'
+                      : 'Добавить фото',
+                ),
               ),
             ),
             _buildField('name', 'Название'),
@@ -998,27 +1349,43 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 ),
                 value: _selectedColor,
                 items: _colors
-                    .map((c) => DropdownMenuItem<String>(value: c, child: Text(c)))
+                    .map(
+                      (c) => DropdownMenuItem<String>(value: c, child: Text(c)),
+                    )
                     .toList(),
-                onChanged: (val) => setState(() => _selectedColor = val),
+                onChanged: (v) => setState(() => _selectedColor = v),
                 validator: (val) => val == null ? 'Выберите цвет' : null,
               ),
             ),
-            _buildField('weight', 'Вес (кг)'),
+            _buildField(
+              'weight',
+              'Вес (кг)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
       case 'Универсальное изделие':
         return Column(
           children: [
             _buildField('name', 'Наименование'),
             _buildField('characteristics', 'Характеристики'),
-            _buildField('quantity', 'Количество (шт)'),
+            _buildField(
+              'quantity',
+              'Количество (шт)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
       case 'Готовое изделие':
         return Column(
           children: [
@@ -1031,138 +1398,111 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 ),
                 value: _selectedProductType,
                 items: _productTypes
-                    .map((p) => DropdownMenuItem<String>(value: p, child: Text(p)))
+                    .map(
+                      (p) => DropdownMenuItem<String>(value: p, child: Text(p)),
+                    )
                     .toList(),
-                onChanged: (val) => setState(() => _selectedProductType = val),
+                onChanged: (v) => setState(() => _selectedProductType = v),
                 validator: (val) => val == null ? 'Выберите тип изделия' : null,
               ),
             ),
             _buildField('orderId', 'ID заказа'),
-            _buildField('quantity', 'Количество (шт)'),
+            _buildField(
+              'quantity',
+              'Количество (шт)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
+
       case 'Форма':
-        // Простейшая форма для учёта формы. Номер, количество, пороги и примечание.
         return Column(
           children: [
             _buildField('name', 'Номер формы'),
-            _buildField('quantity', 'Количество'),
+            _buildField(
+              'quantity',
+              'Количество',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
         );
-      case 'Ручки':
-        // У ручек есть цвет, количество и единица измерения (шт, коробка и т.п.).
+
+      default:
         return Column(
           children: [
             _buildField('name', 'Наименование'),
-            _buildField('color', 'Цвет'),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6.0),
-              child: TextFormField(
-                controller: _controllers['quantity'],
-                decoration: const InputDecoration(
-                  labelText: 'Количество',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (value) => (value == null || value.isEmpty)
-                    ? 'Обязательное поле'
-                    : null,
+            _buildField(
+              'quantity',
+              'Количество',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6.0),
-              child: DropdownButtonFormField<String>(
-                decoration: const InputDecoration(
-                  labelText: 'Единица измерения',
-                  border: OutlineInputBorder(),
-                ),
-                value: _selectedUnit,
-                items: _units
-                    .map((u) => DropdownMenuItem<String>(value: u, child: Text(u)))
-                    .toList(),
-                onChanged: (val) => setState(() => _selectedUnit = val),
-                validator: (val) => val == null ? 'Выберите единицу' : null,
-              ),
-            ),
-            _buildThresholdFields(),
-            _buildField('note', 'Заметки'),
           ],
         );
-      
-default:
-  return Column(
-    children: [
-      _buildField('name', 'Наименование'),
-      _buildField('quantity', 'Количество'),
-    ],
-  );
-
     }
-  }
-
-  Widget _buildField(String key, String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: TextFormField(
-        controller: _controllers[key],
-        decoration: InputDecoration(
-          labelText: label,
-          border: const OutlineInputBorder(),
-        ),
-        validator: (value) {
-          if (key == 'note') return null;
-          return (value == null || value.isEmpty) ? 'Обязательное поле' : null;
-        },
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.watch<WarehouseProvider>();
+    final bool isPens = (['ручки', 'pens', 'handles']
+            .contains(wp.stationeryKey.toLowerCase())) ||
+        (((widget.initialTable ?? _selectedTable) ?? '') == 'Ручки');
+
+    final headerTable = _isEdit
+        ? _mapTypeToUi(widget.existing!.type)
+        : (widget.initialTable ?? _selectedTable ?? '');
+
     return AlertDialog(
-      title: Text(widget.existing != null ? 'Редактировать запись' : 'Добавить запись'),
+      title: Text(_isEdit ? 'Редактировать запись' : 'Добавить запись'),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Если initialTable не задан, позволяем пользователю выбрать таблицу;
-              // иначе отображаем выбранную таблицу и блокируем выбор
-              if (widget.initialTable == null) ...[
+              if (widget.initialTable == null && !_isEdit) ...[
                 DropdownButtonFormField<String>(
                   decoration: const InputDecoration(
                     labelText: 'Выберите таблицу',
                     border: OutlineInputBorder(),
                   ),
-                  items: _tables.map((table) {
-                    return DropdownMenuItem(
-                      value: table,
-                      child: Text(table),
-                    );
-                  }).toList(),
+                  items: _tables
+                      .map(
+                        (t) =>
+                            DropdownMenuItem<String>(value: t, child: Text(t)),
+                      )
+                      .toList(),
                   value: _selectedTable,
-                  onChanged: (value) => setState(() => _selectedTable = value),
+                  onChanged: _onTableChanged,
                   validator: (val) => val == null ? 'Выберите таблицу' : null,
                 ),
                 const SizedBox(height: 10),
-              ] else ...[
+              ] else
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6.0),
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Таблица: ${widget.initialTable}',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                      'Таблица: $headerTable',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ),
-              ],
-              if (_selectedTable != null) _buildFields(),
+              if (_selectedTable != null || headerTable.isNotEmpty)
+                _buildFields(),
             ],
           ),
         ),
@@ -1173,8 +1513,14 @@ default:
           child: const Text('Отмена'),
         ),
         ElevatedButton(
-          onPressed: _submit,
-          child: const Text('Сохранить'),
+          onPressed: _isSaving ? null : _submit,
+          child: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Сохранить'),
         ),
       ],
     );

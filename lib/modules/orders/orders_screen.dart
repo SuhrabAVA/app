@@ -7,6 +7,7 @@ import 'order_model.dart';
 import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
+
 enum SortOption {
   orderDateAsc,
   orderDateDesc,
@@ -43,8 +44,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _isIncomplete(OrderModel o) {
     final p = o.product;
     return (o.stageTemplateId == null || o.stageTemplateId!.isEmpty) ||
-        p.roll == null || p.widthB == null || p.length == null;
+        p.roll == null ||
+        p.widthB == null ||
+        p.length == null;
   }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -129,45 +133,49 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final statusLabel = statusInfo.label;
                             final missing = _isIncomplete(o);
                             return DataRow(
-                              color: MaterialStateProperty.resolveWith<Color?>((states) {
+                              color: MaterialStateProperty.resolveWith<Color?>(
+                                  (states) {
                                 // Если заказ неполон, подсвечиваем строку серым
                                 return missing ? Colors.grey.shade200 : null;
                               }),
-                      cells: [
-                        DataCell(Text('${index + 1}')),
-                        DataCell(Text(o.customer)),
-                        DataCell(Text(o.id)),
-                        DataCell(Text(_formatDate(o.orderDate))),
-                        DataCell(Text(_formatDate(o.dueDate))),
-                        DataCell(Text(product.type)),
-                        DataCell(Text(totalQty.toString())),
-                        DataCell(Text(statusLabel)),
-                        DataCell(Row(
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.remove_red_eye_outlined),
-                              tooltip: 'Просмотр',
-                              onPressed: () => _openViewOrder(o),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.history),
-                              tooltip: 'Время',
-                              onPressed: () => _showOrderTimeline(o),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.edit),
-                              tooltip: 'Редактировать',
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => EditOrderScreen(order: o)),
-                                );
-                              },
-                            ),
-                          ],
-                        )),
-                      ],
-                    );
+                              cells: [
+                                DataCell(Text('${index + 1}')),
+                                DataCell(Text(o.customer)),
+                                DataCell(Text(o.id)),
+                                DataCell(Text(_formatDate(o.orderDate))),
+                                DataCell(Text(_formatDate(o.dueDate))),
+                                DataCell(Text(product.type)),
+                                DataCell(Text(totalQty.toString())),
+                                DataCell(Text(statusLabel)),
+                                DataCell(Row(
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                          Icons.remove_red_eye_outlined),
+                                      tooltip: 'Просмотр',
+                                      onPressed: () => _openViewOrder(o),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.history),
+                                      tooltip: 'Время',
+                                      onPressed: () => _showOrderTimeline(o),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.edit),
+                                      tooltip: 'Редактировать',
+                                      onPressed: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (_) =>
+                                                  EditOrderScreen(order: o)),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                )),
+                              ],
+                            );
                           },
                         ),
                       ),
@@ -181,7 +189,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       child: Wrap(
                         spacing: 12,
                         runSpacing: 12,
-                        children: orders.map((o) => _buildOrderCard(o, allTasks)).toList(),
+                        children: orders
+                            .map((o) => _buildOrderCard(o, allTasks))
+                            .toList(),
                       ),
                     );
                   }
@@ -205,8 +215,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             decoration: InputDecoration(
               hintText: 'Поиск заказов…',
               prefixIcon: const Icon(Icons.search),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
             ),
             onChanged: (_) => setState(() {}),
           ),
@@ -268,16 +280,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // Filter by search query
     final query = _searchController.text.toLowerCase();
     List<OrderModel> filtered = all.where((order) {
-      final matchesSearch = query.isEmpty || order.id.toLowerCase().contains(query) || order.customer.toLowerCase().contains(query);
+      final matchesSearch = query.isEmpty ||
+          order.id.toLowerCase().contains(query) ||
+          order.customer.toLowerCase().contains(query);
       return matchesSearch;
     }).toList();
     // Filter by selected customers
     if (_filterCustomers.isNotEmpty) {
-      filtered = filtered.where((o) => _filterCustomers.contains(o.customer)).toList();
+      filtered =
+          filtered.where((o) => _filterCustomers.contains(o.customer)).toList();
     }
     // Filter by selected product types
     if (_filterProducts.isNotEmpty) {
-      filtered = filtered.where((o) => _filterProducts.contains(o.product.type)).toList();
+      filtered = filtered
+          .where((o) => _filterProducts.contains(o.product.type))
+          .toList();
     }
     // Filter by date range
     if (_filterDateRange != null) {
@@ -285,14 +302,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
       final end = _filterDateRange!.end;
       filtered = filtered.where((o) {
         final d = o.orderDate;
-        return (d.isAtSameMomentAs(start) || d.isAfter(start)) && (d.isAtSameMomentAs(end) || d.isBefore(end.add(const Duration(days: 1))));
+        return (d.isAtSameMomentAs(start) || d.isAfter(start)) &&
+            (d.isAtSameMomentAs(end) ||
+                d.isBefore(end.add(const Duration(days: 1))));
       }).toList();
     }
     // Filter by status
     switch (_selectedFilter) {
       case 'new':
-        filtered =
-            filtered.where((o) => o.statusEnum == OrderStatus.newOrder).toList();
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.newOrder)
+            .toList();
         break;
       case 'inWork':
         filtered =
@@ -316,10 +336,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
         filtered.sort((a, b) => b.orderDate.compareTo(a.orderDate));
         break;
       case SortOption.dueDateAsc:
-        filtered.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+        filtered.sort((a, b) => (a.dueDate ?? DateTime(2100))
+            .compareTo(b.dueDate ?? DateTime(2100)));
         break;
       case SortOption.dueDateDesc:
-        filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
+        filtered.sort((a, b) => (b.dueDate ?? DateTime(2100))
+            .compareTo(a.dueDate ?? DateTime(2100)));
         break;
       case SortOption.quantityAsc:
         filtered.sort((a, b) => totalQty(a).compareTo(totalQty(b)));
@@ -330,7 +352,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     return filtered;
   }
-void _showSortOptions() {
+
+  void _showSortOptions() {
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -402,15 +425,9 @@ void _showSortOptions() {
   void _openFilter() {
     final provider = context.read<OrdersProvider>();
     // Получаем уникальные заказчики и типы изделий из списка заказов
-    final customers = provider.orders
-        .map((o) => o.customer)
-        .toSet()
-        .toList()
+    final customers = provider.orders.map((o) => o.customer).toSet().toList()
       ..sort();
-    final products = provider.orders
-        .map((o) => o.product.type)
-        .toSet()
-        .toList()
+    final products = provider.orders.map((o) => o.product.type).toSet().toList()
       ..sort();
     // Локальные копии фильтра на время редактирования
     final selectedCustomers = List<String>.from(_filterCustomers);
@@ -436,7 +453,9 @@ void _showSortOptions() {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Фильтр', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        const Text('Фильтр',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w600)),
                         IconButton(
                           icon: const Icon(Icons.close),
                           onPressed: () => Navigator.pop(context),
@@ -444,7 +463,8 @@ void _showSortOptions() {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    const Text('Заказчики', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const Text('Заказчики',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
                     Wrap(
                       spacing: 6,
                       children: customers
@@ -466,7 +486,8 @@ void _showSortOptions() {
                           .toList(),
                     ),
                     const SizedBox(height: 12),
-                    const Text('Типы продуктов', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const Text('Типы продуктов',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
                     Wrap(
                       spacing: 6,
                       children: products
@@ -488,7 +509,8 @@ void _showSortOptions() {
                           .toList(),
                     ),
                     const SizedBox(height: 12),
-                    const Text('Диапазон дат', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const Text('Диапазон дат',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
                     Row(
                       children: [
@@ -516,7 +538,8 @@ void _showSortOptions() {
                         if (selectedRange != null)
                           IconButton(
                             icon: const Icon(Icons.clear),
-                            onPressed: () => setModalState(() => selectedRange = null),
+                            onPressed: () =>
+                                setModalState(() => selectedRange = null),
                           ),
                       ],
                     ),
@@ -524,7 +547,8 @@ void _showSortOptions() {
                     ElevatedButton(
                       onPressed: () {
                         setState(() {
-                          _filterCustomers = List<String>.from(selectedCustomers);
+                          _filterCustomers =
+                              List<String>.from(selectedCustomers);
                           _filterProducts = List<String>.from(selectedProducts);
                           _filterDateRange = selectedRange;
                         });
@@ -574,6 +598,7 @@ void _showSortOptions() {
       builder: (_) => OrderTimelineDialog(order: order, events: events),
     );
   }
+
   /// Возвращает цвет и текст статуса для заказа с учётом связанных задач.
   _OrderStatusInfo _computeStatus(OrderModel order, List<TaskModel> allTasks) {
     final tasks = allTasks.where((t) => t.orderId == order.id).toList();
@@ -595,7 +620,7 @@ void _showSortOptions() {
       default:
         return const _OrderStatusInfo(Colors.blue, 'Новый');
     }
-    }
+  }
 
   /// Контейнер для информации о статусе заказа.
 
@@ -626,12 +651,14 @@ void _showSortOptions() {
                   Expanded(
                     child: Text(
                       order.customer,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 14),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: statusColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
@@ -645,41 +672,72 @@ void _showSortOptions() {
               ),
               const SizedBox(height: 4),
               // Вторая строка: ID заказа
-              Text('ID: ${order.id}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              Text('ID: ${order.id}',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
               const SizedBox(height: 4),
               // Даты
               Row(
                 children: [
                   Expanded(
-                    child: Text('Дата заказа: ${_formatDate(order.orderDate)}', style: const TextStyle(fontSize: 11)),
+                    child: Text('Дата заказа: ${_formatDate(order.orderDate)}',
+                        style: const TextStyle(fontSize: 11)),
                   ),
                   Expanded(
-                    child: Text('Срок: ${_formatDate(order.dueDate)}', style: const TextStyle(fontSize: 11)),
+                    child: Text('Срок: ${_formatDate(order.dueDate)}',
+                        style: const TextStyle(fontSize: 11)),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
               // Информация о продукте
-              Text('Изделие: ${product.type}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              Text('Изделие: ${product.type}',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 2),
-              Text('Тираж: $totalQty шт.', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              Text('Тираж: $totalQty шт.',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               // Статусы договора и оплаты
               Row(
                 children: [
                   Row(
                     children: [
-                      Icon(order.contractSigned ? Icons.check_circle_outline : Icons.error_outline, size: 16, color: order.contractSigned ? Colors.green : Colors.red),
+                      Icon(
+                          order.contractSigned
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                          size: 16,
+                          color:
+                              order.contractSigned ? Colors.green : Colors.red),
                       const SizedBox(width: 4),
-                      Text(order.contractSigned ? 'Договор подписан' : 'Договор не подписан', style: TextStyle(fontSize: 11, color: order.contractSigned ? Colors.green : Colors.red)),
+                      Text(
+                          order.contractSigned
+                              ? 'Договор подписан'
+                              : 'Договор не подписан',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: order.contractSigned
+                                  ? Colors.green
+                                  : Colors.red)),
                     ],
                   ),
                   const SizedBox(width: 8),
                   Row(
                     children: [
-                      Icon(order.paymentDone ? Icons.check_circle_outline : Icons.error_outline, size: 16, color: order.paymentDone ? Colors.green : Colors.red),
+                      Icon(
+                          order.paymentDone
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                          size: 16,
+                          color: order.paymentDone ? Colors.green : Colors.red),
                       const SizedBox(width: 4),
-                      Text(order.paymentDone ? 'Оплачено' : 'Не оплачено', style: TextStyle(fontSize: 11, color: order.paymentDone ? Colors.green : Colors.red)),
+                      Text(order.paymentDone ? 'Оплачено' : 'Не оплачено',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: order.paymentDone
+                                  ? Colors.green
+                                  : Colors.red)),
                     ],
                   ),
                 ],
@@ -705,7 +763,8 @@ void _showSortOptions() {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => EditOrderScreen(order: order)),
+                        MaterialPageRoute(
+                            builder: (_) => EditOrderScreen(order: order)),
                       );
                     },
                     child: const Text('Редактировать'),
@@ -719,12 +778,15 @@ void _showSortOptions() {
     );
   }
 
-  String _formatDate(DateTime date) {
+  String _formatDate(DateTime? date) {
+    if (date == null) return '—';
+    if (date == null) return '—';
     return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
   }
 }
-  class _OrderStatusInfo {
-    final Color color;
-    final String label;
-    const _OrderStatusInfo(this.color, this.label);
-  }
+
+class _OrderStatusInfo {
+  final Color color;
+  final String label;
+  const _OrderStatusInfo(this.color, this.label);
+}

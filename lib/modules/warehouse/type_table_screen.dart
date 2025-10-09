@@ -35,6 +35,29 @@ class _TypeTableScreenState extends State<TypeTableScreen> {
   }
 
   @override
+  Widget _scrollableTable(Widget table) {
+    final vertical = ScrollController();
+    final horizontal = ScrollController();
+    return Scrollbar(
+      controller: vertical,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: vertical,
+        child: Scrollbar(
+          controller: horizontal,
+          thumbVisibility: true,
+          notificationPredicate: (notif) =>
+              notif.metrics.axis == Axis.horizontal,
+          child: SingleChildScrollView(
+            controller: horizontal,
+            scrollDirection: Axis.horizontal,
+            child: table,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -57,9 +80,8 @@ class _TypeTableScreenState extends State<TypeTableScreen> {
                   child: SizedBox(
                     width: double.infinity,
                     // Wrap the DataTable in a horizontal scroll view to allow wide tables to scroll
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
+                    child: _scrollableTable(
+                      DataTable(
                         columnSpacing: 24,
                         columns: [
                           const DataColumn(label: Text('№')),

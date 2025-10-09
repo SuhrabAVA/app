@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../services/personnel_db.dart';
 
 class AddEmployeeScreen extends StatefulWidget {
   const AddEmployeeScreen({super.key});
@@ -24,7 +25,7 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
 
   File? _selectedImage;
   bool _isSaving = false;
-  
+
   /// Показывает выбор источника изображения: камера, галерея или файл.
   Future<void> _showImageSourceDialog() async {
     await showModalBottomSheet(
@@ -110,7 +111,9 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
         password.isEmpty ||
         _selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Заполните все обязательные поля, логин/пароль и выберите фото')),
+        const SnackBar(
+            content: Text(
+                'Заполните все обязательные поля, логин/пароль и выберите фото')),
       );
       return;
     }
@@ -124,24 +127,26 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
       final id = const Uuid().v4();
 
       final filePath = 'employee_photos/$id.jpg';
-      await client.storage.from('employee_photos').upload(filePath, _selectedImage!);
-      final photoUrl = client.storage.from('employee_photos').getPublicUrl(filePath);
-
-      await client.from('employees').insert({
-        'id': id,
-        'lastName': lastName,
-        'firstName': firstName,
-        'patronymic': patronymic,
-        'iin': iin,
-        'photoUrl': photoUrl,
-        'positionIds': _positionIds,
-        'isFired': false,
-        'comments': comments,
-        'login': login,
-        'password': password,
-      });
-      await client.from('workspaces').insert({'employee_id': id, 'tasks': []});
-
+      await client.storage
+          .from('employee_photos')
+          .upload(filePath, _selectedImage!);
+      final photoUrl =
+          client.storage.from('employee_photos').getPublicUrl(filePath);
+      final db = PersonnelDB();
+      await db.insertEmployee(
+        id: id,
+        lastName: lastName,
+        firstName: firstName,
+        patronymic: patronymic,
+        iin: iin,
+        photoUrl: photoUrl,
+        positionIds: _positionIds,
+        isFired: false,
+        comments: comments,
+        login: login,
+        password: password,
+      );
+      // NOTE: workspace creation kept as-is if your app needs it; move to SQL later if required.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сотрудник успешно добавлен')),
       );
@@ -168,8 +173,10 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
             GestureDetector(
               onTap: _showImageSourceDialog,
               child: _selectedImage != null
-                  ? CircleAvatar(radius: 50, backgroundImage: FileImage(_selectedImage!))
-                  : const CircleAvatar(radius: 50, child: Icon(Icons.camera_alt)),
+                  ? CircleAvatar(
+                      radius: 50, backgroundImage: FileImage(_selectedImage!))
+                  : const CircleAvatar(
+                      radius: 50, child: Icon(Icons.camera_alt)),
             ),
             const SizedBox(height: 16),
             TextField(

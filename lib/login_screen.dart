@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'modules/personnel/employee_model.dart';        // EmployeeModel
-import 'modules/personnel/personnel_constants.dart';   // kManagerId, kWarehouseHeadId, kTechLeaderId
-import 'modules/personnel/position_model.dart';        // PositionModel
+import 'modules/personnel/employee_model.dart'; // EmployeeModel
+import 'modules/personnel/personnel_constants.dart'; // kManagerId, kWarehouseHeadId, kTechLeaderId
+import 'modules/personnel/position_model.dart'; // PositionModel
 import 'modules/manager/manager_workspace_screen.dart';
 import 'admin_panel.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
@@ -13,20 +14,17 @@ import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
 import 'modules/analytics/analytics_provider.dart';
 import 'services/user_service.dart';
 import 'services/auth_extras.dart';
-import 'services/auth_service.dart';
 
 bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
-  // 1) По id должности
   final ids = emp.positionIds.map((e) => e.toString()).toSet();
   if (ids.contains(kManagerId)) return true;
 
-  // 2) По названию должности "Менеджер" (если id другой)
   final mgr = pr.findManagerPosition();
   if (mgr != null && ids.contains(mgr.id)) return true;
 
-  // 3) По логину (email у модели нет)
   final loginLower = emp.login.toLowerCase();
-  if (loginLower.contains('manager') || loginLower.contains('менедж')) return true;
+  if (loginLower.contains('manager') || loginLower.contains('менедж'))
+    return true;
 
   return false;
 }
@@ -39,14 +37,14 @@ bool isWarehouseHeadUser(EmployeeModel emp, PersonnelProvider pr) {
   if (wh != null && ids.contains(wh.id)) return true;
 
   final loginLower = emp.login.toLowerCase();
-  if (loginLower.contains('warehouse') || loginLower.contains('склад')) return true;
+  if (loginLower.contains('warehouse') || loginLower.contains('склад'))
+    return true;
 
   return false;
 }
 
-/// Главный экран авторизации. Показывает список пользователей,
-/// пользователь выбирает себя, вводит пароль и попадает в нужный модуль.
-/// Техлид (positionIds содержит 'tech_leader') попадает сразу в админ-панель.
+/// Экран логина.
+/// Безопасно работает при включенном RLS: записи создаются только при наличии авторизации.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -59,23 +57,71 @@ class _LoginScreenState extends State<LoginScreen> {
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  bool _bootstrapping = true;
+  String?
+      _bootstrapError; // для отображения подсказки, если RLS блокирует записи
 
   @override
   void initState() {
     super.initState();
-    // Гарантируем наличие техлида в БД (если его ещё нет — создаём).
-    _userService.ensureTechLeaderExists();
+    _bootstrap();
+  }
 
-    // Если настроен бэкенд-вход — пробуем.
-    AuthExtras.tryBackendSignInIfConfigured();
+  Future<void> _bootstrap() async {
+    try {
+      // 1) создаём техлида в наших таблицах (если там логика локальная — ок; если SQL — обернуто в try/catch)
+      try {
+        await _userService.ensureTechLeaderExists();
+      } catch (_) {
+        // не критично для старта экрана
+      }
 
-    // После первого кадра — гарантируем обязательные должности и подгружаем сотрудников.
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final pr = context.read<PersonnelProvider>();
-      await pr.ensureManagerPosition();
-      await pr.ensureWarehouseHeadPosition();
-      await pr.fetchEmployees(); // провайдер также слушает realtime
-    });
+      // 2) Пытаемся выполнить бэкенд-вход (если настроен)
+      try {
+        await AuthExtras.tryBackendSignInIfConfigured();
+      } catch (_) {
+        // не критично
+      }
+
+      // 3) После первого кадра — подгружаем данные
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final pr = context.read<PersonnelProvider>();
+
+        // ВАЖНО: ensure* — только если есть авторизованный пользователь,
+        // иначе RLS (auth.uid() = NULL) заблокирует insert.
+        final currentUser = Supabase.instance.client.auth.currentUser;
+        if (currentUser != null) {
+          try {
+            await pr.ensureManagerPosition();
+          } catch (e) {
+            _bootstrapError ??=
+                'Нет прав на запись в positions (ensureManagerPosition).';
+          }
+          try {
+            await pr.ensureWarehouseHeadPosition();
+          } catch (e) {
+            _bootstrapError ??=
+                'Нет прав на запись в positions (ensureWarehouseHeadPosition).';
+          }
+        }
+
+        // Всегда пробуем получить сотрудников (для чтения обычно есть политика)
+        try {
+          await pr.fetchEmployees();
+        } catch (e) {
+          _bootstrapError ??= 'Нет прав на чтение сотрудников. Проверьте RLS.';
+        }
+
+        if (mounted) {
+          setState(() => _bootstrapping = false);
+        }
+      });
+    } finally {
+      // на случай если addPostFrameCallback не сработал
+      if (mounted) {
+        setState(() => _bootstrapping = false);
+      }
+    }
   }
 
   @override
@@ -115,6 +161,33 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(fontSize: 14, color: Colors.grey),
                   ),
                   const SizedBox(height: 16),
+                  if (_bootstrapError != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.orange.withOpacity(0.1),
+                        border: Border.all(color: Colors.orange.shade300),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.info_outline, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              // Подсказка: это подсвечивает RLS-проблему, но не ломает UI
+                              'Подсказка: $_bootstrapError\n'
+                              'Если это dev-сервер — разрешите запись через RLS-политику (SQL ниже), '
+                              'или авторизуйтесь в Supabase перед вставкой.',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   TextField(
                     controller: _searchController,
                     decoration: const InputDecoration(
@@ -128,116 +201,145 @@ class _LoginScreenState extends State<LoginScreen> {
                     },
                   ),
                   const SizedBox(height: 16),
-                  Consumer<PersonnelProvider>(
-                    builder: (context, personnel, _) {
-                      // Формируем список пользователей из сотрудников
-                      final List<_UserItem> users = [];
+                  if (_bootstrapping)
+                    const Center(child: CircularProgressIndicator())
+                  else
+                    Consumer<PersonnelProvider>(
+                      builder: (context, personnel, _) {
+                        final List<_UserItem> users = [];
 
-                      for (final e in personnel.employees) {
-                        // if (e.isFired) continue; // при желании отфильтровать уволенных
+                        for (final e in personnel.employees) {
+                          // можно отфильтровать уволенных: if (e.isFired) continue;
 
-                        String positionName = '';
-                        if (e.positionIds.isNotEmpty) {
-                          final match = personnel.positions.firstWhere(
-                            (p) => p.id == e.positionIds.first,
-                            orElse: () => PositionModel(id: '', name: ''),
-                          );
-                          positionName = match.name;
+                          String positionName = '';
+                          if (e.positionIds.isNotEmpty) {
+                            final match = personnel.positions.firstWhere(
+                              (p) => p.id == e.positionIds.first,
+                              orElse: () => PositionModel(id: '', name: ''),
+                            );
+                            positionName = match.name;
+                          }
+
+                          final fullName =
+                              '${e.lastName} ${e.firstName} ${e.patronymic}'
+                                  .trim();
+
+                          users.add(_UserItem(
+                            id: e.id,
+                            name: fullName.isEmpty ? 'Без имени' : fullName,
+                            position: positionName,
+                            password: e.password,
+                            isTechLeader: e.positionIds.contains(kTechLeaderId),
+                          ));
                         }
 
-                        final fullName = '${e.lastName} ${e.firstName} ${e.patronymic}'.trim();
+                        final query = _searchQuery.toLowerCase();
+                        final filtered = users
+                            .where((u) =>
+                                u.name.toLowerCase().contains(query) ||
+                                u.position.toLowerCase().contains(query))
+                            .toList();
 
-                        users.add(_UserItem(
-                          id: e.id,
-                          name: fullName.isEmpty ? 'Без имени' : fullName,
-                          position: positionName,
-                          password: e.password,
-                          isTechLeader: e.positionIds.contains(kTechLeaderId),
-                        ));
-                      }
-
-                      if (personnel.employees.isEmpty) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      final query = _searchQuery.toLowerCase();
-                      final filtered = users
-                          .where((u) =>
-                              u.name.toLowerCase().contains(query) ||
-                              u.position.toLowerCase().contains(query))
-                          .toList();
-
-                      if (filtered.isEmpty) {
-                        return const Center(child: Text('Пользователи не найдены'));
-                      }
-
-                      return SizedBox(
-                        height: 300,
-                        child: ListView.separated(
-                          itemCount: filtered.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final user = filtered[index];
-                            return InkWell(
-                              onTap: () => _promptPassword(context, user),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.grey.shade300),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 12,
-                                ),
-                                child: Row(
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 20,
-                                      backgroundColor: Colors.grey.shade200,
-                                      child: const Icon(
-                                        Icons.person_outline,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            user.name,
-                                            style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            user.position.isEmpty
-                                                ? (user.isTechLeader
-                                                    ? 'Технический лидер'
-                                                    : 'Сотрудник')
-                                                : user.position,
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.grey,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const Icon(Icons.chevron_right, color: Colors.grey),
-                                  ],
-                                ),
+                        if (personnel.employees.isEmpty) {
+                          return Column(
+                            children: [
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Список пользователей пуст или недоступен.',
+                                style: TextStyle(fontSize: 13),
+                                textAlign: TextAlign.center,
                               ),
-                            );
-                          },
-                        ),
-                      );
-                    },
-                  ),
-                  // ====== /список пользователей ======
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  try {
+                                    await context
+                                        .read<PersonnelProvider>()
+                                        .fetchEmployees();
+                                  } catch (_) {}
+                                },
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Обновить'),
+                              ),
+                            ],
+                          );
+                        }
+
+                        if (filtered.isEmpty) {
+                          return const Center(
+                              child: Text('Пользователи не найдены'));
+                        }
+
+                        return SizedBox(
+                          height: 300,
+                          child: ListView.separated(
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final user = filtered[index];
+                              return InkWell(
+                                onTap: () => _promptPassword(context, user),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border:
+                                        Border.all(color: Colors.grey.shade300),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 12,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: Colors.grey.shade200,
+                                        child: const Icon(
+                                          Icons.person_outline,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              user.name,
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              user.position.isEmpty
+                                                  ? (user.isTechLeader
+                                                      ? 'Технический лидер'
+                                                      : 'Сотрудник')
+                                                  : user.position,
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Icon(Icons.chevron_right,
+                                          color: Colors.grey),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
@@ -298,7 +400,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       final analytics = context.read<AnalyticsProvider>();
                       String category;
                       if (user.isTechLeader) {
-                        // можно оставить 'manager' если в вашей аналитике нет отдельной категории
                         category = 'manager';
                       } else {
                         final pr = context.read<PersonnelProvider>();
@@ -367,7 +468,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         final screen = isManagerUser(emp, pr)
                             ? ManagerWorkspaceScreen(employeeId: user.id)
                             : isWarehouseHeadUser(emp, pr)
-                                ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
+                                ? WarehouseManagerWorkspaceScreen(
+                                    employeeId: user.id)
                                 : EmployeeWorkspaceScreen(employeeId: user.id);
 
                         Navigator.pushReplacement(
@@ -392,7 +494,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-/// Модель элемента списка пользователей на экране входа.
 class _UserItem {
   final String id;
   final String name;

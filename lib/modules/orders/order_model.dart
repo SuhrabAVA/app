@@ -80,7 +80,7 @@ class OrderModel {
   String manager;
   String customer;
   DateTime orderDate;
-  DateTime dueDate;
+  DateTime? dueDate;
   ProductModel product;
   List<String> additionalParams;
   String handle;
@@ -90,6 +90,11 @@ class OrderModel {
   double val;
   String? pdfUrl;
   String? stageTemplateId;
+  // Формы
+  final bool isOldForm;
+  final int? newFormNo;
+  final String? formSeries;
+  final String? formCode;
   bool contractSigned;
   bool paymentDone;
   String comments;
@@ -114,6 +119,11 @@ class OrderModel {
     double? val,
     this.pdfUrl,
     this.stageTemplateId,
+    // формы
+    this.isOldForm = false,
+    this.newFormNo,
+    this.formSeries,
+    this.formCode,
     bool? contractSigned,
     bool? paymentDone,
     String? comments,
@@ -141,7 +151,7 @@ class OrderModel {
         'manager': manager,
         'customer': customer,
         'order_date': orderDate.toIso8601String(),
-        'due_date': dueDate.toIso8601String(),
+        if (dueDate != null) 'due_date': dueDate!.toIso8601String(),
         'product': product.toMap(),
         'additional_params':
             additionalParams, // массив строк; БД примет и объект
@@ -150,6 +160,10 @@ class OrderModel {
         if (material != null) 'material': material!.toMap(),
         'makeready': makeready,
         'val': val,
+        'is_old_form': isOldForm,
+        if (newFormNo != null) 'new_form_no': newFormNo,
+        if (formSeries != null) 'form_series': formSeries,
+        if (formCode != null) 'form_code': formCode,
         if (pdfUrl != null) 'pdf_url': pdfUrl,
         if (stageTemplateId != null) 'stage_template_id': stageTemplateId,
         'contract_signed': contractSigned,
@@ -162,14 +176,14 @@ class OrderModel {
 
   /// Парсим и camelCase, и snake_case.
   factory OrderModel.fromMap(Map<String, dynamic> map) {
-    DateTime _parseDate(dynamic v) {
+    DateTime? _parseDate(dynamic v) {
       if (v is String && v.isNotEmpty) {
         try {
           return DateTime.parse(v);
         } catch (_) {}
       }
       if (v is DateTime) return v;
-      return DateTime.now();
+      return null;
     }
 
     final productMap = _asMap(_pickAny(map, const ['product', 'productMap']));
@@ -184,11 +198,22 @@ class OrderModel {
     final paymentDoneBool =
         _asBool(_pickAny(map, const ['payment_done', 'paymentDone'])) ?? false;
 
+    final isOldFormBool =
+        _asBool(_pickAny(map, const ['is_old_form', 'isOldForm'])) ?? false;
+    final int? newFormNoVal =
+        (_pickAny(map, const ['new_form_no', 'newFormNo']) as num?)?.toInt();
+    final String? formSeriesVal =
+        (_pickAny(map, const ['form_series', 'formSeries']) as String?);
+    final String? formCodeVal =
+        (_pickAny(map, const ['form_code', 'formCode']) as String?);
+
     return OrderModel(
       id: (_pickAny(map, const ['id']) as String?) ?? '',
       manager: (_pickAny(map, const ['manager']) as String?) ?? '',
       customer: (_pickAny(map, const ['customer']) as String?) ?? '',
-      orderDate: _parseDate(_pickAny(map, const ['order_date', 'orderDate'])),
+      orderDate: _parseDate(_pickAny(map, const ['order_date', 'orderDate'])) ??
+          DateTime.now() ??
+          DateTime.now(),
       dueDate: _parseDate(_pickAny(map, const ['due_date', 'dueDate'])),
       product: ProductModel.fromMap(productMap),
       additionalParams: _asStringList(
@@ -203,6 +228,10 @@ class OrderModel {
       stageTemplateId:
           (_pickAny(map, const ['stage_template_id', 'stageTemplateId'])
               as String?),
+      isOldForm: isOldFormBool,
+      newFormNo: newFormNoVal,
+      formSeries: formSeriesVal,
+      formCode: formCodeVal,
       contractSigned: contractSignedBool,
       paymentDone: paymentDoneBool,
       comments: (_pickAny(map, const ['comments']) as String?) ?? '',

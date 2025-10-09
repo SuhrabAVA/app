@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -26,6 +25,8 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  late ChatProvider _chat;
+  bool _chatReady = false;
   final _scroll = ScrollController();
 
   @override
@@ -33,17 +34,27 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     // Подписываемся в addPostFrame, чтобы гарантированно был доступен Provider
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final chat = context.read<ChatProvider>();
-      chat.subscribe(widget.roomId);
+      if (_chatReady) {
+        _chat.subscribe(widget.roomId);
+      }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Безопасно получаем ChatProvider при активном контексте
+    _chat = context.read<ChatProvider>();
+    _chatReady = true;
   }
 
   @override
   void dispose() {
     _scroll.dispose();
     // НЕ обращаемся к Provider через context в dispose() (чтобы избежать "deactivated widget's ancestor")
-    final chat = Provider.of<ChatProvider>(context, listen: false);
-    chat.unsubscribe(widget.roomId);
+    if (_chatReady) {
+      _chat.unsubscribe(widget.roomId);
+    }
     super.dispose();
   }
 
@@ -55,7 +66,8 @@ class _ChatScreenState extends State<ChatScreen> {
       curve: Curves.easeOut,
     );
   }
- Future<void> _handleMenu(String value) async {
+
+  Future<void> _handleMenu(String value) async {
     final chat = context.read<ChatProvider>();
     switch (value) {
       case 'clear':
@@ -114,7 +126,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   onSelected: _handleMenu,
                   itemBuilder: (ctx) => const [
                     PopupMenuItem(value: 'clear', child: Text('Очистить чат')),
-                    PopupMenuItem(value: 'range', child: Text('Удалить за период')),
+                    PopupMenuItem(
+                        value: 'range', child: Text('Удалить за период')),
                   ],
                 ),
             ],

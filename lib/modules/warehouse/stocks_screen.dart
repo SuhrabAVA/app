@@ -109,6 +109,29 @@ class _StocksScreenState extends State<StocksScreen> {
   }
 
   @override
+  Widget _scrollableTable(Widget table) {
+    final vertical = ScrollController();
+    final horizontal = ScrollController();
+    return Scrollbar(
+      controller: vertical,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: vertical,
+        child: Scrollbar(
+          controller: horizontal,
+          thumbVisibility: true,
+          notificationPredicate: (notif) =>
+              notif.metrics.axis == Axis.horizontal,
+          child: SingleChildScrollView(
+            controller: horizontal,
+            scrollDirection: Axis.horizontal,
+            child: table,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -117,7 +140,8 @@ class _StocksScreenState extends State<StocksScreen> {
       body: Consumer<WarehouseProvider>(
         builder: (context, provider, _) {
           // Исключаем записи типа 'Списание' из отображения в запасах
-          final allStocks = provider.allTmc.where((e) => e.type != 'Списание').toList();
+          final allStocks =
+              provider.allTmc.where((e) => e.type != 'Списание').toList();
           // Собираем уникальные единицы измерения
           final units = <String>{};
           for (final item in allStocks) {
@@ -126,9 +150,12 @@ class _StocksScreenState extends State<StocksScreen> {
           // Фильтруем по поиску и единице измерения
           final filtered = allStocks.where((e) {
             final matchesSearch = _searchQuery.isEmpty ||
-                e.description.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                e.description
+                    .toLowerCase()
+                    .contains(_searchQuery.toLowerCase()) ||
                 e.type.toLowerCase().contains(_searchQuery.toLowerCase());
-            final matchesUnit = _selectedUnit == null || e.unit == _selectedUnit;
+            final matchesUnit =
+                _selectedUnit == null || e.unit == _selectedUnit;
             return matchesSearch && matchesUnit;
           }).toList();
           return Padding(
@@ -156,8 +183,10 @@ class _StocksScreenState extends State<StocksScreen> {
                       value: _selectedUnit,
                       hint: const Text('Все единицы'),
                       items: [
-                        const DropdownMenuItem<String>(value: null, child: Text('Все единицы')),
-                        ...units.map((u) => DropdownMenuItem<String>(value: u, child: Text(u))),
+                        const DropdownMenuItem<String>(
+                            value: null, child: Text('Все единицы')),
+                        ...units.map((u) =>
+                            DropdownMenuItem<String>(value: u, child: Text(u))),
                       ],
                       onChanged: (val) => setState(() => _selectedUnit = val),
                     ),
@@ -175,13 +204,8 @@ class _StocksScreenState extends State<StocksScreen> {
                     elevation: 2,
                     child: filtered.isEmpty
                         ? const Center(child: Text('Нет данных'))
-                        : SingleChildScrollView(
-                            // Nest a horizontal scroll view so that the DataTable can scroll
-                            // sideways when it overflows the screen width. Without this, long
-                            // rows can be clipped and unreadable.
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
+                        : _scrollableTable(
+                            DataTable(
                               columnSpacing: 16,
                               columns: const [
                                 DataColumn(label: Text('ID')),
@@ -199,42 +223,60 @@ class _StocksScreenState extends State<StocksScreen> {
                                   return DataRow(cells: [
                                     DataCell(Text('${index + 1}')),
                                     DataCell(Text(item.description)),
-                                    DataCell(Text(characteristics.isEmpty ? '-' : characteristics)),
+                                    DataCell(Text(characteristics.isEmpty
+                                        ? '-'
+                                        : characteristics)),
                                     DataCell(Text(item.unit)),
                                     DataCell(Text(item.quantity.toString())),
                                     DataCell(Row(
                                       children: [
                                         IconButton(
-                                          icon: const Icon(Icons.edit, size: 20),
-                                          onPressed: () => _openAddDialog(existing: item),
+                                          icon:
+                                              const Icon(Icons.edit, size: 20),
+                                          onPressed: () =>
+                                              _openAddDialog(existing: item),
                                         ),
                                         IconButton(
-                                          icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                          icon: const Icon(
+                                              Icons.remove_circle_outline,
+                                              size: 20),
                                           tooltip: 'Списать',
                                           onPressed: () => _writeOffItem(item),
                                         ),
                                         IconButton(
-                                          icon: const Icon(Icons.delete, size: 20),
+                                          icon: const Icon(Icons.delete,
+                                              size: 20),
                                           onPressed: () async {
-                                            final confirm = await showDialog<bool>(
+                                            final confirm =
+                                                await showDialog<bool>(
                                               context: context,
                                               builder: (ctx) => AlertDialog(
-                                                title: const Text('Удалить запись?'),
-                                                content: Text('Вы уверены, что хотите удалить ${item.description}?'),
+                                                title: const Text(
+                                                    'Удалить запись?'),
+                                                content: Text(
+                                                    'Вы уверены, что хотите удалить ${item.description}?'),
                                                 actions: [
                                                   TextButton(
-                                                    onPressed: () => Navigator.of(ctx).pop(false),
+                                                    onPressed: () =>
+                                                        Navigator.of(ctx)
+                                                            .pop(false),
                                                     child: const Text('Отмена'),
                                                   ),
                                                   TextButton(
-                                                    onPressed: () => Navigator.of(ctx).pop(true),
-                                                    child: const Text('Удалить'),
+                                                    onPressed: () =>
+                                                        Navigator.of(ctx)
+                                                            .pop(true),
+                                                    child:
+                                                        const Text('Удалить'),
                                                   ),
                                                 ],
                                               ),
                                             );
                                             if (confirm == true) {
-                                              await Provider.of<WarehouseProvider>(context, listen: false)
+                                              await Provider.of<
+                                                          WarehouseProvider>(
+                                                      context,
+                                                      listen: false)
                                                   .deleteTmc(item.id);
                                             }
                                           },
@@ -245,8 +287,8 @@ class _StocksScreenState extends State<StocksScreen> {
                                 },
                               ),
                             ),
+                          ),
                   ),
-                ),
                 ),
               ],
             ),

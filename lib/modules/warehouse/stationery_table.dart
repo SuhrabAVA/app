@@ -17,9 +17,20 @@ class StationeryTable extends StatefulWidget {
 }
 
 class _StationeryTableState extends State<StationeryTable> {
-  List<TmcModel> _items = [];
-
+  bool _loading = false;
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // ВАЖНО: для модуля "Ручки" сразу выставляем table_key='ручки' и жёстко грузим данные
+    final p = Provider.of<WarehouseProvider>(context, listen: false);
+    p.setStationeryKey('канцелярия');
+    _loading = true;
+    p.fetchTmc().whenComplete(() {
+      if (mounted) setState(() => _loading = false);
+    });
+  }
 
   @override
   void dispose() {
@@ -28,21 +39,110 @@ class _StationeryTableState extends State<StationeryTable> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
-
-  Future<void> _loadData() async {
-    final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    await provider.fetchTmc();
-    setState(() {
-      _items = provider.getTmcByType('Канцелярия');
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final provider = context.watch<WarehouseProvider>();
+
+    // Берём список напрямую из провайдера (это важно для авто-обновления).
+    final all = provider.getTmcByType('Канцелярия');
+
+    // Поиск по описанию/количеству/ед.
+    final q = _searchController.text.trim().toLowerCase();
+    final items = q.isEmpty
+        ? all
+        : all.where((item) {
+            return item.description.toLowerCase().contains(q) ||
+                item.quantity.toString().toLowerCase().contains(q) ||
+                item.unit.toLowerCase().contains(q);
+          }).toList();
+
+    // Уберём вложенные тернарники — так надёжнее и понятнее.
+    Widget bodyChild;
+    if (_loading && items.isEmpty) {
+      bodyChild = const Center(child: CircularProgressIndicator());
+    } else if (items.isEmpty) {
+      bodyChild = const Center(child: Text('Нет данных'));
+    } else {
+      bodyChild = Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Card(
+          elevation: 2,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(8.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Поиск…',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  // Горизонтальный скролл для узких экранов.
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      columnSpacing: 24,
+                      columns: const [
+                        DataColumn(label: Text('№')),
+                        DataColumn(label: Text('Наименование')),
+                        DataColumn(label: Text('Количество')),
+                        DataColumn(label: Text('Ед.')),
+                        DataColumn(label: Text('Действия')),
+                      ],
+                      rows: List<DataRow>.generate(
+                        items.length,
+                        (rowIndex) {
+                          final item = items[rowIndex];
+                          return DataRow(
+                            cells: [
+                              DataCell(Text('${rowIndex + 1}')),
+                              DataCell(Text(item.description)),
+                              DataCell(Text(item.quantity.toString())),
+                              DataCell(
+                                  Text(item.unit.isEmpty ? 'шт' : item.unit)),
+                              DataCell(Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, size: 20),
+                                    tooltip: 'Редактировать',
+                                    onPressed: () => _editItem(item),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                        Icons.remove_circle_outline,
+                                        size: 20),
+                                    tooltip: 'Списать',
+                                    onPressed: () => _writeOffItem(item),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, size: 20),
+                                    tooltip: 'Удалить',
+                                    onPressed: () => _deleteItem(item),
+                                  ),
+                                ],
+                              )),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Канцелярия'),
@@ -61,121 +161,24 @@ class _StationeryTableState extends State<StationeryTable> {
           ),
           IconButton(
             icon: const Icon(Icons.add),
+            tooltip: 'Добавить',
             onPressed: _openAddDialog,
           ),
         ],
       ),
-      body: _items.isEmpty
-          ? const Center(child: Text('Нет данных'))
-          : Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Card(
-                elevation: 2,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(8.0),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        TextField(
-                          controller: _searchController,
-                          decoration: InputDecoration(
-                            hintText: 'Поиск…',
-                            prefixIcon: const Icon(Icons.search),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                          onChanged: (_) => setState(() {}),
-                        ),
-                        const SizedBox(height: 12),
-                        // Wrap the DataTable in a horizontal scroll view so wide
-                        // tables remain accessible on small screens.
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            columnSpacing: 24,
-                            columns: const [
-                              DataColumn(label: Text('№')),
-                              DataColumn(label: Text('Наименование')),
-                              DataColumn(label: Text('Количество')),
-                              DataColumn(label: Text('Ед.')),
-                              DataColumn(label: Text('Действия')),
-                            ],
-                            rows: List<DataRow>.generate(
-                              _items
-                                  .where((item) {
-                                    final q = _searchController.text.toLowerCase();
-                                    if (q.isEmpty) return true;
-                                    return item.description.toLowerCase().contains(q) ||
-                                        item.quantity.toString().toLowerCase().contains(q) ||
-                                        item.unit.toLowerCase().contains(q);
-                                  })
-                                  .toList()
-                                  .length,
-                              (rowIndex) {
-                                final filtered = _items
-                                    .where((item) {
-                                      final q = _searchController.text.toLowerCase();
-                                      if (q.isEmpty) return true;
-                                      return item.description.toLowerCase().contains(q) ||
-                                          item.quantity.toString().toLowerCase().contains(q) ||
-                                          item.unit.toLowerCase().contains(q);
-                                    })
-                                    .toList();
-                                final item = filtered[rowIndex];
-                                return DataRow(cells: [
-                                  DataCell(Text('${rowIndex + 1}')),
-                                  DataCell(Text(item.description)),
-                                  DataCell(Text(item.quantity.toString())),
-                                  DataCell(Text(item.unit)),
-                                  DataCell(Row(
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, size: 20),
-                                        tooltip: 'Редактировать',
-                                        onPressed: () {
-                                          _editItem(item);
-                                        },
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                        tooltip: 'Списать',
-                                        onPressed: () {
-                                          _writeOffItem(item);
-                                        },
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, size: 20),
-                                        tooltip: 'Удалить',
-                                        onPressed: () {
-                                          _deleteItem(item);
-                                        },
-                                      ),
-                                    ],
-                                  )),
-                                ]);
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
+      body: bodyChild,
     );
   }
 
   void _openAddDialog() {
-    // Открываем диалог добавления записи, ограниченный таблицей "Канцелярия"
+    // Открываем диалог добавления записи сразу для «Канцелярия»
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => const AddEntryDialog(initialTable: 'Канцелярия'),
     ).then((_) {
-      _loadData();
+      // На случай, если realtime ещё не пришёл — дёрнем ручную синхронизацию.
+      Provider.of<WarehouseProvider>(context, listen: false).fetchTmc();
     });
   }
 
@@ -183,18 +186,18 @@ class _StationeryTableState extends State<StationeryTable> {
   void _editItem(TmcModel item) {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => AddEntryDialog(existing: item),
     ).then((_) {
-      _loadData();
+      Provider.of<WarehouseProvider>(context, listen: false).fetchTmc();
     });
   }
 
-  /// Выполняет списание указанного количества и записывает отдельную запись
-  /// о списании. Количество уменьшается на складе. При попытке списать
-  /// больше, чем доступно, выводится уведомление.
+  /// Выполняет списание указанного количества и записывает отдельную запись о списании.
   Future<void> _writeOffItem(TmcModel item) async {
     final qtyController = TextEditingController();
     final commentController = TextEditingController();
+
     final result = await showDialog<double?>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -204,15 +207,19 @@ class _StationeryTableState extends State<StationeryTable> {
           children: [
             TextField(
               controller: qtyController,
-              keyboardType: TextInputType.number,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: 'Количество для списания',
+                border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 8),
             TextField(
               controller: commentController,
               decoration: const InputDecoration(
                 labelText: 'Комментарий (необязательно)',
+                border: OutlineInputBorder(),
               ),
             ),
           ],
@@ -224,7 +231,9 @@ class _StationeryTableState extends State<StationeryTable> {
           ),
           TextButton(
             onPressed: () {
-              final qty = double.tryParse(qtyController.text);
+              // поддержка ввода с запятой
+              final qty =
+                  double.tryParse(qtyController.text.replaceAll(',', '.'));
               Navigator.of(ctx).pop(qty);
             },
             child: const Text('Списать'),
@@ -232,27 +241,40 @@ class _StationeryTableState extends State<StationeryTable> {
         ],
       ),
     );
-    if (result != null && result > 0) {
-      final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      final newQty = item.quantity - result;
-      if (newQty < 0) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Нельзя списать больше, чем есть на складе'),
-        ));
-        return;
-      }
-      await provider.updateTmcQuantity(id: item.id, newQuantity: newQty);
-      await provider.addTmc(
-        supplier: item.supplier,
-        type: 'Списание',
-        description: item.description,
-        quantity: result,
-        unit: item.unit,
+
+    if (result == null || result <= 0) return;
+
+    final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    final newQty = item.quantity - result;
+    if (newQty < 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Нельзя списать больше, чем есть на складе')),
+      );
+      return;
+    }
+
+    try {
+      await provider.writeOff(
+        type: 'stationery',
+        itemId: item.id,
+        qty: result,
         note: commentController.text.trim().isEmpty
             ? null
             : commentController.text.trim(),
       );
-      await _loadData();
+      // Обновим, если realtime ещё не прилетел
+      await provider.fetchTmc();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Списание сохранено')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка списания: $e')),
+      );
     }
   }
 
@@ -275,10 +297,11 @@ class _StationeryTableState extends State<StationeryTable> {
         ],
       ),
     );
-    if (confirm == true) {
-      final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      await provider.deleteTmc(item.id);
-      await _loadData();
-    }
+
+    if (confirm != true) return;
+
+    final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    await provider.deleteTmc(item.id, type: 'stationery');
+    await provider.fetchTmc();
   }
 }

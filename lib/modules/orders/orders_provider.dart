@@ -1,126 +1,144 @@
+// lib/modules/orders/orders_provider.dart
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../services/doc_db.dart';
 
 import 'material_model.dart';
 import 'order_model.dart';
 import 'product_model.dart';
-import '../../utils/auth_helper.dart';
 
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
-  // DocDB instance to interact with the universal `documents` table.
-  final DocDB _docDb = DocDB();
 
   final List<OrderModel> _orders = [];
-  StreamSubscription<List<Map<String, dynamic>>>? _ordersSub;
-  // Realtime channel for listening to order changes via documents.
+  List<OrderModel> get orders => List.unmodifiable(_orders);
+
+  // Realtime channel for listening to order changes.
   RealtimeChannel? _ordersChannel;
 
   OrdersProvider() {
     _listenToOrders();
   }
 
-  List<OrderModel> get orders => List.unmodifiable(_orders);
+  // ===== AUTH =====
+  Future<void> _ensureAuthed() async {
+    final auth = _supabase.auth;
+    if (auth.currentUser == null) {
+      try {
+        // Supabase supports anonymous sign-in if enabled in your project.
+        await auth.signInAnonymously();
+      } catch (_) {
+        // Если анонимная аутентификация выключена — просто продолжаем.
+        // Для чтения у вас должна быть RLS-политика на anon.
+      }
+    }
+  }
 
+  // ===== DATA LOAD =====
   Future<void> refresh() async {
     try {
-      final rows = await _docDb.list('orders');
+      await _ensureAuthed();
+      final res = await _supabase
+          .from('orders')
+          .select()
+          .order('created_at', ascending: false);
+
+      final rows = (res as List).cast<Map<String, dynamic>>();
       _orders
         ..clear()
-        ..addAll(rows.map((row) {
-          // Extract order data from documents. `data` contains order fields.
-          final data = Map<String, dynamic>.from(row['data'] as Map);
-          // Preserve the document id as order id (UUID).
-          data['id'] = row['id'];
-
-          final p = data['product'];
-          if (p is String) {
-            try {
-              data['product'] =
-                  p.isEmpty ? <String, dynamic>{} : jsonDecode(p) as Map;
-            } catch (_) {
-              data['product'] = <String, dynamic>{};
-            }
-          } else if (p == null) {
-            data['product'] = <String, dynamic>{};
-          }
-
-          return OrderModel.fromMap(data);
-        }));
+        ..addAll(rows.map((row) => OrderModel.fromMap(row)));
       notifyListeners();
     } catch (e, st) {
       debugPrint('❌ refresh orders error: $e\n$st');
     }
   }
 
-  // ===== live stream =====
+  // ===== REALTIME =====
   void _listenToOrders() {
-    // Cancel any previous subscriptions
-    _ordersSub?.cancel();
+    // Remove previous channel if any
     if (_ordersChannel != null) {
       _supabase.removeChannel(_ordersChannel!);
       _ordersChannel = null;
     }
+
     // Initial fetch
     refresh();
-    // Subscribe to realtime changes in documents collection 'orders'
-    _ordersChannel = _docDb.listenCollection('orders', (row, eventType) async {
-      // On any change, refresh the local list. Simpler than patching.
-      await refresh();
-    });
+
+    // Subscribe to realtime changes in the dedicated 'orders' table
+    _ordersChannel = _supabase
+        .channel('orders_changes')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'orders',
+          callback: (payload) async => refresh(),
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'orders',
+          callback: (payload) async => refresh(),
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.delete,
+          schema: 'public',
+          table: 'orders',
+          callback: (payload) async => refresh(),
+        )
+        .subscribe();
   }
 
   @override
   void dispose() {
-    _ordersSub?.cancel();
     if (_ordersChannel != null) {
       _supabase.removeChannel(_ordersChannel!);
+      _ordersChannel = null;
     }
     super.dispose();
   }
 
   // ===== CRUD =====
 
-  /// Добавляет готовый заказ и сохраняет его в DocDB.
-  /// ВАЖНО: больше НЕ передаём "красивые" номера в id/explicitId.
+  /// Добавляет готовый заказ (оптимистично) и пишет в таблицу `orders`.
   Future<void> addOrder(OrderModel order) async {
-    // оптимистично добавляем с тем id, что есть в модели
+    await _ensureAuthed();
+
+    // Optimistic insert
     _orders.add(order);
     notifyListeners();
 
     try {
-      // Вставляем БЕЗ explicitId — UUID создаст БД.
-      final inserted = await _docDb.insert('orders', order.toMap());
-      final newId = inserted['id'] as String;
+      final inserted = await _supabase
+          .from('orders')
+          .insert(order.toMap())
+          .select()
+          .single() as Map<String, dynamic>;
 
-      // Подменяем локально id на реальный UUID из БД
+      final newOrder = OrderModel.fromMap(inserted);
       final idx = _orders.indexWhere((o) => o.id == order.id);
       if (idx != -1) {
-        final data = Map<String, dynamic>.from(inserted['data'] as Map)
-          ..['id'] = newId;
-        _orders[idx] = OrderModel.fromMap(data);
-        notifyListeners();
+        _orders[idx] = newOrder;
+      } else {
+        _orders.add(newOrder);
       }
+      notifyListeners();
+
+      // Log creation (best effort)
+      await _logOrderEvent(newOrder.id, 'Создание', 'Создан заказ');
     } catch (e, st) {
-      // Откат
+      // Rollback optimistic change
       _orders.removeWhere((o) => o.id == order.id);
       notifyListeners();
       debugPrint('❌ addOrder error: $e\n$st');
-      // НЕ бросаем дальше, чтобы не валить приложение
     }
   }
 
-  /// Создаёт заказ и сохраняет его. UUID выдаёт БД.
-  /// Если нужен человекочитаемый «ORD-YYYY-N», храните его в data.number,
-  /// НО не используйте как documents.id.
+  /// Создаёт заказ — id возвращает БД. Возвращает созданную модель или null при ошибке.
   Future<OrderModel?> createOrder({
     String manager = '',
     required String customer,
     required DateTime orderDate,
-    required DateTime dueDate,
+    DateTime? dueDate,
     required ProductModel product,
     List<String> additionalParams = const [],
     String handle = '-',
@@ -133,12 +151,15 @@ class OrdersProvider with ChangeNotifier {
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
+    String status = 'newOrder',
+    String? assignmentId,
+    bool assignmentCreated = false,
   }) async {
-    // Временный локальный id (только для оптимистичного UI)
-    final tempLocalId = 'local-${DateTime.now().microsecondsSinceEpoch}';
+    await _ensureAuthed();
 
-    // Собираем локальную модель (с временным id)
-    OrderModel localOrder = OrderModel(
+    // Local temp id for optimistic UI
+    final tempLocalId = 'local-${DateTime.now().microsecondsSinceEpoch}';
+    final localOrder = OrderModel(
       id: tempLocalId,
       manager: manager,
       customer: customer,
@@ -156,66 +177,72 @@ class OrdersProvider with ChangeNotifier {
       contractSigned: contractSigned,
       paymentDone: paymentDone,
       comments: comments,
-      status: 'newOrder',
-      assignmentId: null,
-      assignmentCreated: false,
+      status: status,
+      assignmentId: assignmentId,
+      assignmentCreated: assignmentCreated,
     );
 
-    // Оптимистично добавляем
+    // Optimistic add
     _orders.add(localOrder);
     notifyListeners();
 
     try {
-      // Вставляем БЕЗ explicitId — БД присвоит UUID.
-      final inserted = await _docDb.insert('orders', localOrder.toMap());
+      final inserted = await _supabase
+          .from('orders')
+          .insert(localOrder.toMap()..remove('id')) // let DB generate id
+          .select()
+          .single() as Map<String, dynamic>;
 
-      // Синхронизируем локальную запись с БД
-      final createdData = Map<String, dynamic>.from(inserted['data'] as Map)
-        ..['id'] = inserted['id'];
-      final created = OrderModel.fromMap(createdData);
+      final created = OrderModel.fromMap(inserted);
 
+      // Replace optimistic row
       final idx = _orders.indexWhere((o) => o.id == tempLocalId);
-      if (idx != -1) {
-        _orders[idx] = created;
-        notifyListeners();
-      }
+      if (idx != -1) _orders[idx] = created;
+      notifyListeners();
 
-      // Логируем создание заказа (без падений)
+      // Log creation (best effort)
       await _logOrderEvent(created.id, 'Создание', 'Создан заказ');
       return created;
     } catch (e, st) {
-      // Откат оптимистичной вставки
+      // Rollback
       _orders.removeWhere((o) => o.id == tempLocalId);
       notifyListeners();
       debugPrint('❌ createOrder error: $e\n$st');
-      // НЕ rethrow — чтобы не убивать экран
+
+      await _applyPaperWriteoffFromOrder(localOrder);
       return null;
     }
   }
 
-  /// Обновляет существующий заказ по ID.
+  /// Обновляет существующий заказ по ID (оптимистично).
   Future<void> updateOrder(OrderModel updated) async {
+    await _ensureAuthed();
+
     final index = _orders.indexWhere((o) => o.id == updated.id);
     if (index == -1) return;
 
     final prev = _orders[index];
-    _orders[index] = updated; // оптимистично
+    _orders[index] = updated; // optimistic
     notifyListeners();
 
     try {
-      // Update the document's data in `documents`. We only update the JSON data, not the metadata.
-      await _docDb.updateById(updated.id, updated.toMap());
+      await _supabase
+          .from('orders')
+          .update(updated.toMap()..remove('id'))
+          .eq('id', updated.id);
 
       await _logOrderEvent(updated.id, 'Обновление', 'Изменён заказ');
     } catch (e, st) {
-      _orders[index] = prev; // откат
+      _orders[index] = prev; // rollback
       notifyListeners();
       debugPrint('❌ updateOrder error: $e\n$st');
     }
   }
 
-  /// Удаляет заказ по идентификатору.
+  /// Удаляет заказ по идентификатору (оптимистично).
   Future<void> deleteOrder(String id) async {
+    await _ensureAuthed();
+
     final index = _orders.indexWhere((o) => o.id == id);
     if (index == -1) return;
 
@@ -223,51 +250,34 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _docDb.deleteById(removed.id);
+      await _supabase.from('orders').delete().eq('id', id);
+      // Историю удалять не обязательно — это след.
+      await _logOrderEvent(id, 'Удаление', 'Удалён заказ');
     } catch (e, st) {
-      _orders.insert(index, removed); // откат
+      // rollback
+      _orders.insert(index, removed);
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
     }
   }
 
-  // ===== История заказов =====
+  // ===== HISTORY =====
 
   Future<void> _logOrderEvent(
     String orderId,
     String eventType,
     String description, {
-    String? user,
+    String? userId,
   }) async {
-    final rawUser = user ?? AuthHelper.currentUserId;
-
-    bool _looksLikeUuid(String s) {
-      final re = RegExp(
-        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
-      );
-      return re.hasMatch(s);
-    }
-
-    final payload = <String, dynamic>{
-      'order_id': orderId,
-      'event_type': eventType,
-      'description': description,
-    };
-
-    if (rawUser != null && rawUser.isNotEmpty) {
-      if (_looksLikeUuid(rawUser)) {
-        payload['user'] = rawUser; // только UUID
-      } else {
-        payload['actor_role'] = rawUser; // роли/строки сюда
-      }
-    }
-
-    debugPrint('ℹ️ order_history payload: $payload');
-
     try {
-      // Store order history as a document in the `order_history` collection.
-      await _docDb.insert('order_history', payload);
+      await _supabase.from('order_events').insert({
+        'order_id': orderId,
+        'event_type': eventType,
+        'description': description,
+        if (userId != null) 'user_id': userId,
+      });
     } catch (e, st) {
+      // Non-fatal
       debugPrint('❌ logOrderEvent error: $e\n$st');
     }
   }
@@ -275,29 +285,48 @@ class OrdersProvider with ChangeNotifier {
   /// Возвращает список событий истории по идентификатору заказа.
   Future<List<Map<String, dynamic>>> fetchOrderHistory(String orderId) async {
     try {
-      final rows = await _docDb.whereEq('order_history', 'order_id', orderId);
-      // Sort ascending by created_at to match previous behavior
-      rows.sort((a, b) {
-        final aTime = a['created_at'];
-        final bTime = b['created_at'];
-        if (aTime is String && bTime is String) {
-          return aTime.compareTo(bTime);
-        }
-        return 0;
-      });
-      return rows.map((r) {
-        final data = Map<String, dynamic>.from(r['data'] as Map);
-        // include timestamp
-        data['created_at'] = r['created_at'];
-        return data;
-      }).toList();
+      final rows = await _supabase
+          .from('order_events')
+          .select()
+          .eq('order_id', orderId)
+          .order('created_at');
+
+      return (rows as List).cast<Map<String, dynamic>>();
     } catch (e, st) {
       debugPrint('❌ fetchOrderHistory error: $e\n$st');
       return [];
     }
   }
 
-  // ===== Склад =====
+  // ===== STOCK (WAREHOUSE) INTEGRATION =====
+
+  /// Списание бумаги по данным заказа (если материал = бумага и указан tmcId).
+  Future<void> _applyPaperWriteoffFromOrder(OrderModel order) async {
+    try {
+      final pm = order.product.toMap();
+      final String? tmcId = (pm['tmcId'] ??
+          pm['tmc_id'] ??
+          pm['materialId'] ??
+          pm['material_id']) as String?;
+      final dynamic qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
+      final double qty =
+          (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
+
+      if (tmcId == null || qty <= 0) return;
+
+      // вызываем writeoff для типа paper по ID
+      await _supabase.rpc('writeoff', params: {
+        'type': 'paper',
+        'item': tmcId,
+        'qty': qty,
+        'reason': 'Списание при создании заказа',
+        'by_name': 'OrdersProvider'
+      });
+    } catch (e) {
+      // если недостаточно остатков — пробрасываем, чтобы показать ошибку пользователю
+      rethrow;
+    }
+  }
 
   Future<void> applyStockOnFulfillment(OrderModel order) async {
     await _applyStockDelta(order, isShipment: true);
@@ -313,13 +342,13 @@ class OrdersProvider with ChangeNotifier {
   }) async {
     final pm = order.product.toMap();
 
-    final tmcId = (pm['tmcId'] ??
+    final String? tmcId = (pm['tmcId'] ??
         pm['tmc_id'] ??
         pm['materialId'] ??
         pm['material_id']) as String?;
 
-    final qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
-    final qty =
+    final dynamic qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
+    final double qty =
         (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
 
     if (tmcId == null || qty <= 0) return;
@@ -335,23 +364,18 @@ class OrdersProvider with ChangeNotifier {
     }
   }
 
-  // ===== helpers =====
+  // ===== HELPERS =====
 
-  /// Если нужен человекочитаемый номер типа ORD-YYYY-N — генерируйте и
-  /// кладите его в data.number (НЕ в documents.id).
+  /// Генерирует человекочитаемый номер заказа типа ORD-YYYY-N.
+  /// Храните его в поле модели (не в PK).
   String generateHumanNumber({int? sequence}) {
     final year = DateTime.now().year;
-    final n = (sequence ??
-        (_orders.where((o) {
-          // если вы где-то храните number в data, можете считать по нему
-          return true;
-        }).length +
-            1));
+    final n = sequence ?? (_orders.length + 1);
     return 'ORD-$year-$n';
   }
 
-  /// Генерирует человекочитаемый номер задания (НЕ UUID), вида `ZK-YYYY-NNN`.
-  /// Храните его в `order.assignmentId` (в data), а не в documents.id.
+  /// Генерирует человекочитаемый номер задания вида `ZK-YYYY-NNN`.
+  /// Храните его в `assignmentId` модели заказа.
   String generateAssignmentId({String prefix = 'ZK'}) {
     final year = DateTime.now().year;
     int maxSeq = 0;
@@ -366,5 +390,48 @@ class OrdersProvider with ChangeNotifier {
     }
     final next = (maxSeq + 1).toString().padLeft(3, '0');
     return '$prefix-$year-$next';
+  }
+
+  /// Генерирует читаемый номер заказа: `ЗК-YYYY.MM.DD-N` (N — порядковый за день).
+  Future<String> generateReadableOrderId(
+    DateTime date, {
+    String prefix = 'ЗК',
+  }) async {
+    await _ensureAuthed();
+    final yyyy = date.year.toString().padLeft(4, '0');
+    final mm = date.month.toString().padLeft(2, '0');
+    final dd = date.day.toString().padLeft(2, '0');
+    final datePrefix = '$prefix-$yyyy.$mm.$dd-';
+    int maxSeq = 0;
+
+    // Смотрим уже загруженные заказы в провайдере
+    for (final o in _orders) {
+      final aid = o.assignmentId ?? '';
+      if (!aid.startsWith(datePrefix)) continue;
+      final parts = aid.split('-');
+      if (parts.length < 3) continue;
+      final seq = int.tryParse(parts.last) ?? 0;
+      if (seq > maxSeq) maxSeq = seq;
+    }
+
+    // Дополнительно проверим по БД на всякий случай
+    try {
+      final rows = await _supabase
+          .from('orders')
+          .select('assignment_id')
+          .ilike('assignment_id', '${datePrefix}%');
+
+      for (final r in (rows as List)) {
+        final aid = (r['assignment_id'] ?? '').toString();
+        if (!aid.startsWith(datePrefix)) continue;
+        final parts = aid.split('-');
+        if (parts.length < 3) continue;
+        final seq = int.tryParse(parts.last) ?? 0;
+        if (seq > maxSeq) maxSeq = seq;
+      }
+    } catch (_) {}
+
+    final next = (maxSeq + 1).toString();
+    return '$datePrefix$next';
   }
 }

@@ -1,7 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../services/doc_db.dart';
 final _supabase = Supabase.instance.client;
-
+final _docDb = DocDB();
 class EmployeeRepository {
   Future<void> addEmployee({
     required String userId,
@@ -12,30 +12,33 @@ class EmployeeRepository {
     bool isTechLeader = false,
     List<String> positionIds = const [],
   }) async {
-    await _supabase.from('employees').insert({
-      'user_id': userId,
-      'first_name': firstName,
-      'last_name': lastName,
+    await _docDb.insert('employees', {
+      'userId': userId,
+      'firstName': firstName,
+      'lastName': lastName,
       'patronymic': patronymic,
       'iin': iin,
-      'is_tech_leader': isTechLeader,
-      'position_ids': positionIds,
+      'isTechLeader': isTechLeader,
+      'positionIds': positionIds,
     });
   }
 
   Future<List<Map<String, dynamic>>> fetchEmployees() async {
-    final rows = await _supabase
-        .from('employees')
-        .select()
-        .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(rows);
+    final rows = await _docDb.list('employees');
+    return rows
+        .map((row) {
+          final data = Map<String, dynamic>.from(row['data'] ?? {});
+          data['id'] = row['id'];
+          return data;
+        })
+        .toList();
   }
 
   Future<void> updateEmployee(String id, Map<String, dynamic> patch) async {
-    await _supabase.from('employees').update(patch).eq('id', id);
+    await _docDb.patchById(id, patch);
   }
 
   Future<void> deleteEmployee(String id) async {
-    await _supabase.from('employees').delete().eq('id', id);
+    await _docDb.deleteById(id);
   }
 }

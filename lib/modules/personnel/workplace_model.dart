@@ -1,15 +1,15 @@
 class WorkplaceModel {
   final String id;
   final String name;
+  final String? description;
   final List<String> positionIds;
-  /// Признак наличия станка/оборудования на рабочем месте.
   final bool hasMachine;
-  /// Максимальное количество сотрудников, которые могут одновременно работать на этом месте.
   final int maxConcurrentWorkers;
 
   WorkplaceModel({
     required this.id,
     required this.name,
+    this.description,
     required this.positionIds,
     this.hasMachine = false,
     this.maxConcurrentWorkers = 1,
@@ -19,7 +19,9 @@ class WorkplaceModel {
   /// В Supabase это представление используется для вставки или обновления
   /// строки в таблице `workplaces`.
   Map<String, dynamic> toMap() => {
+        'id': id,
         'name': name,
+        'description': description,
         'positionIds': positionIds,
         'has_machine': hasMachine,
         'max_concurrent_workers': maxConcurrentWorkers,
@@ -31,8 +33,12 @@ class WorkplaceModel {
       WorkplaceModel(
         id: id,
         name: map['name'] as String? ?? '',
+        description: map['description'] as String?,
         positionIds: List<String>.from(map['positionIds'] ?? []),
-        hasMachine: map['has_machine'] as bool? ?? map['hasMachine'] as bool? ?? false,
-        maxConcurrentWorkers: (map['max_concurrent_workers'] as int?) ?? (map['maxConcurrentWorkers'] as int?) ?? 1,
+        hasMachine:
+            map['has_machine'] as bool? ?? map['hasMachine'] as bool? ?? false,
+        maxConcurrentWorkers: (map['max_concurrent_workers'] as int?) ??
+            (map['maxConcurrentWorkers'] as int?) ??
+            1,
       );
 }

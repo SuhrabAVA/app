@@ -16,7 +16,7 @@ class DocDB {
       if (explicitId != null) 'id': explicitId,
       'collection': collection,
       'data': data,
-      'created_by': uid,
+      if (uid != null) 'created_by': uid,
     };
 
     final res = await s.from('documents').insert(row).select().single();

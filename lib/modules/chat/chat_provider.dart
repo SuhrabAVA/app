@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
-
 import 'chat_message.dart';
 
 /// Провайдер чата для Supabase.
@@ -13,12 +12,12 @@ import 'chat_message.dart';
 /// Хранилище: bucket 'chat'
 class ChatProvider with ChangeNotifier {
   final SupabaseClient _sb = Supabase.instance.client;
-  final _uuid = const Uuid();
+final _uuid = const Uuid();
 
   // roomId -> messages
   final Map<String, List<ChatMessage>> _byRoom = {};
   // roomId -> subscription
-  final Map<String, StreamSubscription<List<Map<String, dynamic>>>> _subs = {};
+  final Map<String, dynamic> _subs = {};
   // senderId -> full name кеш
   final Map<String, String> _namesCache = {};
 
@@ -27,77 +26,117 @@ class ChatProvider with ChangeNotifier {
 
   bool isSubscribed(String roomId) => _subs.containsKey(roomId);
 
-  /// Реал-тайм подписка
-  Future<void> subscribe(String roomId) async {
-    if (_subs.containsKey(roomId)) return;
+  
+/// Реал-тайм подписка
+Future<void> subscribe(String roomId) async {
+  if (_subs.containsKey(roomId)) return;
 
-    final stream = _sb
+  // 1) Первичная загрузка истории
+  try {
+    final rows = await _sb
         .from('chat_messages')
-        .stream(primaryKey: ['id'])
+        .select('*')
         .eq('room_id', roomId)
         .order('created_at');
 
-    final sub = stream.listen((rows) async {
-      // Базовый список
-      var list = rows.map(ChatMessage.fromMap).toList()
+    var list = <ChatMessage>[];
+    if (rows is List) {
+      list = rows.map((row) => ChatMessage.fromMap(Map<String, dynamic>.from(row))).toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
+    _byRoom[roomId] = list;
+    notifyListeners();
 
-      // Собираем id отправителей с пустым именем и которых ещё нет в кешe
-      final missing = <String>{};
-      for (final m in list) {
-        final sid = (m.senderId ?? '').trim();
-        final hasName = (m.senderName ?? '').trim().isNotEmpty;
-        if (sid.isNotEmpty && !hasName && !_namesCache.containsKey(sid)) {
-          missing.add(sid);
+    // Подтягиваем имена, которых нет
+    final missing = <String>{};
+    for (final m in list) {
+      final sid = (m.senderId ?? '').trim();
+      final hasName = (m.senderName ?? '').trim().isNotEmpty;
+      if (sid.isNotEmpty && !hasName && !_namesCache.containsKey(sid)) {
+        missing.add(sid);
+      }
+    }
+    if (missing.isNotEmpty) {
+      final res = await _sb
+          .from('documents')
+          .select('id, data')
+          .filter('collection', 'eq', 'employees')
+          .inFilter('id', missing.toList());
+      if (res is List) {
+        for (final row in res) {
+          final data = Map<String, dynamic>.from(row['data'] ?? {});
+          final id = (row['id'] ?? '').toString();
+          final last = (data['lastName'] ?? '').toString();
+          final first = (data['firstName'] ?? '').toString();
+          final patr = (data['patronymic'] ?? '').toString();
+          _namesCache[id] = _fullName(last, first, patr);
         }
       }
+    }
+  } catch (_) {}
 
-      // Подтягиваем имена из employees одним запросом
-      if (missing.isNotEmpty) {
-        try {
-          final res = await _sb
-              .from('employees')
-              .select('id, firstName, lastName, patronymic')
-              .inFilter('id', missing.toList());
-          if (res is List) {
-            for (final row in res) {
-              final r = Map<String, dynamic>.from(row);
-              final id = (r['id'] ?? '').toString();
-              final full = _fullName(
-                r['lastName']?.toString(),
-                r['firstName']?.toString(),
-                r['patronymic']?.toString(),
-              );
-              if (id.isNotEmpty && full.isNotEmpty) {
-                _namesCache[id] = full;
-              }
-            }
+  // 2) Realtime подписка на изменения в documents
+  final channel = _sb.channel('realtime:public:chat_messages');
+
+  channel.onPostgresChanges(
+    event: PostgresChangeEvent.all,
+    schema: 'public',
+    table: 'chat_messages',
+    callback: (payload) {
+      try {
+        final recNew = Map<String, dynamic>.from(payload.newRecord ?? {});
+        final recOld = Map<String, dynamic>.from(payload.oldRecord ?? {});
+
+        final rid = (recNew['room_id'] ?? recOld['room_id'] ?? '').toString();
+        if (rid != roomId) return;
+
+        final id = (recNew['id'] ?? recOld['id'] ?? '').toString();
+        final list = List<ChatMessage>.from(_byRoom[roomId] ?? const <ChatMessage>[]);
+
+        if (recNew.isNotEmpty && (payload.oldRecord == null || recOld.isEmpty)) {
+          // INSERT
+          final msg = ChatMessage.fromMap(recNew);
+          list.add(msg);
+          list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+          _byRoom[roomId] = list;
+          notifyListeners();
+        } else if (recNew.isNotEmpty && recOld.isNotEmpty) {
+          // UPDATE
+          final msg = ChatMessage.fromMap(recNew);
+          final idx = list.indexWhere((m) => (m.id ?? '') == id);
+          if (idx >= 0) {
+            list[idx] = msg;
+          } else {
+            list.add(msg);
           }
-        } catch (_) {/* тихо */}
-      }
+          list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+          _byRoom[roomId] = list;
+          notifyListeners();
+        } else if (recNew.isEmpty && recOld.isNotEmpty) {
+          // DELETE
+          list.removeWhere((m) => (m.id ?? '') == id);
+          _byRoom[roomId] = list;
+          notifyListeners();
+        }
+      } catch (_) {}
+    },
+  );
 
-      // Обогащаем сообщения именем из кеша
-      list = list
-          .map((m) => ((m.senderName ?? '').trim().isEmpty &&
-                  (m.senderId ?? '').isNotEmpty &&
-                  _namesCache[(m.senderId ?? '')] != null)
-              ? m.copyWith(senderName: _namesCache[(m.senderId ?? '')])
-              : m)
-          .toList();
+  await channel.subscribe();
+  _subs[roomId] = channel;
+}
 
-      _byRoom[roomId] = list;
-      notifyListeners();
-    });
-
-    _subs[roomId] = sub;
+Future<void> unsubscribe(String roomId) async {
+  final sub = _subs.remove(roomId);
+  if (sub is RealtimeChannel) {
+    await sub.unsubscribe();
+  } else if (sub is StreamSubscription) {
+    await sub.cancel();
   }
+}
 
-  Future<void> unsubscribe(String roomId) async {
-    final s = _subs.remove(roomId);
-    await s?.cancel();
-  }
-
-  /// Текст
+/// Текст
+    /// Текст
   Future<void> sendText({
     required String roomId,
     required String? senderId,
@@ -117,6 +156,7 @@ class ChatProvider with ChangeNotifier {
   }
 
   /// Файл/медиа
+    /// Файл/медиа
   Future<void> sendFile({
     required String roomId,
     required String? senderId,
@@ -176,7 +216,11 @@ class ChatProvider with ChangeNotifier {
   @override
   void dispose() {
     for (final s in _subs.values) {
-      s.cancel();
+      if (s is StreamSubscription) {
+        s.cancel();
+      } else if (s is RealtimeChannel) {
+        s.unsubscribe();
+      }
     }
     _subs.clear();
     super.dispose();

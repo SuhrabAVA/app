@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Windows",
+      "request": "launch",
+      "type": "dart",
+      "toolArgs": [
+        "--dart-define=WAREHOUSE_EMAIL=admin@example.com",
+        "--dart-define=WAREHOUSE_PASSWORD=StrongPass123!"
+      ]
+    },
+    {
+      "name": "Chrome",
+      "request": "launch",
+      "type": "dart",
+      "toolArgs": [
+        "--dart-define=WAREHOUSE_EMAIL=niskastalker@gmail.com",
+        "--dart-define=WAREHOUSE_PASSWORD=Tt5547595"
+      ]
+    }
+  ]
+}

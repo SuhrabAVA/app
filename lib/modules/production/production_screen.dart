@@ -97,7 +97,7 @@ class _ProductionScreenState extends State<ProductionScreen>
     }
   }
 
-  String _displayId(OrderModel order) {
+  String _displayName(OrderModel order) {
     final code = _try<String?>(() => (order as dynamic).code);
     final orderCode = _try<String?>(() => (order as dynamic).orderCode);
     final id = _try<String?>(() => (order as dynamic).id) ?? '';
@@ -106,6 +106,12 @@ class _ProductionScreenState extends State<ProductionScreen>
         (id.isNotEmpty
             ? 'ID ${id.substring(0, id.length.clamp(0, 8))}'
             : 'Заказ');
+  }
+
+  String _displayCustomer(OrderModel order) {
+    final name = _try<String?>(() => (order as dynamic).customer)?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    return _displayName(order);
   }
 
   String _productDesc(OrderModel order) {
@@ -278,7 +284,7 @@ class _ProductionScreenState extends State<ProductionScreen>
                 final label = _statusLabels[agg]!;
                 final color = _statusColors[agg]!;
 
-                final displayId = _displayId(order);
+                final displayName = _displayCustomer(order);
                 final productDesc = _productDesc(order);
                 final qty = _qtyText(order);
                 final dueDt = _dueDate(order);
@@ -304,7 +310,7 @@ class _ProductionScreenState extends State<ProductionScreen>
                           children: [
                             Expanded(
                               child: Text(
-                                displayId,
+                                displayName,
                                 style: TextStyle(
                                   color: Colors.grey.shade700,
                                   fontSize: 12,

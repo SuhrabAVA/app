@@ -2,10 +2,10 @@
 import 'dart:io' show File;
 import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'doc_db.dart';
 /// Единый клиент Supabase
 final supabase = Supabase.instance.client;
-
+final DocDB _docDb = DocDB();
 /// Имя приватного бакета
 const String kOrderBucket = 'order-attachments';
 
@@ -125,20 +125,17 @@ Future<Map<String, dynamic>> linkOrderPdf({
   _ensureAuthed();
 
   final userId = supabase.auth.currentUser!.id;
-  final rows = await supabase
-      .from('order_files')
-      .upsert({
-        'order_id': orderId,
-        'object_path': objectPath, // должен быть UNIQUE
-        'filename': fileName,
-        'mime_type': 'application/pdf',
-        'size_bytes': sizeBytes,
-        'created_by': userId,
-      }, onConflict: 'object_path')
-      .select()
-      .single();
-
-  return (rows as Map<String, dynamic>);
+  final row = await _docDb.insert('order_files', {
+    'orderId': orderId,
+    'objectPath': objectPath,
+    'filename': fileName,
+    'mimeType': 'application/pdf',
+    'sizeBytes': sizeBytes,
+    'createdBy': userId,
+  });
+  final data = Map<String, dynamic>.from(row['data'] ?? {});
+  data['id'] = row['id'];
+  return data;
 }
 
 /// Приватная подписанная ссылка
@@ -155,16 +152,21 @@ Future<String> getSignedUrl(String objectPath,
 Future<void> deleteOrderFile(String objectPath) async {
   _ensureAuthed();
   await supabase.storage.from(kOrderBucket).remove([objectPath]);
-  await supabase.from('order_files').delete().eq('object_path', objectPath);
+  final rows = await _docDb.whereEq('order_files', 'objectPath', objectPath);
+  for (final r in rows) {
+    await _docDb.deleteById(r['id'] as String);
+  }
 }
 
 /// Список файлов заказа по метаданным
 Future<List<Map<String, dynamic>>> listOrderFiles(String orderId) async {
   _ensureAuthed();
-  final res = await supabase
-      .from('order_files')
-      .select()
-      .eq('order_id', orderId)
-      .order('created_at', ascending: false);
-  return (res as List).cast<Map<String, dynamic>>();
+  final res = await _docDb.whereEq('order_files', 'orderId', orderId);
+  return res
+      .map((row) {
+        final data = Map<String, dynamic>.from(row['data'] ?? {});
+        data['id'] = row['id'];
+        return data;
+      })
+      .toList();
 }
