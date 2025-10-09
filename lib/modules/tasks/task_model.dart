@@ -20,12 +20,30 @@ class TaskComment {
   });
 
   factory TaskComment.fromMap(Map<String, dynamic> map, String id) {
+    int _parseTs(dynamic value) {
+      if (value == null) return 0;
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is DateTime) return value.millisecondsSinceEpoch;
+      if (value is String) {
+        final raw = value.trim();
+        if (raw.isEmpty) return 0;
+        final intVal = int.tryParse(raw);
+        if (intVal != null) return intVal;
+        final doubleVal = double.tryParse(raw);
+        if (doubleVal != null) return doubleVal.toInt();
+        final parsedDate = DateTime.tryParse(raw);
+        if (parsedDate != null) return parsedDate.millisecondsSinceEpoch;
+      }
+      return 0;
+    }
+
     return TaskComment(
       id: id,
       type: map['type'] as String? ?? '',
       text: map['text'] as String? ?? '',
       userId: map['userId'] as String? ?? '',
-      timestamp: map['timestamp'] is int ? map['timestamp'] as int : 0,
+      timestamp: _parseTs(map['timestamp']),
     );
   }
 

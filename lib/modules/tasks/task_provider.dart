@@ -9,6 +9,7 @@ class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TaskModel> _tasks = [];
+  final Map<String, List<String>> _orderStageSequences = {};
   RealtimeChannel? _channel;
 
   TaskProvider() {
@@ -16,6 +17,10 @@ class TaskProvider with ChangeNotifier {
   }
 
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
+  List<String>? stageSequenceForOrder(String orderId) {
+    final seq = _orderStageSequences[orderId];
+    return seq == null ? null : List.unmodifiable(seq);
+  }
 
   Future<void> _ensureAuthed() async {
     final auth = _supabase.auth;
@@ -74,6 +79,8 @@ class TaskProvider with ChangeNotifier {
       _tasks
         ..clear()
         ..addAll(List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
+      final orderIds = _tasks.map((t) => t.orderId).toSet();
+      await _preloadStageSequences(orderIds);
       notifyListeners();
     } catch (e, st) {
       debugPrint('❌ refresh tasks error: $e\n$st');
@@ -104,6 +111,123 @@ class TaskProvider with ChangeNotifier {
   }
 
   // ===== updates =====
+
+  Future<void> _preloadStageSequences(Iterable<String> orderIds) async {
+    for (final orderId in orderIds) {
+      if (orderId.isEmpty) {
+        continue;
+      }
+      final existing = _orderStageSequences[orderId];
+      if (existing != null && existing.isNotEmpty) {
+        continue;
+      }
+      final seq = await _fetchStageSequence(orderId);
+      if (seq.isNotEmpty) {
+        _orderStageSequences[orderId] = seq;
+      }
+    }
+  }
+
+  int _readOrderIndex(Map<String, dynamic> row) {
+    dynamic pick(List<String> keys) {
+      for (final k in keys) {
+        if (row.containsKey(k) && row[k] != null) return row[k];
+      }
+      return null;
+    }
+
+    final raw = pick(const ['order', 'position', 'idx', 'step_no', 'stepNo']);
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) {
+      final trimmed = raw.trim();
+      final parsed = int.tryParse(trimmed);
+      if (parsed != null) return parsed;
+      final alt = int.tryParse(trimmed.replaceAll(RegExp(r'[^0-9-]'), ''));
+      if (alt != null) return alt;
+    }
+    return 0;
+  }
+
+  String _readStageId(Map<String, dynamic> row) {
+    dynamic pick(List<String> keys) {
+      for (final k in keys) {
+        if (row.containsKey(k) && row[k] != null) return row[k];
+      }
+      return null;
+    }
+
+    final raw = pick(const ['stage_id', 'stageId', 'id']);
+    if (raw == null) return '';
+    return raw.toString();
+  }
+
+  Future<List<String>> _fetchStageSequence(String orderId) async {
+    await _ensureAuthed();
+
+    Future<List<String>> fromRows(dynamic rows) async {
+      if (rows is! List || rows.isEmpty) return const [];
+      final list = <Map<String, dynamic>>[];
+      for (final r in rows) {
+        if (r is Map<String, dynamic>) {
+          list.add(r);
+        } else if (r is Map) {
+          list.add(Map<String, dynamic>.from(r));
+        }
+      }
+      if (list.isEmpty) return const [];
+      list.sort((a, b) {
+        final ai = _readOrderIndex(a);
+        final bi = _readOrderIndex(b);
+        if (ai != bi) return ai.compareTo(bi);
+        return _readStageId(a).compareTo(_readStageId(b));
+      });
+      final result = <String>[];
+      for (final m in list) {
+        final id = _readStageId(m);
+        if (id.isNotEmpty && !result.contains(id)) {
+          result.add(id);
+        }
+      }
+      return result;
+    }
+
+    // Try new schema production.*
+    try {
+      final plan = await _supabase
+          .from('production.plans')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['id'] != null) {
+        final rows = await _supabase
+            .from('production.plan_stages')
+            .select('stage_id, order, position, idx, step_no')
+            .eq('plan_id', plan['id'].toString());
+        final seq = await fromRows(rows);
+        if (seq.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Fallback to legacy public.* tables
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['id'] != null) {
+        final rows = await _supabase
+            .from('prod_plan_stages')
+            .select('stage_id, order, position, idx, step_no')
+            .eq('plan_id', plan['id'].toString());
+        final seq = await fromRows(rows);
+        if (seq.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    return const [];
+  }
 
   /// Создаёт отдельную задачу для пользователя (режим "Отдельный исполнитель").
   /// Клонирует order_id и stage_id, задаёт status=inProgress и started_at=now,

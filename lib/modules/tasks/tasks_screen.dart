@@ -126,21 +126,37 @@ bool _isFirstPendingStage(
       stages.entries.where((e) => e.value).map((e) => e.key).toList();
   if (pendingStageIds.isEmpty) return true;
 
-  // Отсортировать по названию рабочего места (fallback к id)
-  int byName(String a, String b) {
-    String name(String id) {
-      try {
-        final w = personnel.workplaces.firstWhere((w) => w.id == id);
-        return (w.name.isNotEmpty ? w.name : id).toLowerCase();
-      } catch (_) {
-        return id.toLowerCase();
+  final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
+  if (orderedStages.isNotEmpty) {
+    final indexMap = <String, int>{};
+    for (var i = 0; i < orderedStages.length; i++) {
+      indexMap.putIfAbsent(orderedStages[i], () => i);
+    }
+    pendingStageIds.sort((a, b) {
+      final ia = indexMap[a];
+      final ib = indexMap[b];
+      if (ia != null && ib != null) return ia.compareTo(ib);
+      if (ia != null) return -1;
+      if (ib != null) return 1;
+      return a.compareTo(b);
+    });
+  } else {
+    // Отсортировать по названию рабочего места (fallback к id)
+    int byName(String a, String b) {
+      String name(String id) {
+        try {
+          final w = personnel.workplaces.firstWhere((w) => w.id == id);
+          return (w.name.isNotEmpty ? w.name : id).toLowerCase();
+        } catch (_) {
+          return id.toLowerCase();
+        }
       }
+
+      return name(a).compareTo(name(b));
     }
 
-    return name(a).compareTo(name(b));
+    pendingStageIds.sort(byName);
   }
-
-  pendingStageIds.sort(byName);
 
   // Первый незавершённый этап
   final firstPendingStageId = pendingStageIds.first;
@@ -282,6 +298,74 @@ class _TasksScreenState extends State<TasksScreen>
       return '${two(d.day)}.${two(d.month)} ${two(d.hour)}:${two(d.minute)}:${two(d.second)}';
     } catch (_) {
       return '';
+    }
+  }
+
+  String _employeeDisplayName(PersonnelProvider personnel, String userId) {
+    if (userId.isEmpty) return '';
+    try {
+      final emp = personnel.employees.firstWhere((e) => e.id == userId);
+      final full = '${emp.firstName} ${emp.lastName}'.trim();
+      return full.isNotEmpty ? full : userId;
+    } catch (_) {
+      return userId;
+    }
+  }
+
+  String _formatQuantityDisplay(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '0';
+    final numeric = RegExp(r'^[0-9]+([.,][0-9]+)?$');
+    if (!numeric.hasMatch(trimmed)) return trimmed;
+    final normalised = trimmed.replaceAll(',', '.');
+    final value = double.tryParse(normalised);
+    if (value == null) return trimmed;
+    if ((value - value.round()).abs() < 0.0001) {
+      return '${value.round()} шт.';
+    }
+    return '${value.toStringAsFixed(2)} шт.';
+  }
+
+  String _describeComment(TaskComment comment) {
+    switch (comment.type) {
+      case 'start':
+        return 'Начал(а) этап';
+      case 'pause':
+        return comment.text.isEmpty
+            ? 'Пауза'
+            : 'Пауза: ${comment.text}';
+      case 'resume':
+        return 'Возобновил(а) этап';
+      case 'user_done':
+        return 'Завершил(а) этап';
+      case 'problem':
+        return comment.text.isEmpty
+            ? 'Сообщил(а) о проблеме'
+            : 'Проблема: ${comment.text}';
+      case 'setup_start':
+        return 'Начал(а) настройку станка';
+      case 'setup_done':
+        return 'Завершил(а) настройку станка';
+      case 'quantity_done':
+        return 'Выполнил(а): ${_formatQuantityDisplay(comment.text)}';
+      case 'quantity_team_total':
+        return 'Команда выполнила: ${_formatQuantityDisplay(comment.text)}';
+      case 'quantity_share':
+        return 'Доля участника: ${_formatQuantityDisplay(comment.text)}';
+      case 'finish_note':
+        return comment.text.isEmpty
+            ? 'Комментарий к завершению'
+            : 'Комментарий к завершению: ${comment.text}';
+      case 'joined':
+        return 'Присоединился(лась) к этапу';
+      case 'exec_mode':
+        final normalized = comment.text.toLowerCase();
+        if (normalized.contains('joint') || normalized.contains('совмест')) {
+          return 'Режим: совместное исполнение';
+        }
+        return 'Режим: отдельный исполнитель';
+      default:
+        return comment.text;
     }
   }
 
@@ -743,8 +827,10 @@ class _TasksScreenState extends State<TasksScreen>
       return activeNow < effCap;
     }
 
-    final bool canStart = ((task.assignees.isEmpty ||
-                task.assignees.contains(widget.employeeId)) &&
+    final bool alreadyAssigned = task.assignees.contains(widget.employeeId);
+    final bool isFirstAssignee = task.assignees.isEmpty;
+    final bool canAutoAssign = !alreadyAssigned && !isFirstAssignee && _slotAvailable();
+    final bool canStart = (((isFirstAssignee || alreadyAssigned || canAutoAssign)) &&
             (task.status == TaskStatus.waiting ||
                 task.status == TaskStatus.paused ||
                 task.status == TaskStatus.problem ||
@@ -1199,19 +1285,14 @@ class _TasksScreenState extends State<TasksScreen>
                       rows.add(const SizedBox(height: 8));
                     }
                   }
-                  if (jointUsers.isNotEmpty || task.assignees.isEmpty) {
-                    final labels =
-                        (jointUsers.isEmpty && task.assignees.isEmpty)
-                            ? <String>[]
-                            : jointUsers.map(nameFor).toList();
+                  if (jointUsers.isNotEmpty) {
+                    final labels = jointUsers.map(nameFor).toList();
                     final label = labels.isEmpty
                         ? 'Совместное исполнение'
                         : 'Помощники: ' + labels.join(', ');
                     if (separateUsers.isEmpty) {
-                      // No separate performers yet: allow joint group controls
                       rows.add(buildControlsFor(label, jointGroup: jointUsers));
                     } else {
-                      // Separate performers exist: hide controls for helpers, show only label
                       rows.add(Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Text(label,
@@ -1220,6 +1301,12 @@ class _TasksScreenState extends State<TasksScreen>
                                 color: Colors.grey)),
                       ));
                     }
+                  } else if (task.assignees.isEmpty) {
+                    rows.add(buildControlsFor('Совместное исполнение',
+                        jointGroup: jointUsers));
+                  }
+                  if (!task.assignees.contains(widget.employeeId) && canStart) {
+                    rows.add(buildControlsFor('Вы', userId: widget.employeeId));
                   }
                   return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1234,6 +1321,7 @@ class _TasksScreenState extends State<TasksScreen>
               const SizedBox(height: 4),
               Builder(
                 builder: (context) {
+                  final personnel = context.watch<PersonnelProvider>();
                   final comments = task.comments;
                   if (comments.isEmpty) {
                     return const Text('Нет комментариев',
@@ -1248,36 +1336,75 @@ class _TasksScreenState extends State<TasksScreen>
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(
-                                c.type == 'problem'
-                                    ? Icons.error_outline
-                                    : (c.type == 'pause'
-                                        ? Icons.pause_circle_outline
-                                        : Icons.info_outline),
-                                size: 18,
-                                color: c.type == 'problem'
-                                    ? Colors.redAccent
-                                    : (c.type == 'pause'
-                                        ? Colors.orange
-                                        : Colors.blueGrey),
-                              ),
+                              Builder(builder: (_) {
+                                IconData icon = Icons.info_outline;
+                                Color color = Colors.blueGrey;
+                                switch (c.type) {
+                                  case 'problem':
+                                    icon = Icons.error_outline;
+                                    color = Colors.redAccent;
+                                    break;
+                                  case 'pause':
+                                    icon = Icons.pause_circle_outline;
+                                    color = Colors.orange;
+                                    break;
+                                  case 'user_done':
+                                  case 'quantity_done':
+                                  case 'quantity_team_total':
+                                    icon = Icons.check_circle_outline;
+                                    color = Colors.green;
+                                    break;
+                                  case 'setup_start':
+                                  case 'setup_done':
+                                    icon = Icons.build_outlined;
+                                    color = Colors.indigo;
+                                    break;
+                                  case 'joined':
+                                    icon = Icons.group_add_outlined;
+                                    color = Colors.teal;
+                                    break;
+                                  case 'exec_mode':
+                                    icon = Icons.settings_input_component_outlined;
+                                    color = Colors.purple;
+                                    break;
+                                  default:
+                                    icon = Icons.info_outline;
+                                    color = Colors.blueGrey;
+                                }
+                                return Icon(icon, size: 18, color: color);
+                              }),
                               const SizedBox(width: 4),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // prepend timestamp to comments for better traceability
-                                    if (c.timestamp != null)
-                                      Text(
-                                        _formatTimestamp(c.timestamp),
-                                        style: const TextStyle(
-                                            fontSize: 10, color: Colors.grey),
-                                      ),
-                                    Text(
-                                      c.text,
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                  ],
+                                child: Builder(
+                                  builder: (_) {
+                                    final headerParts = <String>[];
+                                    final ts = _formatTimestamp(c.timestamp);
+                                    if (ts.isNotEmpty) headerParts.add(ts);
+                                    final author =
+                                        _employeeDisplayName(personnel, c.userId);
+                                    if (author.isNotEmpty) {
+                                      headerParts.add(author);
+                                    }
+                                    final header = headerParts.join(' • ');
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (header.isNotEmpty)
+                                          Text(
+                                            header,
+                                            style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.grey),
+                                          ),
+                                        Text(
+                                          _describeComment(c),
+                                          style:
+                                              const TextStyle(fontSize: 14),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ),
                             ],
