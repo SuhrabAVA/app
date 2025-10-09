@@ -1136,7 +1136,8 @@ class _TasksScreenState extends State<TasksScreen>
                         final _secs = _elapsed(latestTask).inSeconds;
                         await taskProvider.updateStatus(task.id, TaskStatus.completed,
                             spentSeconds: _secs, startedAt: null);
-                        final note = await _askFinishNote(context);
+                        if (!mounted) return;
+                        final note = await _askFinishNote();
                         if (note != null && note.isNotEmpty) {
                           await taskProvider.addCommentAutoUser(
                               taskId: task.id,
@@ -1186,7 +1187,8 @@ class _TasksScreenState extends State<TasksScreen>
                           final _secs = _elapsed(latestTask).inSeconds;
                           await taskProvider.updateStatus(task.id, TaskStatus.completed,
                               spentSeconds: _secs, startedAt: null);
-                          final note = await _askFinishNote(context);
+                          if (!mounted) return;
+                          final note = await _askFinishNote();
                           if (note != null && note.isNotEmpty) {
                             await taskProvider.addCommentAutoUser(
                                 taskId: task.id,
@@ -1786,11 +1788,12 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Future<String?> _askFinishNote(BuildContext context) async {
+  Future<String?> _askFinishNote() async {
+    if (!mounted) return null;
     final controller = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Комментарий к завершению'),
         content: TextField(
           controller: controller,
@@ -1801,16 +1804,17 @@ class _TasksScreenState extends State<TasksScreen>
             border: OutlineInputBorder(),
           ),
           textInputAction: TextInputAction.done,
-          onSubmitted: (_) => Navigator.of(context).pop(controller.text.trim()),
+          onSubmitted: (_) => Navigator.of(ctx).pop(controller.text.trim()),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Отмена'),
+          ),
           ElevatedButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Сохранить')),
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Сохранить'),
+          ),
         ],
       ),
     );
