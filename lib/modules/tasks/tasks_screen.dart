@@ -314,6 +314,7 @@ class _TasksScreenState extends State<TasksScreen>
         taskId: task.id,
         type: 'start',
         text: 'Начал(а) этап',
+        userIdOverride: userId,
       );
     } else {
       // helper: note the join but do not mark as started
@@ -321,6 +322,7 @@ class _TasksScreenState extends State<TasksScreen>
         taskId: task.id,
         type: 'joined',
         text: 'Присоединился(лась) к этапу',
+        userIdOverride: userId,
       );
     }
   }
@@ -958,6 +960,13 @@ class _TasksScreenState extends State<TasksScreen>
                               userId: widget.employeeId,
                             );
                       }
+                      if (!task.assignees.contains(widget.employeeId)) {
+                        final newAssignees = List<String>.from(task.assignees)
+                          ..add(widget.employeeId);
+                        await context
+                            .read<TaskProvider>()
+                            .updateAssignees(task.id, newAssignees);
+                      }
                       // Обновляем статус задачи. Не сбрасываем startedAt, если этап уже
                       // находится в работе – используем существующее значение. В
                       // состоянии паузы или проблемы возобновляем работу с тем же
@@ -976,14 +985,18 @@ class _TasksScreenState extends State<TasksScreen>
                       await context.read<TaskProvider>().addCommentAutoUser(
                           taskId: task.id,
                           type: 'start',
-                          text: 'Начал(а) этап');
+                          text: 'Начал(а) этап',
+                          userIdOverride: widget.employeeId);
                     }
 
                     Future<void> onPause() async {
                       final comment = await _askComment('Причина паузы');
                       if (comment == null) return;
                       await context.read<TaskProvider>().addCommentAutoUser(
-                          taskId: task.id, type: 'pause', text: comment);
+                          taskId: task.id,
+                          type: 'pause',
+                          text: comment,
+                          userIdOverride: widget.employeeId);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
                         await context.read<TaskProvider>().updateStatus(
@@ -1003,7 +1016,8 @@ class _TasksScreenState extends State<TasksScreen>
                         await context.read<TaskProvider>().addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_team_total',
-                            text: qty.toString());
+                            text: qty.toString(),
+                            userIdOverride: widget.employeeId);
                         for (final id in jointGroup) {
                           await context.read<TaskProvider>().addComment(
                               taskId: task.id,
@@ -1012,7 +1026,10 @@ class _TasksScreenState extends State<TasksScreen>
                               userId: id);
                         }
                         await context.read<TaskProvider>().addCommentAutoUser(
-                            taskId: task.id, type: 'user_done', text: 'done');
+                            taskId: task.id,
+                            type: 'user_done',
+                            text: 'done',
+                            userIdOverride: widget.employeeId);
                         final _secs = _elapsed(task).inSeconds;
                         await context.read<TaskProvider>().updateStatus(
                             task.id, TaskStatus.completed,
@@ -1020,7 +1037,10 @@ class _TasksScreenState extends State<TasksScreen>
                         final note = await _askFinishNote(context);
                         if (note != null && note.isNotEmpty) {
                           await context.read<TaskProvider>().addCommentAutoUser(
-                              taskId: task.id, type: 'finish_note', text: note);
+                              taskId: task.id,
+                              type: 'finish_note',
+                              text: note,
+                              userIdOverride: widget.employeeId);
                         }
                         return;
                       } else {
@@ -1028,9 +1048,13 @@ class _TasksScreenState extends State<TasksScreen>
                         await context.read<TaskProvider>().addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_done',
-                            text: qty.toString());
+                            text: qty.toString(),
+                            userIdOverride: widget.employeeId);
                         await context.read<TaskProvider>().addCommentAutoUser(
-                            taskId: task.id, type: 'user_done', text: 'done');
+                            taskId: task.id,
+                            type: 'user_done',
+                            text: 'done',
+                            userIdOverride: widget.employeeId);
 
                         // Collect only assignees in 'separate' mode
                         final separateIds = task.assignees
@@ -1064,7 +1088,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 .addCommentAutoUser(
                                     taskId: task.id,
                                     type: 'finish_note',
-                                    text: note);
+                                    text: note,
+                                    userIdOverride: widget.employeeId);
                           }
                         } else {
                           if (context.mounted) {
@@ -1081,7 +1106,10 @@ class _TasksScreenState extends State<TasksScreen>
                       final comment = await _askComment('Причина проблемы');
                       if (comment == null) return;
                       await context.read<TaskProvider>().addCommentAutoUser(
-                          taskId: task.id, type: 'problem', text: comment);
+                          taskId: task.id,
+                          type: 'problem',
+                          text: comment,
+                          userIdOverride: widget.employeeId);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
                         await context
@@ -1283,7 +1311,10 @@ class _TasksScreenState extends State<TasksScreen>
                             await context
                                 .read<TaskProvider>()
                                 .addCommentAutoUser(
-                                    taskId: task.id, type: 'msg', text: txt);
+                                    taskId: task.id,
+                                    type: 'msg',
+                                    text: txt,
+                                    userIdOverride: widget.employeeId);
                             _chatController.clear();
                           }
                         : null,
@@ -1580,6 +1611,7 @@ class _TasksScreenState extends State<TasksScreen>
       taskId: task.id,
       type: 'setup_start',
       text: 'Начал(а) настройку станка',
+      userIdOverride: widget.employeeId,
     );
     if (!task.assignees.contains(widget.employeeId)) {
       try {
@@ -1597,6 +1629,7 @@ class _TasksScreenState extends State<TasksScreen>
       taskId: task.id,
       type: 'setup_done',
       text: 'Завершил(а) настройку станка',
+      userIdOverride: widget.employeeId,
     );
   }
 
@@ -1661,7 +1694,10 @@ class _TasksScreenState extends State<TasksScreen>
     );
 
     await provider.addCommentAutoUser(
-        taskId: task.id, type: 'pause', text: comment);
+        taskId: task.id,
+        type: 'pause',
+        text: comment,
+        userIdOverride: widget.employeeId);
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(
@@ -1687,7 +1723,10 @@ class _TasksScreenState extends State<TasksScreen>
     );
 
     await provider.addCommentAutoUser(
-        taskId: task.id, type: 'problem', text: comment);
+        taskId: task.id,
+        type: 'problem',
+        text: comment,
+        userIdOverride: widget.employeeId);
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(
