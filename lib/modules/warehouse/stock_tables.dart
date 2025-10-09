@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../warehouse/type_table_screen.dart';
+import '../warehouse/type_table_screen.dart' as warehouse;
 
 /// Экран для отображения списка таблиц по остаткам.
 ///
 /// Каждая карточка представляет отдельную категорию складского остатка и
-/// ведёт к экрану [TypeTableScreen], который отображает данные из Supabase.
+/// ведёт к экрану [warehouse.TypeTableScreen], который отображает данные из Supabase.
 class StockTables extends StatelessWidget {
   const StockTables({super.key});
 
@@ -48,7 +48,7 @@ class StockTables extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => TypeTableScreen(
+        builder: (_) => warehouse.TypeTableScreen(
           type: type,
           title: title,
         ),
