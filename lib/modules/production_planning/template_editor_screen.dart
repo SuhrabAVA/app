@@ -36,37 +36,43 @@ class _TemplateEditorScreenState extends State<TemplateEditorScreen> {
 
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Выберите этап'),
-        content: SizedBox(
-          width: 480,
-          child: ListView(
-            shrinkWrap: true,
-            children: personnel.workplaces.map((WorkplaceModel w) {
-              return RadioListTile<String>(
-                value: w.id,
-                groupValue: selectedId,
-                title: Text(w.name),
-                onChanged: (v) => setState(() => selectedId = v),
-              );
-            }).toList(),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          FilledButton(
-            onPressed: () {
-              if (selectedId == null) return;
-              final w = personnel.workplaces.firstWhere((e) => e.id == selectedId);
-              setState(() {
-                _stages.add(PlannedStage(stageId: w.id, stageName: w.name));
-              });
-              Navigator.pop(ctx);
-            },
-            child: const Text('Добавить'),
-          ),
-        ],
-      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Выберите этап'),
+              content: SizedBox(
+                width: 480,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: personnel.workplaces.map((WorkplaceModel w) {
+                    return RadioListTile<String>(
+                      value: w.id,
+                      groupValue: selectedId,
+                      title: Text(w.name),
+                      onChanged: (v) => setStateDialog(() => selectedId = v),
+                    );
+                  }).toList(),
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+                FilledButton(
+                  onPressed: () {
+                    if (selectedId == null) return;
+                    final w = personnel.workplaces.firstWhere((e) => e.id == selectedId);
+                    setState(() {
+                      _stages.add(PlannedStage(stageId: w.id, stageName: w.name));
+                    });
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Добавить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
