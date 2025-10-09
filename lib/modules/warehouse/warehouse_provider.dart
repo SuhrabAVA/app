@@ -623,7 +623,7 @@ class WarehouseProvider with ChangeNotifier {
       'item_id': itemId,
       'qty': qty,
       'reason': reason,
-      'created_at': nowInKostanayIsoString(),
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
 
     await fetchTmc();
@@ -654,7 +654,7 @@ class WarehouseProvider with ChangeNotifier {
       'item_id': itemId,
       'factual': invValue,
       'note': note,
-      'created_at': nowInKostanayIsoString(),
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
 
     await fetchTmc();
