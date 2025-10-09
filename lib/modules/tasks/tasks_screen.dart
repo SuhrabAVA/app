@@ -110,6 +110,18 @@ bool _anyUserActive(TaskModel task, {String? exceptUserId}) {
 /// Разрешить старт только для самого первого незавершённого этапа заказа
 bool _isFirstPendingStage(
     TaskProvider tasks, PersonnelProvider personnel, TaskModel task) {
+  // Stages without machines do not require setup and may start immediately.
+  try {
+    final stage =
+        personnel.workplaces.firstWhere((w) => w.id == task.stageId);
+    if (!stage.hasMachine) {
+      return true;
+    }
+  } catch (_) {
+    // Unknown stage — do not block execution.
+    return true;
+  }
+
   // Все задачи этого заказа
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;

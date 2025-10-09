@@ -294,6 +294,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _matSelectedName = _matNameCtl.text.isEmpty ? null : _matNameCtl.text;
     _matSelectedFormat = _matFormatCtl.text.isEmpty ? null : _matFormatCtl.text;
     _matSelectedGrammage = _matGramCtl.text.isEmpty ? null : _matGramCtl.text;
+
+    final actualQty = template?.actualQty;
+    if (actualQty != null) {
+      _actualQuantity = _formatActualQuantity(actualQty);
+    } else {
+      _actualQuantity = '';
+    }
     _loadCategoriesForProduct(); // загрузка категорий склада
     if (template != null) {
       final p = template.product;
@@ -330,6 +337,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
+  }
+
+  String _formatActualQuantity(double value) {
+    if (value.isNaN || value.isInfinite) return '';
+    if ((value - value.round()).abs() < 1e-6) {
+      return value.round().toString();
+    }
+    final formatted = value.toStringAsFixed(3);
+    return formatted
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
   }
 
   @override
