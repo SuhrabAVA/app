@@ -522,10 +522,14 @@ class TaskProvider with ChangeNotifier {
     required String taskId,
     required String type,
     required String text,
+    String? userIdOverride,
   }) async {
     await _ensureAuthed();
-    final uid = _supabase.auth.currentUser?.id;
-    if (uid == null) {
+    final uid =
+        (userIdOverride != null && userIdOverride.isNotEmpty)
+            ? userIdOverride
+            : _supabase.auth.currentUser?.id;
+    if (uid == null || uid.isEmpty) {
       debugPrint('❌ addCommentAutoUser: нет авторизованного пользователя');
       return;
     }
