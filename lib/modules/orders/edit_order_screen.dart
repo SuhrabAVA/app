@@ -1048,6 +1048,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         String? __bobbinId;
         bool __shouldCompleteBobbin = false;
         String? __bobbinTitle;
+        double? __formatMaterialWidth;
+        double? __orderWidth;
+        if (_matSelectedFormat != null && _matSelectedFormat!.trim().isNotEmpty) {
+          final match =
+              RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
+          if (match != null) {
+            __formatMaterialWidth =
+                double.tryParse(match.group(1)!.replaceAll(',', '.'));
+          }
+        }
+        final dynamic __widthValue = _product.widthB ?? _product.width;
+        if (__widthValue is num) {
+          __orderWidth = __widthValue.toDouble();
+        } else if (__widthValue is String) {
+          __orderWidth = double.tryParse(__widthValue.replaceAll(',', '.'));
+        }
+        final bool __formatEqualsWidth;
+        if (__formatMaterialWidth != null && __orderWidth != null) {
+          final double widthValue = __orderWidth!;
+          __formatEqualsWidth = widthValue > 0 &&
+              (__formatMaterialWidth! - widthValue).abs() <= 0.001;
+        } else {
+          __formatEqualsWidth = false;
+        }
         try {
           // Flexo by multiple patterns
           Map<String, dynamic>? flexo = await _sb
@@ -1078,8 +1102,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             __flexoId = (flexo['id'] as String?);
             __flexoTitle =
                 (flexo['title'] as String?) ?? (flexo['name'] as String?);
-            if (__flexoTitle == null || __flexoTitle.trim().isEmpty)
+            if (__flexoTitle == null || __flexoTitle.trim().isEmpty) {
               __flexoTitle = 'Флексопечать';
+            }
             if (__flexoTitle == null ||
                 RegExp(r'^[a-z0-9_\-]+$').hasMatch(__flexoTitle)) {
               __flexoTitle = 'Флексопечать';
@@ -1122,6 +1147,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         } catch (_) {}
 
+        int __findBobbinIndex() {
+          return stageMaps.indexWhere((m) {
+            final sid = (m['stageId'] as String?) ??
+                (m['stageid'] as String?) ??
+                (m['stage_id'] as String?) ??
+                (m['workplaceId'] as String?) ??
+                (m['workplace_id'] as String?) ??
+                (m['id'] as String?);
+            final title =
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            final byId = (__bobbinId != null && sid == __bobbinId);
+            final byName = title.contains('бобинорезка') ||
+                title.contains('бабинорезка') ||
+                title.contains('bobbin');
+            return byId || byName;
+          });
+        }
+
         // paints present?
         bool __paintsFilled = (_paints.isNotEmpty) ||
             ((_product.parameters ?? '').toLowerCase().contains('краска'));
@@ -1151,102 +1194,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
           if (!hasFlexo && __flexoId != null && __flexoId!.isNotEmpty) {
             int insertIndex = 0;
-            final bobIndex = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                  (m['stageid'] as String?) ??
-                  (m['stage_id'] as String?) ??
-                  (m['workplaceId'] as String?) ??
-                  (m['workplace_id'] as String?) ??
-                  (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                      '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
-            });
-            if (bobIndex >= 0) insertIndex = bobIndex + 1;
+            if (!__formatEqualsWidth) {
+              final bobIndex = __findBobbinIndex();
+              if (bobIndex >= 0) insertIndex = bobIndex + 1;
+            }
 
             stageMaps.insert(insertIndex, {
               'stageId': __flexoId,
               'workplaceId': __flexoId,
-              'workplaceId': __flexoId,
               'stageName': (__flexoTitle ?? 'Флексопечать'),
               'workplaceName': (__flexoTitle ?? 'Флексопечать'),
-              'order': 0
+              'order': 0,
             });
           }
+        }
 
-          // If material format equals width - remove Bobbin (only for this order)
-          if (__bobbinId != null || true) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remove Bobbin by id or title
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                    (m['stageid'] as String?) ??
-                    (m['stage_id'] as String?) ??
-                    (m['workplaceId'] as String?) ??
-                    (m['workplace_id'] as String?) ??
-                    (m['id'] as String?);
-                final title = ((m['stageName'] ?? m['title']) as String?)
-                        ?.toLowerCase() ??
-                    '';
-                final byId = (__bobbinId != null && sid == __bobbinId);
-                final byName = title.contains('бобинорезка') ||
-                    title.contains('бабинорезка') ||
-                    title.contains('bobbin');
-                return byId || byName;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
+        if (__formatEqualsWidth) {
+          final idxBob = __findBobbinIndex();
+          if (idxBob >= 0) {
+            __shouldCompleteBobbin = true;
+            stageMaps.removeAt(idxBob);
           }
-          if (__bobbinId != null) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remember for marking "done" if necessary, then remove
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                    (m['stageid'] as String?) ??
-                    (m['stage_id'] as String?) ??
-                    (m['workplaceId'] as String?) ??
-                    (m['workplace_id'] as String?) ??
-                    (m['id'] as String?);
-                return sid == __bobbinId;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
-          }
-          // === /Custom stage logic ===
-// Save or update production plan in dedicated table 'production_plans'
+        }
+        // === /Custom stage logic ===
+        // Save or update production plan in dedicated table 'production_plans'
           final existingPlan = await _sb
               .from('production_plans')
               .select('id')
