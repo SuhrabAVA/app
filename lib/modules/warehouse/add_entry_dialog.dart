@@ -863,6 +863,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                     if (v == '__new__') {
                       _isNewPaper = true;
                       _selectedName = null;
+                      _selectedPaperKey = null;
                       _controllers['name']?.text = '';
                       _formatChoices = [];
                       _grammageChoices = [];
@@ -896,6 +897,10 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                         ? 'Обязательное поле'
                         : null),
               ),
+            if (_isNewPaper) ...[
+              const SizedBox(height: 8),
+              _buildField('name', 'Название нового вида'),
+            ],
             const SizedBox(height: 8),
             // ФОРМАТ
             Column(
