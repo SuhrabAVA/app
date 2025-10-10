@@ -964,7 +964,10 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               )
             else
               DropdownButtonFormField<String>(
-                value: _selectedName,
+                value: _selectedName != null &&
+                        _paperNameChoices.contains(_selectedName)
+                    ? _selectedName
+                    : null,
                 items: [
                   ..._paperNameChoices.map(
                     (n) => DropdownMenuItem<String>(value: n, child: Text(n)),
