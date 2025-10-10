@@ -1287,54 +1287,54 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               // ignore problematic stage ids to avoid breaking whole save
             }
           }
-        }
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-        try {
-          // Ensure prod_plans row exists
-          final planRow = await _sb
-              .from('prod_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          String planId;
-          if (planRow == null) {
-            final inserted = await _sb
+
+          // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
+          try {
+            // Ensure prod_plans row exists
+            final planRow = await _sb
                 .from('prod_plans')
-                .insert({
-                  'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
-                })
                 .select('id')
-                .single();
-            planId = inserted['id'] as String;
-          } else {
-            planId = planRow['id'] as String;
+                .eq('order_id', createdOrUpdatedOrder.id)
+                .maybeSingle();
+            String planId;
+            if (planRow == null) {
+              final inserted = await _sb
+                  .from('prod_plans')
+                  .insert({
+                    'order_id': createdOrUpdatedOrder.id,
+                    'status': 'planned',
+                  })
+                  .select('id')
+                  .single();
+              planId = inserted['id'] as String;
+            } else {
+              planId = planRow['id'] as String;
+            }
+            // Rebuild plan stages
+            await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
+            int step = 1;
+            for (final sm in stageMaps) {
+              final stageId =
+                  (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
+              if (stageId == null || stageId.isEmpty) continue;
+              await _sb.from('prod_plan_stages').insert({
+                'plan_id': planId,
+                'stage_id': stageId,
+                'step': step++,
+                'status': 'waiting',
+              });
+            }
+            // Mark bobbin as done here as well
+            if (__shouldCompleteBobbin && __bobbinId != null) {
+              await _sb.from('prod_plan_stages').update({
+                'status': 'done',
+                'finished_at': DateTime.now().toIso8601String(),
+              }).match({'plan_id': planId, 'stage_id': __bobbinId});
+            }
+          } catch (_) {
+            // ignore if tables don't exist
           }
-          // Rebuild plan stages
-          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-          int step = 1;
-          for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step++,
-              'status': 'waiting',
-            });
-          }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
-            await _sb.from('prod_plan_stages').update({
-              'status': 'done',
-              'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
-          }
-        } catch (_) {
-          // ignore if tables don't exist
-        }
-        // ---- /sync normalized tables ----
+          // ---- /sync normalized tables ----
 
         // update order status
         // Mark Bobbin (Бабинорезка) as done when format equals width for this order only
@@ -1347,54 +1347,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             'stage_id': __bobbinId,
           });
         }
-
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-        try {
-          // Ensure prod_plans row exists
-          final planRow = await _sb
-              .from('prod_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          String planId;
-          if (planRow == null) {
-            final inserted = await _sb
-                .from('prod_plans')
-                .insert({
-                  'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
-                })
-                .select('id')
-                .single();
-            planId = inserted['id'] as String;
-          } else {
-            planId = planRow['id'] as String;
-          }
-          // Rebuild plan stages
-          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-          int step = 1;
-          for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step++,
-              'status': 'waiting',
-            });
-          }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
-            await _sb.from('prod_plan_stages').update({
-              'status': 'done',
-              'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
-          }
-        } catch (_) {
-          // ignore if tables don't exist
-        }
-        // ---- /sync normalized tables ----
 
         // update order status to inWork and mark assignment
         final withAssignment = OrderModel(
