@@ -12,6 +12,7 @@ import '../../services/doc_db.dart';
 import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
+import '../../utils/kostanay_time.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -1285,13 +1286,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// Форматирование даты для логов.
   String _fmtDate(String iso) {
-    try {
-      final dt = DateTime.tryParse(iso) ?? DateTime.now();
-      return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')} '
-          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return iso;
-    }
+    final formatted = formatKostanayTimestamp(iso, fallback: '—');
+    if (formatted == '—') return formatted;
+    final parts = formatted.split(' ');
+    if (parts.length < 2) return formatted;
+    final dateParts = parts.first.split('-');
+    if (dateParts.length != 3) return formatted;
+    return '${dateParts[2]}.${dateParts[1]} ${parts[1]}';
   }
 
   /// Диалог добавления новой записи.

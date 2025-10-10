@@ -110,6 +110,18 @@ bool _anyUserActive(TaskModel task, {String? exceptUserId}) {
 /// Разрешить старт только для самого первого незавершённого этапа заказа
 bool _isFirstPendingStage(
     TaskProvider tasks, PersonnelProvider personnel, TaskModel task) {
+  // Stages without machines do not require setup and may start immediately.
+  try {
+    final stage =
+        personnel.workplaces.firstWhere((w) => w.id == task.stageId);
+    if (!stage.hasMachine) {
+      return true;
+    }
+  } catch (_) {
+    // Unknown stage — do not block execution.
+    return true;
+  }
+
   // Все задачи этого заказа
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;
@@ -126,21 +138,37 @@ bool _isFirstPendingStage(
       stages.entries.where((e) => e.value).map((e) => e.key).toList();
   if (pendingStageIds.isEmpty) return true;
 
-  // Отсортировать по названию рабочего места (fallback к id)
-  int byName(String a, String b) {
-    String name(String id) {
-      try {
-        final w = personnel.workplaces.firstWhere((w) => w.id == id);
-        return (w.name.isNotEmpty ? w.name : id).toLowerCase();
-      } catch (_) {
-        return id.toLowerCase();
+  final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
+  if (orderedStages.isNotEmpty) {
+    final indexMap = <String, int>{};
+    for (var i = 0; i < orderedStages.length; i++) {
+      indexMap.putIfAbsent(orderedStages[i], () => i);
+    }
+    pendingStageIds.sort((a, b) {
+      final ia = indexMap[a];
+      final ib = indexMap[b];
+      if (ia != null && ib != null) return ia.compareTo(ib);
+      if (ia != null) return -1;
+      if (ib != null) return 1;
+      return a.compareTo(b);
+    });
+  } else {
+    // Отсортировать по названию рабочего места (fallback к id)
+    int byName(String a, String b) {
+      String name(String id) {
+        try {
+          final w = personnel.workplaces.firstWhere((w) => w.id == id);
+          return (w.name.isNotEmpty ? w.name : id).toLowerCase();
+        } catch (_) {
+          return id.toLowerCase();
+        }
       }
+
+      return name(a).compareTo(name(b));
     }
 
-    return name(a).compareTo(name(b));
+    pendingStageIds.sort(byName);
   }
-
-  pendingStageIds.sort(byName);
 
   // Первый незавершённый этап
   final firstPendingStageId = pendingStageIds.first;
@@ -285,6 +313,74 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
+  String _employeeDisplayName(PersonnelProvider personnel, String userId) {
+    if (userId.isEmpty) return '';
+    try {
+      final emp = personnel.employees.firstWhere((e) => e.id == userId);
+      final full = '${emp.firstName} ${emp.lastName}'.trim();
+      return full.isNotEmpty ? full : userId;
+    } catch (_) {
+      return userId;
+    }
+  }
+
+  String _formatQuantityDisplay(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '0';
+    final numeric = RegExp(r'^[0-9]+([.,][0-9]+)?$');
+    if (!numeric.hasMatch(trimmed)) return trimmed;
+    final normalised = trimmed.replaceAll(',', '.');
+    final value = double.tryParse(normalised);
+    if (value == null) return trimmed;
+    if ((value - value.round()).abs() < 0.0001) {
+      return '${value.round()} шт.';
+    }
+    return '${value.toStringAsFixed(2)} шт.';
+  }
+
+  String _describeComment(TaskComment comment) {
+    switch (comment.type) {
+      case 'start':
+        return 'Начал(а) этап';
+      case 'pause':
+        return comment.text.isEmpty
+            ? 'Пауза'
+            : 'Пауза: ${comment.text}';
+      case 'resume':
+        return 'Возобновил(а) этап';
+      case 'user_done':
+        return 'Завершил(а) этап';
+      case 'problem':
+        return comment.text.isEmpty
+            ? 'Сообщил(а) о проблеме'
+            : 'Проблема: ${comment.text}';
+      case 'setup_start':
+        return 'Начал(а) настройку станка';
+      case 'setup_done':
+        return 'Завершил(а) настройку станка';
+      case 'quantity_done':
+        return 'Выполнил(а): ${_formatQuantityDisplay(comment.text)}';
+      case 'quantity_team_total':
+        return 'Команда выполнила: ${_formatQuantityDisplay(comment.text)}';
+      case 'quantity_share':
+        return 'Доля участника: ${_formatQuantityDisplay(comment.text)}';
+      case 'finish_note':
+        return comment.text.isEmpty
+            ? 'Комментарий к завершению'
+            : 'Комментарий к завершению: ${comment.text}';
+      case 'joined':
+        return 'Присоединился(лась) к этапу';
+      case 'exec_mode':
+        final normalized = comment.text.toLowerCase();
+        if (normalized.contains('joint') || normalized.contains('совмест')) {
+          return 'Режим: совместное исполнение';
+        }
+        return 'Режим: отдельный исполнитель';
+      default:
+        return comment.text;
+    }
+  }
+
   /// Handles joining an already started task. Presents a modal to choose between
   /// separate execution (individual performer) or helper (joint). If the user
   /// chooses separate, a 'start' comment is written immediately to reflect
@@ -314,6 +410,7 @@ class _TasksScreenState extends State<TasksScreen>
         taskId: task.id,
         type: 'start',
         text: 'Начал(а) этап',
+        userIdOverride: userId,
       );
     } else {
       // helper: note the join but do not mark as started
@@ -321,6 +418,7 @@ class _TasksScreenState extends State<TasksScreen>
         taskId: task.id,
         type: 'joined',
         text: 'Присоединился(лась) к этапу',
+        userIdOverride: userId,
       );
     }
   }
@@ -741,8 +839,10 @@ class _TasksScreenState extends State<TasksScreen>
       return activeNow < effCap;
     }
 
-    final bool canStart = ((task.assignees.isEmpty ||
-                task.assignees.contains(widget.employeeId)) &&
+    final bool alreadyAssigned = task.assignees.contains(widget.employeeId);
+    final bool isFirstAssignee = task.assignees.isEmpty;
+    final bool canAutoAssign = !alreadyAssigned && !isFirstAssignee && _slotAvailable();
+    final bool canStart = (((isFirstAssignee || alreadyAssigned || canAutoAssign)) &&
             (task.status == TaskStatus.waiting ||
                 task.status == TaskStatus.paused ||
                 task.status == TaskStatus.problem ||
@@ -958,6 +1058,13 @@ class _TasksScreenState extends State<TasksScreen>
                               userId: widget.employeeId,
                             );
                       }
+                      if (!task.assignees.contains(widget.employeeId)) {
+                        final newAssignees = List<String>.from(task.assignees)
+                          ..add(widget.employeeId);
+                        await context
+                            .read<TaskProvider>()
+                            .updateAssignees(task.id, newAssignees);
+                      }
                       // Обновляем статус задачи. Не сбрасываем startedAt, если этап уже
                       // находится в работе – используем существующее значение. В
                       // состоянии паузы или проблемы возобновляем работу с тем же
@@ -976,14 +1083,18 @@ class _TasksScreenState extends State<TasksScreen>
                       await context.read<TaskProvider>().addCommentAutoUser(
                           taskId: task.id,
                           type: 'start',
-                          text: 'Начал(а) этап');
+                          text: 'Начал(а) этап',
+                          userIdOverride: widget.employeeId);
                     }
 
                     Future<void> onPause() async {
                       final comment = await _askComment('Причина паузы');
                       if (comment == null) return;
                       await context.read<TaskProvider>().addCommentAutoUser(
-                          taskId: task.id, type: 'pause', text: comment);
+                          taskId: task.id,
+                          type: 'pause',
+                          text: comment,
+                          userIdOverride: widget.employeeId);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
                         await context.read<TaskProvider>().updateStatus(
@@ -995,47 +1106,67 @@ class _TasksScreenState extends State<TasksScreen>
                     Future<void> onFinish() async {
                       final qty = await _askQuantity(context);
                       if (qty == null) return;
+                      final taskProvider = context.read<TaskProvider>();
                       if (jointGroup != null) {
                         // JOINT: split quantity and COMPLETE immediately
                         final per =
                             (qty / (jointGroup.isEmpty ? 1 : jointGroup.length))
                                 .floor();
-                        await context.read<TaskProvider>().addCommentAutoUser(
+                        await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_team_total',
-                            text: qty.toString());
+                            text: qty.toString(),
+                            userIdOverride: widget.employeeId);
                         for (final id in jointGroup) {
-                          await context.read<TaskProvider>().addComment(
+                          await taskProvider.addComment(
                               taskId: task.id,
                               type: 'quantity_share',
                               text: per.toString(),
                               userId: id);
                         }
-                        await context.read<TaskProvider>().addCommentAutoUser(
-                            taskId: task.id, type: 'user_done', text: 'done');
-                        final _secs = _elapsed(task).inSeconds;
-                        await context.read<TaskProvider>().updateStatus(
-                            task.id, TaskStatus.completed,
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'user_done',
+                            text: 'done',
+                            userIdOverride: widget.employeeId);
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final _secs = _elapsed(latestTask).inSeconds;
+                        await taskProvider.updateStatus(task.id, TaskStatus.completed,
                             spentSeconds: _secs, startedAt: null);
-                        final note = await _askFinishNote(context);
+                        if (!mounted) return;
+                        final note = await _askFinishNote();
                         if (note != null && note.isNotEmpty) {
-                          await context.read<TaskProvider>().addCommentAutoUser(
-                              taskId: task.id, type: 'finish_note', text: note);
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'finish_note',
+                              text: note,
+                              userIdOverride: widget.employeeId);
                         }
                         return;
                       } else {
                         // SEPARATE: write personal qty, require ALL separate-mode assignees to finish
-                        await context.read<TaskProvider>().addCommentAutoUser(
+                        await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_done',
-                            text: qty.toString());
-                        await context.read<TaskProvider>().addCommentAutoUser(
-                            taskId: task.id, type: 'user_done', text: 'done');
+                            text: qty.toString(),
+                            userIdOverride: widget.employeeId);
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'user_done',
+                            text: 'done',
+                            userIdOverride: widget.employeeId);
 
                         // Collect only assignees in 'separate' mode
-                        final separateIds = task.assignees
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final separateIds = latestTask.assignees
                             .where((id) =>
-                                _execModeForUser(task, id) ==
+                                _execModeForUser(latestTask, id) ==
                                 ExecutionMode.separate)
                             .toList();
                         // Ensure current user is included (in case he wasn't listed yet)
@@ -1045,7 +1176,7 @@ class _TasksScreenState extends State<TasksScreen>
 
                         bool allDone = true;
                         for (final id in separateIds) {
-                          final has = task.comments.any(
+                          final has = latestTask.comments.any(
                               (c) => c.type == 'user_done' && c.userId == id);
                           if (!has) {
                             allDone = false;
@@ -1053,18 +1184,17 @@ class _TasksScreenState extends State<TasksScreen>
                           }
                         }
                         if (allDone) {
-                          final _secs = _elapsed(task).inSeconds;
-                          await context.read<TaskProvider>().updateStatus(
-                              task.id, TaskStatus.completed,
+                          final _secs = _elapsed(latestTask).inSeconds;
+                          await taskProvider.updateStatus(task.id, TaskStatus.completed,
                               spentSeconds: _secs, startedAt: null);
-                          final note = await _askFinishNote(context);
+                          if (!mounted) return;
+                          final note = await _askFinishNote();
                           if (note != null && note.isNotEmpty) {
-                            await context
-                                .read<TaskProvider>()
-                                .addCommentAutoUser(
-                                    taskId: task.id,
-                                    type: 'finish_note',
-                                    text: note);
+                            await taskProvider.addCommentAutoUser(
+                                taskId: task.id,
+                                type: 'finish_note',
+                                text: note,
+                                userIdOverride: widget.employeeId);
                           }
                         } else {
                           if (context.mounted) {
@@ -1081,7 +1211,10 @@ class _TasksScreenState extends State<TasksScreen>
                       final comment = await _askComment('Причина проблемы');
                       if (comment == null) return;
                       await context.read<TaskProvider>().addCommentAutoUser(
-                          taskId: task.id, type: 'problem', text: comment);
+                          taskId: task.id,
+                          type: 'problem',
+                          text: comment,
+                          userIdOverride: widget.employeeId);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
                         await context
@@ -1171,19 +1304,14 @@ class _TasksScreenState extends State<TasksScreen>
                       rows.add(const SizedBox(height: 8));
                     }
                   }
-                  if (jointUsers.isNotEmpty || task.assignees.isEmpty) {
-                    final labels =
-                        (jointUsers.isEmpty && task.assignees.isEmpty)
-                            ? <String>[]
-                            : jointUsers.map(nameFor).toList();
+                  if (jointUsers.isNotEmpty) {
+                    final labels = jointUsers.map(nameFor).toList();
                     final label = labels.isEmpty
                         ? 'Совместное исполнение'
                         : 'Помощники: ' + labels.join(', ');
                     if (separateUsers.isEmpty) {
-                      // No separate performers yet: allow joint group controls
                       rows.add(buildControlsFor(label, jointGroup: jointUsers));
                     } else {
-                      // Separate performers exist: hide controls for helpers, show only label
                       rows.add(Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Text(label,
@@ -1192,6 +1320,12 @@ class _TasksScreenState extends State<TasksScreen>
                                 color: Colors.grey)),
                       ));
                     }
+                  } else if (task.assignees.isEmpty) {
+                    rows.add(buildControlsFor('Совместное исполнение',
+                        jointGroup: jointUsers));
+                  }
+                  if (!task.assignees.contains(widget.employeeId) && canStart) {
+                    rows.add(buildControlsFor('Вы', userId: widget.employeeId));
                   }
                   return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1206,6 +1340,7 @@ class _TasksScreenState extends State<TasksScreen>
               const SizedBox(height: 4),
               Builder(
                 builder: (context) {
+                  final personnel = context.watch<PersonnelProvider>();
                   final comments = task.comments;
                   if (comments.isEmpty) {
                     return const Text('Нет комментариев',
@@ -1220,36 +1355,75 @@ class _TasksScreenState extends State<TasksScreen>
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(
-                                c.type == 'problem'
-                                    ? Icons.error_outline
-                                    : (c.type == 'pause'
-                                        ? Icons.pause_circle_outline
-                                        : Icons.info_outline),
-                                size: 18,
-                                color: c.type == 'problem'
-                                    ? Colors.redAccent
-                                    : (c.type == 'pause'
-                                        ? Colors.orange
-                                        : Colors.blueGrey),
-                              ),
+                              Builder(builder: (_) {
+                                IconData icon = Icons.info_outline;
+                                Color color = Colors.blueGrey;
+                                switch (c.type) {
+                                  case 'problem':
+                                    icon = Icons.error_outline;
+                                    color = Colors.redAccent;
+                                    break;
+                                  case 'pause':
+                                    icon = Icons.pause_circle_outline;
+                                    color = Colors.orange;
+                                    break;
+                                  case 'user_done':
+                                  case 'quantity_done':
+                                  case 'quantity_team_total':
+                                    icon = Icons.check_circle_outline;
+                                    color = Colors.green;
+                                    break;
+                                  case 'setup_start':
+                                  case 'setup_done':
+                                    icon = Icons.build_outlined;
+                                    color = Colors.indigo;
+                                    break;
+                                  case 'joined':
+                                    icon = Icons.group_add_outlined;
+                                    color = Colors.teal;
+                                    break;
+                                  case 'exec_mode':
+                                    icon = Icons.settings_input_component_outlined;
+                                    color = Colors.purple;
+                                    break;
+                                  default:
+                                    icon = Icons.info_outline;
+                                    color = Colors.blueGrey;
+                                }
+                                return Icon(icon, size: 18, color: color);
+                              }),
                               const SizedBox(width: 4),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // prepend timestamp to comments for better traceability
-                                    if (c.timestamp != null)
-                                      Text(
-                                        _formatTimestamp(c.timestamp),
-                                        style: const TextStyle(
-                                            fontSize: 10, color: Colors.grey),
-                                      ),
-                                    Text(
-                                      c.text,
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                  ],
+                                child: Builder(
+                                  builder: (_) {
+                                    final headerParts = <String>[];
+                                    final ts = _formatTimestamp(c.timestamp);
+                                    if (ts.isNotEmpty) headerParts.add(ts);
+                                    final author =
+                                        _employeeDisplayName(personnel, c.userId);
+                                    if (author.isNotEmpty) {
+                                      headerParts.add(author);
+                                    }
+                                    final header = headerParts.join(' • ');
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (header.isNotEmpty)
+                                          Text(
+                                            header,
+                                            style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.grey),
+                                          ),
+                                        Text(
+                                          _describeComment(c),
+                                          style:
+                                              const TextStyle(fontSize: 14),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ),
                             ],
@@ -1283,7 +1457,10 @@ class _TasksScreenState extends State<TasksScreen>
                             await context
                                 .read<TaskProvider>()
                                 .addCommentAutoUser(
-                                    taskId: task.id, type: 'msg', text: txt);
+                                    taskId: task.id,
+                                    type: 'msg',
+                                    text: txt,
+                                    userIdOverride: widget.employeeId);
                             _chatController.clear();
                           }
                         : null,
@@ -1352,7 +1529,16 @@ class _TasksScreenState extends State<TasksScreen>
 
   // Нормализация: если timestamp в секундах — переводим в миллисекунды.
   int _normTs(int ts) {
-    if (ts < 2000000000000) return ts * 1000; // < ~2033 в миллисекундах
+    // Значения меньше ~2 млрд считаем заданными в секундах (UNIX time),
+    // всё остальное — уже миллисекунды. Отдельно обрабатываем редкий случай
+    // микросекунд, чтобы не завышать длительности настройки.
+    if (ts > 10000000000000) {
+      // микросекунды -> миллисекунды
+      return ts ~/ 1000;
+    }
+    if (ts < 2000000000) {
+      return ts * 1000;
+    }
     return ts;
   }
 
@@ -1580,6 +1766,7 @@ class _TasksScreenState extends State<TasksScreen>
       taskId: task.id,
       type: 'setup_start',
       text: 'Начал(а) настройку станка',
+      userIdOverride: widget.employeeId,
     );
     if (!task.assignees.contains(widget.employeeId)) {
       try {
@@ -1597,14 +1784,16 @@ class _TasksScreenState extends State<TasksScreen>
       taskId: task.id,
       type: 'setup_done',
       text: 'Завершил(а) настройку станка',
+      userIdOverride: widget.employeeId,
     );
   }
 
-  Future<String?> _askFinishNote(BuildContext context) async {
+  Future<String?> _askFinishNote() async {
+    if (!mounted) return null;
     final controller = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Комментарий к завершению'),
         content: TextField(
           controller: controller,
@@ -1615,16 +1804,17 @@ class _TasksScreenState extends State<TasksScreen>
             border: OutlineInputBorder(),
           ),
           textInputAction: TextInputAction.done,
-          onSubmitted: (_) => Navigator.of(context).pop(controller.text.trim()),
+          onSubmitted: (_) => Navigator.of(ctx).pop(controller.text.trim()),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Отмена'),
+          ),
           ElevatedButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Сохранить')),
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Сохранить'),
+          ),
         ],
       ),
     );
@@ -1661,7 +1851,10 @@ class _TasksScreenState extends State<TasksScreen>
     );
 
     await provider.addCommentAutoUser(
-        taskId: task.id, type: 'pause', text: comment);
+        taskId: task.id,
+        type: 'pause',
+        text: comment,
+        userIdOverride: widget.employeeId);
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(
@@ -1687,7 +1880,10 @@ class _TasksScreenState extends State<TasksScreen>
     );
 
     await provider.addCommentAutoUser(
-        taskId: task.id, type: 'problem', text: comment);
+        taskId: task.id,
+        type: 'problem',
+        text: comment,
+        userIdOverride: widget.employeeId);
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(

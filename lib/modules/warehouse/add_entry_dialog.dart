@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../warehouse/supplier_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
+import '../../utils/kostanay_time.dart';
 
 class PaperOption {
   final String name;
@@ -691,7 +692,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             (r) => r.id == roll,
             orElse: () => TmcModel(
               id: roll,
-              date: DateTime.now().toIso8601String(),
+              date: nowInKostanayIsoString(),
               supplier: null,
               type: 'Рулон',
               description: roll,

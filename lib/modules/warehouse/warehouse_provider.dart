@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import '../../services/app_auth.dart';
+import '../../utils/kostanay_time.dart';
 
 class WarehouseProvider with ChangeNotifier {
   // ====== PENS DEDICATED TABLE RESOLUTION ======
@@ -274,7 +275,7 @@ class WarehouseProvider with ChangeNotifier {
       }
       final body = <String, dynamic>{
         'id': newId,
-        'date': DateTime.now().toIso8601String(),
+        'date': nowInKostanayIsoString(),
         'supplier': supplier,
         'name': name,
         'color': color,
@@ -317,7 +318,7 @@ class WarehouseProvider with ChangeNotifier {
         // создаём карточку бумаги с quantity = 0
         final body = <String, dynamic>{
           'id': paperId,
-          'date': DateTime.now().toIso8601String(),
+          'date': nowInKostanayIsoString(),
           'supplier': supplier,
           'description': description,
           'unit': unit.isNotEmpty ? unit : 'м',
@@ -351,7 +352,7 @@ class WarehouseProvider with ChangeNotifier {
     // ----------- Остальные типы -----------
     final common = <String, dynamic>{
       'id': newId,
-      'date': DateTime.now().toIso8601String(),
+      'date': nowInKostanayIsoString(),
       'supplier': supplier,
       'description': description,
       'unit': unit,
@@ -622,7 +623,7 @@ class WarehouseProvider with ChangeNotifier {
       'item_id': itemId,
       'qty': qty,
       'reason': reason,
-      'created_at': DateTime.now().toIso8601String(),
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
 
     await fetchTmc();
@@ -653,7 +654,7 @@ class WarehouseProvider with ChangeNotifier {
       'item_id': itemId,
       'factual': invValue,
       'note': note,
-      'created_at': DateTime.now().toIso8601String(),
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
 
     await fetchTmc();
@@ -1207,7 +1208,7 @@ class WarehouseProvider with ChangeNotifier {
     if (existing == null) {
       await _sb.from('papers').insert({
         'id': paperId,
-        'date': DateTime.now().toIso8601String(),
+        'date': nowInKostanayIsoString(),
         'supplier': null,
         'description': name,
         'unit': 'м',
