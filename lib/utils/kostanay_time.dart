@@ -42,7 +42,7 @@ String formatKostanayTimestamp(String? isoString, {String fallback = '—'}) {
   final parsed = DateTime.tryParse(raw);
   if (parsed == null) return raw;
 
-  final normalizedRaw = raw.replace(' ', 'T');
+  final normalizedRaw = raw.replaceFirst(' ', 'T');
   final hasExplicitOffset = normalizedRaw.endsWith('Z') ||
       RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(normalizedRaw);
 
