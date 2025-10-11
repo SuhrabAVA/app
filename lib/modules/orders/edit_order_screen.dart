@@ -1050,7 +1050,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         String? __bobbinTitle;
         double? __formatMaterialWidth;
         double? __orderWidth;
-        if (_matSelectedFormat != null && _matSelectedFormat!.trim().isNotEmpty) {
+        if (_matSelectedFormat != null &&
+            _matSelectedFormat!.trim().isNotEmpty) {
           final match =
               RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
           if (match != null) {
@@ -1156,7 +1157,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 (m['workplace_id'] as String?) ??
                 (m['id'] as String?);
             final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
+                    '';
             final byId = (__bobbinId != null && sid == __bobbinId);
             final byName = title.contains('бобинорезка') ||
                 title.contains('бабинорезка') ||
@@ -1218,123 +1220,123 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         // === /Custom stage logic ===
         // Save or update production plan in dedicated table 'production_plans'
-          final existingPlan = await _sb
+        final existingPlan = await _sb
+            .from('production_plans')
+            .select('id')
+            .eq('order_id', createdOrUpdatedOrder.id)
+            .maybeSingle();
+        if (existingPlan != null) {
+          await _sb
               .from('production_plans')
+              .update({'stages': stageMaps}).eq('id', existingPlan['id']);
+        } else {
+          await _sb.from('production_plans').insert(
+              {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
+        }
+
+        // Build a list of valid stage IDs (must exist in 'workplaces')
+        final List<String> __validStageIds = [];
+        for (final sm in stageMaps) {
+          final sid = (sm['stageId'] as String?) ??
+              (sm['stageid'] as String?) ??
+              (sm['stage_id'] as String?) ??
+              (sm['id'] as String?);
+          if (sid == null || sid.isEmpty) continue;
+          try {
+            final exists = await _sb
+                .from('workplaces')
+                .select('id')
+                .eq('id', sid)
+                .maybeSingle();
+            if (exists != null) __validStageIds.add(sid);
+          } catch (_) {}
+        }
+        if (__validStageIds.isNotEmpty) {
+          await _sb
+              .from('tasks')
+              .delete()
+              .eq('order_id', createdOrUpdatedOrder.id);
+          // create new tasks for each stage
+        } else {
+          // No valid stages resolved — keep existing tasks to avoid losing assignments
+          // (logically indicates a template/config error)
+        }
+        // create new tasks for each stage (only if stage exists)
+        for (final sm in stageMaps) {
+          final stageId = (sm['stageId'] as String?) ??
+              (sm['stageid'] as String?) ??
+              (sm['stage_id'] as String?) ??
+              (sm['workplaceId'] as String?) ??
+              (sm['workplace_id'] as String?) ??
+              (sm['id'] as String?);
+          if (stageId == null || stageId.isEmpty) continue;
+          try {
+            final exists = await _sb
+                .from('workplaces')
+                .select('id')
+                .eq('id', stageId)
+                .maybeSingle();
+            if (exists == null)
+              continue; // skip invalid stageId to avoid FK/insert errors
+            await _sb.from('tasks').insert({
+              'order_id': createdOrUpdatedOrder.id,
+              'stage_id': stageId,
+              'status': 'waiting',
+              'assignees': [],
+              'comments': [],
+            });
+          } catch (e) {
+            // ignore problematic stage ids to avoid breaking whole save
+          }
+        }
+
+        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
+        try {
+          // Ensure prod_plans row exists
+          final planRow = await _sb
+              .from('prod_plans')
               .select('id')
               .eq('order_id', createdOrUpdatedOrder.id)
               .maybeSingle();
-          if (existingPlan != null) {
-            await _sb
-                .from('production_plans')
-                .update({'stages': stageMaps}).eq('id', existingPlan['id']);
-          } else {
-            await _sb.from('production_plans').insert(
-                {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
-          }
-
-          // Build a list of valid stage IDs (must exist in 'workplaces')
-          final List<String> __validStageIds = [];
-          for (final sm in stageMaps) {
-            final sid = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['id'] as String?);
-            if (sid == null || sid.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', sid)
-                  .maybeSingle();
-              if (exists != null) __validStageIds.add(sid);
-            } catch (_) {}
-          }
-          if (__validStageIds.isNotEmpty) {
-            await _sb
-                .from('tasks')
-                .delete()
-                .eq('order_id', createdOrUpdatedOrder.id);
-            // create new tasks for each stage
-          } else {
-            // No valid stages resolved — keep existing tasks to avoid losing assignments
-            // (logically indicates a template/config error)
-          }
-          // create new tasks for each stage (only if stage exists)
-          for (final sm in stageMaps) {
-            final stageId = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['workplaceId'] as String?) ??
-                (sm['workplace_id'] as String?) ??
-                (sm['id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', stageId)
-                  .maybeSingle();
-              if (exists == null)
-                continue; // skip invalid stageId to avoid FK/insert errors
-              await _sb.from('tasks').insert({
-                'order_id': createdOrUpdatedOrder.id,
-                'stage_id': stageId,
-                'status': 'waiting',
-                'assignees': [],
-                'comments': [],
-              });
-            } catch (e) {
-              // ignore problematic stage ids to avoid breaking whole save
-            }
-          }
-
-          // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-          try {
-            // Ensure prod_plans row exists
-            final planRow = await _sb
+          String planId;
+          if (planRow == null) {
+            final inserted = await _sb
                 .from('prod_plans')
+                .insert({
+                  'order_id': createdOrUpdatedOrder.id,
+                  'status': 'planned',
+                })
                 .select('id')
-                .eq('order_id', createdOrUpdatedOrder.id)
-                .maybeSingle();
-            String planId;
-            if (planRow == null) {
-              final inserted = await _sb
-                  .from('prod_plans')
-                  .insert({
-                    'order_id': createdOrUpdatedOrder.id,
-                    'status': 'planned',
-                  })
-                  .select('id')
-                  .single();
-              planId = inserted['id'] as String;
-            } else {
-              planId = planRow['id'] as String;
-            }
-            // Rebuild plan stages
-            await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-            int step = 1;
-            for (final sm in stageMaps) {
-              final stageId =
-                  (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-              if (stageId == null || stageId.isEmpty) continue;
-              await _sb.from('prod_plan_stages').insert({
-                'plan_id': planId,
-                'stage_id': stageId,
-                'step': step++,
-                'status': 'waiting',
-              });
-            }
-            // Mark bobbin as done here as well
-            if (__shouldCompleteBobbin && __bobbinId != null) {
-              await _sb.from('prod_plan_stages').update({
-                'status': 'done',
-                'finished_at': DateTime.now().toIso8601String(),
-              }).match({'plan_id': planId, 'stage_id': __bobbinId});
-            }
-          } catch (_) {
-            // ignore if tables don't exist
+                .single();
+            planId = inserted['id'] as String;
+          } else {
+            planId = planRow['id'] as String;
           }
-          // ---- /sync normalized tables ----
+          // Rebuild plan stages
+          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
+          int step = 1;
+          for (final sm in stageMaps) {
+            final stageId =
+                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
+            if (stageId == null || stageId.isEmpty) continue;
+            await _sb.from('prod_plan_stages').insert({
+              'plan_id': planId,
+              'stage_id': stageId,
+              'step': step++,
+              'status': 'waiting',
+            });
+          }
+          // Mark bobbin as done here as well
+          if (__shouldCompleteBobbin && __bobbinId != null) {
+            await _sb.from('prod_plan_stages').update({
+              'status': 'done',
+              'finished_at': DateTime.now().toIso8601String(),
+            }).match({'plan_id': planId, 'stage_id': __bobbinId});
+          }
+        } catch (_) {
+          // ignore if tables don't exist
+        }
+        // ---- /sync normalized tables ----
 
         // update order status
         // Mark Bobbin (Бабинорезка) as done when format equals width for this order only
