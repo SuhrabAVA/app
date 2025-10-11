@@ -1048,6 +1048,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         String? __bobbinId;
         bool __shouldCompleteBobbin = false;
         String? __bobbinTitle;
+        double? __formatMaterialWidth;
+        double? __orderWidth;
+        if (_matSelectedFormat != null &&
+            _matSelectedFormat!.trim().isNotEmpty) {
+          final match =
+              RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
+          if (match != null) {
+            __formatMaterialWidth =
+                double.tryParse(match.group(1)!.replaceAll(',', '.'));
+          }
+        }
+        final dynamic __widthValue = _product.widthB ?? _product.width;
+        if (__widthValue is num) {
+          __orderWidth = __widthValue.toDouble();
+        } else if (__widthValue is String) {
+          __orderWidth = double.tryParse(__widthValue.replaceAll(',', '.'));
+        }
+        final bool __formatEqualsWidth;
+        if (__formatMaterialWidth != null && __orderWidth != null) {
+          final double widthValue = __orderWidth!;
+          __formatEqualsWidth = widthValue > 0 &&
+              (__formatMaterialWidth! - widthValue).abs() <= 0.001;
+        } else {
+          __formatEqualsWidth = false;
+        }
         try {
           // Flexo by multiple patterns
           Map<String, dynamic>? flexo = await _sb
@@ -1078,8 +1103,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             __flexoId = (flexo['id'] as String?);
             __flexoTitle =
                 (flexo['title'] as String?) ?? (flexo['name'] as String?);
-            if (__flexoTitle == null || __flexoTitle.trim().isEmpty)
+            if (__flexoTitle == null || __flexoTitle.trim().isEmpty) {
               __flexoTitle = 'Флексопечать';
+            }
             if (__flexoTitle == null ||
                 RegExp(r'^[a-z0-9_\-]+$').hasMatch(__flexoTitle)) {
               __flexoTitle = 'Флексопечать';
@@ -1122,13 +1148,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         } catch (_) {}
 
+        int __findBobbinIndex() {
+          return stageMaps.indexWhere((m) {
+            final sid = (m['stageId'] as String?) ??
+                (m['stageid'] as String?) ??
+                (m['stage_id'] as String?) ??
+                (m['workplaceId'] as String?) ??
+                (m['workplace_id'] as String?) ??
+                (m['id'] as String?);
+            final title =
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
+                    '';
+            final byId = (__bobbinId != null && sid == __bobbinId);
+            final byName = title.contains('бобинорезка') ||
+                title.contains('бабинорезка') ||
+                title.contains('bobbin');
+            return byId || byName;
+          });
+        }
+
         // paints present?
-        bool __paintsFilled = _paints.any((p) {
-              final hasTmc = p.tmc != null;
-              final hasQty = p.qty != null;
-              final hasMemo = p.memo.trim().isNotEmpty;
-              return hasTmc || hasQty || hasMemo;
-            }) ||
+        bool __paintsFilled = (_paints.isNotEmpty) ||
             ((_product.parameters ?? '').toLowerCase().contains('краска'));
 
         // If paints exist and template has no Flexo - insert Flexo at 1st position,
@@ -1136,13 +1176,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
         if (__paintsFilled) {
           // Determine if Flexo already present by id or by name
-          if (__flexoId == null || __flexoId!.isEmpty) {
-            __flexoId = 'w_flexoprint';
-          }
-          if (__flexoTitle == null || __flexoTitle!.trim().isEmpty) {
-            __flexoTitle = 'Флексопечать';
-          }
-
           final hasFlexo = stageMaps.any((m) {
             final sid = (m['stageId'] as String?) ??
                 (m['stageid'] as String?) ??
@@ -1163,148 +1196,100 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
           if (!hasFlexo && __flexoId != null && __flexoId!.isNotEmpty) {
             int insertIndex = 0;
-            final bobIndex = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                  (m['stageid'] as String?) ??
-                  (m['stage_id'] as String?) ??
-                  (m['workplaceId'] as String?) ??
-                  (m['workplace_id'] as String?) ??
-                  (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                      '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
-            });
-            if (bobIndex >= 0) insertIndex = bobIndex + 1;
+            if (!__formatEqualsWidth) {
+              final bobIndex = __findBobbinIndex();
+              if (bobIndex >= 0) insertIndex = bobIndex + 1;
+            }
 
             stageMaps.insert(insertIndex, {
               'stageId': __flexoId,
               'workplaceId': __flexoId,
-              'workplaceId': __flexoId,
               'stageName': (__flexoTitle ?? 'Флексопечать'),
               'workplaceName': (__flexoTitle ?? 'Флексопечать'),
-              'order': 0
+              'order': 0,
             });
-          }
-
-          // If material format equals width - remove Bobbin (only for this order)
-          bool _formatMatchesWidth() {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final match =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (match != null) {
-                fmtW = double.tryParse(match.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            return fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001;
-          }
-
-          bool _removeBobbinStage() {
-            final idxBob = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                  (m['stageid'] as String?) ??
-                  (m['stage_id'] as String?) ??
-                  (m['workplaceId'] as String?) ??
-                  (m['workplace_id'] as String?) ??
-                  (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
-            });
-            if (idxBob >= 0) {
-              stageMaps.removeAt(idxBob);
-              return true;
-            }
-            return false;
-          }
-
-          if (_formatMatchesWidth() && _removeBobbinStage()) {
-            __shouldCompleteBobbin = true;
-          }
-          // === /Custom stage logic ===
-          // Save or update production plan in dedicated table 'production_plans'
-          final existingPlan = await _sb
-              .from('production_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          if (existingPlan != null) {
-            await _sb
-                .from('production_plans')
-                .update({'stages': stageMaps}).eq('id', existingPlan['id']);
-          } else {
-            await _sb.from('production_plans').insert(
-                {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
-          }
-
-          // Build a list of valid stage IDs (must exist in 'workplaces')
-          final List<String> __validStageIds = [];
-          for (final sm in stageMaps) {
-            final sid = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['id'] as String?);
-            if (sid == null || sid.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', sid)
-                  .maybeSingle();
-              if (exists != null) __validStageIds.add(sid);
-            } catch (_) {}
-          }
-          if (__validStageIds.isNotEmpty) {
-            await _sb
-                .from('tasks')
-                .delete()
-                .eq('order_id', createdOrUpdatedOrder.id);
-            // create new tasks for each stage
-          } else {
-            // No valid stages resolved — keep existing tasks to avoid losing assignments
-            // (logically indicates a template/config error)
-          }
-          // create new tasks for each stage (only if stage exists)
-          for (final sm in stageMaps) {
-            final stageId = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['workplaceId'] as String?) ??
-                (sm['workplace_id'] as String?) ??
-                (sm['id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', stageId)
-                  .maybeSingle();
-              if (exists == null)
-                continue; // skip invalid stageId to avoid FK/insert errors
-              await _sb.from('tasks').insert({
-                'order_id': createdOrUpdatedOrder.id,
-                'stage_id': stageId,
-                'status': 'waiting',
-                'assignees': [],
-                'comments': [],
-              });
-            } catch (e) {
-              // ignore problematic stage ids to avoid breaking whole save
-            }
           }
         }
+
+        if (__formatEqualsWidth) {
+          final idxBob = __findBobbinIndex();
+          if (idxBob >= 0) {
+            __shouldCompleteBobbin = true;
+            stageMaps.removeAt(idxBob);
+          }
+        }
+        // === /Custom stage logic ===
+        // Save or update production plan in dedicated table 'production_plans'
+        final existingPlan = await _sb
+            .from('production_plans')
+            .select('id')
+            .eq('order_id', createdOrUpdatedOrder.id)
+            .maybeSingle();
+        if (existingPlan != null) {
+          await _sb
+              .from('production_plans')
+              .update({'stages': stageMaps}).eq('id', existingPlan['id']);
+        } else {
+          await _sb.from('production_plans').insert(
+              {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
+        }
+
+        // Build a list of valid stage IDs (must exist in 'workplaces')
+        final List<String> __validStageIds = [];
+        for (final sm in stageMaps) {
+          final sid = (sm['stageId'] as String?) ??
+              (sm['stageid'] as String?) ??
+              (sm['stage_id'] as String?) ??
+              (sm['id'] as String?);
+          if (sid == null || sid.isEmpty) continue;
+          try {
+            final exists = await _sb
+                .from('workplaces')
+                .select('id')
+                .eq('id', sid)
+                .maybeSingle();
+            if (exists != null) __validStageIds.add(sid);
+          } catch (_) {}
+        }
+        if (__validStageIds.isNotEmpty) {
+          await _sb
+              .from('tasks')
+              .delete()
+              .eq('order_id', createdOrUpdatedOrder.id);
+          // create new tasks for each stage
+        } else {
+          // No valid stages resolved — keep existing tasks to avoid losing assignments
+          // (logically indicates a template/config error)
+        }
+        // create new tasks for each stage (only if stage exists)
+        for (final sm in stageMaps) {
+          final stageId = (sm['stageId'] as String?) ??
+              (sm['stageid'] as String?) ??
+              (sm['stage_id'] as String?) ??
+              (sm['workplaceId'] as String?) ??
+              (sm['workplace_id'] as String?) ??
+              (sm['id'] as String?);
+          if (stageId == null || stageId.isEmpty) continue;
+          try {
+            final exists = await _sb
+                .from('workplaces')
+                .select('id')
+                .eq('id', stageId)
+                .maybeSingle();
+            if (exists == null)
+              continue; // skip invalid stageId to avoid FK/insert errors
+            await _sb.from('tasks').insert({
+              'order_id': createdOrUpdatedOrder.id,
+              'stage_id': stageId,
+              'status': 'waiting',
+              'assignees': [],
+              'comments': [],
+            });
+          } catch (e) {
+            // ignore problematic stage ids to avoid breaking whole save
+          }
+        }
+
         // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
         try {
           // Ensure prod_plans row exists
@@ -1364,54 +1349,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             'stage_id': __bobbinId,
           });
         }
-
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-        try {
-          // Ensure prod_plans row exists
-          final planRow = await _sb
-              .from('prod_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          String planId;
-          if (planRow == null) {
-            final inserted = await _sb
-                .from('prod_plans')
-                .insert({
-                  'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
-                })
-                .select('id')
-                .single();
-            planId = inserted['id'] as String;
-          } else {
-            planId = planRow['id'] as String;
-          }
-          // Rebuild plan stages
-          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-          int step = 1;
-          for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step++,
-              'status': 'waiting',
-            });
-          }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
-            await _sb.from('prod_plan_stages').update({
-              'status': 'done',
-              'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
-          }
-        } catch (_) {
-          // ignore if tables don't exist
-        }
-        // ---- /sync normalized tables ----
 
         // update order status to inWork and mark assignment
         final withAssignment = OrderModel(
