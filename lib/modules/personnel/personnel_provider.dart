@@ -44,7 +44,10 @@ class PersonnelProvider extends ChangeNotifier {
 
   // Позиции для выбора на экранах (при желании исключаем фиксированные)
   List<PositionModel> get regularPositions => _positions
-      .where((p) => p.id != kManagerId && p.id != kWarehouseHeadId)
+      .where((p) =>
+          p.id != kManagerId &&
+          p.id != kWarehouseHeadId &&
+          p.id != kTechLeaderId)
       .toList(growable: false);
 
   String _genId() => _uuid.v4();
@@ -323,6 +326,14 @@ class PersonnelProvider extends ChangeNotifier {
   PositionModel? findWarehouseHeadPosition() {
     try {
       return _positions.firstWhere((p) => p.id == kWarehouseHeadId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  PositionModel? findTechLeaderPosition() {
+    try {
+      return _positions.firstWhere((p) => p.id == kTechLeaderId);
     } catch (_) {
       return null;
     }

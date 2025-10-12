@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../orders/order_model.dart';
@@ -832,8 +833,7 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _buildDetailsPanel(
       OrderModel order, WorkplaceModel stage, List<TemplateModel> templates, double scale) {
     final product = order.product;
-    final templateLabel = (order.stageTemplateId != null &&
-            order.stageTemplateId!.isNotEmpty)
+    final templateLabel = (order.stageTemplateId != null && order.stageTemplateId!.isNotEmpty)
         ? (_resolveTemplateName(order.stageTemplateId, templates) ??
             (templates.isEmpty ? 'загрузка...' : 'не найден'))
         : null;
@@ -842,7 +842,243 @@ class _TasksScreenState extends State<TasksScreen>
     final double radius = scaled(12);
     final double mediumSpacing = scaled(16);
     final double smallSpacing = scaled(4);
+    final double infoSpacing = scaled(6);
     final orderNumber = orderDisplayId(order);
+    final dateFormat = DateFormat('dd.MM.yyyy');
+
+    String formatDate(DateTime? date) {
+      if (date == null) return '—';
+      try {
+        return dateFormat.format(date);
+      } catch (_) {
+        return date.toIso8601String();
+      }
+    }
+
+    String formatNum(num? value, {String? unit}) {
+      if (value == null) return '—';
+      final doubleValue = value.toDouble();
+      final bool isInt = (doubleValue - doubleValue.round()).abs() < 0.0001;
+      final String formatted =
+          isInt ? doubleValue.round().toString() : doubleValue.toStringAsFixed(2);
+      if (unit == null) return formatted;
+      final trimmed = unit.trim();
+      return trimmed.isEmpty ? formatted : '$formatted $trimmed';
+    }
+
+    String formatQty(num? value) {
+      if (value == null) return '—';
+      final doubleValue = value.toDouble();
+      final bool isInt = (doubleValue - doubleValue.round()).abs() < 0.0001;
+      return isInt
+          ? '${doubleValue.round()} шт.'
+          : '${doubleValue.toStringAsFixed(2)} шт.';
+    }
+
+    String formatDimension(double value) {
+      if (value <= 0) return '—';
+      return formatNum(value, unit: 'мм');
+    }
+
+    String formatOptionalDouble(double? value, {String? unit}) {
+      if (value == null) return '—';
+      return formatNum(value, unit: unit);
+    }
+
+    Widget infoLine(String label, String value) {
+      final display = value.isNotEmpty ? value : '—';
+      return Padding(
+        padding: EdgeInsets.only(bottom: infoSpacing),
+        child: Text.rich(
+          TextSpan(
+            text: '$label: ',
+            style: TextStyle(
+              fontSize: scaled(13),
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+            children: [
+              TextSpan(
+                text: display,
+                style: TextStyle(
+                  fontSize: scaled(13),
+                  fontWeight: FontWeight.w400,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget infoMultiline(String label, String value) {
+      final display = value.isNotEmpty ? value : '—';
+      return Padding(
+        padding: EdgeInsets.only(bottom: infoSpacing),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: scaled(13),
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+            SizedBox(height: scaled(2)),
+            Text(
+              display,
+              style: TextStyle(fontSize: scaled(13), color: Colors.black87),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget section(String title, List<Widget> content) {
+      if (content.isEmpty) return const SizedBox.shrink();
+      return Padding(
+        padding: EdgeInsets.only(bottom: mediumSpacing),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: scaled(14),
+              ),
+            ),
+            SizedBox(height: smallSpacing),
+            ...content,
+          ],
+        ),
+      );
+    }
+
+    String statusLabel(OrderModel o) {
+      switch (o.statusEnum) {
+        case OrderStatus.completed:
+          return 'Завершён';
+        case OrderStatus.inWork:
+          return 'В работе';
+        case OrderStatus.newOrder:
+        default:
+          return 'Новый';
+      }
+    }
+
+    final List<Widget> generalSection = [];
+    if (order.customer.isNotEmpty) {
+      generalSection.add(infoLine('Заказчик', order.customer));
+    }
+    if (order.manager.isNotEmpty) {
+      generalSection.add(infoLine('Менеджер', order.manager));
+    }
+    generalSection.add(infoLine('Дата заказа', formatDate(order.orderDate)));
+    generalSection.add(infoLine('Срок выполнения', formatDate(order.dueDate)));
+    generalSection.add(infoLine('Статус заказа', statusLabel(order)));
+    if (order.comments.isNotEmpty) {
+      generalSection.add(infoMultiline('Комментарии', order.comments));
+    }
+    generalSection
+        .add(infoLine('Договор подписан', order.contractSigned ? 'Да' : 'Нет'));
+    generalSection.add(infoLine('Оплата', order.paymentDone ? 'Проведена' : 'Нет'));
+    if (order.actualQty != null) {
+      generalSection
+          .add(infoLine('Фактическое количество', formatQty(order.actualQty)));
+    }
+    if (templateLabel != null) {
+      generalSection.add(infoLine('Шаблон этапов', templateLabel));
+    }
+
+    final List<Widget> productSection = [];
+    if (product.type.isNotEmpty) {
+      productSection.add(infoLine('Наименование', product.type));
+    }
+    productSection.add(infoLine('Тираж', formatQty(product.quantity)));
+    if (product.parameters.isNotEmpty) {
+      productSection.add(infoMultiline('Параметры', product.parameters));
+    }
+    if (product.width > 0) {
+      productSection.add(infoLine('Ширина', formatDimension(product.width)));
+    }
+    if (product.height > 0) {
+      productSection.add(infoLine('Высота', formatDimension(product.height)));
+    }
+    if (product.depth > 0) {
+      productSection.add(infoLine('Глубина', formatDimension(product.depth)));
+    }
+    if (product.widthB != null) {
+      productSection
+          .add(infoLine('Ширина B', formatOptionalDouble(product.widthB, unit: 'мм')));
+    }
+    if (product.length != null) {
+      productSection
+          .add(infoLine('Длина L', formatOptionalDouble(product.length, unit: 'м')));
+    }
+    if (product.roll != null) {
+      productSection
+          .add(infoLine('Рулон', formatOptionalDouble(product.roll, unit: 'мм')));
+    }
+    if (product.leftover != null) {
+      productSection.add(
+          infoLine('Остаток', formatOptionalDouble(product.leftover, unit: 'шт.')));
+    }
+
+    final material = order.material;
+    final List<Widget> materialSection = [];
+    if (material != null) {
+      materialSection.add(infoLine('Наименование', material.name));
+      if (material.format != null && material.format!.trim().isNotEmpty) {
+        materialSection.add(infoLine('Формат', material.format!.trim()));
+      }
+      if (material.grammage != null && material.grammage!.trim().isNotEmpty) {
+        materialSection.add(infoLine('Грамаж', material.grammage!.trim()));
+      }
+      materialSection.add(infoLine(
+          'Количество',
+          formatNum(material.quantity,
+              unit: material.unit.isNotEmpty ? material.unit : null)));
+      if (material.weight != null && material.weight! > 0) {
+        materialSection.add(infoLine('Вес', formatNum(material.weight, unit: 'кг')));
+      }
+    }
+
+    final List<Widget> equipmentSection = [];
+    if (order.handle.isNotEmpty) {
+      equipmentSection.add(infoLine('Ручки', order.handle));
+    }
+    if (order.cardboard.isNotEmpty) {
+      equipmentSection.add(infoLine('Картон', order.cardboard));
+    }
+    if (order.additionalParams.isNotEmpty) {
+      equipmentSection
+          .add(infoMultiline('Доп. параметры', order.additionalParams.join(', ')));
+    }
+    if (order.makeready > 0) {
+      equipmentSection.add(infoLine('Приладка', formatNum(order.makeready)));
+    }
+    if (order.val > 0) {
+      equipmentSection.add(infoLine('Стоимость', formatNum(order.val)));
+    }
+
+    final List<Widget> formSection = [];
+    formSection.add(infoLine('Тип формы', order.isOldForm ? 'Старая' : 'Новая'));
+    if (order.formCode != null && order.formCode!.trim().isNotEmpty) {
+      formSection.add(infoLine('Код формы', order.formCode!.trim()));
+    }
+    if (order.formSeries != null && order.formSeries!.trim().isNotEmpty) {
+      formSection.add(infoLine('Серия', order.formSeries!.trim()));
+    }
+    if (order.newFormNo != null) {
+      formSection.add(infoLine('Номер формы', order.newFormNo.toString()));
+    }
+
+    final bool hasPdf = order.pdfUrl != null && order.pdfUrl!.isNotEmpty;
+
     return Container(
       padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
@@ -862,85 +1098,53 @@ class _TasksScreenState extends State<TasksScreen>
                     Text(
                       orderNumber != '—' ? orderNumber : order.id,
                       style: TextStyle(
-                          fontSize: scaled(18), fontWeight: FontWeight.bold),
+                        fontSize: scaled(18),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     SizedBox(height: smallSpacing),
                     const Text('Детали производственного задания'),
                     SizedBox(height: mediumSpacing),
-                    SizedBox(height: mediumSpacing),
-                    const Text('Информация о продукте',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    ...[
-                      if (product.type.isNotEmpty)
-                        Text('Наименование: ${product.type}'),
-                      if (product.quantity > 0)
-                        Text('Тираж: ${product.quantity} шт.'),
-                      if (product.width > 0 ||
-                          product.depth > 0 ||
-                          product.height > 0)
-                        Text('Размер: ' +
-                            [product.width, product.depth, product.height]
-                                .where((v) => v > 0)
-                                .map((v) => v.toStringAsFixed(0))
-                                .join('x') +
-                            ' мм'),
-                      if (product.parameters.isNotEmpty)
-                        Text('Параметры: ${product.parameters}'),
-                      if (product.roll != null)
-                        Text('Рулон: ${product.roll!.toStringAsFixed(0)}'),
-                      if (product.widthB != null)
-                        Text('Ширина B: ${product.widthB!.toStringAsFixed(0)}'),
-                      if (product.length != null)
-                        Text('Длина: ${product.length!.toStringAsFixed(0)}'),
-                      if (product.leftover != null)
-                        Text(
-                            'Остаток: ${product.leftover!.toStringAsFixed(0)}'),
-                      if (order.handle.isNotEmpty)
-                        Text('Ручки: ${order.handle}'),
-                      if (order.cardboard.isNotEmpty)
-                        Text('Картон: ${order.cardboard}'),
-                      if (order.material != null)
-                        Text('Материал: ' +
-                            [
-                              order.material!.name,
-                              order.material!.format ?? '',
-                              order.material!.grammage ?? ''
-                            ]
-                                .where((s) => s.toString().trim().isNotEmpty)
-                                .join(' ')),
-                      if (order.makeready > 0)
-                        Text('Приладка: ${order.makeready}'),
-                      if (order.val > 0) Text('Стоимость: ${order.val}'),
-                      if (order.pdfUrl != null && order.pdfUrl!.isNotEmpty)
-                        Row(children: [
-                          const Icon(Icons.picture_as_pdf_outlined,
-                              size: 16, color: Colors.redAccent),
-                          const SizedBox(width: 6),
-                          Expanded(
-                              child: Text('PDF: ' + order.pdfUrl!,
-                                  overflow: TextOverflow.ellipsis)),
-                          TextButton(
-                            onPressed: () async {
-                              final url = await getSignedUrl(order.pdfUrl!);
-                              if (!context.mounted) return;
-                              Navigator.of(context).push(MaterialPageRoute(
-                                  builder: (_) => PdfViewScreen(
-                                      url: url, title: 'PDF заказа')));
-                            },
-                            child: const Text('Открыть'),
-                          ),
-                        ]),
-                      if (order.customer.isNotEmpty)
-                        Text('Заказчик: ${order.customer}'),
-                      Text('Дата заказа: ${order.orderDate}'),
-                      if (order.dueDate != null)
-                        Text('Срок выполнения: ${order.dueDate}'),
-                      if (order.additionalParams.isNotEmpty)
-                        Text(
-                            'Доп. параметры: ${order.additionalParams.join(', ')}'),
-                      if (templateLabel != null)
-                        Text('Шаблон этапов: $templateLabel'),
-                    ],
+                    if (generalSection.isNotEmpty)
+                      section('Основное', generalSection),
+                    if (productSection.isNotEmpty)
+                      section('Продукт', productSection),
+                    if (materialSection.isNotEmpty)
+                      section('Материал', materialSection),
+                    if (equipmentSection.isNotEmpty)
+                      section('Комплектация', equipmentSection),
+                    if (formSection.isNotEmpty)
+                      section('Форма', formSection),
+                    if (hasPdf)
+                      section('Файлы', [
+                        Row(
+                          children: [
+                            const Icon(Icons.picture_as_pdf_outlined,
+                                size: 16, color: Colors.redAccent),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'PDF: ${order.pdfUrl!}',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: scaled(13)),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () async {
+                                final url = await getSignedUrl(order.pdfUrl!);
+                                if (!context.mounted) return;
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        PdfViewScreen(url: url, title: 'PDF заказа'),
+                                  ),
+                                );
+                              },
+                              child: const Text('Открыть'),
+                            ),
+                          ],
+                        ),
+                      ]),
                   ],
                 ),
               ),
@@ -963,7 +1167,6 @@ class _TasksScreenState extends State<TasksScreen>
       ),
     );
   }
-
   /// Список этапов производства с иконками выполнено/ожидание.
   Widget _buildStageList(OrderModel order, double scale) {
     final taskProvider = context.read<TaskProvider>();
