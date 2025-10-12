@@ -247,11 +247,14 @@ class TaskProvider with ChangeNotifier {
     if (bobbinIndex > flexoIndex) {
       bobIndex -= 1;
     }
-    var targetIndex = bobIndex + 1;
-    if (targetIndex < 0) targetIndex = 0;
-    if (targetIndex > adjusted.length) targetIndex = adjusted.length;
 
-    adjusted.insert(targetIndex, flexoId);
+    if (bobIndex != 0 && bobIndex >= 0 && bobIndex < adjusted.length) {
+      final bobbinId = adjusted.removeAt(bobIndex);
+      adjusted.insert(0, bobbinId);
+    }
+
+    final targetIndex = adjusted.isEmpty ? 0 : 1;
+    adjusted.insert(targetIndex.clamp(0, adjusted.length), flexoId);
     return adjusted;
   }
 
