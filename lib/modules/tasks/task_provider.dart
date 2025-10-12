@@ -224,7 +224,7 @@ class TaskProvider with ChangeNotifier {
     int bobbinIndex = -1;
     for (var i = 0; i < orderedIds.length; i++) {
       final id = orderedIds[i];
-      final row = orderedRows[i];
+      final row = orderedRows.length > i ? orderedRows[i] : const {};
       if (flexoIndex == -1 && _isFlexoStage(id, row)) {
         flexoIndex = i;
       }
@@ -238,23 +238,22 @@ class TaskProvider with ChangeNotifier {
     final adjusted = List<String>.from(orderedIds);
     final flexoId = adjusted.removeAt(flexoIndex);
 
+    int targetIndex;
     if (bobbinIndex == -1) {
-      adjusted.insert(0, flexoId);
-      return adjusted;
+      targetIndex = 0;
+    } else {
+      var adjustedBobbinIndex = bobbinIndex;
+      if (bobbinIndex > flexoIndex) {
+        adjustedBobbinIndex -= 1;
+      }
+      targetIndex = adjustedBobbinIndex + 1;
     }
 
-    var bobIndex = bobbinIndex;
-    if (bobbinIndex > flexoIndex) {
-      bobIndex -= 1;
+    if (targetIndex < 0) targetIndex = 0;
+    if (targetIndex > adjusted.length) {
+      targetIndex = adjusted.length;
     }
-
-    if (bobIndex != 0 && bobIndex >= 0 && bobIndex < adjusted.length) {
-      final bobbinId = adjusted.removeAt(bobIndex);
-      adjusted.insert(0, bobbinId);
-    }
-
-    final targetIndex = adjusted.isEmpty ? 0 : 1;
-    adjusted.insert(targetIndex.clamp(0, adjusted.length), flexoId);
+    adjusted.insert(targetIndex, flexoId);
     return adjusted;
   }
 
