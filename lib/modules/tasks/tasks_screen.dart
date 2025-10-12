@@ -766,6 +766,25 @@ class _TasksScreenState extends State<TasksScreen>
         taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
 
     final orderedStageIds = <String>[];
+    WorkplaceModel stageById(String id) {
+      return personnel.workplaces.firstWhere(
+        (w) => w.id == id,
+        orElse: () => WorkplaceModel(id: id, name: id, positionIds: const []),
+      );
+    }
+
+    bool _isFlexo(WorkplaceModel stage) {
+      final probe = stage.name.toLowerCase();
+      return probe.contains('флекс') || probe.contains('flexo');
+    }
+
+    bool _isBobbin(WorkplaceModel stage) {
+      final probe = stage.name.toLowerCase();
+      return probe.contains('бобин') ||
+          probe.contains('бабин') ||
+          probe.contains('bobbin');
+    }
+
     if (sequence.isNotEmpty) {
       for (final id in sequence) {
         if (stageIds.contains(id)) {
@@ -782,17 +801,46 @@ class _TasksScreenState extends State<TasksScreen>
     } else {
       orderedStageIds.addAll(stageIds);
       orderedStageIds.sort((a, b) {
-        String name(String id) {
-          try {
-            final w = personnel.workplaces.firstWhere((w) => w.id == id);
-            return (w.name.isNotEmpty ? w.name : id).toLowerCase();
-          } catch (_) {
-            return id.toLowerCase();
+        final aName = stageById(a).name.isNotEmpty ? stageById(a).name : a;
+        final bName = stageById(b).name.isNotEmpty ? stageById(b).name : b;
+        return aName.toLowerCase().compareTo(bName.toLowerCase());
+      });
+
+      if (orderedStageIds.length > 1) {
+        int flexoIndex = -1;
+        int bobbinIndex = -1;
+
+        for (var i = 0; i < orderedStageIds.length; i++) {
+          final stage = stageById(orderedStageIds[i]);
+          if (flexoIndex == -1 && _isFlexo(stage)) {
+            flexoIndex = i;
+          }
+          if (bobbinIndex == -1 && _isBobbin(stage)) {
+            bobbinIndex = i;
           }
         }
 
-        return name(a).compareTo(name(b));
-      });
+        if (flexoIndex != -1) {
+          final flexoId = orderedStageIds.removeAt(flexoIndex);
+
+          if (bobbinIndex == -1) {
+            orderedStageIds.insert(0, flexoId);
+          } else {
+            if (bobbinIndex > flexoIndex) {
+              bobbinIndex -= 1;
+            }
+
+            if (bobbinIndex > 0 &&
+                bobbinIndex < orderedStageIds.length) {
+              final bobbinId = orderedStageIds.removeAt(bobbinIndex);
+              orderedStageIds.insert(0, bobbinId);
+            }
+
+            final targetIndex = orderedStageIds.isEmpty ? 0 : 1;
+            orderedStageIds.insert(targetIndex, flexoId);
+          }
+        }
+      }
     }
 
     return Column(
@@ -804,11 +852,7 @@ class _TasksScreenState extends State<TasksScreen>
         for (final id in orderedStageIds)
           Builder(
             builder: (context) {
-              final stage = personnel.workplaces.firstWhere(
-                (w) => w.id == id,
-                orElse: () =>
-                    WorkplaceModel(id: id, name: id, positionIds: const []),
-              );
+              final stage = stageById(id);
               final stageTasks =
                   tasksForOrder.where((t) => t.stageId == id).toList();
               final completed = stageTasks.isNotEmpty &&
