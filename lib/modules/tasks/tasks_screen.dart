@@ -8,6 +8,8 @@ import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
 import '../analytics/analytics_provider.dart';
+import '../production_planning/template_provider.dart';
+import '../production_planning/template_model.dart';
 import 'task_model.dart';
 import 'task_provider.dart';
 import '../common/pdf_view_screen.dart';
@@ -294,6 +296,13 @@ class _TasksScreenState extends State<TasksScreen>
   TaskModel? _selectedTask;
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
+  static const Map<TaskStatus, String> _statusLabels = {
+    TaskStatus.waiting: 'В ожидании',
+    TaskStatus.inProgress: 'В работе',
+    TaskStatus.paused: 'На паузе',
+    TaskStatus.completed: 'Завершенные',
+  };
+  TaskStatus _selectedStatus = TaskStatus.waiting;
 
   /// Aggregated setup duration across all tasks belonging to the same order and
   /// stage. This sums up all overlapping periods between 'setup_start' and
@@ -500,6 +509,25 @@ class _TasksScreenState extends State<TasksScreen>
     if (ps != null) ps.writeState(context, id, identifier: _tidKey);
   }
 
+  TaskStatus _sectionForTask(TaskModel task) {
+    if (task.status == TaskStatus.problem) {
+      return TaskStatus.inProgress;
+    }
+    if (_statusLabels.containsKey(task.status)) {
+      return task.status;
+    }
+    return TaskStatus.waiting;
+  }
+
+  String? _resolveTemplateName(
+      String? templateId, List<TemplateModel> templates) {
+    if (templateId == null || templateId.isEmpty) return null;
+    for (final tpl in templates) {
+      if (tpl.id == templateId) return tpl.name;
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -514,6 +542,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final ordersProvider = context.watch<OrdersProvider>();
     final taskProvider = context.watch<TaskProvider>();
+    final templateProvider = context.watch<TemplateProvider>();
 
     final EmployeeModel employee = personnel.employees.firstWhere(
       (e) => e.id == widget.employeeId,
@@ -550,15 +579,37 @@ class _TasksScreenState extends State<TasksScreen>
       return null;
     }
 
-    final tasks = taskProvider.tasks
+    final tasksForWorkplace = taskProvider.tasks
         .where((t) => t.stageId == _selectedWorkplaceId)
         .toList();
 
     if (_selectedTask == null && savedTid != null) {
       try {
-        _selectedTask = tasks.firstWhere((t) => t.id == savedTid);
+        _selectedTask =
+            tasksForWorkplace.firstWhere((t) => t.id == savedTid);
+        _selectedStatus = _sectionForTask(_selectedTask!);
       } catch (_) {}
+    } else if (_selectedTask != null &&
+        !tasksForWorkplace.any((t) => t.id == _selectedTask!.id)) {
+      _selectedTask = null;
+      _persistTask(null);
     }
+
+    if (_selectedTask != null) {
+      final desiredSection = _sectionForTask(_selectedTask!);
+      if (desiredSection != _selectedStatus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _selectedStatus = desiredSection;
+          });
+        });
+      }
+    }
+
+    final sectionedTasks = tasksForWorkplace
+        .where((t) => _sectionForTask(t) == _selectedStatus)
+        .toList();
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
             (t) => t.id == _selectedTask!.id,
@@ -634,23 +685,57 @@ class _TasksScreenState extends State<TasksScreen>
                             style: const TextStyle(color: Colors.grey),
                           ),
                           const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final entry in _statusLabels.entries)
+                                ChoiceChip(
+                                  label: Text(entry.value),
+                                  selected: _selectedStatus == entry.key,
+                                  onSelected: (selected) {
+                                    if (!selected) return;
+                                    setState(() {
+                                      _selectedStatus = entry.key;
+                                      if (_selectedTask != null &&
+                                          _sectionForTask(_selectedTask!) !=
+                                              _selectedStatus) {
+                                        _selectedTask = null;
+                                        _persistTask(null);
+                                      }
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
                           Expanded(
-                            child: ListView(
-                              children: [
-                                for (final task in tasks)
-                                  _TaskCard(
-                                    task: task,
-                                    order: findOrder(task.orderId),
-                                    selected: _selectedTask?.id == task.id,
-                                    onTap: () {
-                                      _persistTask(task.id);
-                                      setState(() {
-                                        _selectedTask = task;
-                                      });
-                                    },
+                            child: sectionedTasks.isEmpty
+                                ? const Center(
+                                    child: Text(
+                                      'Нет заданий в этой категории',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  )
+                                : ListView(
+                                    children: [
+                                      for (final task in sectionedTasks)
+                                        _TaskCard(
+                                          task: task,
+                                          order: findOrder(task.orderId),
+                                          selected:
+                                              _selectedTask?.id == task.id,
+                                          onTap: () {
+                                            _persistTask(task.id);
+                                            setState(() {
+                                              _selectedTask = task;
+                                              _selectedStatus =
+                                                  _sectionForTask(task);
+                                            });
+                                          },
+                                        ),
+                                    ],
                                   ),
-                              ],
-                            ),
                           ),
                         ],
                       ),
@@ -688,7 +773,8 @@ class _TasksScreenState extends State<TasksScreen>
                     if (currentTask != null &&
                         selectedWorkplace != null &&
                         selectedOrder != null)
-                      _buildDetailsPanel(selectedOrder, selectedWorkplace),
+                      _buildDetailsPanel(selectedOrder, selectedWorkplace,
+                          templateProvider.templates),
                     if (currentTask != null && selectedWorkplace != null)
                       const SizedBox(height: 16),
                     if (currentTask != null && selectedWorkplace != null)
@@ -704,8 +790,14 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Widget _buildDetailsPanel(OrderModel order, WorkplaceModel stage) {
+  Widget _buildDetailsPanel(
+      OrderModel order, WorkplaceModel stage, List<TemplateModel> templates) {
     final product = order.product;
+    final templateLabel = (order.stageTemplateId != null &&
+            order.stageTemplateId!.isNotEmpty)
+        ? (_resolveTemplateName(order.stageTemplateId, templates) ??
+            (templates.isEmpty ? 'загрузка...' : 'не найден'))
+        : null;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -801,9 +893,8 @@ class _TasksScreenState extends State<TasksScreen>
                       if (order.additionalParams.isNotEmpty)
                         Text(
                             'Доп. параметры: ${order.additionalParams.join(', ')}'),
-                      if (order.stageTemplateId != null &&
-                          order.stageTemplateId!.isNotEmpty)
-                        Text('Шаблон этапов: ${order.stageTemplateId}'),
+                      if (templateLabel != null)
+                        Text('Шаблон этапов: $templateLabel'),
                     ],
                   ],
                 ),
