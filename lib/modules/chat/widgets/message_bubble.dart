@@ -1,6 +1,6 @@
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../../utils/media_viewer.dart';
 
 import '../chat_message.dart';
 
@@ -119,7 +119,12 @@ class _MessageBubbleState extends State<MessageBubble> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _ImageWidget(url: m.fileUrl ?? '', scale: scale),
+            _ImageWidget(
+              url: m.fileUrl ?? '',
+              mime: m.fileMime,
+              title: (m.body ?? '').isNotEmpty ? m.body : 'Фото',
+              scale: scale,
+            ),
             if ((m.body ?? '').isNotEmpty) ...[
               SizedBox(height: 6 * scale),
               Text(m.body!, style: TextStyle(fontSize: 14 * scale)),
@@ -132,6 +137,7 @@ class _MessageBubbleState extends State<MessageBubble> {
           icon: Icons.videocam,
           title: m.body?.isNotEmpty == true ? m.body! : 'Видео',
           url: m.fileUrl,
+          mime: m.fileMime,
           scale: scale,
         );
 
@@ -143,6 +149,7 @@ class _MessageBubbleState extends State<MessageBubble> {
           icon: Icons.insert_drive_file,
           title: m.body?.isNotEmpty == true ? m.body! : 'Файл',
           url: m.fileUrl,
+          mime: m.fileMime,
           scale: scale,
         );
     }
@@ -151,8 +158,15 @@ class _MessageBubbleState extends State<MessageBubble> {
 
 class _ImageWidget extends StatelessWidget {
   final String url;
+  final String? mime;
+  final String? title;
   final double scale;
-  const _ImageWidget({required this.url, this.scale = 1.0});
+  const _ImageWidget({
+    required this.url,
+    this.mime,
+    this.title,
+    this.scale = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -164,7 +178,12 @@ class _ImageWidget extends StatelessWidget {
       child: GestureDetector(
         onTap: () {
           if (url.isEmpty) return;
-          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          showMediaPreview(
+            context,
+            url: url,
+            mime: mime,
+            title: title,
+          );
         },
         child: Image.network(
           url,
@@ -196,15 +215,29 @@ class _FileTile extends StatelessWidget {
   final String? url;
   final String title;
   final IconData icon;
+  final String? mime;
   final double scale;
 
-  const _FileTile({required this.icon, required this.title, required this.url, this.scale = 1.0});
+  const _FileTile({
+    required this.icon,
+    required this.title,
+    required this.url,
+    this.mime,
+    this.scale = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
     double scaled(double value) => value * scale;
     return InkWell(
-      onTap: url == null ? null : () => launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
+      onTap: url == null
+          ? null
+          : () => showMediaPreview(
+                context,
+                url: url!,
+                mime: mime,
+                title: title,
+              ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

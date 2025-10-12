@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'warehouse_provider.dart';
+import '../../utils/media_viewer.dart';
 
 class FormsScreen extends StatefulWidget {
   const FormsScreen({Key? key}) : super(key: key);
@@ -377,6 +378,8 @@ class _FormsScreenState extends State<FormsScreen> {
                     if (typeStr.isNotEmpty) subtitle.add('Тип: $typeStr');
                     if (colorsStr.isNotEmpty) subtitle.add('Цвета: $colorsStr');
 
+                    final imageUrl = (row['image_url'] ?? '').toString();
+
                     return Dismissible(
                       key: ValueKey('form_${row['id'] ?? '$series/$n'}'),
                       direction: DismissDirection.endToStart,
@@ -391,24 +394,32 @@ class _FormsScreenState extends State<FormsScreen> {
                       onDismissed: (_) => _deleteRow(row),
                       child: ListTile(
                         onTap: () => _showFormDialog(row: row),
-                        leading:
-                            ((row['image_url'] ?? '').toString().isNotEmpty)
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(20),
-                                    child: Image.network(
-                                      (row['image_url'] ?? '').toString(),
-                                      width: 40,
-                                      height: 40,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) =>
-                                          const Icon(Icons.image_not_supported),
-                                    ),
-                                  )
-                                : CircleAvatar(
-                                    child: Text(series.isEmpty
-                                        ? '?'
-                                        : series.substring(0, 1)),
+                        leading: imageUrl.isNotEmpty
+                            ? GestureDetector(
+                                onTap: () => showImagePreview(
+                                  context,
+                                  imageUrl: imageUrl,
+                                  title: nameNumber,
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: Image.network(
+                                    imageUrl,
+                                    width: 40,
+                                    height: 40,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(Icons.image_not_supported),
                                   ),
+                                ),
+                              )
+                            : CircleAvatar(
+                                child: Text(
+                                  series.isEmpty
+                                      ? '?'
+                                      : series.substring(0, 1),
+                                ),
+                              ),
                         title: Text(nameNumber),
                         subtitle: subtitle.isEmpty
                             ? null
