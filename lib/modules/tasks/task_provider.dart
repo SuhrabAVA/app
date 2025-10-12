@@ -157,9 +157,102 @@ class TaskProvider with ChangeNotifier {
       return null;
     }
 
-    final raw = pick(const ['stage_id', 'stageId', 'id']);
+    final raw =
+        pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']);
     if (raw == null) return '';
     return raw.toString();
+  }
+
+  String _readStageName(Map<String, dynamic> row) {
+    const keys = [
+      'stage_name',
+      'stageName',
+      'workplace_name',
+      'workplaceName',
+      'workplace_title',
+      'workplaceTitle',
+      'title',
+      'name',
+    ];
+    for (final key in keys) {
+      if (!row.containsKey(key)) continue;
+      final value = row[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  bool _isFlexoStage(String id, Map<String, dynamic> row) {
+    final probes = <String>[
+      id,
+      _readStageName(row),
+      if (row['stage_code'] != null) row['stage_code'].toString(),
+    ];
+    for (final probe in probes) {
+      final lower = probe.toLowerCase();
+      if (lower.contains('флекс') || lower.contains('flexo')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isBobbinStage(String id, Map<String, dynamic> row) {
+    final probes = <String>[
+      id,
+      _readStageName(row),
+      if (row['stage_code'] != null) row['stage_code'].toString(),
+    ];
+    for (final probe in probes) {
+      final lower = probe.toLowerCase();
+      if (lower.contains('бобин') ||
+          lower.contains('бабин') ||
+          lower.contains('bobbin')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  List<String> _applyFlexoOrdering(
+      List<Map<String, dynamic>> orderedRows, List<String> orderedIds) {
+    if (orderedIds.length <= 1) return orderedIds;
+
+    int flexoIndex = -1;
+    int bobbinIndex = -1;
+    for (var i = 0; i < orderedIds.length; i++) {
+      final id = orderedIds[i];
+      final row = orderedRows[i];
+      if (flexoIndex == -1 && _isFlexoStage(id, row)) {
+        flexoIndex = i;
+      }
+      if (bobbinIndex == -1 && _isBobbinStage(id, row)) {
+        bobbinIndex = i;
+      }
+    }
+
+    if (flexoIndex == -1) return orderedIds;
+
+    final adjusted = List<String>.from(orderedIds);
+    final flexoId = adjusted.removeAt(flexoIndex);
+
+    if (bobbinIndex == -1) {
+      adjusted.insert(0, flexoId);
+      return adjusted;
+    }
+
+    var bobIndex = bobbinIndex;
+    if (bobbinIndex > flexoIndex) {
+      bobIndex -= 1;
+    }
+    var targetIndex = bobIndex + 1;
+    if (targetIndex < 0) targetIndex = 0;
+    if (targetIndex > adjusted.length) targetIndex = adjusted.length;
+
+    adjusted.insert(targetIndex, flexoId);
+    return adjusted;
   }
 
   Future<List<String>> _fetchStageSequence(String orderId) async {
@@ -183,13 +276,15 @@ class TaskProvider with ChangeNotifier {
         return _readStageId(a).compareTo(_readStageId(b));
       });
       final result = <String>[];
+      final filteredRows = <Map<String, dynamic>>[];
       for (final m in list) {
         final id = _readStageId(m);
         if (id.isNotEmpty && !result.contains(id)) {
           result.add(id);
+          filteredRows.add(m);
         }
       }
-      return result;
+      return _applyFlexoOrdering(filteredRows, result);
     }
 
     // Try new schema production.*
