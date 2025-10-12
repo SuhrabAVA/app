@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../personnel/personnel_provider.dart';
 import 'order_model.dart';
 
-/// Диалог, показывающий историю событий по заказу.
+/// Диалог, показывающий ход выполнения заказа на основе комментариев этапов.
 class OrderTimelineDialog extends StatelessWidget {
   final OrderModel order;
   final List<Map<String, dynamic>> events;
@@ -223,11 +223,11 @@ class OrderTimelineDialog extends StatelessWidget {
     });
 
     return AlertDialog(
-      title: Text('История заказа ${order.id}'),
+      title: Text('Выполнение заказа ${order.id}'),
       content: SizedBox(
         width: double.maxFinite,
         child: sortedEvents.isEmpty
-            ? const Text('История пуста')
+            ? const Text('Комментариев по выполнению пока нет')
             : ListView.separated(
                 shrinkWrap: true,
                 itemCount: sortedEvents.length,
