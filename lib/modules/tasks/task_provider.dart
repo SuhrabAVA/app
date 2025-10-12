@@ -258,6 +258,47 @@ class TaskProvider with ChangeNotifier {
     return adjusted;
   }
 
+  Future<Map<String, Map<String, dynamic>>> _workplaceMeta(
+      List<String> stageIds) async {
+    if (stageIds.isEmpty) return const {};
+    try {
+      final rows = await _supabase
+          .from('workplaces')
+          .select('id, name, title, short_name, code')
+          .in_('id', stageIds);
+      final result = <String, Map<String, dynamic>>{};
+      if (rows is List) {
+        for (final row in rows) {
+          if (row is! Map) continue;
+          final map = Map<String, dynamic>.from(row as Map);
+          final id = map['id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          final nameCandidates = [
+            map['name'],
+            map['title'],
+            map['short_name'],
+          ];
+          String? resolvedName;
+          for (final candidate in nameCandidates) {
+            if (candidate == null) continue;
+            final text = candidate.toString().trim();
+            if (text.isNotEmpty) {
+              resolvedName = text;
+              break;
+            }
+          }
+          result[id] = {
+            if (resolvedName != null) 'stage_name': resolvedName,
+            if (map['code'] != null) 'stage_code': map['code'].toString(),
+          };
+        }
+      }
+      return result;
+    } catch (_) {
+      return const {};
+    }
+  }
+
   Future<List<String>> _fetchStageSequence(String orderId) async {
     await _ensureAuthed();
 
@@ -284,7 +325,16 @@ class TaskProvider with ChangeNotifier {
         final id = _readStageId(m);
         if (id.isNotEmpty && !result.contains(id)) {
           result.add(id);
-          filteredRows.add(m);
+          filteredRows.add(Map<String, dynamic>.from(m));
+        }
+      }
+      if (result.isEmpty) return const [];
+      final meta = await _workplaceMeta(result);
+      for (var i = 0; i < filteredRows.length; i++) {
+        final id = result[i];
+        final extras = meta[id];
+        if (extras != null && extras.isNotEmpty) {
+          filteredRows[i].addAll(extras);
         }
       }
       return _applyFlexoOrdering(filteredRows, result);
