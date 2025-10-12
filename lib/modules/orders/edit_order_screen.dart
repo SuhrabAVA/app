@@ -432,7 +432,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   bool _hasAnyPaints() {
     for (final paint in _paints) {
-      if (paint.hasName) return true;
+      final hasTmc = paint.tmc != null;
+      final hasName = paint.displayName.trim().isNotEmpty;
+      final hasQty = paint.qty != null;
+      final hasMemo = paint.memo.trim().isNotEmpty;
+      if (hasTmc || hasName || hasQty || hasMemo) {
+        return true;
+      }
     }
     return false;
   }
@@ -2976,6 +2982,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     final bool paintsFilled = _hasAnyPaints() ||
         (_product.parameters.toLowerCase().contains('краска'));
+
+    if (paintsFilled) {
+      flexoId ??= 'w_flexoprint';
+      final normalizedFlexoTitle = (flexoTitle ?? '').trim();
+      if (normalizedFlexoTitle.isEmpty) {
+        flexoTitle = 'Флексопечать';
+      } else if (RegExp(r'^[a-z0-9_\-]+$')
+          .hasMatch(normalizedFlexoTitle.toLowerCase())) {
+        flexoTitle = 'Флексопечать';
+      } else {
+        flexoTitle = normalizedFlexoTitle;
+      }
+    }
 
     if (paintsFilled && flexoId != null && flexoId.isNotEmpty) {
       final hasFlexo = stageMaps.any((m) {
