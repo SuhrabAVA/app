@@ -110,18 +110,6 @@ bool _anyUserActive(TaskModel task, {String? exceptUserId}) {
 /// Разрешить старт только для самого первого незавершённого этапа заказа
 bool _isFirstPendingStage(
     TaskProvider tasks, PersonnelProvider personnel, TaskModel task) {
-  // Stages without machines do not require setup and may start immediately.
-  try {
-    final stage =
-        personnel.workplaces.firstWhere((w) => w.id == task.stageId);
-    if (!stage.hasMachine) {
-      return true;
-    }
-  } catch (_) {
-    // Unknown stage — do not block execution.
-    return true;
-  }
-
   // Все задачи этого заказа
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;
@@ -774,13 +762,46 @@ class _TasksScreenState extends State<TasksScreen>
     }
     if (stageIds.isEmpty) return const SizedBox.shrink();
 
+    final sequence =
+        taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
+
+    final orderedStageIds = <String>[];
+    if (sequence.isNotEmpty) {
+      for (final id in sequence) {
+        if (stageIds.contains(id)) {
+          orderedStageIds.add(id);
+        }
+      }
+      if (orderedStageIds.length != stageIds.length) {
+        final extras = stageIds
+            .where((id) => !orderedStageIds.contains(id))
+            .toList()
+          ..sort();
+        orderedStageIds.addAll(extras);
+      }
+    } else {
+      orderedStageIds.addAll(stageIds);
+      orderedStageIds.sort((a, b) {
+        String name(String id) {
+          try {
+            final w = personnel.workplaces.firstWhere((w) => w.id == id);
+            return (w.name.isNotEmpty ? w.name : id).toLowerCase();
+          } catch (_) {
+            return id.toLowerCase();
+          }
+        }
+
+        return name(a).compareTo(name(b));
+      });
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Этапы производства',
             style: TextStyle(fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
-        for (final id in stageIds)
+        for (final id in orderedStageIds)
           Builder(
             builder: (context) {
               final stage = personnel.workplaces.firstWhere(
