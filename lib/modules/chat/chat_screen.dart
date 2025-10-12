@@ -117,8 +117,14 @@ class _ChatScreenState extends State<ChatScreen> {
         // автопрокрутка вниз при новых сообщениях
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
 
+        final media = MediaQuery.of(context);
+        final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+        final double scale = isTablet ? 0.9 : 1.0;
+        double scaled(double value) => value * scale;
+
         return Scaffold(
           appBar: AppBar(
+            toolbarHeight: isTablet ? 48 : null,
             title: Text('Чат • ${widget.roomId}'),
             actions: [
               if (widget.isLead)
@@ -137,7 +143,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Expanded(
                 child: ListView.builder(
                   controller: _scroll,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: EdgeInsets.symmetric(vertical: scaled(6)),
                   itemCount: list.length,
                   itemBuilder: (context, i) {
                     final m = list[i];
@@ -147,11 +153,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                padding: EdgeInsets.fromLTRB(scaled(8), 0, scaled(8), scaled(8)),
                 child: ChatInputBar(
                   roomId: widget.roomId,
                   senderId: widget.meId,
                   senderName: widget.meName,
+                  scale: scale,
+                  compact: isTablet,
                 ),
               ),
             ],

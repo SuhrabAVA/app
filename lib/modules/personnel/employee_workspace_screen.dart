@@ -244,7 +244,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-     final personnel = context.watch<PersonnelProvider>();
+    final personnel = context.watch<PersonnelProvider>();
     final EmployeeModel emp = personnel.employees.firstWhere(
       (e) => e.id == employeeId,
       orElse: () => EmployeeModel(
@@ -267,29 +267,55 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
         .join(' ')
         .trim();
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: Container(
-            color: Colors.white,
-            child: const TabBar(
-              tabs: [
-                Tab(text: 'Задания'),
-                Tab(text: 'Чат'),
+    final media = MediaQuery.of(context);
+    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final double scale = isTablet ? 0.9 : 1.0;
+    final double targetTextScale = (media.textScaleFactor * scale).clamp(0.8, media.textScaleFactor) as double;
+    final mediaData = media.copyWith(textScaleFactor: targetTextScale);
+    final theme = Theme.of(context);
+    final TextStyle? baseTabLabel = theme.tabBarTheme.labelStyle ?? theme.textTheme.labelLarge;
+    final TextStyle? baseTabUnselected = theme.tabBarTheme.unselectedLabelStyle ?? theme.textTheme.labelMedium;
+    final ThemeData compactTheme = theme.copyWith(
+      visualDensity: isTablet ? const VisualDensity(horizontal: -1, vertical: -1) : theme.visualDensity,
+      tabBarTheme: theme.tabBarTheme.copyWith(
+        labelPadding: isTablet ? const EdgeInsets.symmetric(horizontal: 12) : theme.tabBarTheme.labelPadding,
+        labelStyle: baseTabLabel?.copyWith(fontSize: isTablet ? 13 : baseTabLabel?.fontSize),
+        unselectedLabelStyle: baseTabUnselected?.copyWith(fontSize: isTablet ? 13 : baseTabUnselected?.fontSize),
+      ),
+      iconTheme: theme.iconTheme.copyWith(size: isTablet ? 20 : theme.iconTheme.size),
+      appBarTheme: theme.appBarTheme.copyWith(toolbarHeight: isTablet ? 48 : theme.appBarTheme.toolbarHeight),
+    );
+    final double tabBarHeight = isTablet ? 46 : 50;
+
+    return MediaQuery(
+      data: mediaData,
+      child: Theme(
+        data: compactTheme,
+        child: DefaultTabController(
+          length: 2,
+          child: Scaffold(
+            appBar: PreferredSize(
+              preferredSize: Size.fromHeight(tabBarHeight),
+              child: Container(
+                color: Colors.white,
+                child: const TabBar(
+                  tabs: [
+                    Tab(text: 'Задания'),
+                    Tab(text: 'Чат'),
+                  ],
+                ),
+              ),
+            ),
+            body: TabBarView(
+              children: [
+                TasksScreen(employeeId: employeeId),
+                ChatTab(
+                  currentUserId: employeeId,
+                  currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
+                ),
               ],
             ),
           ),
-        ),
-        body: TabBarView(
-          children: [
-            TasksScreen(employeeId: employeeId),
-            ChatTab(
-              currentUserId: employeeId,
-              currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
-            ),
-          ],
         ),
       ),
     );
