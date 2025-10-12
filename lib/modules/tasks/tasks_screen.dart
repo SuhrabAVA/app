@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../orders/order_model.dart';
+import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
@@ -841,6 +842,7 @@ class _TasksScreenState extends State<TasksScreen>
     final double radius = scaled(12);
     final double mediumSpacing = scaled(16);
     final double smallSpacing = scaled(4);
+    final orderNumber = orderDisplayId(order);
     return Container(
       padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
@@ -858,7 +860,7 @@ class _TasksScreenState extends State<TasksScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      order.assignmentId ?? order.id,
+                      orderNumber != '—' ? orderNumber : order.id,
                       style: TextStyle(
                           fontSize: scaled(18), fontWeight: FontWeight.bold),
                     ),
@@ -2214,7 +2216,12 @@ class _TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = _statusColor(task.status);
     final name = order?.product.type ?? '';
-    final displayId = order?.assignmentId ?? order?.id ?? task.orderId;
+    final displayId = () {
+      if (order == null) return task.orderId;
+      final formatted = orderDisplayId(order!);
+      if (formatted != '—') return formatted;
+      return order!.id;
+    }();
     final displayTitle = (order != null && order!.customer.isNotEmpty)
         ? order!.customer
         : (name.isNotEmpty ? name : displayId);

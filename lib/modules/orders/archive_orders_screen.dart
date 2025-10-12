@@ -5,6 +5,7 @@ import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
 import 'edit_order_screen.dart';
+import 'id_format.dart';
 
 /// Экран архива заказов. Показывает завершённые заказы с поиском и
 /// возможностью переключения вида (список/карточки). Из архива можно
@@ -31,8 +32,10 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
     return orders.where((o) {
       if (o.statusEnum != OrderStatus.completed) return false;
       if (query.isEmpty) return true;
+      final displayId = orderDisplayId(o).toLowerCase();
       return o.customer.toLowerCase().contains(query) ||
           o.id.toLowerCase().contains(query) ||
+          displayId.contains(query) ||
           o.product.type.toLowerCase().contains(query);
     }).toList();
   }
@@ -80,13 +83,15 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
 
   Widget _buildCard(BuildContext context, OrderModel o) {
     final product = o.product;
+    final displayId = orderDisplayId(o);
+    final orderNumber = displayId == '—' ? o.id : displayId;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Заказ ${o.id}',
+            Text('Заказ $orderNumber',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             Text('Заказчик: ${o.customer}'),
@@ -155,10 +160,12 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
                       itemBuilder: (_, i) {
                         final o = orders[i];
                         final product = o.product.type;
+                        final displayId = orderDisplayId(o);
+                        final orderNumber = displayId == '—' ? o.id : displayId;
                         return ListTile(
                           title: Text(o.customer),
                           subtitle: Text(product),
-                          leading: Text(o.id),
+                          leading: Text(orderNumber),
                           trailing: TextButton(
                             onPressed: () => _resumeOrder(context, o),
                             child: const Text('Возобновить'),
