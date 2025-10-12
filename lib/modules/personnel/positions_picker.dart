@@ -39,11 +39,14 @@ class _ManagerAwarePositionsPickerState extends State<ManagerAwarePositionsPicke
     final pr = context.watch<PersonnelProvider>();
     final regular = pr.regularPositions;
     final manager = pr.findManagerPosition();
+    final techLeader = pr.findTechLeaderPosition();
     final wh = pr.findWarehouseHeadPosition();
 
     final managerSelected = manager != null && _selected.contains(manager.id);
+    final techLeaderSelected =
+        techLeader != null && _selected.contains(techLeader.id);
     final warehouseSelected = wh != null && _selected.contains(wh.id);
-    final specialSelected = managerSelected || warehouseSelected;
+    final specialSelected = managerSelected || techLeaderSelected || warehouseSelected;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,7 +83,7 @@ class _ManagerAwarePositionsPickerState extends State<ManagerAwarePositionsPicke
         const SizedBox(height: 16),
 
           // Спецроли (блок 2)
-          if (manager != null || wh != null) ...[
+          if (manager != null || techLeader != null || wh != null) ...[
             const Divider(height: 24),
             Text('Роль с отдельным рабочим местом',
                 style: Theme.of(context).textTheme.labelLarge),
@@ -104,6 +107,24 @@ class _ManagerAwarePositionsPickerState extends State<ManagerAwarePositionsPicke
                 },
               ),
             if (manager != null) const SizedBox(height: 8),
+            if (techLeader != null)
+              FilterChip(
+                label: const Text('Технический лидер (эксклюзивно)'),
+                selected: techLeaderSelected,
+                onSelected: (v) {
+                  setState(() {
+                    if (v) {
+                      _selected
+                        ..clear()
+                        ..add(techLeader.id);
+                    } else {
+                      _selected.remove(techLeader.id);
+                    }
+                  });
+                  _emit();
+                },
+              ),
+            if (techLeader != null) const SizedBox(height: 8),
             if (wh != null)
               FilterChip(
                 label: const Text('Заведующий складом (эксклюзивно)'),
@@ -124,7 +145,7 @@ class _ManagerAwarePositionsPickerState extends State<ManagerAwarePositionsPicke
               ),
             const SizedBox(height: 4),
             Text(
-              'Если выбран «Менеджер» или «Заведующий складом», выбрать другие должности нельзя, так как у них отдельное рабочее пространство.',
+              'Если выбран «Менеджер», «Технический лидер» или «Заведующий складом», выбрать другие должности нельзя, так как у них отдельное рабочее пространство.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
             ),
           ],

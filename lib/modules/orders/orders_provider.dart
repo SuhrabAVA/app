@@ -284,14 +284,123 @@ class OrdersProvider with ChangeNotifier {
 
   /// Возвращает список событий истории по идентификатору заказа.
   Future<List<Map<String, dynamic>>> fetchOrderHistory(String orderId) async {
+    DateTime? _parseTimestamp(dynamic value) {
+      if (value == null) return null;
+      if (value is int) {
+        if (value > 2000000000) {
+          return DateTime.fromMillisecondsSinceEpoch(value);
+        }
+        return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+      }
+      if (value is num) {
+        final int intValue = value.toInt();
+        return _parseTimestamp(intValue);
+      }
+      if (value is String) {
+        if (value.isEmpty) return null;
+        final parsedInt = int.tryParse(value);
+        if (parsedInt != null) return _parseTimestamp(parsedInt);
+        return DateTime.tryParse(value);
+      }
+      if (value is DateTime) return value;
+      return null;
+    }
+
+    double? _extractQuantity(String type, String text) {
+      const trackedTypes = {'quantity_done', 'quantity_team_total', 'quantity_share'};
+      if (!trackedTypes.contains(type)) return null;
+      final normalized = text.replaceAll(',', '.');
+      final match = RegExp(r'-?[0-9]+(?:\.[0-9]+)?').firstMatch(normalized);
+      if (match != null) {
+        return double.tryParse(match.group(0)!);
+      }
+      return double.tryParse(normalized.trim());
+    }
+
+    String? _stringOrNull(dynamic value) {
+      if (value == null) return null;
+      final String stringValue = value.toString();
+      return stringValue.trim().isEmpty ? null : stringValue;
+    }
+
     try {
-      final rows = await _supabase
+      final List<Map<String, dynamic>> combined = [];
+
+      final eventRows = await _supabase
           .from('order_events')
           .select()
           .eq('order_id', orderId)
           .order('created_at');
 
-      return (rows as List).cast<Map<String, dynamic>>();
+      if (eventRows is List) {
+        for (final raw in eventRows) {
+          if (raw is! Map) continue;
+          final map = Map<String, dynamic>.from(raw as Map);
+          final DateTime? ts =
+              _parseTimestamp(map['created_at'] ?? map['timestamp'] ?? map['inserted_at']);
+          combined.add({
+            'source': 'order_event',
+            'timestamp': ts?.millisecondsSinceEpoch,
+            'event_type': _stringOrNull(map['event_type']) ?? '',
+            'description':
+                _stringOrNull(map['description']) ?? _stringOrNull(map['message']) ?? '',
+            'user_id': _stringOrNull(map['user_id']),
+            'payload': map['payload'],
+          });
+        }
+      }
+
+      final taskRows = await _supabase
+          .from('tasks')
+          .select('id, stage_id, comments')
+          .eq('order_id', orderId);
+
+      if (taskRows is List) {
+        for (final raw in taskRows) {
+          if (raw is! Map) continue;
+          final map = Map<String, dynamic>.from(raw as Map);
+          final String? stageId = _stringOrNull(map['stage_id'] ?? map['stageId']);
+          final commentsData = map['comments'];
+          final List<Map<String, dynamic>> commentsList = [];
+
+          if (commentsData is List) {
+            for (final item in commentsData) {
+              if (item is Map) {
+                commentsList.add(Map<String, dynamic>.from(item));
+              }
+            }
+          } else if (commentsData is Map) {
+            commentsData.forEach((_, value) {
+              if (value is Map) {
+                commentsList.add(Map<String, dynamic>.from(value));
+              }
+            });
+          }
+
+          for (final comment in commentsList) {
+            final String type = _stringOrNull(comment['type']) ?? '';
+            final String text = _stringOrNull(comment['text']) ?? '';
+            final DateTime? ts = _parseTimestamp(comment['timestamp']);
+            combined.add({
+              'source': 'task_comment',
+              'timestamp': ts?.millisecondsSinceEpoch,
+              'event_type': type,
+              'description': text,
+              'user_id': _stringOrNull(comment['userId']),
+              'stage_id': stageId,
+              'quantity': _extractQuantity(type, text),
+            });
+          }
+        }
+      }
+
+      combined.sort((a, b) {
+        final int tsA = (a['timestamp'] as int?) ?? 0;
+        final int tsB = (b['timestamp'] as int?) ?? 0;
+        return tsA.compareTo(tsB);
+      });
+
+      return combined;
     } catch (e, st) {
       debugPrint('❌ fetchOrderHistory error: $e\n$st');
       return [];
