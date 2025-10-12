@@ -5,6 +5,7 @@ import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/add_entry_dialog.dart';
 import 'tmc_history_screen.dart';
+import '../../utils/media_viewer.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -271,21 +272,19 @@ class _PaintTableState extends State<PaintTable> {
                                       }
                                       return GestureDetector(
                                         onTap: () {
-                                          if (bytes == null && item.imageUrl == null) return;
-                                          showDialog(
-                                            context: context,
-                                            builder: (_) {
-                                              return Dialog(
-                                                child: SizedBox(
-                                                  width: 300,
-                                                  height: 300,
-                                                  child: bytes != null
-                                                      ? Image.memory(bytes!, fit: BoxFit.contain)
-                                                      : Image.network(item.imageUrl!, fit: BoxFit.contain),
-                                                ),
-                                              );
-                                            },
-                                          );
+                                          if (bytes != null && bytes!.isNotEmpty) {
+                                            showImagePreview(
+                                              context,
+                                              bytes: bytes,
+                                              title: item.description,
+                                            );
+                                          } else if (item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                                            showImagePreview(
+                                              context,
+                                              imageUrl: item.imageUrl!,
+                                              title: item.description,
+                                            );
+                                          }
                                         },
                                         child: preview,
                                       );

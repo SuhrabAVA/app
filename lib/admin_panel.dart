@@ -24,6 +24,7 @@ class AdminPanelScreen extends StatefulWidget {
 }
 
 class _AdminPanelScreenState extends State<AdminPanelScreen> {
+  static const _anonymousUuid = '00000000-0000-0000-0000-000000000000';
   String? _meName;
   bool _loadingName = true;
 
@@ -97,7 +98,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   @override
   Widget build(BuildContext context) {
     final u = AuthService.currentUser;
-    final meId = (u?.id as String?) ?? 'anonymous';
+    final rawId = (u?.id as String?)?.trim();
+    final meId = (rawId == null || rawId.isEmpty) ? _anonymousUuid : rawId;
     final isLead =
         (((u?.userMetadata?['role']) ?? (u?.appMetadata?['role'])) == 'lead');
 

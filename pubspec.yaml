@@ -37,6 +37,8 @@ dependencies:
 
   # Добавляем виджет для просмотра PDF внутри приложения
   pdfx: ^2.5.0
+  video_player: ^2.9.1
+  http: ^1.2.1
 
 
 dev_dependencies:

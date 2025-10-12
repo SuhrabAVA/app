@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import 'personnel_provider.dart';
 import 'employee_model.dart';
 import 'positions_picker.dart';
+import '../../utils/media_viewer.dart';
 
 /// === Supabase helpers ===
 
@@ -79,6 +80,33 @@ class EmployeesScreen extends StatelessWidget {
                 final initials =
                     (emp.lastName.isNotEmpty ? emp.lastName[0] : '') +
                         (emp.firstName.isNotEmpty ? emp.firstName[0] : '');
+                final photoUrl = emp.photoUrl ?? '';
+                final displayName = fullName.isEmpty ? 'Сотрудник' : fullName;
+
+                Widget avatar = CircleAvatar(
+                  backgroundColor: Colors.blueGrey.shade100,
+                  backgroundImage:
+                      (photoUrl.isNotEmpty) ? NetworkImage(photoUrl) : null,
+                  child: (photoUrl.isEmpty)
+                      ? Text(
+                          initials.toUpperCase(),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 16),
+                        )
+                      : null,
+                );
+
+                if (photoUrl.isNotEmpty) {
+                  avatar = GestureDetector(
+                    onTap: () => showImagePreview(
+                      context,
+                      imageUrl: photoUrl,
+                      title: displayName,
+                    ),
+                    child: avatar,
+                  );
+                }
+
                 return Card(
                   margin: const EdgeInsets.symmetric(horizontal: 12),
                   elevation: 1,
@@ -92,22 +120,9 @@ class EmployeesScreen extends StatelessWidget {
                   ),
                   child: ListTile(
                     onTap: () => _openEditDialog(context, emp),
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.blueGrey.shade100,
-                      backgroundImage:
-                          (emp.photoUrl != null && emp.photoUrl!.isNotEmpty)
-                              ? NetworkImage(emp.photoUrl!)
-                              : null,
-                      child: (emp.photoUrl == null || emp.photoUrl!.isEmpty)
-                          ? Text(
-                              initials.toUpperCase(),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 16),
-                            )
-                          : null,
-                    ),
+                    leading: avatar,
                     title: Text(
-                      fullName.isEmpty ? 'Без имени' : fullName,
+                      displayName,
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         color: emp.isFired ? Colors.grey : Colors.black,
