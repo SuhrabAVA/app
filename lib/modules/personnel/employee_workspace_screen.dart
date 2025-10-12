@@ -56,6 +56,7 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
       return;
     }
     String? selectedId;
+    String searchQuery = '';
     String password = '';
     bool wrongPass = false;
     await showDialog(
@@ -64,24 +65,75 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setStateDialog) {
+            final query = searchQuery.trim().toLowerCase();
+            final filtered = available.where((emp) {
+              if (query.isEmpty) return true;
+              final fullName =
+                  '${emp.lastName} ${emp.firstName} ${emp.patronymic}'.toLowerCase();
+              final login = emp.login.toLowerCase();
+              return fullName.contains(query) || login.contains(query);
+            }).toList();
+            final currentValue =
+                filtered.any((e) => e.id == selectedId) ? selectedId : null;
             return AlertDialog(
               title: const Text('Добавить сотрудника'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: 'Сотрудник'),
-                    items: [
-                      for (final e in available)
-                        DropdownMenuItem(value: e.id, child: Text('${e.lastName} ${e.firstName}')),
-                    ],
-                    onChanged: (val) {
+                  TextField(
+                    decoration: const InputDecoration(
+                      labelText: 'Поиск сотрудника',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (value) {
                       setStateDialog(() {
-                        selectedId = val;
+                        searchQuery = value;
+                        selectedId = null;
                         wrongPass = false;
                       });
                     },
                   ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: currentValue,
+                    decoration: const InputDecoration(labelText: 'Сотрудник'),
+                    items: [
+                      for (final e in filtered)
+                        DropdownMenuItem(
+                          value: e.id,
+                          child: Text(
+                            () {
+                              final joined = [e.lastName, e.firstName, e.patronymic]
+                                  .where((part) => part.trim().isNotEmpty)
+                                  .join(' ')
+                                  .trim();
+                              if (joined.isNotEmpty) return joined;
+                              if (e.login.isNotEmpty) return e.login;
+                              return 'Без имени';
+                            }(),
+                          ),
+                        ),
+                    ],
+                    onChanged: filtered.isEmpty
+                        ? null
+                        : (val) {
+                            setStateDialog(() {
+                              selectedId = val;
+                              wrongPass = false;
+                            });
+                          },
+                  ),
+                  if (filtered.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8.0),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Совпадения не найдены',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 8),
                   TextField(
                     obscureText: true,

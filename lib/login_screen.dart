@@ -229,6 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             name: fullName.isEmpty ? 'Без имени' : fullName,
                             position: positionName,
                             password: e.password,
+                            photoUrl: e.photoUrl,
                             isTechLeader: e.positionIds.contains(kTechLeaderId),
                           ));
                         }
@@ -296,10 +297,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                       CircleAvatar(
                                         radius: 20,
                                         backgroundColor: Colors.grey.shade200,
-                                        child: const Icon(
-                                          Icons.person_outline,
-                                          color: Colors.grey,
-                                        ),
+                                        foregroundImage:
+                                            (user.photoUrl != null && user.photoUrl!.isNotEmpty)
+                                                ? NetworkImage(user.photoUrl!)
+                                                : null,
+                                        child: (user.photoUrl == null ||
+                                                user.photoUrl!.isEmpty)
+                                            ? const Icon(
+                                                Icons.person_outline,
+                                                color: Colors.grey,
+                                              )
+                                            : null,
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
@@ -499,6 +507,7 @@ class _UserItem {
   final String name;
   final String position;
   final String password;
+  final String? photoUrl;
   final bool isTechLeader;
 
   _UserItem({
@@ -506,6 +515,7 @@ class _UserItem {
     required this.name,
     required this.position,
     required this.password,
+    this.photoUrl,
     this.isTechLeader = false,
   });
 }
