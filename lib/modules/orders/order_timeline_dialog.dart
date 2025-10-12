@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../personnel/personnel_provider.dart';
+import 'id_format.dart';
 import 'order_model.dart';
 
 /// Диалог, показывающий ход выполнения заказа на основе комментариев этапов.
@@ -222,8 +223,11 @@ class OrderTimelineDialog extends StatelessWidget {
       return tsA.compareTo(tsB);
     });
 
+    final displayId = orderDisplayId(order);
+    final orderTitle = displayId == '—' ? order.id : displayId;
+
     return AlertDialog(
-      title: Text('Выполнение заказа ${order.id}'),
+      title: Text('Выполнение заказа $orderTitle'),
       content: SizedBox(
         width: double.maxFinite,
         child: sortedEvents.isEmpty
