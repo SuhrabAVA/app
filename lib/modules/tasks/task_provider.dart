@@ -265,7 +265,7 @@ class TaskProvider with ChangeNotifier {
       final rows = await _supabase
           .from('workplaces')
           .select('id, name, title, short_name, code')
-          .in_('id', stageIds);
+          .inFilter('id', stageIds);
       final result = <String, Map<String, dynamic>>{};
       if (rows is List) {
         for (final row in rows) {
