@@ -21,28 +21,15 @@ import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
 // УДАЛЕНО: import '../production_planning/planned_stage_model.dart';
+import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
+import '../production_planning/template_model.dart';
+import '../production_planning/template_provider.dart';
 import '../../services/app_auth.dart';
 import '../common/pdf_view_screen.dart'; // <= добавлено для встроенного просмотра PDF
 
 enum _AggregatedStatus { production, paused, problem, completed, waiting }
-
-const Map<_AggregatedStatus, String> _statusLabels = {
-  _AggregatedStatus.production: 'Производство',
-  _AggregatedStatus.paused: 'На паузе',
-  _AggregatedStatus.problem: 'Проблема',
-  _AggregatedStatus.completed: 'Завершено',
-  _AggregatedStatus.waiting: 'Ожидание',
-};
-
-const Map<_AggregatedStatus, Color> _statusColors = {
-  _AggregatedStatus.production: Colors.blue,
-  _AggregatedStatus.paused: Colors.orange,
-  _AggregatedStatus.problem: Colors.red,
-  _AggregatedStatus.completed: Colors.green,
-  _AggregatedStatus.waiting: Colors.grey,
-};
 
 class ProductionDetailsScreen extends StatefulWidget {
   final OrderModel order;
@@ -63,6 +50,19 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
     final p = o.product;
     final material = o.material;
+    final weight = material?.weight;
+    final templateProvider =
+        Provider.maybeOf<TemplateProvider>(context, listen: true);
+    final List<TemplateModel> templates =
+        templateProvider?.templates ?? const <TemplateModel>[];
+
+    String? _templateName(String? id) {
+      if (id == null || id.isEmpty) return null;
+      for (final tpl in templates) {
+        if (tpl.id == id) return tpl.name;
+      }
+      return null;
+    }
 
     Widget _tile(String label, String value, [IconData? icon]) {
       return ListTile(
@@ -107,6 +107,15 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
           const Divider(height: 24),
 
+          // Комментарии менеджера
+          const Text('Комментарий',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          Text(
+            o.comments.isEmpty ? '—' : o.comments,
+            style: const TextStyle(fontSize: 15),
+          ),
+
           // Продукт
           const Text('Продукт',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -146,6 +155,49 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                 child: _tile('Длина L', p.length?.toStringAsFixed(2) ?? '—',
                     Icons.swap_vert)),
           ]),
+          Row(children: [
+            Expanded(
+                child: _tile('Отход',
+                    p.leftover == null ? '—' : p.leftover!.toStringAsFixed(2),
+                    Icons.delete_outline)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile('Фактический выпуск',
+                    o.actualQty == null
+                        ? '—'
+                        : (o.actualQty! % 1 == 0
+                            ? o.actualQty!.toInt().toString()
+                            : o.actualQty!.toStringAsFixed(2)),
+                    Icons.speed_outlined)),
+          ]),
+
+          const Divider(height: 24),
+
+          // Формы и шаблон этапов
+          const Text('Форма и этапы',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          _tile('Код формы', o.formCode ?? '—', Icons.confirmation_number),
+          Row(
+            children: [
+              Expanded(
+                  child: _tile('Серия', o.formSeries ?? '—', Icons.tag)),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: _tile('Номер',
+                      o.newFormNo != null ? '${o.newFormNo}' : '—',
+                      Icons.numbers)),
+            ],
+          ),
+          _tile('Старая форма', o.isOldForm ? 'Да' : 'Нет', Icons.history),
+          _tile(
+            'Шаблон этапов',
+            _templateName(o.stageTemplateId) ??
+                (o.stageTemplateId == null || o.stageTemplateId!.isEmpty
+                    ? '—'
+                    : o.stageTemplateId!),
+            Icons.account_tree_outlined,
+          ),
 
           const Divider(height: 24),
 
@@ -162,6 +214,27 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
             Expanded(
                 child: _tile(
                     'Плотность', material?.grammage ?? '—', Icons.texture)),
+          ]),
+          Row(children: [
+            Expanded(
+                child: _tile(
+                    'Кол-во',
+                    material == null
+                        ? '—'
+                        : (material.quantity % 1 == 0
+                            ? material.quantity.toInt().toString()
+                            : material.quantity.toStringAsFixed(2)),
+                    Icons.scale)),
+            const SizedBox(width: 12),
+            Expanded(
+                child:
+                    _tile('Ед. изм.', material?.unit ?? '—', Icons.category)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _tile(
+                    'Вес',
+                    weight == null ? '—' : weight.toStringAsFixed(2),
+                    Icons.fitness_center)),
           ]),
 
           const Divider(height: 24),
@@ -224,6 +297,9 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
           ]),
           if (o.additionalParams.isNotEmpty) ...[
             const SizedBox(height: 8),
+            const Text('Дополнительные параметры',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 6,
@@ -444,63 +520,35 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return _AggregatedStatus.production;
   }
 
-  Widget _buildStatusButton({
+  Widget _buildStatusBadge({
     required String label,
     required Color color,
     required _AggregatedStatus targetStatus,
     required _AggregatedStatus currentStatus,
-    required List<TaskModel> tasks,
-    required TaskProvider provider,
   }) {
-    final bool selected = currentStatus == targetStatus;
+    final bool active = currentStatus == targetStatus;
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: ElevatedButton(
-          onPressed: selected
-              ? null
-              : () async {
-                  for (final t in tasks) {
-                    TaskStatus newStatus;
-                    switch (targetStatus) {
-                      case _AggregatedStatus.production:
-                        newStatus = TaskStatus.inProgress;
-                        break;
-                      case _AggregatedStatus.paused:
-                        newStatus = TaskStatus.paused;
-                        break;
-                      case _AggregatedStatus.problem:
-                        newStatus = TaskStatus.problem;
-                        break;
-                      case _AggregatedStatus.completed:
-                        newStatus = TaskStatus.completed;
-                        break;
-                      case _AggregatedStatus.waiting:
-                        newStatus = TaskStatus.waiting;
-                        break;
-                    }
-                    final seconds = _elapsed(t).inSeconds;
-                    await provider.updateStatus(
-                      t.id,
-                      newStatus,
-                      spentSeconds: newStatus == TaskStatus.inProgress
-                          ? t.spentSeconds
-                          : seconds,
-                      startedAt: newStatus == TaskStatus.inProgress
-                          ? DateTime.now().millisecondsSinceEpoch
-                          : null,
-                    );
-                  }
-                },
-          style: ElevatedButton.styleFrom(
-            backgroundColor:
-                selected ? color.withOpacity(0.8) : color.withOpacity(0.2),
-            foregroundColor: color,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+        child: Container(
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? color.withOpacity(0.15) : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: active ? color : Colors.grey.shade300,
+              width: active ? 1.5 : 1,
             ),
           ),
-          child: Text(label, textAlign: TextAlign.center),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: active ? color : Colors.grey.shade700,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
         ),
       ),
     );
@@ -521,6 +569,69 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return formatter.format(dt);
   }
 
+  String _formatCommentTimestamp(int timestamp) {
+    if (timestamp <= 0) return '';
+    try {
+      final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+      return DateFormat('dd.MM.yyyy HH:mm').format(dt);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _commentAuthorName(String userId, List<EmployeeModel> employees) {
+    if (userId.isEmpty) return 'Неизвестный сотрудник';
+    EmployeeModel? found;
+    for (final emp in employees) {
+      if (emp.id == userId ||
+          (emp.login.isNotEmpty && emp.login == userId) ||
+          (emp.iin.isNotEmpty && emp.iin == userId)) {
+        found = emp;
+        break;
+      }
+    }
+    if (found == null) return userId;
+    final parts = [found.lastName, found.firstName, found.patronymic]
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return userId;
+    return parts.join(' ');
+  }
+
+  Widget _buildCommentMeta(TaskComment comment, List<EmployeeModel> employees) {
+    final timestampText = _formatCommentTimestamp(comment.timestamp);
+    final authorText = _commentAuthorName(comment.userId, employees);
+    final meta = [timestampText, authorText]
+        .where((s) => s.trim().isNotEmpty)
+        .join(' • ');
+    if (meta.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Text(
+        meta,
+        style: const TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+    );
+  }
+
+  String _statusLabel(_AggregatedStatus status) {
+    switch (status) {
+      case _AggregatedStatus.production:
+        return 'Производство';
+      case _AggregatedStatus.paused:
+        return 'На паузе';
+      case _AggregatedStatus.problem:
+        return 'Проблема';
+      case _AggregatedStatus.completed:
+        return 'Завершено';
+      case _AggregatedStatus.waiting:
+        return 'Ожидание запуска';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final taskProvider = context.watch<TaskProvider>();
@@ -534,6 +645,9 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
 
     final aggStatus = _computeAggregatedStatus(tasks);
+    final highlightStatus = aggStatus == _AggregatedStatus.waiting
+        ? _AggregatedStatus.production
+        : aggStatus;
 
     return Scaffold(
       appBar: AppBar(
@@ -616,40 +730,40 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                             ],
                           ),
                           const SizedBox(height: 8),
+                          Text(
+                            'Текущее состояние: ${_statusLabel(aggStatus)}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.black54,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
                           // Управление статусом заказа
                           Row(
                             children: [
-                              _buildStatusButton(
+                              _buildStatusBadge(
                                 label: 'Производство',
                                 color: Colors.blue,
                                 targetStatus: _AggregatedStatus.production,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
+                                currentStatus: highlightStatus,
                               ),
-                              _buildStatusButton(
+                              _buildStatusBadge(
                                 label: 'На паузе',
                                 color: Colors.orange,
                                 targetStatus: _AggregatedStatus.paused,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
+                                currentStatus: highlightStatus,
                               ),
-                              _buildStatusButton(
+                              _buildStatusBadge(
                                 label: 'Проблема',
                                 color: Colors.redAccent,
                                 targetStatus: _AggregatedStatus.problem,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
+                                currentStatus: highlightStatus,
                               ),
-                              _buildStatusButton(
+                              _buildStatusBadge(
                                 label: 'Завершено',
                                 color: Colors.green,
                                 targetStatus: _AggregatedStatus.completed,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
+                                currentStatus: highlightStatus,
                               ),
                             ],
                           ),
@@ -704,11 +818,21 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                           ),
                                           const SizedBox(width: 4),
                                           Expanded(
-                                            child: Text(
-                                              c.text,
-                                              style: const TextStyle(
-                                                fontSize: 14,
-                                              ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                _buildCommentMeta(
+                                                  c,
+                                                  personnel.employees,
+                                                ),
+                                                Text(
+                                                  c.text,
+                                                  style: const TextStyle(
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         ],
