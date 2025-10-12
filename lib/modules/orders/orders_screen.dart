@@ -7,6 +7,7 @@ import 'order_model.dart';
 import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
+import 'id_format.dart';
 
 enum SortOption {
   orderDateAsc,
@@ -115,7 +116,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         columns: const [
                           DataColumn(label: Text('№')),
                           DataColumn(label: Text('Заказчик')),
-                          DataColumn(label: Text('ID заказа')),
+                          DataColumn(label: Text('Номер заказа')),
                           DataColumn(label: Text('Дата заказа')),
                           DataColumn(label: Text('Срок')),
                           DataColumn(label: Text('Продукт')),
@@ -141,7 +142,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                               cells: [
                                 DataCell(Text('${index + 1}')),
                                 DataCell(Text(o.customer)),
-                                DataCell(Text(o.id)),
+                                DataCell(Text(orderDisplayId(o))),
                                 DataCell(Text(_formatDate(o.orderDate))),
                                 DataCell(Text(_formatDate(o.dueDate))),
                                 DataCell(Text(product.type)),
@@ -671,8 +672,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 ],
               ),
               const SizedBox(height: 4),
-              // Вторая строка: ID заказа
-              Text('ID: ${order.id}',
+              // Вторая строка: номер заказа
+              Text('Номер: ${orderDisplayId(order)}',
                   style: const TextStyle(fontSize: 11, color: Colors.grey)),
               const SizedBox(height: 4),
               // Даты

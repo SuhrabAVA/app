@@ -920,6 +920,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final typeKey = _normalizeType(widget.type);
+    const protectedTypes = {'paper', 'stationery', 'paint', 'pens'};
+    final canDeleteTable = !protectedTypes.contains(typeKey);
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
@@ -959,10 +962,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               icon: const Icon(Icons.refresh),
               tooltip: 'Обновить данные',
               onPressed: _loadAll),
-          IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: 'Удалить таблицу',
-              onPressed: _deleteTable),
+          if (canDeleteTable)
+            IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Удалить таблицу',
+                onPressed: _deleteTable),
         ],
       ),
       body: Column(
@@ -974,7 +978,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               decoration: InputDecoration(
                 hintText: 'Поиск…',
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: (_normalizeType(widget.type) == 'paper')
+                suffixIcon: (typeKey == 'paper')
                     ? IconButton(
                         icon: const Icon(Icons.filter_list),
                         onPressed: _openPaperFilters)
