@@ -41,33 +41,35 @@ class _MessageBubbleState extends State<MessageBubble> {
         ? Theme.of(context).colorScheme.primaryContainer.withOpacity(.6)
         : Theme.of(context).colorScheme.surfaceVariant.withOpacity(.9);
 
+    final media = MediaQuery.of(context);
+    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final double scale = isTablet ? 0.9 : 1.0;
+    double scaled(double value) => value * scale;
+
     final radius = BorderRadius.only(
-      topLeft: const Radius.circular(16),
-      topRight: const Radius.circular(16),
-      bottomLeft: widget.isMine ? const Radius.circular(16) : const Radius.circular(6),
-      bottomRight: widget.isMine ? const Radius.circular(6) : const Radius.circular(16),
+      topLeft: Radius.circular(scaled(16)),
+      topRight: Radius.circular(scaled(16)),
+      bottomLeft: widget.isMine ? Radius.circular(scaled(16)) : Radius.circular(scaled(6)),
+      bottomRight: widget.isMine ? Radius.circular(scaled(6)) : Radius.circular(scaled(16)),
     );
 
-    final maxW = MediaQuery.of(context).size.width * 0.75;
+    final maxW = media.size.width * 0.75;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      padding: EdgeInsets.symmetric(vertical: scaled(6), horizontal: scaled(8)),
       child: Column(
         crossAxisAlignment:
             widget.isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          // Имя автора
           Text(
             displayName,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: scaled(12),
               fontWeight: FontWeight.w600,
               color: Colors.black.withOpacity(.55),
             ),
           ),
-          const SizedBox(height: 4),
-
-          // Пузырь
+          SizedBox(height: scaled(4)),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxW),
             child: DecoratedBox(
@@ -76,7 +78,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                 borderRadius: radius,
                 boxShadow: [
                   BoxShadow(
-                    blurRadius: 6,
+                    blurRadius: scaled(6),
                     spreadRadius: 0,
                     offset: const Offset(0, 1),
                     color: Colors.black.withOpacity(.06),
@@ -84,17 +86,15 @@ class _MessageBubbleState extends State<MessageBubble> {
                 ],
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-                child: _buildContent(context, m),
+                padding: EdgeInsets.symmetric(vertical: scaled(10), horizontal: scaled(14)),
+                child: _buildContent(context, m, scale),
               ),
             ),
           ),
-
-          // Время
-          const SizedBox(height: 4),
+          SizedBox(height: scaled(4)),
           Text(
             _formatTime(m.createdAt),
-            style: TextStyle(fontSize: 11, color: Colors.black.withOpacity(.45)),
+            style: TextStyle(fontSize: scaled(11), color: Colors.black.withOpacity(.45)),
           ),
         ],
       ),
@@ -107,22 +107,22 @@ class _MessageBubbleState extends State<MessageBubble> {
     return '$h:$m';
   }
 
-  Widget _buildContent(BuildContext context, ChatMessage m) {
+  Widget _buildContent(BuildContext context, ChatMessage m, double scale) {
     switch (m.kind) {
       case 'text':
         return SelectableText(
           m.body ?? '',
-          style: const TextStyle(fontSize: 15, height: 1.25),
+          style: TextStyle(fontSize: 15 * scale, height: 1.25),
         );
 
       case 'image':
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _ImageWidget(url: m.fileUrl ?? ''),
+            _ImageWidget(url: m.fileUrl ?? '', scale: scale),
             if ((m.body ?? '').isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(m.body!),
+              SizedBox(height: 6 * scale),
+              Text(m.body!, style: TextStyle(fontSize: 14 * scale)),
             ]
           ],
         );
@@ -132,16 +132,18 @@ class _MessageBubbleState extends State<MessageBubble> {
           icon: Icons.videocam,
           title: m.body?.isNotEmpty == true ? m.body! : 'Видео',
           url: m.fileUrl,
+          scale: scale,
         );
 
       case 'audio':
-        return _AudioTile(url: m.fileUrl, durationMs: m.durationMs);
+        return _AudioTile(url: m.fileUrl, durationMs: m.durationMs, scale: scale);
 
       default:
         return _FileTile(
           icon: Icons.insert_drive_file,
           title: m.body?.isNotEmpty == true ? m.body! : 'Файл',
           url: m.fileUrl,
+          scale: scale,
         );
     }
   }
@@ -149,14 +151,16 @@ class _MessageBubbleState extends State<MessageBubble> {
 
 class _ImageWidget extends StatelessWidget {
   final String url;
-  const _ImageWidget({required this.url});
+  final double scale;
+  const _ImageWidget({required this.url, this.scale = 1.0});
 
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width * 0.70;
     final h = w * 0.66;
+    double scaled(double value) => value * scale;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(scaled(12)),
       child: GestureDetector(
         onTap: () {
           if (url.isEmpty) return;
@@ -172,14 +176,14 @@ class _ImageWidget extends StatelessWidget {
             height: h,
             color: Colors.black12,
             alignment: Alignment.center,
-            child: const Icon(Icons.broken_image),
+            child: Icon(Icons.broken_image, size: scaled(24)),
           ),
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
             return SizedBox(
               width: w,
               height: h,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              child: Center(child: CircularProgressIndicator(strokeWidth: scaled(2))),
             );
           },
         ),
@@ -192,19 +196,21 @@ class _FileTile extends StatelessWidget {
   final String? url;
   final String title;
   final IconData icon;
+  final double scale;
 
-  const _FileTile({required this.icon, required this.title, required this.url});
+  const _FileTile({required this.icon, required this.title, required this.url, this.scale = 1.0});
 
   @override
   Widget build(BuildContext context) {
+    double scaled(double value) => value * scale;
     return InkWell(
       onTap: url == null ? null : () => launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: 8),
-          Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
+          Icon(icon, size: scaled(18)),
+          SizedBox(width: scaled(8)),
+          Flexible(child: Text(title, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: scaled(13)))),
         ],
       ),
     );
@@ -214,7 +220,8 @@ class _FileTile extends StatelessWidget {
 class _AudioTile extends StatefulWidget {
   final String? url;
   final int? durationMs;
-  const _AudioTile({this.url, this.durationMs});
+  final double scale;
+  const _AudioTile({this.url, this.durationMs, this.scale = 1.0});
 
   @override
   State<_AudioTile> createState() => _AudioTileState();
@@ -247,14 +254,20 @@ class _AudioTileState extends State<_AudioTile> {
     final durText = (dur != null && dur > 0)
         ? ' ${Duration(milliseconds: dur).inSeconds}s'
         : '';
+    final double iconSize = widget.scale * 24;
+    final VisualDensity density = widget.scale < 1.0
+        ? const VisualDensity(horizontal: -2, vertical: -2)
+        : VisualDensity.standard;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
           icon: Icon(_playing ? Icons.stop_circle : Icons.play_arrow),
+          iconSize: iconSize,
+          visualDensity: density,
           onPressed: _toggle,
         ),
-        Text('Голосовое$durText'),
+        Text('Голосовое$durText', style: TextStyle(fontSize: 14 * widget.scale)),
       ],
     );
   }

@@ -544,6 +544,19 @@ class _TasksScreenState extends State<TasksScreen>
     final taskProvider = context.watch<TaskProvider>();
     final templateProvider = context.watch<TemplateProvider>();
 
+    final media = MediaQuery.of(context);
+    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final double scale = isTablet ? 0.85 : 1.0;
+    double scaled(double value) => value * scale;
+    final double outerPadding = scaled(16);
+    final double columnGap = scaled(16);
+    final double cardPadding = scaled(12);
+    final double cardRadius = scaled(12);
+    final double sectionSpacing = scaled(12);
+    final double smallSpacing = scaled(4);
+    final double largeSpacing = scaled(24);
+    final double chipSpacing = scaled(8);
+
     final EmployeeModel employee = personnel.employees.firstWhere(
       (e) => e.id == widget.employeeId,
       orElse: () => EmployeeModel(
@@ -638,7 +651,7 @@ class _TasksScreenState extends State<TasksScreen>
         elevation: 0.5,
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: EdgeInsets.all(outerPadding),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -650,10 +663,10 @@ class _TasksScreenState extends State<TasksScreen>
                 children: [
                   Expanded(
                     child: Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: EdgeInsets.all(cardPadding),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(cardRadius),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.grey.shade300,
@@ -664,12 +677,14 @@ class _TasksScreenState extends State<TasksScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             'Список заданий',
                             style: TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.bold),
+                              fontSize: scaled(18),
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          const SizedBox(height: 4),
+                          SizedBox(height: smallSpacing),
                           Text(
                             _selectedWorkplaceId == null
                                 ? ''
@@ -682,17 +697,27 @@ class _TasksScreenState extends State<TasksScreen>
                                             positionIds: const [],
                                           ),
                                         ).name}',
-                            style: const TextStyle(color: Colors.grey),
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: scaled(13),
+                            ),
                           ),
-                          const SizedBox(height: 12),
+                          SizedBox(height: sectionSpacing),
                           Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
+                            spacing: chipSpacing,
+                            runSpacing: chipSpacing,
                             children: [
                               for (final entry in _statusLabels.entries)
                                 ChoiceChip(
-                                  label: Text(entry.value),
+                                  label: Text(
+                                    entry.value,
+                                    style: TextStyle(fontSize: scaled(13)),
+                                  ),
                                   selected: _selectedStatus == entry.key,
+                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: isTablet
+                                      ? const VisualDensity(horizontal: -1, vertical: -1)
+                                      : VisualDensity.standard,
                                   onSelected: (selected) {
                                     if (!selected) return;
                                     setState(() {
@@ -708,7 +733,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 ),
                             ],
                           ),
-                          const SizedBox(height: 12),
+                          SizedBox(height: sectionSpacing),
                           Expanded(
                             child: sectionedTasks.isEmpty
                                 ? const Center(
@@ -741,11 +766,15 @@ class _TasksScreenState extends State<TasksScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  const Text('Рабочее место:'),
-                  const SizedBox(height: 8),
+                  SizedBox(height: largeSpacing),
+                  Text(
+                    'Рабочее место:',
+                    style: TextStyle(fontSize: scaled(14)),
+                  ),
+                  SizedBox(height: scaled(8)),
                   DropdownButton<String>(
                     value: _selectedWorkplaceId,
+                    isDense: isTablet,
                     items: [
                       for (final w in workplaces)
                         DropdownMenuItem(value: w.id, child: Text(w.name)),
@@ -761,7 +790,7 @@ class _TasksScreenState extends State<TasksScreen>
                 ],
               ),
             ),
-            const SizedBox(width: 16),
+            SizedBox(width: columnGap),
 
             // ===== Правая колонка: детали + панель управления
             Expanded(
@@ -773,13 +802,22 @@ class _TasksScreenState extends State<TasksScreen>
                     if (currentTask != null &&
                         selectedWorkplace != null &&
                         selectedOrder != null)
-                      _buildDetailsPanel(selectedOrder, selectedWorkplace,
-                          templateProvider.templates),
+                      _buildDetailsPanel(
+                        selectedOrder,
+                        selectedWorkplace,
+                        templateProvider.templates,
+                        scale,
+                      ),
                     if (currentTask != null && selectedWorkplace != null)
-                      const SizedBox(height: 16),
+                      SizedBox(height: scaled(16)),
                     if (currentTask != null && selectedWorkplace != null)
                       _buildControlPanel(
-                          currentTask, selectedWorkplace, taskProvider),
+                        currentTask,
+                        selectedWorkplace,
+                        taskProvider,
+                        scale,
+                        isTablet,
+                      ),
                   ],
                 ),
               ),
@@ -791,18 +829,23 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Widget _buildDetailsPanel(
-      OrderModel order, WorkplaceModel stage, List<TemplateModel> templates) {
+      OrderModel order, WorkplaceModel stage, List<TemplateModel> templates, double scale) {
     final product = order.product;
     final templateLabel = (order.stageTemplateId != null &&
             order.stageTemplateId!.isNotEmpty)
         ? (_resolveTemplateName(order.stageTemplateId, templates) ??
             (templates.isEmpty ? 'загрузка...' : 'не найден'))
         : null;
+    double scaled(double value) => value * scale;
+    final double panelPadding = scaled(16);
+    final double radius = scaled(12);
+    final double mediumSpacing = scaled(16);
+    final double smallSpacing = scaled(4);
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(radius),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -816,13 +859,13 @@ class _TasksScreenState extends State<TasksScreen>
                   children: [
                     Text(
                       order.assignmentId ?? order.id,
-                      style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          fontSize: scaled(18), fontWeight: FontWeight.bold),
                     ),
-                    const SizedBox(height: 4),
+                    SizedBox(height: smallSpacing),
                     const Text('Детали производственного задания'),
-                    const SizedBox(height: 16),
-                    const SizedBox(height: 16),
+                    SizedBox(height: mediumSpacing),
+                    SizedBox(height: mediumSpacing),
                     const Text('Информация о продукте',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     ...[
@@ -903,28 +946,35 @@ class _TasksScreenState extends State<TasksScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 36),
+                    SizedBox(height: scaled(36)),
                     const Text('Этап производства',
                         style: TextStyle(fontWeight: FontWeight.bold)),
-                    Text(stage.name),
+                    Text(stage.name, style: TextStyle(fontSize: scaled(14))),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          _buildStageList(order),
+          SizedBox(height: mediumSpacing),
+          _buildStageList(order, scale),
         ],
       ),
     );
   }
 
   /// Список этапов производства с иконками выполнено/ожидание.
-  Widget _buildStageList(OrderModel order) {
+  Widget _buildStageList(OrderModel order, double scale) {
     final taskProvider = context.read<TaskProvider>();
     final personnel = context.read<PersonnelProvider>();
     final tasksForOrder =
         taskProvider.tasks.where((t) => t.orderId == order.id).toList();
+
+    double scaled(double value) => value * scale;
+    final double rowPadding = scaled(2);
+    final double iconSize = scaled(16);
+    final double horizontalGap = scaled(4);
+    final double verticalSpacing = scaled(6);
+    final TextStyle stageTextStyle = TextStyle(fontSize: scaled(14));
 
     final stageIds = <String>{};
     for (final t in tasksForOrder) {
@@ -969,9 +1019,9 @@ class _TasksScreenState extends State<TasksScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Этапы производства',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
+        Text('Этапы производства',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: scaled(14))),
+        SizedBox(height: verticalSpacing),
         for (final id in orderedStageIds)
           Builder(
             builder: (context) {
@@ -985,16 +1035,16 @@ class _TasksScreenState extends State<TasksScreen>
               final completed = stageTasks.isNotEmpty &&
                   stageTasks.every((t) => t.status == TaskStatus.completed);
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
+                padding: EdgeInsets.symmetric(vertical: rowPadding),
                 child: Row(
                   children: [
                     Icon(
                       completed ? Icons.check_circle : Icons.access_time,
-                      size: 16,
+                      size: iconSize,
                       color: completed ? Colors.green : Colors.orange,
                     ),
-                    const SizedBox(width: 4),
-                    Text(stage.name, style: const TextStyle(fontSize: 14)),
+                    SizedBox(width: horizontalGap),
+                    Text(stage.name, style: stageTextStyle),
                   ],
                 ),
               );
@@ -1005,7 +1055,7 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Widget _buildControlPanel(
-      TaskModel task, WorkplaceModel stage, TaskProvider provider) {
+      TaskModel task, WorkplaceModel stage, TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
     final List<TaskModel> allRelated = _relatedTasks(provider, task);
     final int activeCount = _activeExecutorsCountForStage(provider, task);
@@ -1018,6 +1068,14 @@ class _TasksScreenState extends State<TasksScreen>
         (task.assignees.contains(widget.employeeId) &&
             _execModeForUser(task, widget.employeeId) ==
                 ExecutionMode.separate);
+
+    // Старт возможен, если задача ждёт/на паузе/с проблемой
+    double scaled(double value) => value * scale;
+    final double panelPadding = scaled(12);
+    final double gapSmall = scaled(6);
+    final double gapMedium = scaled(12);
+    final double buttonSpacing = scaled(8);
+    final double radius = scaled(12);
 
     // Старт возможен, если задача ждёт/на паузе/с проблемой
     // ИЛИ уже в работе, но есть свободная вместимость по рабочему месту.
@@ -1050,10 +1108,10 @@ class _TasksScreenState extends State<TasksScreen>
         isAssignee;
     final bool canProblem = task.status == TaskStatus.inProgress && isAssignee;
     final Widget panel = Container(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(radius),
         boxShadow: const [
           BoxShadow(
             color: Colors.black12,
@@ -1065,9 +1123,9 @@ class _TasksScreenState extends State<TasksScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Управление заданием',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
+          Text('Управление заданием',
+              style: TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
+          SizedBox(height: gapSmall),
           Column(
             children: [
               if (_hasMachineForStage(stage))
@@ -1078,18 +1136,38 @@ class _TasksScreenState extends State<TasksScreen>
                           !_isSetupCompletedForUser(task, widget.employeeId)
                               ? () => _startSetup(task, provider)
                               : null,
+                      style: ElevatedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: scaled(12),
+                          vertical: scaled(10),
+                        ),
+                        minimumSize: Size(scaled(90), scaled(36)),
+                        visualDensity: isTablet
+                            ? const VisualDensity(horizontal: -1, vertical: -1)
+                            : null,
+                      ),
                       icon: const Icon(Icons.build),
                       label: const Text('Настройка станка'),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: buttonSpacing),
                     ElevatedButton(
                       onPressed:
                           _isSetupCompletedForUser(task, widget.employeeId)
                               ? null
                               : () => _finishSetup(task, provider),
+                      style: ElevatedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: scaled(12),
+                          vertical: scaled(10),
+                        ),
+                        minimumSize: Size(scaled(90), scaled(36)),
+                        visualDensity: isTablet
+                            ? const VisualDensity(horizontal: -1, vertical: -1)
+                            : null,
+                      ),
                       child: const Text('Завершить настройку станка'),
                     ),
-                    const SizedBox(width: 12),
+                    SizedBox(width: gapMedium),
                     StreamBuilder<DateTime>(
                       stream: Stream<DateTime>.periodic(
                           const Duration(seconds: 1), (_) => DateTime.now()),
@@ -1106,12 +1184,13 @@ class _TasksScreenState extends State<TasksScreen>
                         String two(int n) => n.toString().padLeft(2, '0');
                         final s =
                             '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                        return Text('Время настройки: $s');
+                        return Text('Время настройки: $s',
+                            style: TextStyle(fontSize: scaled(13)));
                       },
                     ),
                   ],
                 ),
-              const SizedBox(height: 6),
+              SizedBox(height: gapSmall),
               // ⏱ Время этапа
               Align(
                 alignment: Alignment.centerRight,
@@ -1123,11 +1202,12 @@ class _TasksScreenState extends State<TasksScreen>
                     String two(int n) => n.toString().padLeft(2, '0');
                     final s =
                         '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                    return Text('Время этапа: ' + s);
+                    return Text('Время этапа: ' + s,
+                        style: TextStyle(fontSize: scaled(13)));
                   },
                 ),
               ),
-              const SizedBox(height: 6),
+              SizedBox(height: gapSmall),
 
               // ==== Управление исполнением ===
               Builder(
@@ -1439,19 +1519,19 @@ class _TasksScreenState extends State<TasksScreen>
                             ElevatedButton(
                                 onPressed: canStartButtonRow ? onStart : null,
                                 child: const Text('▶ Начать')),
-                            const SizedBox(width: 8),
+                            SizedBox(width: buttonSpacing),
                             ElevatedButton(
                                 onPressed: canPauseRow ? onPause : null,
                                 child: const Text('⏸ Пауза')),
-                            const SizedBox(width: 8),
+                            SizedBox(width: buttonSpacing),
                             ElevatedButton(
                                 onPressed: canFinishRow ? onFinish : null,
                                 child: const Text('✓ Завершить')),
-                            const SizedBox(width: 8),
+                            SizedBox(width: buttonSpacing),
                             ElevatedButton(
                                 onPressed: canProblemRow ? onProblem : null,
                                 child: const Text('⚠ Проблема')),
-                            const SizedBox(width: 12),
+                            SizedBox(width: gapMedium),
                             // Обновляем отображение времени для каждой строки каждую секунду
                             StreamBuilder<DateTime>(
                               stream: Stream<DateTime>.periodic(
@@ -1493,7 +1573,7 @@ class _TasksScreenState extends State<TasksScreen>
                     for (final uid in separateUsers) {
                       rows.add(buildControlsFor('Исполнитель: ' + nameFor(uid),
                           userId: uid));
-                      rows.add(const SizedBox(height: 8));
+                      rows.add(SizedBox(height: scaled(8)));
                     }
                   }
                   if (jointUsers.isNotEmpty) {
@@ -1505,11 +1585,12 @@ class _TasksScreenState extends State<TasksScreen>
                       rows.add(buildControlsFor(label, jointGroup: jointUsers));
                     } else {
                       rows.add(Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        padding: EdgeInsets.symmetric(vertical: scaled(4)),
                         child: Text(label,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontStyle: FontStyle.italic,
-                                color: Colors.grey)),
+                                color: Colors.grey,
+                                fontSize: scaled(13))),
                       ));
                     }
                   } else if (task.assignees.isEmpty) {
@@ -1524,12 +1605,11 @@ class _TasksScreenState extends State<TasksScreen>
                       children: rows);
                 },
               ),
-              _AssignedEmployeesRow(task: task),
-              const SizedBox(height: 8),
-              const SizedBox(height: 8),
-              const Text('Комментарии к этапу',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
+              _AssignedEmployeesRow(task: task, scale: scale, compact: isTablet),
+              SizedBox(height: scaled(8)),
+              Text('Комментарии к этапу',
+                  style: TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
+              SizedBox(height: gapSmall),
               Builder(
                 builder: (context) {
                   final personnel = context.watch<PersonnelProvider>();
@@ -1543,7 +1623,7 @@ class _TasksScreenState extends State<TasksScreen>
                     children: [
                       for (final c in comments)
                         Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          padding: EdgeInsets.symmetric(vertical: gapSmall / 2),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1584,7 +1664,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 }
                                 return Icon(icon, size: 18, color: color);
                               }),
-                              const SizedBox(width: 4),
+                              SizedBox(width: scaled(4)),
                               Expanded(
                                 child: Builder(
                                   builder: (_) {
@@ -1625,7 +1705,7 @@ class _TasksScreenState extends State<TasksScreen>
                   );
                 },
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: scaled(8)),
               Row(
                 children: [
                   Expanded(
@@ -1640,7 +1720,7 @@ class _TasksScreenState extends State<TasksScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: spacing),
                   ElevatedButton(
                     onPressed: isAssignee
                         ? () async {
@@ -1689,7 +1769,7 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           panel,
-          const SizedBox(height: 12),
+          SizedBox(height: mediumSpacing),
           ElevatedButton.icon(
             onPressed: _joinCapacityAvailable
                 ? () => _joinTask(task, provider, widget.employeeId)
@@ -2116,12 +2196,16 @@ class _TaskCard extends StatelessWidget {
   final OrderModel? order;
   final bool selected;
   final VoidCallback onTap;
+  final bool compact;
+  final double scale;
 
   const _TaskCard({
     required this.task,
     required this.order,
     required this.onTap,
     this.selected = false,
+    this.compact = false,
+    this.scale = 1.0,
   });
 
   @override
@@ -2129,31 +2213,38 @@ class _TaskCard extends StatelessWidget {
     final color = _statusColor(task.status);
     final name = order?.product.type ?? '';
     final displayId = order?.assignmentId ?? order?.id ?? task.orderId;
-    // Prefer customer name; otherwise product type; finally fall back to id
     final displayTitle = (order != null && order!.customer.isNotEmpty)
         ? order!.customer
         : (name.isNotEmpty ? name : displayId);
+    double scaled(double value) => value * scale;
+    final EdgeInsets contentPadding = EdgeInsets.symmetric(
+      horizontal: scaled(compact ? 10 : 14),
+      vertical: scaled(compact ? 6 : 10),
+    );
 
     return Card(
+      margin: EdgeInsets.symmetric(vertical: scaled(compact ? 4 : 6)),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(scaled(10)),
         side:
             BorderSide(color: selected ? Colors.blue : color.withOpacity(0.5)),
       ),
       child: ListTile(
         onTap: onTap,
+        dense: compact,
+        visualDensity:
+            compact ? const VisualDensity(horizontal: -2, vertical: -2) : null,
+        contentPadding: contentPadding,
         title: Text(displayTitle),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(name),
-          ],
-        ),
+        subtitle: name.isNotEmpty ? Text(name) : null,
         trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          padding: EdgeInsets.symmetric(
+            horizontal: scaled(10),
+            vertical: scaled(compact ? 3 : 4),
+          ),
           decoration: BoxDecoration(
             color: color.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(scaled(12)),
           ),
           child: Text(
             _statusText(task.status),
@@ -2167,12 +2258,19 @@ class _TaskCard extends StatelessWidget {
 
 class _AssignedEmployeesRow extends StatelessWidget {
   final TaskModel task;
-  const _AssignedEmployeesRow({required this.task});
+  final double scale;
+  final bool compact;
+  const _AssignedEmployeesRow({required this.task, required this.scale, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.read<TaskProvider>();
+
+    double scaled(double value) => value * scale;
+    final double spacing = scaled(compact ? 6 : 8);
+    final double chipSpacing = scaled(4);
+    final TextStyle labelStyle = TextStyle(fontSize: scaled(14));
 
     final names = task.assignees.map((id) {
       final emp = personnel.employees.firstWhere(
@@ -2269,8 +2367,8 @@ class _AssignedEmployeesRow extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Исполнители:'),
-        const SizedBox(width: 8),
+        Text('Исполнители:', style: labelStyle),
+        SizedBox(width: spacing),
         StreamBuilder<DateTime>(
           stream: Stream<DateTime>.periodic(
               const Duration(seconds: 1), (_) => DateTime.now()),
@@ -2286,16 +2384,26 @@ class _AssignedEmployeesRow extends StatelessWidget {
             String two(int n) => n.toString().padLeft(2, '0');
             final s =
                 '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-            return Text('⏱ ' + s, style: const TextStyle(color: Colors.grey));
+            return Text('⏱ ' + s, style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: scaled(13),
+                            ));
           },
         ),
-        const SizedBox(width: 4),
+        SizedBox(width: scaled(4)),
         Flexible(
           fit: FlexFit.loose,
           child: Wrap(
-            spacing: 4,
+            spacing: chipSpacing,
+            runSpacing: chipSpacing / 2,
             children: [
-              for (final name in names) Chip(label: Text(name)),
+              for (final name in names)
+                Chip(
+                  label: Text(name, style: TextStyle(fontSize: scaled(12))),
+                  visualDensity: compact
+                      ? const VisualDensity(horizontal: -2, vertical: -2)
+                      : VisualDensity.standard,
+                ),
             ],
           ),
         )

@@ -18,12 +18,16 @@ class ChatInputBar extends StatefulWidget {
   final String roomId;
   final String? senderId;
   final String? senderName;
+  final double scale;
+  final bool compact;
 
   const ChatInputBar({
     super.key,
     required this.roomId,
     required this.senderId,
     required this.senderName,
+    this.scale = 1.0,
+    this.compact = false,
   });
 
   @override
@@ -187,30 +191,43 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   @override
   Widget build(BuildContext context) {
+    double scaled(double value) => value * widget.scale;
+    final double iconSize = scaled(widget.compact ? 22 : 24);
+    final VisualDensity density =
+        widget.compact ? const VisualDensity(horizontal: -2, vertical: -2) : VisualDensity.standard;
+    final double gap = scaled(6);
+    final EdgeInsets inputPadding =
+        EdgeInsets.symmetric(horizontal: scaled(12), vertical: scaled(widget.compact ? 8 : 10));
+
     return SafeArea(
       top: false,
       child: Row(
         children: [
-          // Кнопка камеры для мгновенного фото. Вызывает камеру устройства и
-          // отправляет снимок как изображение. На web платформе будет
-          // работать так же, как кнопка выбора фото из галереи.
           IconButton(
             tooltip: 'Камера',
+            visualDensity: density,
+            iconSize: iconSize,
             icon: const Icon(Icons.camera_alt_outlined),
             onPressed: _takePhoto,
           ),
           IconButton(
             tooltip: 'Фото',
+            visualDensity: density,
+            iconSize: iconSize,
             icon: const Icon(Icons.image_outlined),
             onPressed: _pickImage,
           ),
           IconButton(
             tooltip: 'Видео',
+            visualDensity: density,
+            iconSize: iconSize,
             icon: const Icon(Icons.videocam_outlined),
             onPressed: _pickVideo,
           ),
           IconButton(
             tooltip: 'Файл',
+            visualDensity: density,
+            iconSize: iconSize,
             icon: const Icon(Icons.attach_file),
             onPressed: _pickAnyFile,
           ),
@@ -220,22 +237,26 @@ class _ChatInputBarState extends State<ChatInputBar> {
               textInputAction: TextInputAction.newline,
               minLines: 1,
               maxLines: 5,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: 'Сообщение',
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
                 isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: inputPadding,
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: gap),
           IconButton(
             tooltip: _recording ? 'Стоп' : 'Голосовое',
+            visualDensity: density,
+            iconSize: iconSize,
             icon: Icon(_recording ? Icons.stop_circle : Icons.mic_none),
             onPressed: _toggleRecord,
           ),
           IconButton(
             tooltip: 'Отправить',
+            visualDensity: density,
+            iconSize: iconSize,
             icon: const Icon(Icons.send),
             onPressed: _sendText,
           ),
