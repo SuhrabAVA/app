@@ -1075,6 +1075,8 @@ class _TasksScreenState extends State<TasksScreen>
     final double gapSmall = scaled(6);
     final double gapMedium = scaled(12);
     final double buttonSpacing = scaled(8);
+    final double spacing = scaled(8);
+    final double mediumSpacing = scaled(16);
     final double radius = scaled(12);
 
     // Старт возможен, если задача ждёт/на паузе/с проблемой
