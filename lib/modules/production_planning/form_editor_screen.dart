@@ -39,10 +39,27 @@ class EditOrderScreen extends StatefulWidget {
 
 class _PaintEntry {
   TmcModel? tmc;
+  String? name;
   double? qty;
   String memo;
   bool exceeded;
-  _PaintEntry({this.tmc, this.qty, this.memo = '', this.exceeded = false});
+
+  _PaintEntry({this.tmc, this.name, this.qty, this.memo = '', this.exceeded = false});
+
+  String? get resolvedName {
+    final direct = tmc?.description;
+    if (direct != null && direct.trim().isNotEmpty) return direct;
+    if (name != null && name!.trim().isNotEmpty) return name!.trim();
+    return null;
+  }
+
+  bool get hasContent {
+    if (tmc != null) return true;
+    if ((name ?? '').trim().isNotEmpty) return true;
+    if ((qty ?? 0) > 0) return true;
+    if (memo.trim().isNotEmpty) return true;
+    return false;
+  }
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
@@ -189,6 +206,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Краски (мультисекция)
   final List<_PaintEntry> _paints = <_PaintEntry>[];
   bool _paintsRestored = false;
+  bool _persistedPaintsDetected = false;
   bool _fetchedOrderForm = false;
   // Форма: использование старой формы или создание новой
   bool _isOldForm = false;
@@ -327,9 +345,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     _customerController.addListener(_updateStockExtra);
     // ensure at least one paint row only for new orders (not editing)
-    if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
+    if (widget.order == null) {
+      _ensurePaintRowExists(insideSetState: true);
+    }
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
+  }
+
+  void _ensurePaintRowExists({bool insideSetState = false}) {
+    if (_paints.isEmpty) {
+      if (insideSetState) {
+        _paints.add(_PaintEntry());
+      } else {
+        setState(() => _paints.add(_PaintEntry()));
+      }
+    }
+  }
+
+  void _onPaintEdited() {
+    final hasLocal = _paints.any((entry) => entry.hasContent);
+    _persistedPaintsDetected = hasLocal ? true : false;
+  }
+
+  bool _hasFilledPaints() {
+    if (_paints.any((entry) => entry.hasContent)) {
+      return true;
+    }
+    if (_persistedPaintsDetected) {
+      return true;
+    }
+    return _product.parameters.toLowerCase().contains('краска');
   }
 
   @override
@@ -569,6 +614,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final params = template?.product.parameters ?? '';
     if (params.isEmpty || !params.contains('Краска:')) {
       _paintsRestored = true;
+      _ensurePaintRowExists();
       return;
     }
     final paintTmcList = warehouse.getTmcByType('Краска');
@@ -578,6 +624,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final matches = reg.allMatches(params).toList();
     if (matches.isEmpty) {
       _paintsRestored = true;
+      _ensurePaintRowExists();
       return;
     }
     final restored = <_PaintEntry>[];
@@ -595,7 +642,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
       if (found != null) {
-        restored.add(_PaintEntry(tmc: found, qty: qty, memo: memo));
+        restored.add(_PaintEntry(tmc: found, name: found.description, qty: qty, memo: memo));
+      } else {
+        restored.add(_PaintEntry(name: name, qty: qty, memo: memo));
       }
     }
     if (restored.isNotEmpty) {
@@ -603,10 +652,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _paints
           ..clear()
           ..addAll(restored);
+        if (_paints.isEmpty) {
+          _paints.add(_PaintEntry());
+        }
+        _persistedPaintsDetected = restored.isNotEmpty;
         _paintsRestored = true;
       });
     } else {
       _paintsRestored = true;
+      _ensurePaintRowExists();
     }
   }
 
@@ -623,21 +677,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final rows = <Map<String, dynamic>>[];
     final infos = <String>[];
     for (final row in _paints) {
-      // Сохраняем строку в order_paints даже если количество не указано (инфо не теряется).
-      if (row.tmc != null) {
-        rows.add({
-          'order_id': orderId,
-          'name': row.tmc!.description,
-          'info': row.memo.isNotEmpty ? row.memo : null,
-          'qty_kg': row.qty, // может быть null
-        });
+      final paintName = row.resolvedName;
+      if (paintName == null || paintName.isEmpty) {
+        continue;
       }
-      // В product.parameters пишем только позиции с указанным количеством > 0
-      if (row.tmc != null && (row.qty ?? 0) > 0) {
+
+      rows.add({
+        'order_id': orderId,
+        'name': paintName,
+        'info': row.memo.isNotEmpty ? row.memo : null,
+        'qty_kg': row.qty,
+      });
+
+      if ((row.qty ?? 0) > 0) {
+        final qtyFormatted = row.qty!.toStringAsFixed(2);
         infos.add(
-            'Краска: ${row.tmc!.description} ${row.qty!.toStringAsFixed(2)} кг${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
+            'Краска: $paintName $qtyFormatted кг${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
       }
     }
+
+    _persistedPaintsDetected = rows.isNotEmpty;
 
     // 3) Обновляем product.parameters
     if (infos.isNotEmpty) {
@@ -677,16 +736,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final memo = (it['info'] ?? '').toString();
             final tmc = warehouse.getPaintByName(name);
             if (tmc != null) {
-              restored.add(_PaintEntry(tmc: tmc, qty: qty, memo: memo));
+              restored.add(_PaintEntry(
+                  tmc: tmc,
+                  name: tmc.description,
+                  qty: qty,
+                  memo: memo));
             } else {
               // В редком случае, если номенклатуры уже нет - просто с текстом.
-              restored.add(_PaintEntry(qty: qty, memo: memo));
+              restored.add(_PaintEntry(name: name, qty: qty, memo: memo));
             }
           }
           setState(() {
             _paints
               ..clear()
               ..addAll(restored.isNotEmpty ? restored : _paints);
+            if (_paints.isEmpty) {
+              _paints.add(_PaintEntry());
+            }
+            _persistedPaintsDetected = restored.isNotEmpty;
             _paintsRestored = true;
           });
           return;
@@ -1098,15 +1165,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         } catch (_) {}
 
         // paints present?
-        bool __paintsFilled =
-            _paints.any((p) => p.tmc != null);
+        bool __paintsFilled = _hasFilledPaints();
 
         // If paints exist and template has no Flexo - insert Flexo at 1st position,
         // or 2nd if Bobbin exists in the queue
 
-        if (true) {
+        if (__paintsFilled) {
           // Determine if Flexo already present by id or by name
-                    // Ensure Flexo ID fallback
           if (__flexoId == null || __flexoId!.isEmpty) {
             __flexoId = 'w_flexoprint';
           }
@@ -1114,7 +1179,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             __flexoTitle = 'Флексопечать';
           }
           debugPrint('⚙️ Flexo resolved: id=' + (__flexoId ?? 'null') + ', title=' + (__flexoTitle ?? 'null'));
-final hasFlexo = stageMaps.any((m) {
+          final hasFlexo = stageMaps.any((m) {
             final sid = (m['stageId'] as String?) ??
                 (m['stageid'] as String?) ??
                 (m['stage_id'] as String?) ??
@@ -1122,9 +1187,9 @@ final hasFlexo = stageMaps.any((m) {
                 (m['workplace_id'] as String?) ??
                 (m['id'] as String?);
             final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                    '';
-            final byId = (__flexoId != null && sid == __flexoId) || (sid != null && (sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            final byId = (__flexoId != null && sid == __flexoId) ||
+                (sid != null && (sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
             final byName =
                 title.contains('флексопечать') || title.contains('flexo');
             return byId || byName;
@@ -1134,14 +1199,13 @@ final hasFlexo = stageMaps.any((m) {
             int insertIndex = 0;
             final bobIndex = stageMaps.indexWhere((m) {
               final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
+                  (m['stageid'] as String?) ??
+                  (m['stage_id'] as String?) ??
+                  (m['workplaceId'] as String?) ??
+                  (m['workplace_id'] as String?) ??
+                  (m['id'] as String?);
               final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                      '';
+                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
               final byId = (__bobbinId != null && sid == __bobbinId);
               final byName = title.contains('бобинорезка') ||
                   title.contains('бабинорезка') ||
@@ -1161,74 +1225,50 @@ final hasFlexo = stageMaps.any((m) {
             });
           }
 
-          // If material format equals width - remove Bobbin (only for this order)
-          if (__bobbinId != null || true) {
+          bool _formatMatchesWidth() {
             double? fmtW;
             if (_matSelectedFormat != null &&
                 _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
+              final match =
                   RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
+              if (match != null) {
+                fmtW = double.tryParse(match.group(1)!.replaceAll(',', '.'));
               }
             }
             final double w =
                 ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remove Bobbin by id or title
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-                final title = ((m['stageName'] ?? m['title']) as String?)
-                        ?.toLowerCase() ??
-                    '';
-                final byId = (__bobbinId != null && sid == __bobbinId);
-                final byName = title.contains('бобинорезка') ||
-                    title.contains('бабинорезка') ||
-                    title.contains('bobbin');
-                return byId || byName;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
+            return fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001;
           }
-          if (__bobbinId != null) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
+
+          bool _removeBobbinStage() {
+            final idxBob = stageMaps.indexWhere((m) {
+              final sid = (m['stageId'] as String?) ??
+                  (m['stageid'] as String?) ??
+                  (m['stage_id'] as String?) ??
+                  (m['workplaceId'] as String?) ??
+                  (m['workplace_id'] as String?) ??
+                  (m['id'] as String?);
+              final title =
+                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+              final byId = (__bobbinId != null && sid == __bobbinId);
+              final byName = title.contains('бобинорезка') ||
+                  title.contains('бабинорезка') ||
+                  title.contains('bobbin');
+              return byId || byName;
+            });
+            if (idxBob >= 0) {
+              stageMaps.removeAt(idxBob);
+              return true;
             }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remember for marking "done" if necessary, then remove
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-                return sid == __bobbinId;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
+            return false;
           }
-          // === /Custom stage logic ===
-// Save or update production plan in dedicated table 'production_plans'
+
+          if (_formatMatchesWidth() && _removeBobbinStage()) {
+            __shouldCompleteBobbin = true;
+          }
+        }
+        // === /Custom stage logic ===
+        // Save or update production plan in dedicated table 'production_plans'
           final existingPlan = await _sb
               .from('production_plans')
               .select('id')
@@ -1675,7 +1715,7 @@ final hasFlexo = stageMaps.any((m) {
 
     // Списание красок (если указано несколько)
     // При редактировании списываем только ДЕЛЬТУ, чтобы не дублировать списания
-    if _paints.any((p) => p.tmc != null) {
+    if (_paints.any((p) => p.tmc != null)) {
       final prevRows = (widget.order == null)
           ? <Map<String, dynamic>>[]
           : await OrdersRepository().getPaints(createdOrUpdatedOrder.id);
@@ -2830,9 +2870,11 @@ final hasFlexo = stageMaps.any((m) {
                     displayStringForOption: (tmc) => tmc.description,
                     fieldViewBuilder:
                         (context, controller, focusNode, onFieldSubmitted) {
-                      if (row.tmc != null &&
-                          controller.text != row.tmc!.description) {
-                        controller.text = row.tmc!.description;
+                      final display = row.resolvedName ?? '';
+                      if (controller.text != display) {
+                        controller.text = display;
+                        controller.selection = TextSelection.fromPosition(
+                            TextPosition(offset: controller.text.length));
                       }
                       return TextFormField(
                         controller: controller,
@@ -2841,17 +2883,31 @@ final hasFlexo = stageMaps.any((m) {
                           labelText: 'Краска (необязательно)',
                           border: OutlineInputBorder(),
                         ),
+                        onChanged: (value) {
+                          final trimmed = value.trim();
+                          setState(() {
+                            if (trimmed.isEmpty) {
+                              row.name = null;
+                              row.tmc = null;
+                            } else {
+                              row.name = trimmed;
+                            }
+                          });
+                          _onPaintEdited();
+                        },
                       );
                     },
                     onSelected: (tmc) {
                       setState(() {
                         row.tmc = tmc;
+                        row.name = tmc.description;
                         if (row.qty != null) {
                           row.exceeded = row.qty! > tmc.quantity;
                         } else {
                           row.exceeded = false;
                         }
                       });
+                      _onPaintEdited();
                     },
                     optionsViewBuilder: (context, onSelected, options) {
                       return Align(
@@ -2890,7 +2946,10 @@ final hasFlexo = stageMaps.any((m) {
                       labelText: 'Инфо',
                       border: OutlineInputBorder(),
                     ),
-                    onChanged: (v) => setState(() => row.memo = v.trim()),
+                    onChanged: (v) {
+                      setState(() => row.memo = v.trim());
+                      _onPaintEdited();
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2918,6 +2977,7 @@ final hasFlexo = stageMaps.any((m) {
                           row.exceeded = false;
                         }
                       });
+                      _onPaintEdited();
                     },
                   ),
                 ),
@@ -2926,7 +2986,11 @@ final hasFlexo = stageMaps.any((m) {
                 if (_paints.length > 1)
                   IconButton(
                     tooltip: 'Удалить краску',
-                    onPressed: () => setState(() => _paints.removeAt(i)),
+                    onPressed: () {
+                      setState(() => _paints.removeAt(i));
+                      _ensurePaintRowExists();
+                      _onPaintEdited();
+                    },
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
               ],
@@ -2936,7 +3000,10 @@ final hasFlexo = stageMaps.any((m) {
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
-            onPressed: () => setState(() => _paints.add(_PaintEntry())),
+            onPressed: () {
+              setState(() => _paints.add(_PaintEntry()));
+              _onPaintEdited();
+            },
             icon: const Icon(Icons.add),
             label: const Text('Добавить краску'),
           ),

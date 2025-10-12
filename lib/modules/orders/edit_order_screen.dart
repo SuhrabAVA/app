@@ -18,10 +18,12 @@ import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
 import '../production_planning/template_provider.dart';
+import '../production_planning/template_model.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
+import '../personnel/workplace_model.dart';
 import '../tasks/task_provider.dart';
 
 /// Экран редактирования или создания заказа.
@@ -39,10 +41,41 @@ class EditOrderScreen extends StatefulWidget {
 
 class _PaintEntry {
   TmcModel? tmc;
+  String? name;
   double? qty;
   String memo;
   bool exceeded;
-  _PaintEntry({this.tmc, this.qty, this.memo = '', this.exceeded = false});
+
+  _PaintEntry({this.tmc, this.name, this.qty, this.memo = '', this.exceeded = false});
+
+  String? get resolvedName {
+    final direct = tmc?.description;
+    if (direct != null && direct.trim().isNotEmpty) return direct;
+    if (name != null && name!.trim().isNotEmpty) return name!.trim();
+    return null;
+  }
+
+  bool get hasContent {
+    if (tmc != null) return true;
+    if ((name ?? '').trim().isNotEmpty) return true;
+    if ((qty ?? 0) > 0) return true;
+    if (memo.trim().isNotEmpty) return true;
+    return false;
+  }
+}
+
+class _StageAdjustmentResult {
+  final List<Map<String, dynamic>> stages;
+  final bool bobbinRemoved;
+  final String? bobbinStageId;
+  final bool flexoInserted;
+
+  const _StageAdjustmentResult({
+    required this.stages,
+    required this.bobbinRemoved,
+    this.bobbinStageId,
+    required this.flexoInserted,
+  });
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
@@ -163,6 +196,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   double _makeready = 0;
   double _val = 0;
   String? _stageTemplateId;
+  final TextEditingController _stageTemplateCtl = TextEditingController();
+  List<Map<String, dynamic>> _stagePreview = <Map<String, dynamic>>[];
+  bool _previewFlexoAdded = false;
+  bool _previewBobbinRemoved = false;
+  String? _lastPreviewTemplateId;
   // Кол-во ручек для списания
   double? _handleQty;
   MaterialModel? _selectedMaterial;
@@ -189,6 +227,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Краски (мультисекция)
   final List<_PaintEntry> _paints = <_PaintEntry>[];
   bool _paintsRestored = false;
+  bool _persistedPaintsDetected = false;
   bool _fetchedOrderForm = false;
   // Форма: использование старой формы или создание новой
   bool _isOldForm = false;
@@ -334,7 +373,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     _customerController.addListener(_updateStockExtra);
     // ensure at least one paint row only for new orders (not editing)
-    if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
+    if (widget.order == null) {
+      _ensurePaintRowExists(insideSetState: true);
+    }
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
   }
@@ -348,6 +389,221 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return formatted
         .replaceFirst(RegExp(r'0+$'), '')
         .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  void _ensurePaintRowExists({bool insideSetState = false}) {
+    if (_paints.isEmpty) {
+      if (insideSetState) {
+        _paints.add(_PaintEntry());
+      } else {
+        setState(() => _paints.add(_PaintEntry()));
+      }
+    }
+  }
+
+  void _onPaintEdited({bool schedulePreview = true}) {
+    final hasLocal = _paints.any((entry) => entry.hasContent);
+    _persistedPaintsDetected = hasLocal ? true : false;
+    if (schedulePreview) {
+      _scheduleStagePreview();
+    }
+  }
+
+  void _scheduleStagePreview() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _refreshStagePreview();
+      }
+    });
+  }
+
+  TemplateModel? _findTemplateById(
+      List<TemplateModel> templates, String templateId) {
+    for (final tpl in templates) {
+      if (tpl.id == templateId) return tpl;
+    }
+    return null;
+  }
+
+  String? _extractStageId(Map<String, dynamic> stage) {
+    return (stage['stageId'] as String?) ??
+        (stage['stageid'] as String?) ??
+        (stage['stage_id'] as String?) ??
+        (stage['workplaceId'] as String?) ??
+        (stage['workplace_id'] as String?) ??
+        (stage['id'] as String?);
+  }
+
+  String _extractStageTitle(Map<String, dynamic> stage) {
+    final dynamic raw =
+        stage['stageName'] ?? stage['workplaceName'] ?? stage['title'] ?? stage['name'];
+    final title = raw == null ? '' : raw.toString().trim();
+    if (title.isEmpty) {
+      final id = _extractStageId(stage);
+      return id ?? 'Этап';
+    }
+    return title;
+  }
+
+  String? _extractStageComment(Map<String, dynamic> stage) {
+    final dynamic raw = stage['comment'] ?? stage['stageComment'];
+    if (raw == null) return null;
+    final comment = raw.toString().trim();
+    return comment.isEmpty ? null : comment;
+  }
+
+  bool _hasFilledPaints() {
+    if (_paints.any((entry) => entry.hasContent)) {
+      return true;
+    }
+    if (_persistedPaintsDetected) {
+      return true;
+    }
+    return _product.parameters.toLowerCase().contains('краска');
+  }
+
+  bool _materialFormatMatchesWidth() {
+    final formatText = (_matSelectedFormat ?? _matFormatCtl.text).trim();
+    if (formatText.isEmpty) return false;
+    final match = RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(formatText);
+    if (match == null) return false;
+    final fmtWidth = double.tryParse(match.group(1)!.replaceAll(',', '.'));
+    final double width =
+        ((_product.widthB ?? _product.width) ?? 0).toDouble();
+    if (fmtWidth == null || width <= 0) return false;
+    return (fmtWidth - width).abs() <= 0.001;
+  }
+
+  WorkplaceModel? _workplaceByKeywords(
+      Iterable<WorkplaceModel> workplaces, List<String> keywords) {
+    final lowered = keywords.map((k) => k.toLowerCase()).toList();
+    for (final wp in workplaces) {
+      final name = wp.name.toLowerCase();
+      final description = (wp.description ?? '').toLowerCase();
+      final matches = lowered.any(
+          (needle) => name.contains(needle) || description.contains(needle));
+      if (matches) return wp;
+    }
+    return null;
+  }
+
+  _StageAdjustmentResult _adjustStages(
+    List<Map<String, dynamic>> templateStages,
+    Iterable<WorkplaceModel> workplaces,
+  ) {
+    final stages = templateStages
+        .map((stage) => Map<String, dynamic>.from(stage))
+        .toList();
+
+    final flexoWp = _workplaceByKeywords(workplaces, const ['флексопеч', 'flexo']);
+    String? flexoId = flexoWp?.id ?? 'w_flexoprint';
+    String flexoTitle = (flexoWp?.name.trim().isNotEmpty ?? false)
+        ? flexoWp!.name
+        : 'Флексопечать';
+
+    final bobbinWp =
+        _workplaceByKeywords(workplaces, const ['бобинорез', 'бабинорез', 'bobbin']);
+    final bobbinId = bobbinWp?.id;
+
+    bool flexoInserted = false;
+
+    bool stageMatchesFlexo(Map<String, dynamic> stage) {
+      final sid = _extractStageId(stage) ?? '';
+      final name = _extractStageTitle(stage).toLowerCase();
+      final byId = sid.isNotEmpty &&
+          ((flexoId != null && sid == flexoId) ||
+              sid == 'w_flexoprint' ||
+              sid.startsWith('w_flexo'));
+      final byName = name.contains('флексопеч') || name.contains('flexo');
+      return byId || byName;
+    }
+
+    bool stageMatchesBobbin(Map<String, dynamic> stage) {
+      final sid = _extractStageId(stage) ?? '';
+      final name = _extractStageTitle(stage).toLowerCase();
+      final byId = bobbinId != null && sid == bobbinId;
+      final byName = name.contains('бобинорезка') ||
+          name.contains('бабинорезка') ||
+          name.contains('bobbin');
+      return byId || byName;
+    }
+
+    final hasFlexo = stages.any(stageMatchesFlexo);
+    if (_hasFilledPaints() && !hasFlexo && flexoId != null && flexoId.isNotEmpty) {
+      final bobbinIndex = stages.indexWhere(stageMatchesBobbin);
+      final insertIndex = bobbinIndex >= 0 ? bobbinIndex + 1 : 0;
+      stages.insert(insertIndex, {
+        'stageId': flexoId,
+        'workplaceId': flexoId,
+        'stageName': flexoTitle,
+        'workplaceName': flexoTitle,
+      });
+      flexoInserted = true;
+    }
+
+    bool bobbinRemoved = false;
+    String? removedBobbinId;
+    if (_materialFormatMatchesWidth()) {
+      final bobbinIndex = stages.indexWhere(stageMatchesBobbin);
+      if (bobbinIndex >= 0) {
+        final removed = stages.removeAt(bobbinIndex);
+        removedBobbinId = _extractStageId(removed) ?? bobbinId;
+        bobbinRemoved = true;
+      }
+    }
+
+    for (var i = 0; i < stages.length; i++) {
+      stages[i]['order'] = i + 1;
+    }
+
+    return _StageAdjustmentResult(
+      stages: stages,
+      bobbinRemoved: bobbinRemoved,
+      bobbinStageId: removedBobbinId,
+      flexoInserted: flexoInserted,
+    );
+  }
+
+  void _refreshStagePreview() {
+    if (!mounted) return;
+    if (_stageTemplateId == null || _stageTemplateId!.isEmpty) {
+      setState(() {
+        _stagePreview = <Map<String, dynamic>>[];
+        _previewFlexoAdded = false;
+        _previewBobbinRemoved = false;
+        _lastPreviewTemplateId = null;
+      });
+      return;
+    }
+    final templates = context.read<TemplateProvider>().templates;
+    final template = _findTemplateById(templates, _stageTemplateId!);
+    if (template == null) {
+      setState(() {
+        _stagePreview = <Map<String, dynamic>>[];
+        _previewFlexoAdded = false;
+        _previewBobbinRemoved = false;
+        _lastPreviewTemplateId = _stageTemplateId;
+      });
+      return;
+    }
+    final baseStages = template.stages
+        .map<Map<String, dynamic>>((stage) => {
+              'stageId': stage.stageId,
+              'workplaceId': stage.stageId,
+              'stageName': stage.stageName,
+              'workplaceName': stage.stageName,
+              if (stage.comment != null) 'comment': stage.comment,
+            })
+        .toList();
+    final workplaces = context.read<PersonnelProvider>().workplaces;
+    final adjusted = _adjustStages(baseStages, workplaces);
+    setState(() {
+      _stagePreview = adjusted.stages;
+      _previewFlexoAdded = adjusted.flexoInserted;
+      _previewBobbinRemoved = adjusted.bobbinRemoved;
+      _lastPreviewTemplateId = _stageTemplateId;
+    });
   }
 
   @override
@@ -402,6 +658,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             });
           }
         }
+      });
+      Future.microtask(() {
+        if (mounted) _refreshStagePreview();
       });
     }
     // Если редактируем существующий заказ - подтянем зафиксированный номер формы для отображения
@@ -469,6 +728,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _matNameCtl.dispose();
     _matFormatCtl.dispose();
     _matGramCtl.dispose();
+    _stageTemplateCtl.dispose();
     _newFormNoCtl.dispose();
     _newFormNameCtl.dispose();
     _newFormSizeCtl.dispose();
@@ -579,6 +839,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _lengthExceeded = _product.length! > tmc.quantity;
     }
     setState(() {});
+    _scheduleStagePreview();
   }
 
   void _restorePaintsFromParams(WarehouseProvider warehouse) {
@@ -587,6 +848,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final params = template?.product.parameters ?? '';
     if (params.isEmpty || !params.contains('Краска:')) {
       _paintsRestored = true;
+      _ensurePaintRowExists();
       return;
     }
     final paintTmcList = warehouse.getTmcByType('Краска');
@@ -596,6 +858,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final matches = reg.allMatches(params).toList();
     if (matches.isEmpty) {
       _paintsRestored = true;
+      _ensurePaintRowExists();
       return;
     }
     final restored = <_PaintEntry>[];
@@ -613,7 +876,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
       if (found != null) {
-        restored.add(_PaintEntry(tmc: found, qty: qty, memo: memo));
+        restored.add(
+            _PaintEntry(tmc: found, name: found.description, qty: qty, memo: memo));
+      } else {
+        restored.add(_PaintEntry(name: name, qty: qty, memo: memo));
       }
     }
     if (restored.isNotEmpty) {
@@ -621,10 +887,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _paints
           ..clear()
           ..addAll(restored);
+        if (_paints.isEmpty) {
+          _paints.add(_PaintEntry());
+        }
+        _persistedPaintsDetected = restored.isNotEmpty;
         _paintsRestored = true;
       });
+      _scheduleStagePreview();
     } else {
       _paintsRestored = true;
+      _ensurePaintRowExists();
     }
   }
 
@@ -641,19 +913,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final rows = <Map<String, dynamic>>[];
     final infos = <String>[];
     for (final row in _paints) {
-      // Сохраняем строку в order_paints даже если количество не указано (инфо не теряется).
-      if (row.tmc != null) {
-        rows.add({
-          'order_id': orderId,
-          'name': row.tmc!.description,
-          'info': row.memo.isNotEmpty ? row.memo : null,
-          'qty_kg': row.qty, // может быть null
-        });
+      final paintName = row.resolvedName;
+      if (paintName == null || paintName.isEmpty) {
+        continue;
       }
-      // В product.parameters пишем только позиции с указанным количеством > 0
-      if (row.tmc != null && (row.qty ?? 0) > 0) {
+
+      rows.add({
+        'order_id': orderId,
+        'name': paintName,
+        'info': row.memo.isNotEmpty ? row.memo : null,
+        'qty_kg': row.qty,
+      });
+
+      if ((row.qty ?? 0) > 0) {
+        final qtyFormatted = row.qty!.toStringAsFixed(2);
         infos.add(
-            'Краска: ${row.tmc!.description} ${row.qty!.toStringAsFixed(2)} кг${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
+            'Краска: $paintName $qtyFormatted кг${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
       }
     }
 
@@ -664,6 +939,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     } else {
       _product.parameters = clean;
     }
+
+    _persistedPaintsDetected = rows.isNotEmpty;
 
     // 4) Перезаписываем таблицу order_paints
     try {
@@ -695,18 +972,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final memo = (it['info'] ?? '').toString();
             final tmc = warehouse.getPaintByName(name);
             if (tmc != null) {
-              restored.add(_PaintEntry(tmc: tmc, qty: qty, memo: memo));
+              restored.add(_PaintEntry(
+                  tmc: tmc,
+                  name: tmc.description,
+                  qty: qty,
+                  memo: memo));
             } else {
               // В редком случае, если номенклатуры уже нет - просто с текстом.
-              restored.add(_PaintEntry(qty: qty, memo: memo));
+              restored.add(_PaintEntry(name: name, qty: qty, memo: memo));
             }
           }
           setState(() {
             _paints
               ..clear()
               ..addAll(restored.isNotEmpty ? restored : _paints);
+            if (_paints.isEmpty) {
+              _paints.add(_PaintEntry());
+            }
+            _persistedPaintsDetected = restored.isNotEmpty;
             _paintsRestored = true;
           });
+          _scheduleStagePreview();
           return;
         }
       }
@@ -1042,284 +1328,69 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           });
         }
 
-        // === Custom stage logic (Flexo insert; Bobbin remove when format==width) ===
-        String? __flexoId;
-        String? __flexoTitle;
-        String? __bobbinId;
-        bool __shouldCompleteBobbin = false;
-        String? __bobbinTitle;
-        try {
-          // Flexo by multiple patterns
-          Map<String, dynamic>? flexo = await _sb
-              .from('workplaces')
-              .select('id,title')
-              .ilike('title', 'Флексопечать%')
-              .limit(1)
-              .maybeSingle();
-          flexo ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('title', 'Flexo%')
-              .limit(1)
-              .maybeSingle();
-          flexo ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('name', 'Flexo%')
-              .limit(1)
-              .maybeSingle();
-          flexo ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('title', 'Флексо%')
-              .limit(1)
-              .maybeSingle();
-          if (flexo != null) {
-            __flexoId = (flexo['id'] as String?);
-            __flexoTitle =
-                (flexo['title'] as String?) ?? (flexo['name'] as String?);
-            if (__flexoTitle == null || __flexoTitle.trim().isEmpty)
-              __flexoTitle = 'Флексопечать';
-            if (__flexoTitle == null ||
-                RegExp(r'^[a-z0-9_\-]+$').hasMatch(__flexoTitle)) {
-              __flexoTitle = 'Флексопечать';
-            }
-          }
-          // Bobbin by multiple patterns
-          Map<String, dynamic>? bob = await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('title', 'Бобинорезка%')
-              .limit(1)
-              .maybeSingle();
-          bob ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('title', 'Бабинорезка%')
-              .limit(1)
-              .maybeSingle();
-          bob ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('name', 'Бабинорезка%')
-              .limit(1)
-              .maybeSingle();
-          bob ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('title', 'Bobbin%')
-              .limit(1)
-              .maybeSingle();
-          bob ??= await _sb
-              .from('workplaces')
-              .select('id,title,name')
-              .ilike('name', 'Bobbin%')
-              .limit(1)
-              .maybeSingle();
-          if (bob != null) {
-            __bobbinId = (bob['id'] as String?);
-            __bobbinTitle = (bob['title'] as String?);
-          }
-        } catch (_) {}
+        final workplaces = context.read<PersonnelProvider>().workplaces;
+        final adjustment = _adjustStages(stageMaps, workplaces);
+        final stageMapsAdjusted = adjustment.stages;
+        final bool shouldCompleteBobbin = adjustment.bobbinRemoved;
+        final String? bobbinStageId = adjustment.bobbinStageId;
 
-        // paints present?
-        bool __paintsFilled = (_paints.isNotEmpty) ||
-            ((_product.parameters ?? '').toLowerCase().contains('краска'));
-
-        // If paints exist and template has no Flexo - insert Flexo at 1st position,
-        // or 2nd if Bobbin exists in the queue
-
-        if (__paintsFilled) {
-          // Determine if Flexo already present by id or by name
-          final hasFlexo = stageMaps.any((m) {
-            final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-            final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                    '';
-            final byId = (__flexoId != null && sid == __flexoId) ||
-                (sid != null &&
-                    (sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
-            final byName =
-                title.contains('флексопечать') || title.contains('flexo');
-            return byId || byName;
-          });
-
-          if (!hasFlexo && __flexoId != null && __flexoId!.isNotEmpty) {
-            int insertIndex = 0;
-            final bobIndex = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                  (m['stageid'] as String?) ??
-                  (m['stage_id'] as String?) ??
-                  (m['workplaceId'] as String?) ??
-                  (m['workplace_id'] as String?) ??
-                  (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                      '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
-            });
-            if (bobIndex >= 0) insertIndex = bobIndex + 1;
-
-            stageMaps.insert(insertIndex, {
-              'stageId': __flexoId,
-              'workplaceId': __flexoId,
-              'workplaceId': __flexoId,
-              'stageName': (__flexoTitle ?? 'Флексопечать'),
-              'workplaceName': (__flexoTitle ?? 'Флексопечать'),
-              'order': 0
-            });
-          }
-
-          // If material format equals width - remove Bobbin (only for this order)
-          if (__bobbinId != null || true) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remove Bobbin by id or title
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                    (m['stageid'] as String?) ??
-                    (m['stage_id'] as String?) ??
-                    (m['workplaceId'] as String?) ??
-                    (m['workplace_id'] as String?) ??
-                    (m['id'] as String?);
-                final title = ((m['stageName'] ?? m['title']) as String?)
-                        ?.toLowerCase() ??
-                    '';
-                final byId = (__bobbinId != null && sid == __bobbinId);
-                final byName = title.contains('бобинорезка') ||
-                    title.contains('бабинорезка') ||
-                    title.contains('bobbin');
-                return byId || byName;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
-          }
-          if (__bobbinId != null) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remember for marking "done" if necessary, then remove
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                    (m['stageid'] as String?) ??
-                    (m['stage_id'] as String?) ??
-                    (m['workplaceId'] as String?) ??
-                    (m['workplace_id'] as String?) ??
-                    (m['id'] as String?);
-                return sid == __bobbinId;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
-          }
-          // === /Custom stage logic ===
-// Save or update production plan in dedicated table 'production_plans'
-          final existingPlan = await _sb
+        final existingPlan = await _sb
+            .from('production_plans')
+            .select('id')
+            .eq('order_id', createdOrUpdatedOrder.id)
+            .maybeSingle();
+        if (existingPlan != null) {
+          await _sb
               .from('production_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          if (existingPlan != null) {
-            await _sb
-                .from('production_plans')
-                .update({'stages': stageMaps}).eq('id', existingPlan['id']);
-          } else {
-            await _sb.from('production_plans').insert(
-                {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
-          }
+              .update({'stages': stageMapsAdjusted}).eq('id', existingPlan['id']);
+        } else {
+          await _sb.from('production_plans').insert({
+            'order_id': createdOrUpdatedOrder.id,
+            'stages': stageMapsAdjusted,
+          });
+        }
 
-          // Build a list of valid stage IDs (must exist in 'workplaces')
-          final List<String> __validStageIds = [];
-          for (final sm in stageMaps) {
-            final sid = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['id'] as String?);
-            if (sid == null || sid.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', sid)
-                  .maybeSingle();
-              if (exists != null) __validStageIds.add(sid);
-            } catch (_) {}
-          }
-          if (__validStageIds.isNotEmpty) {
-            await _sb
-                .from('tasks')
-                .delete()
-                .eq('order_id', createdOrUpdatedOrder.id);
-            // create new tasks for each stage
-          } else {
-            // No valid stages resolved — keep existing tasks to avoid losing assignments
-            // (logically indicates a template/config error)
-          }
-          // create new tasks for each stage (only if stage exists)
-          for (final sm in stageMaps) {
-            final stageId = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['workplaceId'] as String?) ??
-                (sm['workplace_id'] as String?) ??
-                (sm['id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', stageId)
-                  .maybeSingle();
-              if (exists == null)
-                continue; // skip invalid stageId to avoid FK/insert errors
-              await _sb.from('tasks').insert({
-                'order_id': createdOrUpdatedOrder.id,
-                'stage_id': stageId,
-                'status': 'waiting',
-                'assignees': [],
-                'comments': [],
-              });
-            } catch (e) {
-              // ignore problematic stage ids to avoid breaking whole save
-            }
+        final List<String> validStageIds = [];
+        for (final sm in stageMapsAdjusted) {
+          final sid = _extractStageId(sm);
+          if (sid == null || sid.isEmpty) continue;
+          try {
+            final exists = await _sb
+                .from('workplaces')
+                .select('id')
+                .eq('id', sid)
+                .maybeSingle();
+            if (exists != null) validStageIds.add(sid);
+          } catch (_) {}
+        }
+
+        if (validStageIds.isNotEmpty) {
+          await _sb.from('tasks').delete().eq('order_id', createdOrUpdatedOrder.id);
+        }
+
+        for (final sm in stageMapsAdjusted) {
+          final stageId = _extractStageId(sm);
+          if (stageId == null || stageId.isEmpty) continue;
+          try {
+            final exists = await _sb
+                .from('workplaces')
+                .select('id')
+                .eq('id', stageId)
+                .maybeSingle();
+            if (exists == null) continue;
+            await _sb.from('tasks').insert({
+              'order_id': createdOrUpdatedOrder.id,
+              'stage_id': stageId,
+              'status': 'waiting',
+              'assignees': [],
+              'comments': [],
+            });
+          } catch (_) {
+            // ignore problematic stage ids to avoid breaking whole save
           }
         }
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
+
         try {
-          // Ensure prod_plans row exists
           final planRow = await _sb
               .from('prod_plans')
               .select('id')
@@ -1339,12 +1410,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           } else {
             planId = planRow['id'] as String;
           }
-          // Rebuild plan stages
           await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
           int step = 1;
-          for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
+          for (final sm in stageMapsAdjusted) {
+            final stageId = _extractStageId(sm);
             if (stageId == null || stageId.isEmpty) continue;
             await _sb.from('prod_plan_stages').insert({
               'plan_id': planId,
@@ -1353,78 +1422,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               'status': 'waiting',
             });
           }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
+          if (shouldCompleteBobbin && bobbinStageId != null) {
             await _sb.from('prod_plan_stages').update({
               'status': 'done',
               'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
+            }).match({'plan_id': planId, 'stage_id': bobbinStageId});
           }
         } catch (_) {
           // ignore if tables don't exist
         }
-        // ---- /sync normalized tables ----
 
-        // update order status
-        // Mark Bobbin (Бабинорезка) as done when format equals width for this order only
-        if (__shouldCompleteBobbin && __bobbinId != null) {
+        if (shouldCompleteBobbin && bobbinStageId != null) {
           await _sb.from('tasks').update({
             'status': 'done',
             'completed_at': DateTime.now().toIso8601String(),
           }).match({
             'order_id': createdOrUpdatedOrder.id,
-            'stage_id': __bobbinId,
+            'stage_id': bobbinStageId,
           });
         }
-
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-        try {
-          // Ensure prod_plans row exists
-          final planRow = await _sb
-              .from('prod_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          String planId;
-          if (planRow == null) {
-            final inserted = await _sb
-                .from('prod_plans')
-                .insert({
-                  'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
-                })
-                .select('id')
-                .single();
-            planId = inserted['id'] as String;
-          } else {
-            planId = planRow['id'] as String;
-          }
-          // Rebuild plan stages
-          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-          int step = 1;
-          for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step++,
-              'status': 'waiting',
-            });
-          }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
-            await _sb.from('prod_plan_stages').update({
-              'status': 'done',
-              'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
-          }
-        } catch (_) {
-          // ignore if tables don't exist
-        }
-        // ---- /sync normalized tables ----
-
+      }
         // update order status to inWork and mark assignment
         final withAssignment = OrderModel(
           id: createdOrUpdatedOrder.id,
@@ -2225,26 +2242,226 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
             const SizedBox(height: 12),
             // Очередь (шаблон этапов)
-            Consumer<TemplateProvider>(
-              builder: (context, provider, _) {
-                final templates = provider.templates;
-                return DropdownButtonFormField<String>(
-                  value: _stageTemplateId,
-                  decoration: const InputDecoration(
-                    labelText: 'Выберите очередь',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: templates
-                      .map((t) =>
-                          DropdownMenuItem(value: t.id, child: Text(t.name)))
-                      .toList(),
-                  onChanged: (val) => setState(() => _stageTemplateId = val),
-                );
-              },
-            ),
+            _buildStageTemplatePicker(),
           ],
         ),
       ),
+    );
+  }
+
+  /// Карточка продукта (тип, размеры, материал, краски, вложения и пр.)
+  Widget _buildStagePreviewSection() {
+    if (_stageTemplateId == null || _stageTemplateId!.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.4),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text('Шаблон не выбран'),
+      );
+    }
+    if (_stagePreview.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.4),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text('В шаблоне нет этапов.'),
+      );
+    }
+    final colorScheme = Theme.of(context).colorScheme;
+    final baseColor = colorScheme.secondaryContainer.withOpacity(
+        colorScheme.brightness == Brightness.dark ? 0.3 : 0.55);
+    final borderColor = colorScheme.secondary.withOpacity(0.5);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Этапы производства',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ...List.generate(_stagePreview.length, (index) {
+          final stage = _stagePreview[index];
+          final title = _extractStageTitle(stage);
+          final comment = _extractStageComment(stage);
+          final isFlexo = title.toLowerCase().contains('флексопеч') ||
+              title.toLowerCase().contains('flexo');
+          final highlight = _previewFlexoAdded && isFlexo;
+          final containerColor = highlight
+              ? colorScheme.primary.withOpacity(0.18)
+              : baseColor;
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: containerColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: colorScheme.primary.withOpacity(0.25),
+                  child: Text('${index + 1}'),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      if (comment != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(comment,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: colorScheme.onSurfaceVariant)),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+        if (_previewFlexoAdded)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Этап «Флексопечать» будет добавлен автоматически для этого заказа.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: colorScheme.primary),
+            ),
+          ),
+        if (_previewBobbinRemoved)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Этап «Бобинорезка» будет пропущен, так как формат равен ширине.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: colorScheme.error),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStageTemplatePicker() {
+    return Consumer<TemplateProvider>(
+      builder: (context, provider, _) {
+        final templates = provider.templates;
+        if (_stageTemplateId != null && _stageTemplateId!.isNotEmpty) {
+          final tpl = _findTemplateById(templates, _stageTemplateId!);
+          if (tpl != null && _stageTemplateCtl.text != tpl.name) {
+            _stageTemplateCtl
+              ..text = tpl.name
+              ..selection = TextSelection.fromPosition(
+                  TextPosition(offset: tpl.name.length));
+          }
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Autocomplete<TemplateModel>(
+              optionsBuilder: (TextEditingValue text) {
+                final query = text.text.toLowerCase();
+                if (query.isEmpty) return templates;
+                return templates.where(
+                    (tpl) => tpl.name.toLowerCase().contains(query));
+              },
+              displayStringForOption: (tpl) => tpl.name,
+              fieldViewBuilder:
+                  (context, controller, focusNode, onFieldSubmitted) {
+                if (controller.text != _stageTemplateCtl.text) {
+                  controller
+                    ..text = _stageTemplateCtl.text
+                    ..selection = _stageTemplateCtl.selection;
+                }
+                return TextFormField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  decoration: InputDecoration(
+                    labelText: 'Выберите очередь',
+                    border: const OutlineInputBorder(),
+                    suffixIcon: controller.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              controller.clear();
+                              setState(() {
+                                _stageTemplateCtl.clear();
+                                _stageTemplateId = null;
+                                _stagePreview = <Map<String, dynamic>>[];
+                                _previewFlexoAdded = false;
+                                _previewBobbinRemoved = false;
+                              });
+                              _refreshStagePreview();
+                            },
+                          )
+                        : null,
+                  ),
+                  onChanged: (value) {
+                    _stageTemplateCtl.value = controller.value;
+                    if (value.trim().isEmpty && _stageTemplateId != null) {
+                      setState(() {
+                        _stageTemplateId = null;
+                        _stagePreview = <Map<String, dynamic>>[];
+                        _previewFlexoAdded = false;
+                        _previewBobbinRemoved = false;
+                      });
+                    }
+                  },
+                  onEditingComplete: onFieldSubmitted,
+                );
+              },
+              optionsViewBuilder: (context, onSelected, options) {
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 4,
+                    child: SizedBox(
+                      width: 420,
+                      height: 260,
+                      child: ListView.builder(
+                        itemCount: options.length,
+                        itemBuilder: (context, index) {
+                          final tpl = options.elementAt(index);
+                          return ListTile(
+                            title: Text(tpl.name),
+                            onTap: () => onSelected(tpl),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
+              onSelected: (tpl) {
+                _stageTemplateCtl
+                  ..text = tpl.name
+                  ..selection = TextSelection.fromPosition(
+                      TextPosition(offset: tpl.name.length));
+                setState(() {
+                  _stageTemplateId = tpl.id;
+                });
+                _refreshStagePreview();
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildStagePreviewSection(),
+          ],
+        );
+      },
     );
   }
 
@@ -2339,6 +2556,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       // Разрешаем ввод дробей с запятой, заменяем запятую на точку.
                       final normalized = val.replaceAll(',', '.');
                       product.width = double.tryParse(normalized) ?? 0;
+                      _scheduleStagePreview();
                     },
                   ),
                 ),
@@ -2562,6 +2780,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                     formatOptions[lowerF.indexOf(typedF)];
                               }
                             });
+                            _scheduleStagePreview();
                           }
                         });
                         return TextField(
@@ -2592,6 +2811,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           _selectedMaterialTmc = null;
                           _selectedMaterial = null;
                         });
+                        _scheduleStagePreview();
                       },
                     ),
                     const SizedBox(height: 8),
@@ -2651,6 +2871,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                 }
                               }
                             });
+                            _scheduleStagePreview();
                           }
                         });
                         return TextField(
@@ -2685,6 +2906,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                             _selectMaterial(tmc);
                           }
                         });
+                        _scheduleStagePreview();
                       },
                     ),
                     if (paperQty != null) ...[
@@ -2741,6 +2963,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     onChanged: (val) {
                       final normalized = val.replaceAll(',', '.');
                       product.widthB = double.tryParse(normalized);
+                      _scheduleStagePreview();
                     },
                   ),
                 ),
@@ -2817,7 +3040,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ),
               minLines: 1,
               maxLines: 3,
-              onChanged: (val) => product.parameters = val,
+              onChanged: (val) {
+                product.parameters = val;
+                _scheduleStagePreview();
+              },
             ),
           ],
         ),
@@ -2853,9 +3079,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     displayStringForOption: (tmc) => tmc.description,
                     fieldViewBuilder:
                         (context, controller, focusNode, onFieldSubmitted) {
-                      if (row.tmc != null &&
-                          controller.text != row.tmc!.description) {
-                        controller.text = row.tmc!.description;
+                      final display = row.resolvedName ?? '';
+                      if (controller.text != display) {
+                        controller.text = display;
+                        controller.selection = TextSelection.fromPosition(
+                            TextPosition(offset: controller.text.length));
                       }
                       return TextFormField(
                         controller: controller,
@@ -2864,17 +3092,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           labelText: 'Краска (необязательно)',
                           border: OutlineInputBorder(),
                         ),
+                        onChanged: (value) {
+                          final trimmed = value.trim();
+                          setState(() {
+                            if (trimmed.isEmpty) {
+                              row.name = null;
+                              row.tmc = null;
+                            } else {
+                              row.name = trimmed;
+                            }
+                          });
+                          _onPaintEdited();
+                        },
                       );
                     },
                     onSelected: (tmc) {
                       setState(() {
                         row.tmc = tmc;
+                        row.name = tmc.description;
                         if (row.qty != null) {
                           row.exceeded = row.qty! > tmc.quantity;
                         } else {
                           row.exceeded = false;
                         }
                       });
+                      _onPaintEdited();
                     },
                     optionsViewBuilder: (context, onSelected, options) {
                       return Align(
@@ -2913,7 +3155,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       labelText: 'Инфо',
                       border: OutlineInputBorder(),
                     ),
-                    onChanged: (v) => setState(() => row.memo = v.trim()),
+                    onChanged: (v) {
+                      setState(() => row.memo = v.trim());
+                      _onPaintEdited();
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2941,6 +3186,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           row.exceeded = false;
                         }
                       });
+                      _onPaintEdited();
                     },
                   ),
                 ),
@@ -2949,7 +3195,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 if (_paints.length > 1)
                   IconButton(
                     tooltip: 'Удалить краску',
-                    onPressed: () => setState(() => _paints.removeAt(i)),
+                    onPressed: () {
+                      setState(() => _paints.removeAt(i));
+                      _ensurePaintRowExists();
+                      _onPaintEdited();
+                    },
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
               ],
@@ -2959,7 +3209,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
-            onPressed: () => setState(() => _paints.add(_PaintEntry())),
+            onPressed: () {
+              setState(() => _paints.add(_PaintEntry()));
+              _onPaintEdited();
+            },
             icon: const Icon(Icons.add),
             label: const Text('Добавить краску'),
           ),
