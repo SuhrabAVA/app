@@ -52,7 +52,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     final material = o.material;
     final weight = material?.weight;
     final templateProvider =
-        Provider.maybeOf<TemplateProvider>(context, listen: true);
+        Provider.of<TemplateProvider?>(context, listen: true);
     final List<TemplateModel> templates =
         templateProvider?.templates ?? const <TemplateModel>[];
 
