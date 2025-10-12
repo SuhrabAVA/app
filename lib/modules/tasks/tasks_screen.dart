@@ -107,6 +107,84 @@ bool _anyUserActive(TaskModel task, {String? exceptUserId}) {
   return false;
 }
 
+bool _containsFlexo(String text) {
+  final lower = text.toLowerCase();
+  return lower.contains('флекс') || lower.contains('flexo');
+}
+
+bool _containsBobbin(String text) {
+  final lower = text.toLowerCase();
+  return lower.contains('бобин') || lower.contains('бабин') || lower.contains('bobbin');
+}
+
+String _workplaceName(PersonnelProvider personnel, String stageId) {
+  try {
+    final wp = personnel.workplaces.firstWhere((w) => w.id == stageId);
+    if (wp.name.isNotEmpty) return wp.name;
+  } catch (_) {}
+  return stageId;
+}
+
+bool _isFlexoStageId(PersonnelProvider personnel, String stageId) {
+  final probes = <String>{stageId, _workplaceName(personnel, stageId)};
+  for (final probe in probes) {
+    if (_containsFlexo(probe)) return true;
+  }
+  return false;
+}
+
+bool _isBobbinStageId(PersonnelProvider personnel, String stageId) {
+  final probes = <String>{stageId, _workplaceName(personnel, stageId)};
+  for (final probe in probes) {
+    if (_containsBobbin(probe)) return true;
+  }
+  return false;
+}
+
+void _ensureFlexoOrdering(List<String> stageIds, PersonnelProvider personnel) {
+  if (stageIds.length <= 1) return;
+
+  final flexoIndex =
+      stageIds.indexWhere((id) => _isFlexoStageId(personnel, id));
+  if (flexoIndex == -1) return;
+
+  final bobbinIndex =
+      stageIds.indexWhere((id) => _isBobbinStageId(personnel, id));
+
+  final adjusted = List<String>.from(stageIds);
+  final flexoId = adjusted.removeAt(flexoIndex);
+
+  if (bobbinIndex == -1) {
+    adjusted.insert(0, flexoId);
+    stageIds
+      ..clear()
+      ..addAll(adjusted);
+    return;
+  }
+
+  var bobIndex = bobbinIndex;
+  if (bobbinIndex > flexoIndex) {
+    bobIndex -= 1;
+  }
+  if (bobIndex < 0) {
+    bobIndex = 0;
+  } else if (bobIndex >= adjusted.length) {
+    bobIndex = adjusted.length - 1;
+  }
+
+  final bobbinId = adjusted.removeAt(bobIndex);
+  adjusted.insert(0, bobbinId);
+  final insertIndex = adjusted.isEmpty ? 0 : 1;
+  final safeIndex = insertIndex < 0
+      ? 0
+      : (insertIndex > adjusted.length ? adjusted.length : insertIndex);
+  adjusted.insert(safeIndex, flexoId);
+
+  stageIds
+    ..clear()
+    ..addAll(adjusted);
+}
+
 /// Разрешить старт только для самого первого незавершённого этапа заказа
 bool _isFirstPendingStage(
     TaskProvider tasks, PersonnelProvider personnel, TaskModel task) {
@@ -156,6 +234,7 @@ bool _isFirstPendingStage(
     }
 
     pendingStageIds.sort(byName);
+    _ensureFlexoOrdering(pendingStageIds, personnel);
   }
 
   // Первый незавершённый этап
@@ -793,6 +872,7 @@ class _TasksScreenState extends State<TasksScreen>
 
         return name(a).compareTo(name(b));
       });
+      _ensureFlexoOrdering(orderedStageIds, personnel);
     }
 
     return Column(
