@@ -247,49 +247,66 @@ class _PaintTableState extends State<PaintTable> {
                                 final item = filtered[rowIndex];
                                 return DataRow(cells: [
                                   DataCell(Text('${rowIndex + 1}')),
-                                  DataCell(
-                                    // On tap, show the image in a fullscreen dialog.
-                                    Builder(builder: (context) {
-                                      Widget preview;
-                                      Uint8List? bytes;
-                                      if (item.imageBase64 != null) {
-                                        try {
-                                          bytes = base64Decode(item.imageBase64!);
-                                        } catch (_) {}
+                                  Builder(builder: (context) {
+                                    Uint8List? decodedBytes;
+                                    if (item.imageBase64 != null) {
+                                      try {
+                                        decodedBytes = base64Decode(item.imageBase64!);
+                                      } catch (_) {
+                                        decodedBytes = null;
                                       }
-                                      if (bytes != null && bytes.isNotEmpty) {
-                                        preview = ClipRRect(
-                                          borderRadius: BorderRadius.circular(4),
-                                          child: Image.memory(bytes, width: 110, height: 110, fit: BoxFit.cover),
-                                        );
-                                      } else if (item.imageUrl != null) {
-                                        preview = ClipRRect(
-                                          borderRadius: BorderRadius.circular(4),
-                                          child: Image.network(item.imageUrl!, width: 110, height: 110, fit: BoxFit.cover),
-                                        );
-                                      } else {
-                                        preview = const Icon(Icons.image_not_supported);
-                                      }
-                                      return GestureDetector(
-                                        onTap: () {
-                                          if (bytes != null && bytes!.isNotEmpty) {
-                                            showImagePreview(
-                                              context,
-                                              bytes: bytes,
-                                              title: item.description,
-                                            );
-                                          } else if (item.imageUrl != null && item.imageUrl!.isNotEmpty) {
-                                            showImagePreview(
-                                              context,
-                                              imageUrl: item.imageUrl!,
-                                              title: item.description,
-                                            );
-                                          }
-                                        },
-                                        child: preview,
+                                    }
+                                    final Uint8List? previewBytes = decodedBytes;
+                                    final String imageUrl = item.imageUrl ?? '';
+                                    final bool hasBytes = previewBytes != null && previewBytes.isNotEmpty;
+                                    final bool hasUrl = imageUrl.isNotEmpty;
+
+                                    final Widget preview;
+                                    if (hasBytes) {
+                                      preview = ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.memory(
+                                          previewBytes!,
+                                          width: 110,
+                                          height: 110,
+                                          fit: BoxFit.cover,
+                                        ),
                                       );
-                                    }),
-                                  ),
+                                    } else if (hasUrl) {
+                                      preview = ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          imageUrl,
+                                          width: 110,
+                                          height: 110,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    } else {
+                                      preview = const Icon(Icons.image_not_supported);
+                                    }
+
+                                    return DataCell(
+                                      preview,
+                                      onTap: (!hasBytes && !hasUrl)
+                                          ? null
+                                          : () {
+                                              if (hasBytes) {
+                                                showImagePreview(
+                                                  context,
+                                                  bytes: previewBytes,
+                                                  title: item.description,
+                                                );
+                                              } else if (hasUrl) {
+                                                showImagePreview(
+                                                  context,
+                                                  imageUrl: imageUrl,
+                                                  title: item.description,
+                                                );
+                                              }
+                                            },
+                                    );
+                                  }),
                                   DataCell(Text(item.description)),
                                   DataCell(Text(item.quantity.toString())),
                                   DataCell(Text(item.unit)),
