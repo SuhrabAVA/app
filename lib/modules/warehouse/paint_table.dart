@@ -8,7 +8,6 @@ import 'tmc_history_screen.dart';
 import '../../utils/media_viewer.dart';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'deleted_records_screen.dart';
 
 /// Экран для отображения записей типа "Краска".
 ///
@@ -46,18 +45,6 @@ class _PaintTableState extends State<PaintTable> {
     });
   }
 
-  void _openDeletedPaints() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const DeletedRecordsScreen(
-          entityType: 'paint',
-          title: 'Удалённые (Краски)',
-        ),
-      ),
-    );
-  }
-
   void _openAddDialog() {
     showDialog(
       context: context,
@@ -73,26 +60,11 @@ class _PaintTableState extends State<PaintTable> {
   }
 
   Future<void> _deleteItem(TmcModel item) async {
-    final reasonController = TextEditingController();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Вы уверены, что хотите удалить ${item.description}?'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                labelText: 'Причина удаления',
-              ),
-              autofocus: true,
-            ),
-          ],
-        ),
+        content: Text('Вы уверены, что хотите удалить ${item.description}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -106,15 +78,8 @@ class _PaintTableState extends State<PaintTable> {
       ),
     );
     if (confirm == true) {
-      final reason = reasonController.text.trim();
-      if (reason.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Укажите причину удаления')),
-        );
-        return;
-      }
       final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      await provider.deleteTmc(item.id, type: item.type, reason: reason);
+      await provider.deleteTmc(item.id);
       await _loadData();
     }
   }
@@ -133,7 +98,7 @@ class _PaintTableState extends State<PaintTable> {
               controller: qtyController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'Количество (г) для списания',
+                labelText: 'Количество (кг) для списания',
               ),
             ),
             TextField(
@@ -190,11 +155,6 @@ class _PaintTableState extends State<PaintTable> {
       appBar: AppBar(
         title: const Text('Краски'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined),
-            tooltip: 'Удалённые записи',
-            onPressed: _openDeletedPaints,
-          ),
           // Кнопка истории изменений
           IconButton(
             icon: const Icon(Icons.history),
@@ -260,10 +220,15 @@ class _PaintTableState extends State<PaintTable> {
                             rows: List<DataRow>.generate(
                               _items
                                   .where((item) {
-                                    final query = _searchController.text.toLowerCase();
+                                    final query =
+                                        _searchController.text.toLowerCase();
                                     if (query.isEmpty) return true;
-                                    return item.description.toLowerCase().contains(query) ||
-                                        item.unit.toLowerCase().contains(query) ||
+                                    return item.description
+                                            .toLowerCase()
+                                            .contains(query) ||
+                                        item.unit
+                                            .toLowerCase()
+                                            .contains(query) ||
                                         item.quantity
                                             .toString()
                                             .toLowerCase()
@@ -272,18 +237,19 @@ class _PaintTableState extends State<PaintTable> {
                                   .toList()
                                   .length,
                               (rowIndex) {
-                                final filtered = _items
-                                    .where((item) {
-                                      final query = _searchController.text.toLowerCase();
-                                      if (query.isEmpty) return true;
-                                      return item.description.toLowerCase().contains(query) ||
-                                          item.unit.toLowerCase().contains(query) ||
-                                          item.quantity
-                                              .toString()
-                                              .toLowerCase()
-                                              .contains(query);
-                                    })
-                                    .toList();
+                                final filtered = _items.where((item) {
+                                  final query =
+                                      _searchController.text.toLowerCase();
+                                  if (query.isEmpty) return true;
+                                  return item.description
+                                          .toLowerCase()
+                                          .contains(query) ||
+                                      item.unit.toLowerCase().contains(query) ||
+                                      item.quantity
+                                          .toString()
+                                          .toLowerCase()
+                                          .contains(query);
+                                }).toList();
                                 final item = filtered[rowIndex];
                                 return DataRow(cells: [
                                   DataCell(Text('${rowIndex + 1}')),
@@ -291,14 +257,18 @@ class _PaintTableState extends State<PaintTable> {
                                     Uint8List? decodedBytes;
                                     if (item.imageBase64 != null) {
                                       try {
-                                        decodedBytes = base64Decode(item.imageBase64!);
+                                        decodedBytes =
+                                            base64Decode(item.imageBase64!);
                                       } catch (_) {
                                         decodedBytes = null;
                                       }
                                     }
-                                    final Uint8List? previewBytes = decodedBytes;
+                                    final Uint8List? previewBytes =
+                                        decodedBytes;
                                     final String imageUrl = item.imageUrl ?? '';
-                                    final bool hasBytes = previewBytes != null && previewBytes.isNotEmpty;
+                                    final bool hasBytes =
+                                        previewBytes != null &&
+                                            previewBytes.isNotEmpty;
                                     final bool hasUrl = imageUrl.isNotEmpty;
 
                                     final Widget preview;
@@ -323,7 +293,8 @@ class _PaintTableState extends State<PaintTable> {
                                         ),
                                       );
                                     } else {
-                                      preview = const Icon(Icons.image_not_supported);
+                                      preview =
+                                          const Icon(Icons.image_not_supported);
                                     }
 
                                     return DataCell(
@@ -358,12 +329,15 @@ class _PaintTableState extends State<PaintTable> {
                                         onPressed: () => _editItem(item),
                                       ),
                                       IconButton(
-                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                        icon: const Icon(
+                                            Icons.remove_circle_outline,
+                                            size: 20),
                                         tooltip: 'Списать',
                                         onPressed: () => _writeOffItem(item),
                                       ),
                                       IconButton(
-                                        icon: const Icon(Icons.delete, size: 20),
+                                        icon:
+                                            const Icon(Icons.delete, size: 20),
                                         tooltip: 'Удалить',
                                         onPressed: () => _deleteItem(item),
                                       ),

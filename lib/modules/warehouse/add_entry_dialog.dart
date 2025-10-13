@@ -92,7 +92,6 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   bool _isNewPaper = false;
 
   String _paperMethod = 'meters'; // meters | weight | diameter
-  String? _paperDiameterTone; // white | brown
 
   String? _selectedUnit;
   final List<String> _units = const [
@@ -424,7 +423,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               description: _controllers['name']!.text.trim().isNotEmpty
                   ? _controllers['name']!.text.trim()
                   : item.description,
-              unit: 'г',
+              unit: 'кг',
               quantity: double.tryParse(_controllers['weight']!
                       .text
                       .trim()
@@ -558,28 +557,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           final d = double.tryParse(
                   _controllers['diameter']!.text.replaceAll(',', '.')) ??
               0.0;
-          bool? isWhite;
-          if (_paperDiameterTone != null) {
-            isWhite = _paperDiameterTone == 'white';
-          } else {
-            final srcName =
-                (sel?.name ?? _controllers['name']!.text).toLowerCase();
-            if (srcName.contains('бел') || srcName.contains('white')) {
-              isWhite = true;
-            } else if (srcName.contains('кор') ||
-                srcName.contains('бур') ||
-                srcName.contains('brown')) {
-              isWhite = false;
-            }
-          }
-          if (isWhite == null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content:
-                      Text('Укажите цвет бумаги для расчёта по диаметру')), 
-            );
-            return;
-          }
+          final srcName =
+              (sel?.name ?? _controllers['name']!.text).toLowerCase();
+          final isWhite = srcName.contains('бел') || srcName.contains('white');
           length = fromDiameter(d, isWhite) ?? 0.0;
         }
 
@@ -766,12 +746,20 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             0;
         final description = color.isNotEmpty ? '$name $color' : name;
 
+        if (_imageBytes == null || _imageBytes!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Для краски обязательно приложить фото')),
+          );
+          return;
+        }
+
         await wh.addTmc(
           id: const Uuid().v4(),
           type: 'Краска',
           description: description,
           quantity: weight,
-          unit: 'г',
+          unit: 'кг',
           note: note.isEmpty ? null : note,
           imageBytes: _imageBytes,
           lowThreshold: lowTh,
@@ -948,10 +936,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         ),
         keyboardType: keyboardType,
         onChanged: onChanged,
-        validator: validator ?? (value) {
-          if (key == 'note') return null;
-          return (value == null || value.isEmpty) ? 'Обязательное поле' : null;
-        },
+        validator: validator ??
+            (value) {
+              if (key == 'note') return null;
+              return (value == null || value.isEmpty)
+                  ? 'Обязательное поле'
+                  : null;
+            },
       ),
     );
   }
@@ -1134,12 +1125,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 DropdownMenuItem(
                     value: 'diameter', child: Text('По диаметру (см)')),
               ],
-              onChanged: (v) => setState(() {
-                _paperMethod = v ?? 'meters';
-                if (_paperMethod != 'diameter') {
-                  _paperDiameterTone = null;
-                }
-              }),
+              onChanged: (v) => setState(() => _paperMethod = v ?? 'meters'),
             ),
             const SizedBox(height: 8),
             if (_paperMethod == 'meters')
@@ -1162,24 +1148,6 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 'Диаметр (см)',
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
-              ),
-            if (_paperMethod == 'diameter')
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6.0),
-                child: DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(
-                    labelText: 'Цвет основы',
-                    border: OutlineInputBorder(),
-                  ),
-                  value: _paperDiameterTone,
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'white', child: Text('Белая бумага')),
-                    DropdownMenuItem(
-                        value: 'brown', child: Text('Коричневая бумага')),
-                  ],
-                  onChanged: (v) => setState(() => _paperDiameterTone = v),
-                ),
               ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
@@ -1506,7 +1474,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             _buildField(
               'weight',
-              'Вес (г)',
+              'Вес (кг)',
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),

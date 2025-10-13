@@ -3,8 +3,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../utils/auth_helper.dart';
 import '../../utils/kostanay_time.dart';
-import 'deletion_logger.dart';
-import 'deleted_records_screen.dart';
 
 class CategoriesHubScreen extends StatefulWidget {
   const CategoriesHubScreen({super.key});
@@ -139,24 +137,12 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
   }
 
   Future<void> _deleteCategory(Map<String, dynamic> it) async {
-    final reasonCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить категорию?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        content:
             const Text('Все позиции внутри будут удалены (ON DELETE CASCADE).'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonCtrl,
-              decoration: const InputDecoration(labelText: 'Причина удаления'),
-              autofocus: true,
-            ),
-          ],
-        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -168,37 +154,10 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
       ),
     );
     if (ok != true) return;
-    final reason = reasonCtrl.text.trim();
-    if (reason.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Укажите причину удаления')),
-      );
-      return;
-    }
-
-    Map<String, dynamic>? payload;
-    try {
-      final row = await _sb
-          .from('warehouse_categories')
-          .select()
-          .eq('id', it['id'])
-          .maybeSingle();
-      if (row != null && row is Map<String, dynamic>) {
-        payload = Map<String, dynamic>.from(row);
-      }
-    } catch (_) {}
 
     await _sb.from('warehouse_categories').delete().match({
       'id': it['id'],
     });
-    if (payload != null) {
-      await DeletionLogger.log(
-        entityType: 'category',
-        entityId: payload['id'].toString(),
-        payload: payload,
-        reason: reason,
-      );
-    }
     await _load();
   }
 
@@ -215,29 +174,12 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     );
   }
 
-  void _openDeletedCategories() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const DeletedRecordsScreen(
-          entityType: 'category',
-          title: 'Удалённые категории',
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Категории'),
         actions: [
-          IconButton(
-            onPressed: _openDeletedCategories,
-            icon: const Icon(Icons.delete_sweep_outlined),
-            tooltip: 'Удалённые записи',
-          ),
           IconButton(
               onPressed: _addCategoryDialog, icon: const Icon(Icons.add)),
         ],
@@ -410,23 +352,6 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     }
   }
 
-  void _openDeletedItems() {
-    final extra = <String, String>{'category_id': widget.categoryId};
-    if (widget.hasSubtables) {
-      extra['table_key'] = _tableKey ?? '';
-    }
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DeletedRecordsScreen(
-          entityType: 'category_item',
-          title: 'Удалённые (${widget.categoryTitle})',
-          extraFilters: extra,
-        ),
-      ),
-    );
-  }
-
   // ======== helpers ========
   Map<String, String> get _itemNameById {
     final m = <String, String>{};
@@ -490,24 +415,11 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
   }
 
   Future<void> _deleteItem(String id) async {
-    final reasonCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить позицию?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Действие нельзя отменить.'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonCtrl,
-              decoration: const InputDecoration(labelText: 'Причина удаления'),
-              autofocus: true,
-            ),
-          ],
-        ),
+        content: const Text('Действие нельзя отменить.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -518,42 +430,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
         ],
       ),
     );
-    if (ok != true) return;
-    final reason = reasonCtrl.text.trim();
-    if (reason.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Укажите причину удаления')),
-      );
-      return;
+    if (ok == true) {
+      await _sb.from('warehouse_category_items').delete().match({'id': id});
+      await _loadAll();
     }
-
-    Map<String, dynamic>? payload;
-    try {
-      final row = await _sb
-          .from('warehouse_category_items')
-          .select()
-          .eq('id', id)
-          .maybeSingle();
-      if (row != null && row is Map<String, dynamic>) {
-        payload = Map<String, dynamic>.from(row);
-      }
-    } catch (_) {}
-
-    await _sb.from('warehouse_category_items').delete().match({'id': id});
-    if (payload != null) {
-      final extra = <String, String>{'category_id': widget.categoryId};
-      if (widget.hasSubtables) {
-        extra['table_key'] = _tableKey ?? '';
-      }
-      await DeletionLogger.log(
-        entityType: 'category_item',
-        entityId: id,
-        payload: payload,
-        reason: reason,
-        extra: extra,
-      );
-    }
-    await _loadAll();
   }
 
   // ======== writeoffs (по конкретной позиции) ========
@@ -737,11 +617,6 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
               ),
             ),
           ],
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined),
-            tooltip: 'Удалённые записи',
-            onPressed: _openDeletedItems,
-          ),
           IconButton(
             tooltip: _tabs.index == 0
                 ? 'Добавить позицию'

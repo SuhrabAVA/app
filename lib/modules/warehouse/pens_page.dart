@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../warehouse_provider.dart';
 import '../tmc_model.dart';
+import 'deleted_records_modal.dart';
 
 /// Экран модуля «Ручки».
 class PensPage extends StatefulWidget {
@@ -59,6 +60,13 @@ class _PensPageState extends State<PensPage>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ручки'),
+        actions: [
+          TextButton(
+            onPressed: _openDeletedRecords,
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            child: const Text('Удаленные записи'),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -97,6 +105,16 @@ class _PensPageState extends State<PensPage>
   // чтобы не перезагружать список при переключении табов (если есть TabBar выше)
   @override
   bool get wantKeepAlive => true;
+
+  Future<void> _openDeletedRecords() async {
+    final provider = context.read<WarehouseProvider>();
+    final entityType = provider.deletionEntityTypeFor('Ручки');
+    await showDeletedRecordsModal(
+      context: context,
+      title: 'Удаленные записи — Ручки',
+      loader: () => provider.fetchDeletedRecords(entityType: entityType),
+    );
+  }
 }
 
 class _PensTable extends StatelessWidget {
