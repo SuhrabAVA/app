@@ -267,13 +267,14 @@ class _PdfPreviewPageState extends State<_PdfPreviewPage> {
       if (response.statusCode != 200) {
         throw Exception('HTTP ${response.statusCode}');
       }
-      final document = await PdfDocument.openData(response.bodyBytes);
+      final documentFuture = PdfDocument.openData(response.bodyBytes);
+      final document = await documentFuture;
       if (!mounted) {
         await document.close();
         return;
       }
       setState(() {
-        _controller = PdfControllerPinch(document: document);
+        _controller = PdfControllerPinch(document: documentFuture);
         _loading = false;
       });
     } catch (e) {
@@ -318,7 +319,7 @@ class _PdfPreviewPageState extends State<_PdfPreviewPage> {
                     : PdfViewPinch(
                         controller: _controller!,
                         builders: PdfViewPinchBuilders(
-                          options: const PdfViewOptions(),
+                          options: PdfViewOptions(),
                           documentLoaderBuilder: (_) => const Center(child: CircularProgressIndicator()),
                           pageLoaderBuilder: (_) => const Center(child: CircularProgressIndicator()),
                           errorBuilder: (_, error) => Center(
