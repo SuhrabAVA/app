@@ -9,6 +9,7 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import '../../services/app_auth.dart';
 import '../../utils/kostanay_time.dart';
+import 'deletion_logger.dart';
 
 class WarehouseProvider with ChangeNotifier {
   // ====== PENS DEDICATED TABLE RESOLUTION ======
@@ -367,6 +368,18 @@ class WarehouseProvider with ChangeNotifier {
     try {
       if (normalizedType == 'paint') {
         await _sb.from('paints').insert(common);
+        if (quantity > 0) {
+          try {
+            await _sb.from('paints_arrivals').insert({
+              'paint_id': newId,
+              'qty': quantity,
+              if (note != null) 'note': note,
+              'by_name': (AuthHelper.currentUserName ?? '').trim(),
+            });
+          } catch (e) {
+            debugPrint('⚠️ paint arrival log failed: $e');
+          }
+        }
       } else if (normalizedType == 'material') {
         await _sb.from('materials').insert(common);
       } else if (normalizedType == 'stationery') {
@@ -376,6 +389,18 @@ class WarehouseProvider with ChangeNotifier {
           'type': 'stationery',
         };
         await _sb.from('warehouse_stationery').insert(body);
+        if (quantity > 0) {
+          try {
+            await _sb.from('warehouse_stationery_arrivals').insert({
+              'item_id': newId,
+              'qty': quantity,
+              if (note != null) 'note': note,
+              'by_name': (AuthHelper.currentUserName ?? '').trim(),
+            });
+          } catch (e) {
+            debugPrint('⚠️ stationery arrival log failed: $e');
+          }
+        }
       } else {
         throw Exception('Неизвестный type: $normalizedType');
       }
@@ -557,7 +582,7 @@ class WarehouseProvider with ChangeNotifier {
     }
   }
 
-  Future<void> deleteTmc(String id, {String? type}) async {
+  Future<void> deleteTmc(String id, {String? type, String? reason}) async {
     await _ensureAuthed();
 
     String? resolvedType = _normalizeType(type);
@@ -565,10 +590,32 @@ class WarehouseProvider with ChangeNotifier {
       resolvedType = await _detectTypeById(id) ?? 'material';
     }
     final table = _tableByType(resolvedType);
+    Map<String, dynamic>? existing;
+    try {
+      final row = await _sb.from(table).select().eq('id', id).maybeSingle();
+      if (row != null && row is Map<String, dynamic>) {
+        existing = Map<String, dynamic>.from(row);
+      }
+    } catch (e) {
+      debugPrint('⚠️ preload delete row failed: $e');
+    }
     try {
       await _sb.from(table).delete().eq('id', id);
       _allTmc.removeWhere((e) => e.id == id && e.type == resolvedType);
       notifyListeners();
+      if (existing != null) {
+        final extra = <String, dynamic>{};
+        if (resolvedType == 'stationery') {
+          extra['table_key'] = _stationeryKey;
+        }
+        await DeletionLogger.log(
+          entityType: resolvedType,
+          entityId: id,
+          payload: existing!,
+          reason: reason,
+          extra: extra.isEmpty ? null : extra,
+        );
+      }
     } catch (e) {
       debugPrint('❌ deleteTmc failed: $e');
       rethrow;

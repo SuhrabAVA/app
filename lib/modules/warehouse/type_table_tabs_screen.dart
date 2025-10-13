@@ -13,6 +13,7 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
 import '../../utils/kostanay_time.dart';
+import 'deleted_records_screen.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -223,7 +224,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       'note': 'note'
     },
     'paper': {
-      'table': 'paper_inventories',
+      'table': 'papers_inventories',
       'fk': 'paper_id',
       'qty': 'counted_qty',
       'note': 'note'
@@ -331,7 +332,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
-      if (typeKey == 'paper') 'paper_inventories',
+      if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
       if (typeKey == 'material') 'materials_inventories',
     ];
@@ -935,6 +936,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep_outlined),
+            tooltip: 'Удалённые записи',
+            onPressed: () => _openDeletedRecords(typeKey),
+          ),
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
@@ -1040,7 +1046,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         const DataColumn(label: Text('Граммаж')),
                       if (_normalizeType(widget.type) != 'paper' &&
                           items.any((i) => i.weight != null))
-                        const DataColumn(label: Text('Вес (кг)')),
+                        const DataColumn(label: Text('Вес (г)')),
                       if (items.any(
                           (i) => i.note != null && i.note!.trim().isNotEmpty))
                         const DataColumn(label: Text('Заметки')),
@@ -1874,11 +1880,26 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   Future<void> _deleteItem(TmcModel item) async {
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Text('Будет удалена «${item.description}».'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Будет удалена «${item.description}».'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления',
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -1890,10 +1911,37 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ),
     );
     if (ok == true) {
+      final reason = reasonC.text.trim();
+      if (reason.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Укажите причину удаления')),
+          );
+        }
+        return;
+      }
       await Provider.of<WarehouseProvider>(context, listen: false)
-          .deleteTmc(item.id);
+          .deleteTmc(item.id, type: item.type, reason: reason);
       await _loadAll();
     }
+  }
+
+  void _openDeletedRecords(String typeKey) {
+    final extra = <String, String>{};
+    if (typeKey == 'stationery') {
+      final key =
+          Provider.of<WarehouseProvider>(context, listen: false).stationeryKey;
+      extra['table_key'] = key;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DeletedRecordsScreen(
+          entityType: typeKey,
+          title: 'Удалённые (${widget.title})',
+          extraFilters: extra.isEmpty ? null : extra,
+        ),
+      ),
+    );
   }
 
   /// Уведомления о низком остатке (пока без логики порогов – заглушка, чтобы не падала сборка).
