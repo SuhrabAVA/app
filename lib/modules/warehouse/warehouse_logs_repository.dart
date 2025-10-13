@@ -269,7 +269,7 @@ class WarehouseLogsRepository {
       try {
         final PostgrestFilterBuilder<dynamic> baseQuery =
             _client.from(table).select(selectFields);
-        final PostgrestFilterBuilder<dynamic> query = ids.isEmpty
+        final PostgrestTransformBuilder<dynamic> query = ids.isEmpty
             ? baseQuery.order(orderBy, ascending: ascending)
             : baseQuery
                 .or(ids.map((dynamic e) => '$fk.eq.$e').join(','))
