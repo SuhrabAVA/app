@@ -235,7 +235,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
     if (atIndex > 0) {
       final before = prefix.substring(atIndex - 1, atIndex);
-      final allowedBefore = RegExp(r'[\s.,!?;:()\[\]{}<>"'\-]');
+      final allowedBefore = RegExp("[\s.,!?;:()\[\]{}<>\"-]");
       if (!allowedBefore.hasMatch(before)) {
         _hideMentionOverlay();
         return;
