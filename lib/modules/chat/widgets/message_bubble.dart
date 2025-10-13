@@ -9,11 +9,13 @@ import '../chat_message.dart';
 class MessageBubble extends StatefulWidget {
   final ChatMessage m;
   final bool isMine;
+  final String? meId;
 
   const MessageBubble({
     super.key,
     required this.m,
     required this.isMine,
+    this.meId,
   });
 
   @override
@@ -22,6 +24,45 @@ class MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<MessageBubble> {
   final _player = AudioPlayer();
+  static final RegExp _mentionRegExp = RegExp(r'@\{([^|{}]+)\|([^{}]+)\}');
+
+  _ParsedSegments _parseSegments(String? source) {
+    final raw = source ?? '';
+    if (raw.isEmpty) {
+      return const _ParsedSegments(segments: [], mentions: [], plainText: '');
+    }
+    final matches = _mentionRegExp.allMatches(raw).toList(growable: false);
+    if (matches.isEmpty) {
+      return _ParsedSegments(
+        segments: [
+          _Segment(raw, false),
+        ],
+        mentions: const [],
+        plainText: raw,
+      );
+    }
+    final segments = <_Segment>[];
+    final mentions = <_MentionTarget>[];
+    var cursor = 0;
+    for (final match in matches) {
+      if (match.start > cursor) {
+        segments.add(_Segment(raw.substring(cursor, match.start), false));
+      }
+      final name = (match.group(1) ?? '').trim();
+      final id = (match.group(2) ?? '').trim();
+      final display = '@${name.isNotEmpty ? name : ''}';
+      segments.add(_Segment(display, true));
+      if (id.isNotEmpty) {
+        mentions.add(_MentionTarget(id: id, display: display));
+      }
+      cursor = match.end;
+    }
+    if (cursor < raw.length) {
+      segments.add(_Segment(raw.substring(cursor), false));
+    }
+    final plain = segments.map((s) => s.text).join();
+    return _ParsedSegments(segments: segments, mentions: mentions, plainText: plain);
+  }
 
   @override
   void dispose() {
@@ -42,6 +83,11 @@ class _MessageBubbleState extends State<MessageBubble> {
     final bubbleColor = widget.isMine
         ? Theme.of(context).colorScheme.primaryContainer.withOpacity(.6)
         : Theme.of(context).colorScheme.surfaceVariant.withOpacity(.9);
+
+    final parsedBody = _parseSegments(m.body);
+    final bool highlightsMention = !widget.isMine &&
+        (widget.meId ?? '').isNotEmpty &&
+        parsedBody.mentions.any((mention) => mention.id == widget.meId);
 
     final media = MediaQuery.of(context);
     final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
@@ -89,14 +135,30 @@ class _MessageBubbleState extends State<MessageBubble> {
               ),
               child: Padding(
                 padding: EdgeInsets.symmetric(vertical: scaled(10), horizontal: scaled(14)),
-                child: _buildContent(context, m, scale),
+                child: _buildContent(context, m, scale, parsedBody),
               ),
             ),
           ),
           SizedBox(height: scaled(4)),
-          Text(
-            _formatTime(m.createdAt),
-            style: TextStyle(fontSize: scaled(11), color: Colors.black.withOpacity(.45)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment:
+                widget.isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+            children: [
+              if (highlightsMention)
+                Padding(
+                  padding: EdgeInsets.only(right: scaled(4)),
+                  child: Icon(
+                    Icons.priority_high_rounded,
+                    size: scaled(14),
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              Text(
+                _formatTime(m.createdAt),
+                style: TextStyle(fontSize: scaled(11), color: Colors.black.withOpacity(.45)),
+              ),
+            ],
           ),
         ],
       ),
@@ -109,35 +171,49 @@ class _MessageBubbleState extends State<MessageBubble> {
     return '$h:$m';
   }
 
-  Widget _buildContent(BuildContext context, ChatMessage m, double scale) {
+  Widget _buildContent(
+      BuildContext context, ChatMessage m, double scale, _ParsedSegments parsed) {
     switch (m.kind) {
       case 'text':
-        return SelectableText(
-          m.body ?? '',
-          style: TextStyle(fontSize: 15 * scale, height: 1.25),
+        final baseStyle = TextStyle(fontSize: 15 * scale, height: 1.25);
+        final mentionStyle = baseStyle.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        );
+        final spans = parsed.segments
+            .map((segment) => TextSpan(
+                  text: segment.text,
+                  style: segment.isMention ? mentionStyle : null,
+                ))
+            .toList(growable: false);
+        return SelectableText.rich(
+          TextSpan(children: spans),
+          style: baseStyle,
         );
 
       case 'image':
+        final caption = parsed.plainText.trim();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _ImageWidget(
               url: m.fileUrl ?? '',
               mime: m.fileMime,
-              title: (m.body ?? '').isNotEmpty ? m.body : 'Фото',
+              title: caption.isNotEmpty ? caption : 'Фото',
               scale: scale,
             ),
-            if ((m.body ?? '').isNotEmpty) ...[
+            if (caption.isNotEmpty) ...[
               SizedBox(height: 6 * scale),
-              Text(m.body!, style: TextStyle(fontSize: 14 * scale)),
+              Text(caption, style: TextStyle(fontSize: 14 * scale)),
             ]
           ],
         );
 
       case 'video':
+        final title = parsed.plainText.trim();
         return _FileTile(
           icon: Icons.videocam,
-          title: m.body?.isNotEmpty == true ? m.body! : 'Видео',
+          title: title.isNotEmpty ? title : 'Видео',
           url: m.fileUrl,
           mime: m.fileMime,
           scale: scale,
@@ -147,15 +223,39 @@ class _MessageBubbleState extends State<MessageBubble> {
         return _AudioTile(url: m.fileUrl, durationMs: m.durationMs, scale: scale);
 
       default:
+        final title = parsed.plainText.trim();
         return _FileTile(
           icon: Icons.insert_drive_file,
-          title: m.body?.isNotEmpty == true ? m.body! : 'Файл',
+          title: title.isNotEmpty ? title : 'Файл',
           url: m.fileUrl,
           mime: m.fileMime,
           scale: scale,
         );
     }
   }
+}
+
+class _Segment {
+  final String text;
+  final bool isMention;
+  const _Segment(this.text, this.isMention);
+}
+
+class _MentionTarget {
+  final String id;
+  final String display;
+  const _MentionTarget({required this.id, required this.display});
+}
+
+class _ParsedSegments {
+  final List<_Segment> segments;
+  final List<_MentionTarget> mentions;
+  final String plainText;
+  const _ParsedSegments({
+    required this.segments,
+    required this.mentions,
+    required this.plainText,
+  });
 }
 
 class _ImageWidget extends StatelessWidget {
