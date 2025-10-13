@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../utils/auth_helper.dart';
 import '../../utils/kostanay_time.dart';
+import 'deleted_records_repository.dart';
+import 'deleted_records_screen.dart';
 
 class CategoriesHubScreen extends StatefulWidget {
   const CategoriesHubScreen({super.key});
@@ -137,12 +139,26 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
   }
 
   Future<void> _deleteCategory(Map<String, dynamic> it) async {
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить категорию?'),
-        content:
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             const Text('Все позиции внутри будут удалены (ON DELETE CASCADE).'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -155,10 +171,34 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     );
     if (ok != true) return;
 
+    await DeletedRecordsRepository.archive(
+      entityType: 'category',
+      entityId: it['id']?.toString(),
+      payload: {
+        'id': it['id'],
+        'code': it['code'],
+        'title': it['title'],
+        'has_subtables': it['has_subtables'],
+      },
+      reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
+    );
+
     await _sb.from('warehouse_categories').delete().match({
       'id': it['id'],
     });
     await _load();
+  }
+
+  void _openDeletedCategories() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DeletedRecordsScreen(
+          entityType: 'category',
+          title: 'Удалённые категории',
+        ),
+      ),
+    );
   }
 
   void _open(Map<String, dynamic> it) {
@@ -180,6 +220,10 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
       appBar: AppBar(
         title: const Text('Категории'),
         actions: [
+          IconButton(
+              tooltip: 'Удалённые записи',
+              onPressed: _openDeletedCategories,
+              icon: const Icon(Icons.delete_sweep_outlined)),
           IconButton(
               onPressed: _addCategoryDialog, icon: const Icon(Icons.add)),
         ],
@@ -414,12 +458,29 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     await _loadAll();
   }
 
-  Future<void> _deleteItem(String id) async {
+  Future<void> _deleteItem(Map<String, dynamic> row) async {
+    final id = row['id']?.toString();
+    if (id == null) return;
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить позицию?'),
-        content: const Text('Действие нельзя отменить.'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Действие нельзя отменить.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -430,10 +491,47 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
         ],
       ),
     );
-    if (ok == true) {
-      await _sb.from('warehouse_category_items').delete().match({'id': id});
-      await _loadAll();
+    if (ok != true) return;
+
+    final extra = <String, String>{'category_id': widget.categoryId};
+    final tableKey = row['table_key']?.toString();
+    if (widget.hasSubtables && tableKey != null && tableKey.isNotEmpty) {
+      extra['table_key'] = tableKey;
     }
+
+    await DeletedRecordsRepository.archive(
+      entityType: 'category_item',
+      entityId: id,
+      payload: {
+        'id': row['id'],
+        'description': row['description'],
+        'quantity': row['quantity'],
+        'table_key': row['table_key'],
+        'category_id': widget.categoryId,
+      },
+      reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
+      extra: extra,
+    );
+
+    await _sb.from('warehouse_category_items').delete().match({'id': id});
+    await _loadAll();
+  }
+
+  void _openDeletedItems() {
+    final filters = <String, String>{'category_id': widget.categoryId};
+    if (widget.hasSubtables && (_tableKey ?? '').isNotEmpty) {
+      filters['table_key'] = _tableKey ?? '';
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DeletedRecordsScreen(
+          entityType: 'category_item',
+          title: 'Удалённые записи — ${widget.categoryTitle}',
+          extraFilters: filters,
+        ),
+      ),
+    );
   }
 
   // ======== writeoffs (по конкретной позиции) ========
@@ -573,11 +671,11 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
             icon: const Icon(Icons.edit_outlined),
             onPressed: () => _addOrEditItem(existing: r),
           ),
-          IconButton(
-            tooltip: 'Удалить',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => _deleteItem(id),
-          ),
+      IconButton(
+        tooltip: 'Удалить',
+        icon: const Icon(Icons.delete_outline),
+        onPressed: () => _deleteItem(r),
+      ),
         ],
       ),
       onTap: () => _addOrEditItem(existing: r),
@@ -617,6 +715,11 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
               ),
             ),
           ],
+          IconButton(
+            tooltip: 'Удалённые записи',
+            onPressed: _openDeletedItems,
+            icon: const Icon(Icons.delete_sweep_outlined),
+          ),
           IconButton(
             tooltip: _tabs.index == 0
                 ? 'Добавить позицию'

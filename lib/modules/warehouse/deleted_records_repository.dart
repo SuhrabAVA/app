@@ -15,6 +15,7 @@ class DeletedRecordsRepository {
     Map<String, dynamic>? payload,
     String? entityId,
     String? reason,
+    Map<String, dynamic>? extra,
   }) async {
     try {
       final data = <String, dynamic>{
@@ -24,6 +25,7 @@ class DeletedRecordsRepository {
         if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
         if ((AuthHelper.currentUserName ?? '').isNotEmpty)
           'deleted_by': AuthHelper.currentUserName,
+        if (extra != null && extra.isNotEmpty) 'extra': extra,
       };
       await _sb.from('warehouse_deleted_records').insert(data);
     } catch (_) {

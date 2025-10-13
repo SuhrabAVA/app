@@ -13,6 +13,8 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
 import '../../utils/kostanay_time.dart';
+import 'deleted_records_repository.dart';
+import 'deleted_records_screen.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -274,6 +276,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       'qty': 'qty',
       'note': 'note'
     },
+  };
+
+  static const Map<String, String> _deletedEntityTypes = {
+    'paper': 'tmc_paper',
+    'stationery': 'tmc_stationery',
+    'paint': 'tmc_paint',
+    'pens': 'tmc_pens',
   };
 
   String _normalizeType(String raw) {
@@ -840,6 +849,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     });
   }
 
+  void _openDeletedRecords() {
+    final typeKey = _normalizeType(widget.type);
+    final entityType = _deletedEntityTypes[typeKey];
+    if (entityType == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DeletedRecordsScreen(
+          entityType: entityType,
+          title: 'Удалённые записи — ${widget.title}',
+        ),
+      ),
+    );
+  }
+
   /// Фильтр по тексту для позиций
   List<TmcModel> _applyFilterItems(List<TmcModel> src) {
     final q = _query.trim().toLowerCase();
@@ -935,6 +958,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep_outlined),
+            tooltip: 'Удалённые записи',
+            onPressed: _openDeletedRecords,
+          ),
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
@@ -1321,6 +1349,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       return;
     }
     final c = TextEditingController();
+    final unitSuffix = item.unit.trim().isEmpty ? '' : ' (${item.unit})';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1328,7 +1357,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         content: TextField(
           controller: c,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Сколько добавить'),
+          decoration:
+              InputDecoration(labelText: 'Сколько добавить$unitSuffix'),
         ),
         actions: [
           TextButton(
@@ -1437,6 +1467,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     double? grammage =
         double.tryParse((item.grammage ?? '').replaceAll(',', '.'));
     final formKey = GlobalKey<FormState>();
+    String? diameterColor;
+    final nameLow = item.description.toLowerCase();
+    if (nameLow.contains('бел')) {
+      diameterColor = 'white';
+    } else if (nameLow.contains('коричнев')) {
+      diameterColor = 'brown';
+    }
 
     double? _computeFromWeight(double wKg, double fmt, double g) {
       return ((wKg * 1000) / g) / (fmt / 100.0);
@@ -1553,6 +1590,25 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       decoration:
                           const InputDecoration(labelText: 'Грамаж (г/м²)'),
                     ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: diameterColor,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'white', child: Text('Белая бумага')),
+                        DropdownMenuItem(
+                            value: 'brown', child: Text('Коричневая бумага')),
+                      ],
+                      onChanged: (v) => setS(() => diameterColor = v),
+                      decoration:
+                          const InputDecoration(labelText: 'Тип бумаги'),
+                      validator: (v) {
+                        if (method == 'diameter' && (v == null || v.isEmpty)) {
+                          return 'Выберите тип бумаги';
+                        }
+                        return null;
+                      },
+                    ),
                   ],
                 ],
               ),
@@ -1575,9 +1631,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (ok != true) return;
 
     double addMeters = 0;
-    final nameLow = item.description.toLowerCase();
-    final isWhite = nameLow.contains('белый') || nameLow.contains(' бел');
-    final isBrown = nameLow.contains('коричнев');
 
     if (method == 'meters') {
       addMeters = double.tryParse(metersC.text.replaceAll(',', '.')) ?? 0;
@@ -1600,7 +1653,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         return;
       }
       final d = double.tryParse(diameterC.text.replaceAll(',', '.')) ?? 0;
-      final white = isWhite && !isBrown;
+      if (diameterColor == null || diameterColor!.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Выберите тип бумаги')));
+        }
+        return;
+      }
+      final white = diameterColor == 'white';
       addMeters = _computeFromDiameter(d, format!, grammage!, white) ?? 0;
     }
     if (addMeters <= 0) return;
@@ -1612,6 +1672,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   Future<void> _writeOff(TmcModel item) async {
     final qtyC = TextEditingController();
     final commentC = TextEditingController();
+    final unitSuffix = item.unit.trim().isEmpty ? '' : ' (${item.unit})';
     final result = await showDialog<double?>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1623,7 +1684,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               controller: qtyC,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Количество'),
+              decoration: InputDecoration(labelText: 'Количество$unitSuffix'),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -1874,11 +1935,26 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   Future<void> _deleteItem(TmcModel item) async {
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Text('Будет удалена «${item.description}».'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Будет удалена «${item.description}».'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -1890,8 +1966,17 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ),
     );
     if (ok == true) {
+      final typeKey = _normalizeType(widget.type);
+      final entityType = _deletedEntityTypes[typeKey] ?? 'tmc_generic';
+      await DeletedRecordsRepository.archive(
+        entityType: entityType,
+        entityId: item.id,
+        payload: item.toMap(),
+        reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
+        extra: {'type_key': typeKey},
+      );
       await Provider.of<WarehouseProvider>(context, listen: false)
-          .deleteTmc(item.id);
+          .deleteTmc(item.id, type: widget.type);
       await _loadAll();
     }
   }
