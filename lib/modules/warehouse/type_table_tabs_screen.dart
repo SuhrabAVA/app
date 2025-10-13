@@ -211,13 +211,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   static const Map<String, Map<String, String>> _invMap = {
     'paint': {
-      'table': 'paint_inventories',
+      'table': 'paints_inventories',
       'fk': 'paint_id',
       'qty': 'counted_qty',
       'note': 'note'
     },
     'material': {
-      'table': 'material_inventories',
+      'table': 'materials_inventories',
       'fk': 'material_id',
       'qty': 'counted_qty',
       'note': 'note'
@@ -317,8 +317,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
       if (typeKey == 'paper') 'paper_writeoffs',
-      if (typeKey == 'paint') 'paint_writeoffs',
-      if (typeKey == 'material') 'material_writeoffs',
+      if (typeKey == 'paint') 'paints_writeoffs',
+      if (typeKey == 'material') 'materials_writeoffs',
     ];
     final seen = <String>{};
     return base.where((e) => seen.add(e)).toList();
@@ -332,8 +332,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
       if (typeKey == 'paper') 'paper_inventories',
-      if (typeKey == 'paint') 'paint_inventories',
-      if (typeKey == 'material') 'material_inventories',
+      if (typeKey == 'paint') 'paints_inventories',
+      if (typeKey == 'material') 'materials_inventories',
     ];
     final seen = <String>{};
     return base.where((e) => seen.add(e)).toList();
@@ -347,7 +347,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
-      'arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
       if (typeKey == 'material') 'materials_arrivals',
