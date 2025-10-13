@@ -9,6 +9,7 @@ import '../orders/order_model.dart';
 
 import 'analytics_provider.dart';
 import 'analytics_record.dart';
+import 'warehouse_analytics_tab.dart';
 
 /// Экран отображения аналитики для разных категорий сотрудников.
 /// Вверху — фильтры по сотруднику и периоду, ниже — вкладки:
@@ -218,32 +219,45 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     return DefaultTabController(
       length: 3,
-      child: Scaffold(
-        appBar: AppBar(
-          leading: const BackButton(),
-          title: const Text('Аналитика'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Производство'),
-              Tab(text: 'Менеджеры'),
-              Tab(text: 'Склад'),
-            ],
-          ),
-        ),
-        body: Column(
-          children: [
-            _buildFilters(personnel),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  _buildTable('production', analytics.logs, personnel, orders),
-                  _buildTable('manager', analytics.logs, personnel, orders),
-                  _buildTable('warehouse', analytics.logs, personnel, orders),
+      child: Builder(
+        builder: (context) {
+          final TabController controller = DefaultTabController.of(context)!;
+          return Scaffold(
+            appBar: AppBar(
+              leading: const BackButton(),
+              title: const Text('Аналитика'),
+              bottom: const TabBar(
+                tabs: [
+                  Tab(text: 'Производство'),
+                  Tab(text: 'Менеджеры'),
+                  Tab(text: 'Склад'),
                 ],
               ),
             ),
-          ],
-        ),
+            body: Column(
+              children: [
+                AnimatedBuilder(
+                  animation: controller,
+                  builder: (context, _) {
+                    if (controller.index == 2) {
+                      return const SizedBox.shrink();
+                    }
+                    return _buildFilters(personnel);
+                  },
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _buildTable('production', analytics.logs, personnel, orders),
+                      _buildTable('manager', analytics.logs, personnel, orders),
+                      const WarehouseAnalyticsTab(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
