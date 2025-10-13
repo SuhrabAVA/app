@@ -115,7 +115,7 @@ class _StockListScreenState extends State<StockListScreen> {
                         if (tmc.grammage != null &&
                             tmc.grammage!.trim().isNotEmpty)
                           Text('Граммаж: ${tmc.grammage}'),
-                        if (tmc.weight != null) Text('Вес: ${tmc.weight} кг'),
+                        if (tmc.weight != null) Text('Вес: ${tmc.weight} г'),
                         if (tmc.note != null && tmc.note!.trim().isNotEmpty)
                           Text('Заметки: ${tmc.note}'),
                         Text(thresholds),
