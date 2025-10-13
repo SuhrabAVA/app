@@ -98,13 +98,13 @@ class WarehouseLogsRepository {
 
   static const Map<String, Map<String, String>> _woMap = <String, Map<String, String>>{
     'paint': {
-      'table': 'paint_writeoffs',
+      'table': 'paints_writeoffs',
       'fk': 'paint_id',
       'qty': 'qty',
       'note': 'note'
     },
     'material': {
-      'table': 'material_writeoffs',
+      'table': 'materials_writeoffs',
       'fk': 'material_id',
       'qty': 'qty',
       'note': 'note'
@@ -131,13 +131,13 @@ class WarehouseLogsRepository {
 
   static const Map<String, Map<String, String>> _invMap = <String, Map<String, String>>{
     'paint': {
-      'table': 'paint_inventories',
+      'table': 'paints_inventories',
       'fk': 'paint_id',
       'qty': 'counted_qty',
       'note': 'note'
     },
     'material': {
-      'table': 'material_inventories',
+      'table': 'materials_inventories',
       'fk': 'material_id',
       'qty': 'counted_qty',
       'note': 'note'
@@ -345,8 +345,8 @@ class WarehouseLogsRepository {
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
       if (typeKey == 'paper') 'paper_writeoffs',
-      if (typeKey == 'paint') 'paint_writeoffs',
-      if (typeKey == 'material') 'material_writeoffs',
+      if (typeKey == 'paint') 'paints_writeoffs',
+      if (typeKey == 'material') 'materials_writeoffs',
     ];
     final Set<String> seen = <String>{};
     return base.where((String e) => seen.add(e)).toList();
@@ -359,8 +359,8 @@ class WarehouseLogsRepository {
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
       if (typeKey == 'paper') 'paper_inventories',
-      if (typeKey == 'paint') 'paint_inventories',
-      if (typeKey == 'material') 'material_inventories',
+      if (typeKey == 'paint') 'paints_inventories',
+      if (typeKey == 'material') 'materials_inventories',
     ];
     final Set<String> seen = <String>{};
     return base.where((String e) => seen.add(e)).toList();
@@ -373,7 +373,6 @@ class WarehouseLogsRepository {
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
-      'arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
       if (typeKey == 'material') 'materials_arrivals',
