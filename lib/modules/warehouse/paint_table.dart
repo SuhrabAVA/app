@@ -8,6 +8,7 @@ import 'tmc_history_screen.dart';
 import '../../utils/media_viewer.dart';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'deleted_records_modal.dart';
 
 /// Экран для отображения записей типа "Краска".
 ///
@@ -52,6 +53,16 @@ class _PaintTableState extends State<PaintTable> {
     ).then((_) => _loadData());
   }
 
+  Future<void> _openDeletedRecords() async {
+    final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    final entityType = provider.deletionEntityTypeFor('Краска');
+    await showDeletedRecordsModal(
+      context: context,
+      title: 'Удаленные записи — Краски',
+      loader: () => provider.fetchDeletedRecords(entityType: entityType),
+    );
+  }
+
   void _editItem(TmcModel item) {
     showDialog(
       context: context,
@@ -60,11 +71,25 @@ class _PaintTableState extends State<PaintTable> {
   }
 
   Future<void> _deleteItem(TmcModel item) async {
+    final reasonC = TextEditingController();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Text('Вы уверены, что хотите удалить ${item.description}?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Вы уверены, что хотите удалить ${item.description}?'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -79,7 +104,11 @@ class _PaintTableState extends State<PaintTable> {
     );
     if (confirm == true) {
       final provider = Provider.of<WarehouseProvider>(context, listen: false);
-      await provider.deleteTmc(item.id);
+      final reason = reasonC.text.trim();
+      await provider.deleteTmc(
+        item.id,
+        reason: reason.isEmpty ? null : reason,
+      );
       await _loadData();
     }
   }
@@ -98,7 +127,7 @@ class _PaintTableState extends State<PaintTable> {
               controller: qtyController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'Количество (кг) для списания',
+                labelText: 'Количество (г) для списания',
               ),
             ),
             TextField(
@@ -155,6 +184,11 @@ class _PaintTableState extends State<PaintTable> {
       appBar: AppBar(
         title: const Text('Краски'),
         actions: [
+          TextButton(
+            onPressed: _openDeletedRecords,
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            child: const Text('Удаленные записи'),
+          ),
           // Кнопка истории изменений
           IconButton(
             icon: const Icon(Icons.history),

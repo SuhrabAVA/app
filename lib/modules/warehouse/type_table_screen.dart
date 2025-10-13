@@ -96,7 +96,7 @@ class _TypeTableScreenState extends State<TypeTableScreen> {
                               i.grammage!.trim().isNotEmpty))
                             const DataColumn(label: Text('Граммаж')),
                           if (_items.any((i) => i.weight != null))
-                            const DataColumn(label: Text('Вес (кг)')),
+                    const DataColumn(label: Text('Вес (г)')),
                           if (_items.any((i) =>
                               i.note != null && i.note!.trim().isNotEmpty))
                             const DataColumn(label: Text('Заметки')),

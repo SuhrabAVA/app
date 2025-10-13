@@ -9,6 +9,7 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import '../../services/app_auth.dart';
 import '../../utils/kostanay_time.dart';
+import 'deleted_records_repository.dart';
 
 class WarehouseProvider with ChangeNotifier {
   // ====== PENS DEDICATED TABLE RESOLUTION ======
@@ -48,6 +49,53 @@ class WarehouseProvider with ChangeNotifier {
       List.unmodifiable(_writeoffsByItem[itemId] ?? const []);
   List<Map<String, dynamic>> inventories(String itemId) =>
       List.unmodifiable(_inventoriesByItem[itemId] ?? const []);
+
+  Future<List<Map<String, dynamic>>> fetchDeletedRecords({
+    required String entityType,
+  }) {
+    return DeletedRecordsRepository.fetch(entityType);
+  }
+
+  String normalizeTypeKey(String type) {
+    return _normalizeType(type) ?? type.toLowerCase().trim();
+  }
+
+  String deletionEntityTypeFor(String rawType) {
+    return _entityTypeForDeletion(normalizeTypeKey(rawType));
+  }
+
+  static const Map<String, Map<String, String>> _arrivalMap = {
+    'paint': {
+      'table': 'paints_arrivals',
+      'fk': 'paint_id',
+      'qty': 'qty',
+      'note': 'note',
+    },
+    'material': {
+      'table': 'materials_arrivals',
+      'fk': 'material_id',
+      'qty': 'qty',
+      'note': 'note',
+    },
+    'paper': {
+      'table': 'papers_arrivals',
+      'fk': 'paper_id',
+      'qty': 'qty',
+      'note': 'note',
+    },
+    'stationery': {
+      'table': 'warehouse_stationery_arrivals',
+      'fk': 'item_id',
+      'qty': 'qty',
+      'note': 'note',
+    },
+    'pens': {
+      'table': 'warehouse_pens_arrivals',
+      'fk': 'item_id',
+      'qty': 'qty',
+      'note': 'note',
+    },
+  };
 
   WarehouseProvider() {
     _init();
@@ -287,6 +335,12 @@ class WarehouseProvider with ChangeNotifier {
       };
       await _sb.from(table).insert(body);
       await fetchTmc();
+      await _insertArrivalLog(
+        typeKey: 'pens',
+        itemId: newId,
+        qty: quantity,
+        note: note,
+      );
       await _logTmcEvent(
         tmcId: newId,
         eventType: 'Приход (ручки)',
@@ -350,13 +404,27 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     // ----------- Остальные типы -----------
+    double effectiveQuantity = quantity;
+    String effectiveUnit = unit;
+    if (normalizedType == 'paint') {
+      final normalizedUnit = unit.trim().toLowerCase();
+      if (normalizedUnit == 'кг' || normalizedUnit == 'kg') {
+        effectiveQuantity = quantity * 1000;
+        effectiveUnit = 'г';
+      } else if (normalizedUnit.isEmpty) {
+        effectiveUnit = 'г';
+      }
+    } else if (normalizedType == 'stationery' && effectiveUnit.trim().isEmpty) {
+      effectiveUnit = 'шт';
+    }
+
     final common = <String, dynamic>{
       'id': newId,
       'date': nowInKostanayIsoString(),
       'supplier': supplier,
       'description': description,
-      'unit': unit,
-      'quantity': quantity,
+      'unit': effectiveUnit,
+      'quantity': effectiveQuantity,
       'note': note,
       'low_threshold': lowThreshold ?? 0,
       'critical_threshold': criticalThreshold ?? 0,
@@ -367,6 +435,12 @@ class WarehouseProvider with ChangeNotifier {
     try {
       if (normalizedType == 'paint') {
         await _sb.from('paints').insert(common);
+        await _insertArrivalLog(
+          typeKey: 'paint',
+          itemId: newId,
+          qty: effectiveQuantity,
+          note: note,
+        );
       } else if (normalizedType == 'material') {
         await _sb.from('materials').insert(common);
       } else if (normalizedType == 'stationery') {
@@ -376,6 +450,12 @@ class WarehouseProvider with ChangeNotifier {
           'type': 'stationery',
         };
         await _sb.from('warehouse_stationery').insert(body);
+        await _insertArrivalLog(
+          typeKey: 'stationery',
+          itemId: newId,
+          qty: effectiveQuantity,
+          note: note,
+        );
       } else {
         throw Exception('Неизвестный type: $normalizedType');
       }
@@ -438,11 +518,26 @@ class WarehouseProvider with ChangeNotifier {
       finalBase64 ??= base64Encode(imageBytes);
     }
 
+    double? effectiveQty = quantity;
+    String? effectiveUnit = unit;
+    if (resolvedType == 'paint') {
+      final unitLc = (effectiveUnit ?? '').trim().toLowerCase();
+      if (effectiveQty != null && (unitLc == 'кг' || unitLc == 'kg')) {
+        effectiveQty = effectiveQty * 1000;
+        effectiveUnit = 'г';
+      } else if (effectiveUnit != null && unitLc.isEmpty) {
+        effectiveUnit = 'г';
+      }
+      if (effectiveUnit == null && unit == null && quantity != null) {
+        effectiveUnit = 'г';
+      }
+    }
+
     final patch = <String, dynamic>{
       if (supplier != null) 'supplier': supplier,
       if (description != null) 'description': description,
-      if (quantity != null) 'quantity': quantity,
-      if (unit != null) 'unit': unit,
+      if (effectiveQty != null) 'quantity': effectiveQty,
+      if (effectiveUnit != null) 'unit': effectiveUnit,
       if (note != null) 'note': note,
       if (lowThreshold != null) 'low_threshold': lowThreshold,
       if (criticalThreshold != null) 'critical_threshold': criticalThreshold,
@@ -480,18 +575,43 @@ class WarehouseProvider with ChangeNotifier {
       resolvedType = await _detectTypeById(id) ?? 'material';
     }
     final table = _tableByType(resolvedType);
+    String? unitOverride;
     try {
       if (newQuantity != null) {
-        await _sb.from(table).update(
-            {'quantity': newQuantity < 0 ? 0 : newQuantity}).eq('id', id);
+        double next = newQuantity < 0 ? 0 : newQuantity;
+        if (resolvedType == 'paint') {
+          unitOverride = 'г';
+        }
+        await _sb
+            .from(table)
+            .update({
+              'quantity': next,
+              if (unitOverride != null) 'unit': unitOverride,
+            })
+            .eq('id', id);
       } else {
-        final row =
-            await _sb.from(table).select('quantity').eq('id', id).single();
-        final current = (row['quantity'] as num).toDouble();
+        final row = await _sb
+            .from(table)
+            .select('quantity, unit')
+            .eq('id', id)
+            .single();
+        double current = (row['quantity'] as num).toDouble();
+        String unit = (row['unit'] as String?) ?? '';
+        if (resolvedType == 'paint') {
+          final unitLc = unit.trim().toLowerCase();
+          if (unitLc == 'кг' || unitLc == 'kg') {
+            current *= 1000;
+          }
+          unitOverride = 'г';
+        }
         final next = (current + (delta ?? 0));
         await _sb
             .from(table)
-            .update({'quantity': next < 0 ? 0 : next}).eq('id', id);
+            .update({
+              'quantity': next < 0 ? 0 : next,
+              if (unitOverride != null) 'unit': unitOverride,
+            })
+            .eq('id', id);
       }
       await fetchTmc();
     } catch (e) {
@@ -557,7 +677,7 @@ class WarehouseProvider with ChangeNotifier {
     }
   }
 
-  Future<void> deleteTmc(String id, {String? type}) async {
+  Future<void> deleteTmc(String id, {String? type, String? reason}) async {
     await _ensureAuthed();
 
     String? resolvedType = _normalizeType(type);
@@ -565,13 +685,32 @@ class WarehouseProvider with ChangeNotifier {
       resolvedType = await _detectTypeById(id) ?? 'material';
     }
     final table = _tableByType(resolvedType);
+    Map<String, dynamic>? snapshot;
+    try {
+      final row = await _sb.from(table).select().eq('id', id).maybeSingle();
+      if (row != null) {
+        snapshot = Map<String, dynamic>.from(row as Map);
+        snapshot['type'] = resolvedType;
+      }
+    } catch (_) {}
+    bool deleted = false;
     try {
       await _sb.from(table).delete().eq('id', id);
       _allTmc.removeWhere((e) => e.id == id && e.type == resolvedType);
       notifyListeners();
+      deleted = true;
     } catch (e) {
       debugPrint('❌ deleteTmc failed: $e');
       rethrow;
+    } finally {
+      if (deleted) {
+        await DeletedRecordsRepository.archive(
+          entityType: _entityTypeForDeletion(resolvedType),
+          entityId: id,
+          payload: snapshot,
+          reason: reason,
+        );
+      }
     }
   }
 
@@ -643,16 +782,28 @@ class WarehouseProvider with ChangeNotifier {
     final table = (itemType == 'pens')
         ? 'warehouse_pens_inventories'
         : 'warehouse_stationery_inventories';
+    final sanitized = invValue < 0 ? 0 : invValue;
     await _sb.from(table).insert({
       'item_id': itemId,
-      'factual': invValue,
+      'factual': sanitized,
       if (note != null && note.isNotEmpty) 'note': note,
     });
+
+    final baseTable =
+        (itemType == 'pens') ? (_resolvedPensTable ?? 'warehouse_pens') : 'warehouse_stationery';
+    try {
+      await _sb
+          .from(baseTable)
+          .update({'quantity': sanitized})
+          .eq('id', itemId);
+    } catch (e) {
+      debugPrint('❌ inventorySet update qty: $e');
+    }
 
     final list = _inventoriesByItem.putIfAbsent(itemId, () => []);
     list.insert(0, {
       'item_id': itemId,
-      'factual': invValue,
+      'factual': sanitized,
       'note': note,
       'created_at': DateTime.now().toUtc().toIso8601String(),
     });
@@ -684,6 +835,23 @@ class WarehouseProvider with ChangeNotifier {
     if (t == 'списание') return '_op_writeoff';
     if (t == 'инвентаризация') return '_op_inventory';
     return null;
+  }
+
+  String _entityTypeForDeletion(String type) {
+    switch (type) {
+      case 'paint':
+        return 'tmc_paint';
+      case 'paper':
+        return 'tmc_paper';
+      case 'stationery':
+        return 'tmc_stationery';
+      case 'pens':
+        return 'tmc_pens';
+      case 'material':
+        return 'tmc_material';
+      default:
+        return 'tmc_$type';
+    }
   }
 
   String _tableByType(String type) {
@@ -785,6 +953,44 @@ class WarehouseProvider with ChangeNotifier {
         updatedAt: row['updated_at']?.toString(),
       );
     }
+    if (type == 'paint') {
+      double qty = _d(row['quantity']);
+      String unit = (row['unit'] as String?) ?? '';
+      final unitLc = unit.trim().toLowerCase();
+      if (unitLc == 'кг' || unitLc == 'kg') {
+        qty *= 1000;
+        unit = 'г';
+      } else if (unitLc.isEmpty) {
+        unit = 'г';
+      }
+      return TmcModel(
+        id: row['id'] as String,
+        date: (row['date'] as String?) ??
+            DateTime.tryParse(row['created_at']?.toString() ?? '')
+                ?.toIso8601String() ??
+            '',
+        supplier: row['supplier'] as String?,
+        type: type,
+        description: (row['description'] ?? '').toString(),
+        quantity: qty,
+        unit: unit,
+        note: row['note'] as String?,
+        format: row['format'] as String?,
+        grammage: row['grammage'] as String?,
+        weight: (row['weight'] is num)
+            ? (row['weight'] as num).toDouble()
+            : double.tryParse('${row['weight']}'),
+        imageUrl: row['image_url'] as String?,
+        imageBase64: row['image_base64'] as String?,
+        lowThreshold:
+            row['low_threshold'] == null ? null : _d(row['low_threshold']),
+        criticalThreshold: row['critical_threshold'] == null
+            ? null
+            : _d(row['critical_threshold']),
+        createdAt: row['created_at']?.toString(),
+        updatedAt: row['updated_at']?.toString(),
+      );
+    }
     return TmcModel(
       id: row['id'] as String,
       date: (row['date'] as String?) ??
@@ -840,6 +1046,46 @@ class WarehouseProvider with ChangeNotifier {
       });
     } catch (_) {
       // analytics не обязательна
+    }
+  }
+
+  Future<void> _insertArrivalLog({
+    required String typeKey,
+    required String itemId,
+    required double qty,
+    String? note,
+  }) async {
+    final map = _arrivalMap[typeKey];
+    if (map == null || qty <= 0) return;
+    final table = map['table'];
+    final fk = map['fk'] ?? 'item_id';
+    final qtyCol = map['qty'] ?? 'qty';
+    final noteCol = map['note'] ?? 'note';
+    if (table == null) return;
+
+    final payload = <String, dynamic>{
+      fk: itemId,
+      qtyCol: qty,
+    };
+    final user = (AuthHelper.currentUserName ?? '').trim();
+    if (user.isNotEmpty) {
+      payload['by_name'] = user;
+    }
+    if (note != null && note.trim().isNotEmpty) {
+      payload[noteCol] = note.trim();
+    }
+
+    try {
+      await _sb.from(table).insert(payload);
+    } on PostgrestException catch (e) {
+      if ((e.code ?? '') == '42703' ||
+          (e.message ?? '').contains('by_name')) {
+        final fallback = Map<String, dynamic>.from(payload)
+          ..remove('by_name');
+        await _sb.from(table).insert(fallback);
+      }
+    } catch (_) {
+      // Arrival log is optional, ignore other errors.
     }
   }
 

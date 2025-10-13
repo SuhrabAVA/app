@@ -5,6 +5,7 @@ import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/add_entry_dialog.dart';
 import 'tmc_history_screen.dart';
+import 'deleted_records_modal.dart';
 
 /// Экран для отображения канцелярских товаров.
 /// Использует [DataTable] для отображения прихода с нумерацией строк,
@@ -147,6 +148,11 @@ class _StationeryTableState extends State<StationeryTable> {
       appBar: AppBar(
         title: const Text('Канцелярия'),
         actions: [
+          TextButton(
+            onPressed: _openDeletedRecords,
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            child: const Text('Удаленные записи'),
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'История',
@@ -180,6 +186,16 @@ class _StationeryTableState extends State<StationeryTable> {
       // На случай, если realtime ещё не пришёл — дёрнем ручную синхронизацию.
       Provider.of<WarehouseProvider>(context, listen: false).fetchTmc();
     });
+  }
+
+  Future<void> _openDeletedRecords() async {
+    final provider = context.read<WarehouseProvider>();
+    final entityType = provider.deletionEntityTypeFor('Канцелярия');
+    await showDeletedRecordsModal(
+      context: context,
+      title: 'Удаленные записи — Канцелярия',
+      loader: () => provider.fetchDeletedRecords(entityType: entityType),
+    );
   }
 
   /// Редактирует существующий элемент канцелярии.
@@ -280,11 +296,25 @@ class _StationeryTableState extends State<StationeryTable> {
 
   /// Удаляет выбранную запись из канцелярии после подтверждения.
   Future<void> _deleteItem(TmcModel item) async {
+    final reasonC = TextEditingController();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Text('Вы уверены, что хотите удалить ${item.description}?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Вы уверены, что хотите удалить ${item.description}?'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -301,7 +331,12 @@ class _StationeryTableState extends State<StationeryTable> {
     if (confirm != true) return;
 
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    await provider.deleteTmc(item.id, type: 'stationery');
+    final reason = reasonC.text.trim();
+    await provider.deleteTmc(
+      item.id,
+      type: 'stationery',
+      reason: reason.isEmpty ? null : reason,
+    );
     await provider.fetchTmc();
   }
 }
