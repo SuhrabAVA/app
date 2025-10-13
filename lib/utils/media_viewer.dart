@@ -319,7 +319,7 @@ class _PdfPreviewPageState extends State<_PdfPreviewPage> {
                     : PdfViewPinch(
                         controller: _controller!,
                         builders: PdfViewPinchBuilders(
-                          options: PdfViewOptions(),
+                          options: const DefaultBuilderOptions(),
                           documentLoaderBuilder: (_) => const Center(child: CircularProgressIndicator()),
                           pageLoaderBuilder: (_) => const Center(child: CircularProgressIndicator()),
                           errorBuilder: (_, error) => Center(
