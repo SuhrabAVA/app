@@ -3,8 +3,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../utils/auth_helper.dart';
 import '../../utils/kostanay_time.dart';
-import 'deleted_records_modal.dart';
-import 'deleted_records_repository.dart';
 
 class CategoriesHubScreen extends StatefulWidget {
   const CategoriesHubScreen({super.key});
@@ -139,25 +137,12 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
   }
 
   Future<void> _deleteCategory(Map<String, dynamic> it) async {
-    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить категорию?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-                'Все позиции внутри будут удалены (ON DELETE CASCADE).'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonC,
-              decoration: const InputDecoration(
-                  labelText: 'Причина удаления (необязательно)'),
-            ),
-          ],
-        ),
+        content:
+            const Text('Все позиции внутри будут удалены (ON DELETE CASCADE).'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -173,17 +158,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     await _sb.from('warehouse_categories').delete().match({
       'id': it['id'],
     });
-    await DeletedRecordsRepository.archive(
-      entityType: 'category',
-      entityId: (it['id'] ?? '').toString(),
-      payload: {
-        'id': it['id'],
-        'code': it['code'],
-        'title': it['title'],
-        'has_subtables': it['has_subtables'],
-      },
-      reason: reasonC.text.trim(),
-    );
     await _load();
   }
 
@@ -206,11 +180,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
       appBar: AppBar(
         title: const Text('Категории'),
         actions: [
-          TextButton(
-            onPressed: _openDeletedCategories,
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-            child: const Text('Удаленные записи'),
-          ),
           IconButton(
               onPressed: _addCategoryDialog, icon: const Icon(Icons.add)),
         ],
@@ -241,14 +210,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
                 );
               },
             ),
-    );
-  }
-
-  Future<void> _openDeletedCategories() async {
-    await showDeletedRecordsModal(
-      context: context,
-      title: 'Удаленные категории',
-      loader: () => DeletedRecordsRepository.fetch('category'),
     );
   }
 }
@@ -391,29 +352,6 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     }
   }
 
-  Future<void> _openDeletedRecords() async {
-    await showDeletedRecordsModal(
-      context: context,
-      title: 'Удаленные записи — ${widget.categoryTitle}',
-      loader: () async {
-        final rows = await DeletedRecordsRepository.fetch('category_item');
-        final List<Map<String, dynamic>> filtered = [];
-        for (final row in rows) {
-          final payload = (row['payload'] as Map<String, dynamic>?) ?? {};
-          final catId = (payload['category_id'] ?? payload['categoryId'] ?? '')
-              .toString();
-          if (catId != widget.categoryId) continue;
-          if (widget.hasSubtables) {
-            final key = (payload['table_key'] ?? '').toString();
-            if ((key) != (_tableKey ?? '')) continue;
-          }
-          filtered.add(row);
-        }
-        return filtered;
-      },
-    );
-  }
-
   // ======== helpers ========
   Map<String, String> get _itemNameById {
     final m = <String, String>{};
@@ -477,24 +415,11 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
   }
 
   Future<void> _deleteItem(String id) async {
-    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить позицию?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Действие нельзя отменить.'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonC,
-              decoration: const InputDecoration(
-                  labelText: 'Причина удаления (необязательно)'),
-            ),
-          ],
-        ),
+        content: const Text('Действие нельзя отменить.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -507,20 +432,6 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     );
     if (ok == true) {
       await _sb.from('warehouse_category_items').delete().match({'id': id});
-      final payload = _items.firstWhere(
-        (element) => element['id'].toString() == id,
-        orElse: () => {},
-      );
-      await DeletedRecordsRepository.archive(
-        entityType: 'category_item',
-        entityId: id,
-        payload: {
-          ...payload,
-          'category_id': widget.categoryId,
-          'table_key': payload['table_key'] ?? _tableKey,
-        },
-        reason: reasonC.text.trim(),
-      );
       await _loadAll();
     }
   }
@@ -689,11 +600,6 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: _openDeletedRecords,
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-            child: const Text('Удаленные записи'),
-          ),
           if (widget.hasSubtables) ...[
             DropdownButtonHideUnderline(
               child: DropdownButton<String>(

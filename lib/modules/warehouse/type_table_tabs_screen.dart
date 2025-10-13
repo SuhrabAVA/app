@@ -13,7 +13,6 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
 import '../../utils/kostanay_time.dart';
-import 'deleted_records_modal.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -918,16 +917,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
   }
 
-  Future<void> _showDeletedRecords() async {
-    final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    final entityType = provider.deletionEntityTypeFor(widget.type);
-    await showDeletedRecordsModal(
-      context: context,
-      title: 'Удаленные записи — ${widget.title}',
-      loader: () => provider.fetchDeletedRecords(entityType: entityType),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final typeKey = _normalizeType(widget.type);
@@ -946,11 +935,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: _showDeletedRecords,
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-            child: const Text('Удаленные записи'),
-          ),
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
@@ -1056,7 +1040,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         const DataColumn(label: Text('Граммаж')),
                       if (_normalizeType(widget.type) != 'paper' &&
                           items.any((i) => i.weight != null))
-                        const DataColumn(label: Text('Вес (г)')),
+                        const DataColumn(label: Text('Вес (кг)')),
                       if (items.any(
                           (i) => i.note != null && i.note!.trim().isNotEmpty))
                         const DataColumn(label: Text('Заметки')),
@@ -1453,8 +1437,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     double? grammage =
         double.tryParse((item.grammage ?? '').replaceAll(',', '.'));
     final formKey = GlobalKey<FormState>();
-    String diameterColor =
-        item.description.toLowerCase().contains('коричнев') ? 'brown' : 'white';
 
     double? _computeFromWeight(double wKg, double fmt, double g) {
       return ((wKg * 1000) / g) / (fmt / 100.0);
@@ -1571,24 +1553,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       decoration:
                           const InputDecoration(labelText: 'Грамаж (г/м²)'),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Белый'),
-                          selected: diameterColor == 'white',
-                          onSelected: (_) =>
-                              setS(() => diameterColor = 'white'),
-                        ),
-                        ChoiceChip(
-                          label: const Text('Коричневый'),
-                          selected: diameterColor == 'brown',
-                          onSelected: (_) =>
-                              setS(() => diameterColor = 'brown'),
-                        ),
-                      ],
-                    ),
                   ],
                 ],
               ),
@@ -1611,6 +1575,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (ok != true) return;
 
     double addMeters = 0;
+    final nameLow = item.description.toLowerCase();
+    final isWhite = nameLow.contains('белый') || nameLow.contains(' бел');
+    final isBrown = nameLow.contains('коричнев');
+
     if (method == 'meters') {
       addMeters = double.tryParse(metersC.text.replaceAll(',', '.')) ?? 0;
     } else if (method == 'weight') {
@@ -1632,7 +1600,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         return;
       }
       final d = double.tryParse(diameterC.text.replaceAll(',', '.')) ?? 0;
-      final white = diameterColor == 'white';
+      final white = isWhite && !isBrown;
       addMeters = _computeFromDiameter(d, format!, grammage!, white) ?? 0;
     }
     if (addMeters <= 0) return;
@@ -1906,25 +1874,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   Future<void> _deleteItem(TmcModel item) async {
-    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Будет удалена «${item.description}».'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonC,
-              decoration: const InputDecoration(
-                labelText: 'Причина удаления (необязательно)',
-              ),
-            ),
-          ],
-        ),
+        content: Text('Будет удалена «${item.description}».'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -1936,13 +1890,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ),
     );
     if (ok == true) {
-      final provider =
-          Provider.of<WarehouseProvider>(context, listen: false);
-      final reason = reasonC.text.trim();
-      await provider.deleteTmc(
-        item.id,
-        reason: reason.isEmpty ? null : reason,
-      );
+      await Provider.of<WarehouseProvider>(context, listen: false)
+          .deleteTmc(item.id);
       await _loadAll();
     }
   }

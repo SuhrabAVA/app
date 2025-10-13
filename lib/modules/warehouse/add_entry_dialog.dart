@@ -92,7 +92,6 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   bool _isNewPaper = false;
 
   String _paperMethod = 'meters'; // meters | weight | diameter
-  String _diameterColor = 'white';
 
   String? _selectedUnit;
   final List<String> _units = const [
@@ -103,7 +102,6 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     'талон',
     'литр',
     'пачка',
-    'г',
     'кг',
     'мешков',
   ];
@@ -425,15 +423,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               description: _controllers['name']!.text.trim().isNotEmpty
                   ? _controllers['name']!.text.trim()
                   : item.description,
-              unit: 'г',
+              unit: 'кг',
               quantity: double.tryParse(_controllers['weight']!
                       .text
                       .trim()
                       .replaceAll(',', '.')) ??
-                  ((item.unit.toLowerCase() == 'кг' ||
-                          item.unit.toLowerCase() == 'kg')
-                      ? item.quantity * 1000
-                      : item.quantity),
+                  item.quantity,
               note: note.isNotEmpty ? note : item.note,
               imageBase64: imageBase64,
               lowThreshold: lowTh,
@@ -525,8 +520,8 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             double.tryParse(grammageStr.replaceAll(',', '.')) ?? 0.0;
         double length = 0.0;
 
-        double? fromWeight(double wGrams) =>
-            (wGrams / grammage) / (format / 100.0);
+        double? fromWeight(double wKg) =>
+            ((wKg * 1000) / grammage) / (format / 100.0);
 
         double? fromDiameter(double d, bool isWhite) {
           final r_m = (d / 2.0) / 100.0;
@@ -562,7 +557,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           final d = double.tryParse(
                   _controllers['diameter']!.text.replaceAll(',', '.')) ??
               0.0;
-          final isWhite = _diameterColor == 'white';
+          final srcName =
+              (sel?.name ?? _controllers['name']!.text).toLowerCase();
+          final isWhite = srcName.contains('бел') || srcName.contains('white');
           length = fromDiameter(d, isWhite) ?? 0.0;
         }
 
@@ -749,12 +746,20 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             0;
         final description = color.isNotEmpty ? '$name $color' : name;
 
+        if (_imageBytes == null || _imageBytes!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Для краски обязательно приложить фото')),
+          );
+          return;
+        }
+
         await wh.addTmc(
           id: const Uuid().v4(),
           type: 'Краска',
           description: description,
           quantity: weight,
-          unit: 'г',
+          unit: 'кг',
           note: note.isEmpty ? null : note,
           imageBytes: _imageBytes,
           lowThreshold: lowTh,
@@ -931,10 +936,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         ),
         keyboardType: keyboardType,
         onChanged: onChanged,
-        validator: validator ?? (value) {
-          if (key == 'note') return null;
-          return (value == null || value.isEmpty) ? 'Обязательное поле' : null;
-        },
+        validator: validator ??
+            (value) {
+              if (key == 'note') return null;
+              return (value == null || value.isEmpty)
+                  ? 'Обязательное поле'
+                  : null;
+            },
       ),
     );
   }
@@ -1113,7 +1121,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
               value: _paperMethod,
               items: const [
                 DropdownMenuItem(value: 'meters', child: Text('Ввести метры')),
-                DropdownMenuItem(value: 'weight', child: Text('По весу (г)')),
+                DropdownMenuItem(value: 'weight', child: Text('По весу (кг)')),
                 DropdownMenuItem(
                     value: 'diameter', child: Text('По диаметру (см)')),
               ],
@@ -1130,7 +1138,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             if (_paperMethod == 'weight')
               _buildField(
                 'weight',
-                'Вес (г)',
+                'Вес (кг)',
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
               ),
@@ -1140,34 +1148,6 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 'Диаметр (см)',
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
-              ),
-            if (_paperMethod == 'diameter')
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Цвет рулона'),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Белый'),
-                          selected: _diameterColor == 'white',
-                          onSelected: (_) =>
-                              setState(() => _diameterColor = 'white'),
-                        ),
-                        ChoiceChip(
-                          label: const Text('Коричневый'),
-                          selected: _diameterColor == 'brown',
-                          onSelected: (_) =>
-                              setState(() => _diameterColor = 'brown'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
               ),
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
@@ -1494,7 +1474,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             _buildField(
               'weight',
-              'Вес (г)',
+              'Вес (кг)',
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
