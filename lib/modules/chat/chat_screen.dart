@@ -148,7 +148,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   itemBuilder: (context, i) {
                     final m = list[i];
                     final isMine = m.senderId == widget.meId;
-                    return MessageBubble(m: m, isMine: isMine);
+                    return MessageBubble(
+                      m: m,
+                      isMine: isMine,
+                      meId: widget.meId,
+                    );
                   },
                 ),
               ),

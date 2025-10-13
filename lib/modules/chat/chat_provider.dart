@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'chat_message.dart';
+import 'chat_mention_candidate.dart';
 
 /// Провайдер чата для Supabase.
 /// Таблица: public.chat_messages
@@ -22,11 +23,55 @@ class ChatProvider with ChangeNotifier {
   final Map<String, String> _namesCache = {};
   // предотвращаем дублирующиеся запросы за именами
   final Set<String> _pendingNames = {};
+  // список сотрудников для подсказок @упоминаний
+  final List<ChatMentionCandidate> _mentionCandidates = [];
+  bool _mentionLoading = false;
 
   List<ChatMessage> messages(String roomId) =>
       List.unmodifiable(_byRoom[roomId] ?? const []);
 
   bool isSubscribed(String roomId) => _subs.containsKey(roomId);
+
+  /// Возвращает список сотрудников для подсказок при вводе `@`.
+  Future<List<ChatMentionCandidate>> mentionCandidates({String query = ''}) async {
+    await _ensureMentionCandidates();
+    final q = query.trim();
+    final matches = _mentionCandidates
+        .where((c) => c.matches(q))
+        .toList(growable: false)
+      ..sort((a, b) => a.displayName.compareTo(b.displayName));
+    // ограничиваем до 8 элементов, чтобы не перегружать подсказку
+    return matches.length > 8 ? matches.sublist(0, 8) : matches;
+  }
+
+  Future<void> _ensureMentionCandidates() async {
+    if (_mentionCandidates.isNotEmpty || _mentionLoading) return;
+    _mentionLoading = true;
+    try {
+      final res = await _sb
+          .from('documents')
+          .select('id, data')
+          .eq('collection', 'employees');
+      if (res is List) {
+        _mentionCandidates
+          ..clear()
+          ..addAll(res.whereType<Map>().map((raw) {
+            final row = Map<String, dynamic>.from(raw as Map);
+            final id = (row['id'] ?? '').toString();
+            final data = Map<String, dynamic>.from(row['data'] ?? {});
+            final isFired = (data['isFired'] as bool?) ?? false;
+            if (id.isEmpty || isFired) return null;
+            final candidate = ChatMentionCandidate.fromEmployeeRow(id, data);
+            if (candidate.displayName.trim().isEmpty) return null;
+            return candidate;
+          }).whereType<ChatMentionCandidate>());
+      }
+    } catch (_) {
+      // игнорируем ошибки Supabase, подсказки просто не появятся
+    } finally {
+      _mentionLoading = false;
+    }
+  }
 
   
   /// Реал-тайм подписка
