@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import '../../../utils/media_viewer.dart';
@@ -170,8 +172,12 @@ class _ImageWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.of(context).size.width * 0.70;
-    final h = w * 0.66;
+    final mediaWidth = MediaQuery.of(context).size.width;
+    final baseWidth = mediaWidth * 0.55;
+    final minWidth = 140.0 * scale;
+    final maxWidth = mediaWidth * 0.65;
+    final double w = baseWidth.clamp(minWidth, maxWidth).toDouble();
+    final double h = w * 0.66;
     double scaled(double value) => value * scale;
     return ClipRRect(
       borderRadius: BorderRadius.circular(scaled(12)),
@@ -261,46 +267,192 @@ class _AudioTile extends StatefulWidget {
 }
 
 class _AudioTileState extends State<_AudioTile> {
-  final _player = AudioPlayer();
-  bool _playing = false;
+  final AudioPlayer _player = AudioPlayer();
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  PlayerState _playerState = PlayerState.stopped;
+  bool _sourcePrepared = false;
+
+  StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<void>? _completeSub;
+  StreamSubscription<PlayerState>? _stateSub;
+
+  bool get _isPlaying => _playerState == PlayerState.playing;
 
   @override
-  void dispose() {
-    _player.dispose();
-    super.dispose();
-  }
+  void initState() {
+    super.initState();
+    final presetMs = widget.durationMs;
+    if (presetMs != null && presetMs > 0) {
+      _duration = Duration(milliseconds: presetMs);
+    }
+    _durationSub = _player.onDurationChanged.listen((event) {
+      if (!mounted) return;
+      if (event.inMilliseconds <= 0) return;
+      setState(() => _duration = event);
+    });
+    _positionSub = _player.onPositionChanged.listen((event) {
+      if (!mounted) return;
+      setState(() => _position = event);
+    });
+    _stateSub = _player.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      setState(() => _playerState = state);
+    });
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _playerState = PlayerState.stopped;
+        _position = Duration.zero;
+      });
+    });
 
-  Future<void> _toggle() async {
-    if (widget.url == null || widget.url!.isEmpty) return;
-    if (_playing) {
-      await _player.stop();
-      setState(() => _playing = false);
-    } else {
-      await _player.play(UrlSource(widget.url!));
-      setState(() => _playing = true);
+    if ((widget.url ?? '').isNotEmpty) {
+      unawaited(_prepareSource());
     }
   }
 
   @override
+  void dispose() {
+    _durationSub?.cancel();
+    _positionSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _prepareSource() async {
+    if (_sourcePrepared) return;
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    try {
+      await _player.setSourceUrl(url);
+      _sourcePrepared = true;
+    } catch (_) {}
+  }
+
+  Future<void> _toggle() async {
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    if (_isPlaying) {
+      await _player.pause();
+      return;
+    }
+    await _prepareSource();
+    if (_playerState == PlayerState.paused &&
+        _position > Duration.zero &&
+        (_duration == Duration.zero || _position < _duration)) {
+      await _player.resume();
+    } else {
+      await _player.play(UrlSource(url));
+      _sourcePrepared = true;
+    }
+  }
+
+  Future<void> _seekTo(double value) async {
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    final target = Duration(milliseconds: value.round());
+    await _prepareSource();
+    setState(() => _position = target);
+    try {
+      await _player.seek(target);
+    } catch (_) {}
+  }
+
+  String _format(Duration d) {
+    if (d.inMilliseconds <= 0) return '00:00';
+    final minutes = d.inMinutes;
+    final seconds = d.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final dur = widget.durationMs;
-    final durText = (dur != null && dur > 0)
-        ? ' ${Duration(milliseconds: dur).inSeconds}s'
-        : '';
-    final double iconSize = widget.scale * 24;
-    final VisualDensity density = widget.scale < 1.0
-        ? const VisualDensity(horizontal: -2, vertical: -2)
-        : VisualDensity.standard;
+    final theme = Theme.of(context);
+    final totalMs = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds
+        : (widget.durationMs ?? 0);
+    final sliderEnabled = totalMs > 0;
+    final sliderMax = sliderEnabled ? totalMs.toDouble() : 1.0;
+    final currentMs = sliderEnabled
+        ? _position.inMilliseconds.clamp(0, totalMs).toDouble()
+        : 0.0;
+    final totalDuration = sliderEnabled ? Duration(milliseconds: totalMs) : Duration.zero;
+    final currentDuration = Duration(milliseconds: currentMs.round());
+    final textStyle = TextStyle(
+      fontSize: 12 * widget.scale,
+      color: theme.colorScheme.onSurface.withOpacity(.6),
+    );
+
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: MainAxisSize.max,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        IconButton(
-          icon: Icon(_playing ? Icons.stop_circle : Icons.play_arrow),
-          iconSize: iconSize,
-          visualDensity: density,
-          onPressed: _toggle,
+        Container(
+          width: 42 * widget.scale,
+          height: 42 * widget.scale,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primary.withOpacity(.15),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+            color: theme.colorScheme.primary,
+            onPressed: _toggle,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            splashRadius: 24 * widget.scale,
+          ),
         ),
-        Text('Голосовое$durText', style: TextStyle(fontSize: 14 * widget.scale)),
+        SizedBox(width: 12 * widget.scale),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Голосовое сообщение',
+                style: TextStyle(
+                  fontSize: 13 * widget.scale,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withOpacity(.75),
+                ),
+              ),
+              SizedBox(height: 6 * widget.scale),
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3 * widget.scale,
+                  thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6 * widget.scale),
+                  overlayShape: RoundSliderOverlayShape(overlayRadius: 10 * widget.scale),
+                  activeTrackColor: theme.colorScheme.primary,
+                  thumbColor: theme.colorScheme.primary,
+                  inactiveTrackColor: theme.colorScheme.primary.withOpacity(.2),
+                ),
+                child: Slider(
+                  min: 0,
+                  max: sliderMax,
+                  value: sliderEnabled ? currentMs : 0.0,
+                  onChanged: sliderEnabled
+                      ? (value) => setState(
+                            () => _position = Duration(milliseconds: value.round()),
+                          )
+                      : null,
+                  onChangeEnd: sliderEnabled ? _seekTo : null,
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_format(currentDuration), style: textStyle),
+                  Text(_format(totalDuration), style: textStyle),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
