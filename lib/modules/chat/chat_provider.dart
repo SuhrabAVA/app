@@ -315,7 +315,7 @@ Future<void> unsubscribe(String roomId) async {
     }
     _pendingNames.add(senderId);
     try {
-      final res = await _sb
+      final dynamic res = await _sb
           .from('documents')
           .select('id, data')
           .filter('collection', 'eq', 'employees')
@@ -327,7 +327,9 @@ Future<void> unsubscribe(String roomId) async {
         row = res;
       } else if (res is List && res.isNotEmpty) {
         final first = res.first;
-        if (first is Map) {
+        if (first is Map<String, dynamic>) {
+          row = first;
+        } else if (first is Map) {
           row = Map<String, dynamic>.from(first as Map);
         }
       }
