@@ -49,6 +49,48 @@ class WarehouseProvider with ChangeNotifier {
   List<Map<String, dynamic>> inventories(String itemId) =>
       List.unmodifiable(_inventoriesByItem[itemId] ?? const []);
 
+  static const Map<String, Map<String, String>> _arrMap = {
+    'paint': {'table': 'paints_arrivals', 'fk': 'paint_id', 'qty': 'qty'},
+    'material': {'table': 'materials_arrivals', 'fk': 'material_id', 'qty': 'qty'},
+    'paper': {'table': 'papers_arrivals', 'fk': 'paper_id', 'qty': 'qty'},
+    'stationery':
+        {'table': 'warehouse_stationery_arrivals', 'fk': 'item_id', 'qty': 'qty'},
+    'pens': {'table': 'warehouse_pens_arrivals', 'fk': 'item_id', 'qty': 'qty'},
+  };
+
+  static const Map<String, Map<String, String>> _invMap = {
+    'paint': {
+      'table': 'paints_inventories',
+      'fk': 'paint_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'material': {
+      'table': 'materials_inventories',
+      'fk': 'material_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'paper': {
+      'table': 'paper_inventories',
+      'fk': 'paper_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'stationery': {
+      'table': 'warehouse_stationery_inventories',
+      'fk': 'item_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'pens': {
+      'table': 'warehouse_pens_inventories',
+      'fk': 'item_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+  };
+
   WarehouseProvider() {
     _init();
   }
@@ -367,6 +409,14 @@ class WarehouseProvider with ChangeNotifier {
     try {
       if (normalizedType == 'paint') {
         await _sb.from('paints').insert(common);
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'paint',
+            itemId: newId,
+            qty: quantity,
+            note: note,
+          );
+        }
       } else if (normalizedType == 'material') {
         await _sb.from('materials').insert(common);
       } else if (normalizedType == 'stationery') {
@@ -376,6 +426,14 @@ class WarehouseProvider with ChangeNotifier {
           'type': 'stationery',
         };
         await _sb.from('warehouse_stationery').insert(body);
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'stationery',
+            itemId: newId,
+            qty: quantity,
+            note: note,
+          );
+        }
       } else {
         throw Exception('Неизвестный type: $normalizedType');
       }
@@ -637,27 +695,205 @@ class WarehouseProvider with ChangeNotifier {
     String? typeHint,
   }) async {
     final double invValue = newQty ?? factual ?? 0;
+    final rawNote = note?.trim() ?? '';
+    final String? trimmedNote = rawNote.isEmpty ? null : rawNote;
     await _ensureAuthed();
-    String itemType = _normalizeType(typeHint) ??
-        (await _detectTypeById(itemId) ?? 'stationery');
-    final table = (itemType == 'pens')
-        ? 'warehouse_pens_inventories'
-        : 'warehouse_stationery_inventories';
-    await _sb.from(table).insert({
-      'item_id': itemId,
-      'factual': invValue,
-      if (note != null && note.isNotEmpty) 'note': note,
-    });
+    final itemType =
+        _normalizeType(typeHint) ?? (await _detectTypeById(itemId) ?? 'stationery');
+    final tables = _inventoryTables(itemType);
+    final fkCandidates = <String>{
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id',
+      if (_invMap[itemType]?['fk'] != null) _invMap[itemType]!['fk']!,
+    }.toList();
+    final qtyColumns = <String>{
+      'counted_qty',
+      'quantity',
+      'qty',
+      'factual',
+      if (_invMap[itemType]?['qty'] != null) _invMap[itemType]!['qty']!,
+    }.toList();
+    final noteColumns = <String>{
+      'note',
+      'comment',
+      'reason',
+      if (_invMap[itemType]?['note'] != null) _invMap[itemType]!['note']!,
+    }.toList();
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+
+    bool inserted = false;
+    for (final table in tables) {
+      for (final fk in fkCandidates) {
+        for (final qtyCol in qtyColumns) {
+          for (final String? noteCol in [...noteColumns, null]) {
+            final payload = <String, dynamic>{
+              fk: itemId,
+              qtyCol: invValue,
+              'by_name': byName,
+            };
+            if (noteCol != null && trimmedNote != null) {
+              payload[noteCol] = trimmedNote;
+            }
+            try {
+              try {
+                await _sb.from(table).insert(payload);
+                inserted = true;
+                break;
+              } on PostgrestException catch (e) {
+                if ((e.message ?? '').contains('by_name') || (e.code ?? '') == '42703') {
+                  final p2 = Map<String, dynamic>.from(payload)..remove('by_name');
+                  await _sb.from(table).insert(p2);
+                  inserted = true;
+                  break;
+                }
+                if ((e.code ?? '') == '42703') {
+                  // try next combination if column missing
+                  continue;
+                }
+                rethrow;
+              }
+            } catch (_) {
+              // try next combination
+            }
+          }
+          if (inserted) break;
+        }
+        if (inserted) break;
+      }
+      if (inserted) break;
+    }
+
+    if (!inserted) {
+      throw Exception('Не удалось сохранить инвентаризацию для $itemType');
+    }
+
+    final baseTable = _tableByType(itemType);
+    try {
+      await _sb
+          .from(baseTable)
+          .update({'quantity': invValue < 0 ? 0 : invValue}).eq('id', itemId);
+    } catch (e) {
+      debugPrint('⚠️ failed to update quantity after inventory: $e');
+    }
 
     final list = _inventoriesByItem.putIfAbsent(itemId, () => []);
     list.insert(0, {
       'item_id': itemId,
       'factual': invValue,
-      'note': note,
+      'note': trimmedNote,
       'created_at': DateTime.now().toUtc().toIso8601String(),
     });
 
     await fetchTmc();
+  }
+
+  List<String> _arrivalTables(String typeKey) {
+    final hint = _arrMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
+      if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'stationery') 'stationery_arrivals',
+      if (typeKey == 'paper') 'papers_arrivals',
+      if (typeKey == 'paint') 'paints_arrivals',
+      if (typeKey == 'material') 'materials_arrivals',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  List<String> _inventoryTables(String typeKey) {
+    final hint = _invMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'paper') 'paper_inventories',
+      if (typeKey == 'paint') 'paints_inventories',
+      if (typeKey == 'material') 'materials_inventories',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  Future<void> _logArrivalGeneric({
+    required String typeKey,
+    required String itemId,
+    required double qty,
+    String? note,
+  }) async {
+    if (qty <= 0) return;
+    final tables = _arrivalTables(typeKey);
+    final fkCandidates = <String>[
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id',
+      if (_arrMap[typeKey]?['fk'] != null) _arrMap[typeKey]!['fk']!,
+    ];
+    final qtyCandidates = <String>[
+      'qty',
+      'quantity',
+      'amount',
+      'count',
+      if (_arrMap[typeKey]?['qty'] != null) _arrMap[typeKey]!['qty']!,
+    ];
+    final noteCandidates = <String>['note', 'comment', 'reason'];
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+
+    for (final table in tables) {
+      for (final fk in fkCandidates) {
+        try {
+          final payload = <String, dynamic>{fk: itemId, 'by_name': byName};
+          bool qtySet = false;
+          for (final q in qtyCandidates) {
+            if (!qtySet) {
+              payload[q] = qty;
+              qtySet = true;
+            }
+          }
+          if (note != null && note.trim().isNotEmpty) {
+            bool noteSet = false;
+            for (final n in noteCandidates) {
+              if (!noteSet) {
+                payload[n] = note.trim();
+                noteSet = true;
+              }
+            }
+          }
+          try {
+            await _sb.from(table).insert(payload);
+            return;
+          } on PostgrestException catch (e) {
+            if ((e.message ?? '').contains('by_name') ||
+                (e.code ?? '') == '42703') {
+              final p2 = Map<String, dynamic>.from(payload)
+                ..remove('by_name');
+              await _sb.from(table).insert(p2);
+              return;
+            }
+            if ((e.code ?? '') == '42703') {
+              continue;
+            }
+            rethrow;
+          }
+        } catch (_) {
+          // try next combination
+        }
+      }
+    }
   }
 
   // ===================== HELPERS =====================

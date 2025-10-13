@@ -92,6 +92,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   bool _isNewPaper = false;
 
   String _paperMethod = 'meters'; // meters | weight | diameter
+  String? _paperDiameterColor; // white | brown
 
   String? _selectedUnit;
   final List<String> _units = const [
@@ -217,6 +218,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           if (grammage.isNotEmpty) {
             _applyGrammageSelection(grammage);
           }
+          final descLower = existing.description.toLowerCase();
+          if (descLower.contains('бел')) {
+            _paperDiameterColor = 'white';
+          } else if (descLower.contains('коричнев')) {
+            _paperDiameterColor = 'brown';
+          }
         }
       });
     });
@@ -295,7 +302,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         break;
       case 'Краска':
         _controllers['name']!.text = item.description;
-        _controllers['weight']!.text = item.quantity.toString();
+        final unitLower = item.unit.toLowerCase().trim();
+        final qtyGrams = unitLower == 'кг' ? item.quantity * 1000 : item.quantity;
+        _controllers['weight']!.text = qtyGrams.toString();
         break;
       case 'Канцелярия':
       case 'Универсальное изделие':
@@ -418,17 +427,21 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           case 'Краска':
             String? imageBase64 = item.imageBase64;
             if (_imageBytes != null) imageBase64 = base64Encode(_imageBytes!);
+            final currentQtyGrams = item.unit.toLowerCase().trim() == 'кг'
+                ? item.quantity * 1000
+                : item.quantity;
+            final enteredQty = double.tryParse(_controllers['weight']!
+                    .text
+                    .trim()
+                    .replaceAll(',', '.')) ??
+                currentQtyGrams;
             await wh.updateTmc(
               id: item.id,
               description: _controllers['name']!.text.trim().isNotEmpty
                   ? _controllers['name']!.text.trim()
                   : item.description,
-              unit: 'кг',
-              quantity: double.tryParse(_controllers['weight']!
-                      .text
-                      .trim()
-                      .replaceAll(',', '.')) ??
-                  item.quantity,
+              unit: 'гр',
+              quantity: enteredQty,
               note: note.isNotEmpty ? note : item.note,
               imageBase64: imageBase64,
               lowThreshold: lowTh,
@@ -557,9 +570,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           final d = double.tryParse(
                   _controllers['diameter']!.text.replaceAll(',', '.')) ??
               0.0;
-          final srcName =
-              (sel?.name ?? _controllers['name']!.text).toLowerCase();
-          final isWhite = srcName.contains('бел') || srcName.contains('white');
+          if ((_paperDiameterColor ?? '').isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Выберите тип бумаги')),
+            );
+            return;
+          }
+          final isWhite = _paperDiameterColor == 'white';
           length = fromDiameter(d, isWhite) ?? 0.0;
         }
 
@@ -741,25 +758,17 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       if (table == 'Краска') {
         final name = _controllers['name']!.text.trim();
         final color = _selectedColor ?? '';
-        final weight = double.tryParse(
+        final grams = double.tryParse(
                 _controllers['weight']!.text.trim().replaceAll(',', '.')) ??
             0;
         final description = color.isNotEmpty ? '$name $color' : name;
-
-        if (_imageBytes == null || _imageBytes!.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Для краски обязательно приложить фото')),
-          );
-          return;
-        }
 
         await wh.addTmc(
           id: const Uuid().v4(),
           type: 'Краска',
           description: description,
-          quantity: weight,
-          unit: 'кг',
+          quantity: grams,
+          unit: 'гр',
           note: note.isEmpty ? null : note,
           imageBytes: _imageBytes,
           lowThreshold: lowTh,
@@ -844,6 +853,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
 
     if (match.isNotEmpty) {
       _selectedPaperKey = match.first.key;
+      final lower = match.first.name.toLowerCase();
+      if (lower.contains('бел')) {
+        _paperDiameterColor = 'white';
+      } else if (lower.contains('коричнев')) {
+        _paperDiameterColor = 'brown';
+      }
     } else {
       _selectedPaperKey = null;
     }
@@ -1142,13 +1157,35 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
               ),
-            if (_paperMethod == 'diameter')
+            if (_paperMethod == 'diameter') ...[
               _buildField(
                 'diameter',
                 'Диаметр (см)',
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
               ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _paperDiameterColor,
+                decoration: const InputDecoration(
+                  labelText: 'Тип бумаги',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'white', child: Text('Белая бумага')),
+                  DropdownMenuItem(
+                      value: 'brown', child: Text('Коричневая бумага')),
+                ],
+                onChanged: (v) => setState(() => _paperDiameterColor = v),
+                validator: (v) {
+                  if (_paperMethod == 'diameter' && (v == null || v.isEmpty)) {
+                    return 'Выберите тип бумаги';
+                  }
+                  return null;
+                },
+              ),
+            ],
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
@@ -1474,7 +1511,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             _buildField(
               'weight',
-              'Вес (кг)',
+              'Вес (г)',
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),

@@ -97,8 +97,8 @@ class _PaintTableState extends State<PaintTable> {
             TextField(
               controller: qtyController,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Количество (кг) для списания',
+              decoration: InputDecoration(
+                labelText: 'Количество (${item.unit}) для списания',
               ),
             ),
             TextField(
