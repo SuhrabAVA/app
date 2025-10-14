@@ -385,6 +385,7 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'item_id': r['item_id'],
                 'counted_qty': r['counted_qty'],
                 'note': r['note'],
+                'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
               })
           .toList()
@@ -791,9 +792,14 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final dtIso = (r['created_at'] ?? '').toString();
                     final dt = formatKostanayTimestamp(dtIso);
                     final note = (r['note'] ?? '').toString();
+                    final by = (r['by_name'] ?? '').toString();
+                    final subtitleParts = <String>[];
+                    if (dt.trim().isNotEmpty) subtitleParts.add(dt);
+                    if (note.isNotEmpty) subtitleParts.add(note);
+                    if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • $qty'),
-                      subtitle: Text(note.isEmpty ? dt : '$dt  •  $note'),
+                      subtitle: Text(subtitleParts.join('  •  ')),
                     );
                   },
                 ),
