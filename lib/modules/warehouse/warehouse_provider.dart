@@ -412,19 +412,24 @@ class WarehouseProvider with ChangeNotifier {
         'name': name,
         'color': color,
         'unit': unit.isNotEmpty ? unit : 'пар',
-        'quantity': quantity,
+        'quantity': 0,
         'note': safeNote,
         'low_threshold': lowThreshold ?? 0,
         'critical_threshold': criticalThreshold ?? 0,
       };
       await _sb.from(table).insert(body);
-      await fetchTmc();
       await _logArrivalGeneric(
         typeKey: 'pens',
         itemId: newId,
         qty: quantity,
         note: safeNote,
+        extraPayload: await _resolvePenLogExtras(
+          itemId: newId,
+          name: name,
+          color: color,
+        ),
       );
+      await fetchTmc();
       await _logTmcEvent(
         tmcId: newId,
         eventType: 'Приход (ручки)',
@@ -771,6 +776,8 @@ class WarehouseProvider with ChangeNotifier {
         ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
         : AuthHelper.currentUserName!;
 
+    Map<String, String> penExtras = const {};
+
     final payload = <String, dynamic>{
       'item_id': itemId,
       'qty': qty,
@@ -778,6 +785,10 @@ class WarehouseProvider with ChangeNotifier {
       'by_name': byName,
       'employee': byName,
     };
+    if (itemType == 'pens') {
+      penExtras = await _resolvePenLogExtras(itemId: itemId);
+      payload.addAll(penExtras);
+    }
 
     Future<bool> insertInto(String table, Map<String, dynamic> data) async {
       return _tryInsertWarehouseLog(table, data);
@@ -823,13 +834,17 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     final list = _writeoffsByItem.putIfAbsent(itemId, () => []);
-    list.insert(0, {
+    final writeoffEntry = {
       'item_id': itemId,
       'qty': qty,
       'reason': reason,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'by_name': byName,
-    });
+    };
+    if (itemType == 'pens') {
+      writeoffEntry.addAll(penExtras);
+    }
+    list.insert(0, writeoffEntry);
 
     await fetchTmc();
   }
@@ -874,6 +889,9 @@ class WarehouseProvider with ChangeNotifier {
     final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
         ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
         : AuthHelper.currentUserName!;
+    final Map<String, String> penExtras = itemType == 'pens'
+        ? await _resolvePenLogExtras(itemId: itemId)
+        : const {};
 
     bool inserted = false;
     if (!inserted) {
@@ -950,6 +968,9 @@ class WarehouseProvider with ChangeNotifier {
                   'employee': byName,
                   'type': itemType,
                 };
+                if (penExtras.isNotEmpty) {
+                  payload.addAll(penExtras);
+                }
                 if (tableKey != null) {
                   payload['table_key'] = tableKey;
                 }
@@ -1009,13 +1030,15 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     final list = _inventoriesByItem.putIfAbsent(itemId, () => []);
-    list.insert(0, {
+    final invEntry = {
       'item_id': itemId,
       'factual': invValue,
       'note': trimmedNote,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'by_name': byName,
-    });
+    };
+    if (penExtras.isNotEmpty) invEntry.addAll(penExtras);
+    list.insert(0, invEntry);
 
     await fetchTmc();
   }
@@ -1075,11 +1098,79 @@ class WarehouseProvider with ChangeNotifier {
     }
   }
 
+  Future<Map<String, String>> _resolvePenLogExtras({
+    String? itemId,
+    String? name,
+    String? color,
+  }) async {
+    String? resolvedName = name?.trim().isNotEmpty == true ? name!.trim() : null;
+    String? resolvedColor = color?.trim().isNotEmpty == true ? color!.trim() : null;
+
+    bool needsLookup =
+        (resolvedName == null || resolvedColor == null) && (itemId != null);
+
+    if (needsLookup) {
+      try {
+        TmcModel? tmc;
+        try {
+          tmc = _allTmc
+              .firstWhere((e) => e.id == itemId && e.type == 'pens');
+        } catch (_) {
+          try {
+            tmc = _allTmc.firstWhere((e) => e.id == itemId);
+          } catch (_) {}
+        }
+        final desc = (tmc?.description ?? '').trim();
+        if (desc.isNotEmpty) {
+          final parts = desc.split('•');
+          if (resolvedName == null && parts.isNotEmpty) {
+            resolvedName = parts.first.trim();
+          }
+          if (resolvedColor == null && parts.length > 1) {
+            resolvedColor = parts
+                .sublist(1)
+                .map((p) => p.trim())
+                .where((p) => p.isNotEmpty)
+                .join(' • ');
+          }
+        }
+      } catch (_) {}
+    }
+
+    if ((resolvedName == null || resolvedColor == null) && itemId != null) {
+      try {
+        final row = await _sb
+            .from(_tableByType('pens'))
+            .select('name, color')
+            .eq('id', itemId)
+            .maybeSingle();
+        if (row != null) {
+          resolvedName ??= (row['name'] ?? '').toString().trim().isEmpty
+              ? null
+              : row['name'].toString().trim();
+          resolvedColor ??= (row['color'] ?? '').toString().trim().isEmpty
+              ? null
+              : row['color'].toString().trim();
+        }
+      } catch (_) {}
+    }
+
+    final extras = <String, String>{};
+    if (resolvedName != null && resolvedName.isNotEmpty) {
+      extras['name'] = resolvedName;
+    }
+    if (resolvedColor != null && resolvedColor.isNotEmpty) {
+      extras['color'] = resolvedColor;
+    }
+    return extras;
+  }
+
   Future<void> _logArrivalGeneric({
     required String typeKey,
     required String itemId,
     required double qty,
     String? note,
+    Map<String, dynamic>? extraPayload,
   }) async {
     if (qty <= 0) return;
     final tables = _arrivalTables(typeKey);
@@ -1112,6 +1203,9 @@ class WarehouseProvider with ChangeNotifier {
           'by_name': byName,
           'employee': byName,
         };
+        if (extraPayload != null && extraPayload.isNotEmpty) {
+          basePayload.addAll(extraPayload);
+        }
         bool qtySet = false;
         for (final q in qtyCandidates) {
           if (!qtySet) {
