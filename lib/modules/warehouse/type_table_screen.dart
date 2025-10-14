@@ -505,14 +505,38 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }) async {
     final s = Supabase.instance.client;
     for (final t in tables) {
-      try {
-        final q = s.from(t).select(selectFields);
-        final data = orderBy == null
-            ? await q
-            : await q.order(orderBy, ascending: ascending);
-        return (data as List).cast<Map<String, dynamic>>();
-      } catch (_) {
-        // попробуем следующий
+      final attemptedOrders = <String?>[orderBy, if (orderBy != null) ...{
+        'created_at',
+        'createdAt',
+        'createdat',
+        'date',
+        'timestamp',
+      }, null];
+      final seen = <String?>{};
+      for (final order in attemptedOrders.where((c) => seen.add(c))) {
+        try {
+          final q = s.from(t).select(selectFields);
+          final data = order == null
+              ? await q
+              : await q.order(order, ascending: ascending);
+          return (data as List).cast<Map<String, dynamic>>();
+        } on PostgrestException catch (e) {
+          final code = e.code?.toLowerCase() ?? '';
+          final message = e.message?.toLowerCase() ?? '';
+          final details = e.details?.toLowerCase() ?? '';
+          final columnMissing = order != null &&
+              (code == '42703' ||
+                  message.contains(order.toLowerCase()) &&
+                      message.contains('column') ||
+                  details.contains(order.toLowerCase()) &&
+                      details.contains('column'));
+          if (columnMissing) {
+            continue;
+          }
+        } catch (_) {
+          // попробуем следующую колонку / таблицу
+        }
+        break;
       }
     }
     return [];
