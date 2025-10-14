@@ -561,14 +561,38 @@ class _FormsScreenState extends State<FormsScreen> {
                                 fontWeight: FontWeight.w600,
                               ),
                       ),
-                      subtitle: subtitleText == null
-                          ? null
-                          : Text(
-                              subtitleText,
-                              style: isEnabled
-                                  ? null
-                                  : TextStyle(color: Colors.red.shade700),
-                            ),
+                      subtitle:
+                          (subtitleText == null && (isEnabled || disabledComment.isEmpty))
+                              ? null
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (subtitleText != null)
+                                      Text(
+                                        subtitleText,
+                                        style: isEnabled
+                                            ? null
+                                            : TextStyle(
+                                                color: Colors.red.shade700,
+                                              ),
+                                      ),
+                                    if (!isEnabled && disabledComment.isNotEmpty)
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: Text(
+                                          disabledComment,
+                                          textAlign: TextAlign.end,
+                                          style: TextStyle(
+                                            color: Colors.red.shade700,
+                                            fontSize: 12,
+                                          ),
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -578,31 +602,11 @@ class _FormsScreenState extends State<FormsScreen> {
                             onPressed: () => _showFormDialog(row: row),
                           ),
                           const SizedBox(width: 8),
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Switch(
-                                value: isEnabled,
-                                onChanged: (value) => unawaited(
-                                  _handleToggleForm(row, value, nameNumber),
-                                ),
-                              ),
-                              if (!isEnabled && disabledComment.isNotEmpty)
-                                SizedBox(
-                                  width: 180,
-                                  child: Text(
-                                    disabledComment,
-                                    textAlign: TextAlign.end,
-                                    style: TextStyle(
-                                      color: Colors.red.shade700,
-                                      fontSize: 12,
-                                    ),
-                                    maxLines: 3,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
+                          Switch(
+                            value: isEnabled,
+                            onChanged: (value) => unawaited(
+                              _handleToggleForm(row, value, nameNumber),
+                            ),
                           ),
                         ],
                       ),
