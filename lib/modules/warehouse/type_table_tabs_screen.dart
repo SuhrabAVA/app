@@ -233,7 +233,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     'stationery': {
       'table': 'warehouse_stationery_inventories',
       'fk': 'item_id',
-      'qty': 'counted_qty',
+      'qty': 'factual',
       'note': 'note'
     },
     'pens': {
@@ -790,8 +790,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
-      final qty = _pickNumDynamic(e,
-              [_invMap[typeKey]?['qty'], 'counted_qty', 'quantity', 'qty']) ??
+      final qty = _pickNumDynamic(e, [
+            _invMap[typeKey]?['qty'],
+            'counted_qty',
+            'factual',
+            'quantity',
+            'qty'
+          ]) ??
           0;
       final dateIso =
           (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
@@ -1939,6 +1944,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         ];
         final qtyCandidates = <String>[
           'counted_qty',
+          'factual',
           'quantity',
           'qty',
           if (_invMap[typeKey]?['qty'] != null) _invMap[typeKey]!['qty']!

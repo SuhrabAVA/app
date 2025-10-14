@@ -100,6 +100,7 @@ class _DeletedRecordsModalState extends State<_DeletedRecordsModal> {
                         'quantity',
                         'qty',
                         'counted_qty',
+                        'factual',
                       ]);
                       final unit = _firstNonEmpty(payload, const [
                         'unit',

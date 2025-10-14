@@ -114,7 +114,7 @@ class WarehouseProvider with ChangeNotifier {
     'stationery': {
       'table': 'warehouse_stationery_inventories',
       'fk': 'item_id',
-      'qty': 'counted_qty',
+      'qty': 'factual',
       'note': 'note'
     },
     'pens': {
