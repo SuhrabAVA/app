@@ -124,6 +124,14 @@ class _StationeryTableState extends State<StationeryTable> {
                                     onPressed: () => _writeOffItem(item),
                                   ),
                                   IconButton(
+                                    icon: const Icon(
+                                      Icons.inventory_2_outlined,
+                                      size: 20,
+                                    ),
+                                    tooltip: 'Инвентаризация',
+                                    onPressed: () => _inventoryItem(item),
+                                  ),
+                                  IconButton(
                                     icon: const Icon(Icons.delete, size: 20),
                                     tooltip: 'Удалить',
                                     onPressed: () => _deleteItem(item),
@@ -290,6 +298,90 @@ class _StationeryTableState extends State<StationeryTable> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ошибка списания: $e')),
+      );
+    }
+  }
+
+  Future<void> _inventoryItem(TmcModel item) async {
+    final qtyController = TextEditingController(
+      text: item.quantity.toStringAsFixed(2),
+    );
+    final noteController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Инвентаризация: ${item.description}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: qtyController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Фактическое количество',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              decoration: const InputDecoration(
+                labelText: 'Заметка (необязательно)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final newQty = double.tryParse(qtyController.text.replaceAll(',', '.'));
+    if (newQty == null || newQty < 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Введите корректное количество')),
+      );
+      return;
+    }
+
+    final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    try {
+      await provider.inventorySet(
+        itemId: item.id,
+        newQty: newQty,
+        note: noteController.text.trim().isEmpty
+            ? null
+            : noteController.text.trim(),
+      );
+
+      // Обновление данных на случай, если realtime ещё не успел подтянуть изменения.
+      await provider.fetchTmc();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Инвентаризация сохранена (${newQty.toStringAsFixed(2)} ${item.unit.isEmpty ? 'шт' : item.unit})',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка инвентаризации: $e')),
       );
     }
   }
