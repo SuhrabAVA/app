@@ -283,21 +283,111 @@ class WarehouseProvider with ChangeNotifier {
           description: description,
         );
 
-    String? finalImageUrl = imageUrl;
-    String? finalBase64 = imageBase64;
+    final String? safeNote =
+        note != null && note.trim().isNotEmpty ? note.trim() : null;
+    String? resolvedImageUrl = imageUrl;
+    String? resolvedBase64 = imageBase64;
 
-    if (imageBytes != null && imageBytes.isNotEmpty) {
-      finalImageUrl = await _uploadImage(newId, imageBytes, imageContentType);
-      finalBase64 ??= base64Encode(imageBytes);
+    Future<void> prepareImage(String targetId) async {
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        resolvedImageUrl =
+            await _uploadImage(targetId, imageBytes, imageContentType);
+        resolvedBase64 ??= base64Encode(imageBytes);
+        return;
+      }
+      if (resolvedImageUrl == null && resolvedBase64 != null) {
+        try {
+          final bytes = base64Decode(resolvedBase64!);
+          if (bytes.isNotEmpty) {
+            resolvedImageUrl =
+                await _uploadImage(targetId, bytes, imageContentType);
+          }
+        } catch (_) {}
+      }
     }
-    if (finalImageUrl == null && finalBase64 != null) {
-      try {
-        final _bytes = base64Decode(finalBase64);
-        if (_bytes.isNotEmpty) {
-          finalImageUrl = await _uploadImage(newId, _bytes, imageContentType);
+
+    if (normalizedType == 'paint') {
+      final existing = await _findExistingPaint(description);
+      if (existing != null) {
+        final existingId = existing['id'] as String;
+        await prepareImage(existingId);
+        final updatePayload = <String, dynamic>{};
+        if (safeNote != null) updatePayload['note'] = safeNote;
+        if (lowThreshold != null) {
+          updatePayload['low_threshold'] = lowThreshold;
         }
-      } catch (_) {}
+        if (criticalThreshold != null) {
+          updatePayload['critical_threshold'] = criticalThreshold;
+        }
+        if (resolvedImageUrl != null) {
+          updatePayload['image_url'] = resolvedImageUrl;
+        }
+        if (resolvedBase64 != null) {
+          updatePayload['image_base64'] = resolvedBase64;
+        }
+        if (updatePayload.isNotEmpty) {
+          await _sb.from('paints').update(updatePayload).eq('id', existingId);
+        }
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'paint',
+            itemId: existingId,
+            qty: quantity,
+            note: safeNote,
+          );
+        }
+        await fetchTmc();
+        return;
+      }
     }
+
+    if (normalizedType == 'stationery') {
+      final existing = await _findExistingStationery(description);
+      if (existing != null) {
+        final existingId = existing['id'] as String;
+        await prepareImage(existingId);
+        final updatePayload = <String, dynamic>{
+          'table_key': _stationeryKey,
+        };
+        final trimmedUnit = unit.trim();
+        final currentUnit = (existing['unit'] ?? '').toString().trim();
+        if (trimmedUnit.isNotEmpty && trimmedUnit != currentUnit) {
+          updatePayload['unit'] = trimmedUnit;
+        }
+        if (safeNote != null) updatePayload['note'] = safeNote;
+        if (lowThreshold != null) {
+          updatePayload['low_threshold'] = lowThreshold;
+        }
+        if (criticalThreshold != null) {
+          updatePayload['critical_threshold'] = criticalThreshold;
+        }
+        if (resolvedImageUrl != null) {
+          updatePayload['image_url'] = resolvedImageUrl;
+        }
+        if (resolvedBase64 != null) {
+          updatePayload['image_base64'] = resolvedBase64;
+        }
+        updatePayload.removeWhere((key, value) => value == null);
+        if (updatePayload.isNotEmpty) {
+          await _sb
+              .from('warehouse_stationery')
+              .update(updatePayload)
+              .eq('id', existingId);
+        }
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'stationery',
+            itemId: existingId,
+            qty: quantity,
+            note: safeNote,
+          );
+        }
+        await fetchTmc();
+        return;
+      }
+    }
+
+    await prepareImage(newId);
 
     // ----------- РУЧКИ (dedicated table) -----------
     if (normalizedType == 'pens') {
@@ -323,7 +413,7 @@ class WarehouseProvider with ChangeNotifier {
         'color': color,
         'unit': unit.isNotEmpty ? unit : 'пар',
         'quantity': quantity,
-        'note': note,
+        'note': safeNote,
         'low_threshold': lowThreshold ?? 0,
         'critical_threshold': criticalThreshold ?? 0,
       };
@@ -333,7 +423,7 @@ class WarehouseProvider with ChangeNotifier {
         tmcId: newId,
         eventType: 'Приход (ручки)',
         quantityChange: quantity,
-        note: note ?? 'Добавление в склад ручек',
+        note: safeNote ?? 'Добавление в склад ручек',
       );
       return;
     }
@@ -365,14 +455,14 @@ class WarehouseProvider with ChangeNotifier {
           'description': description,
           'unit': unit.isNotEmpty ? unit : 'м',
           'quantity': 0,
-          'note': note,
+          'note': safeNote,
           'low_threshold': lowThreshold ?? 0,
           'critical_threshold': criticalThreshold ?? 0,
           'format': format,
           'grammage': grammage,
           if (weight != null) 'weight': weight,
-          if (finalImageUrl != null) 'image_url': finalImageUrl,
-          if (finalBase64 != null) 'image_base64': finalBase64,
+          if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
+          if (resolvedBase64 != null) 'image_base64': resolvedBase64,
         };
         await _sb.from('papers').insert(body);
       }
@@ -382,7 +472,7 @@ class WarehouseProvider with ChangeNotifier {
           '_type': 'paper',
           '_item': paperId,
           '_qty': quantity,
-          '_note': note,
+          '_note': safeNote,
           '_by_name': (AuthHelper.currentUserName ?? '')
         });
       }
@@ -403,11 +493,11 @@ class WarehouseProvider with ChangeNotifier {
       'description': description,
       'unit': unit,
       'quantity': initialQuantity,
-      'note': note,
+      'note': safeNote,
       'low_threshold': lowThreshold ?? 0,
       'critical_threshold': criticalThreshold ?? 0,
-      if (finalImageUrl != null) 'image_url': finalImageUrl,
-      if (finalBase64 != null) 'image_base64': finalBase64,
+      if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
+      if (resolvedBase64 != null) 'image_base64': resolvedBase64,
     };
 
     try {
@@ -418,7 +508,7 @@ class WarehouseProvider with ChangeNotifier {
             typeKey: 'paint',
             itemId: newId,
             qty: quantity,
-            note: note,
+            note: safeNote,
           );
         }
       } else if (normalizedType == 'material') {
@@ -435,7 +525,7 @@ class WarehouseProvider with ChangeNotifier {
             typeKey: 'stationery',
             itemId: newId,
             qty: quantity,
-            note: note,
+            note: safeNote,
           );
         }
       } else {
@@ -742,6 +832,9 @@ class WarehouseProvider with ChangeNotifier {
               qtyCol: invValue,
               'by_name': byName,
             };
+            if (itemType == 'stationery') {
+              payload['table_key'] = _stationeryKey;
+            }
             if (noteCol != null && trimmedNote != null) {
               payload[noteCol] = trimmedNote;
             }
@@ -941,6 +1034,46 @@ class WarehouseProvider with ChangeNotifier {
       default:
         throw Exception('Неизвестный type: $type');
     }
+  }
+
+  Future<Map<String, dynamic>?> _findExistingPaint(String description) async {
+    final normalized = description.trim();
+    if (normalized.isEmpty) return null;
+    final data = await _sb
+        .from('paints')
+        .select<Map<String, dynamic>>(
+            'id, description, unit, note, low_threshold, critical_threshold, image_url, image_base64')
+        .ilike('description', normalized)
+        .limit(1)
+        .maybeSingle();
+    if (data == null) return null;
+    final existingDescription =
+        (data['description'] ?? '').toString().trim().toLowerCase();
+    if (existingDescription != normalized.toLowerCase()) {
+      return null;
+    }
+    return data;
+  }
+
+  Future<Map<String, dynamic>?> _findExistingStationery(
+      String description) async {
+    final normalized = description.trim();
+    if (normalized.isEmpty) return null;
+    final data = await _sb
+        .from('warehouse_stationery')
+        .select<Map<String, dynamic>>(
+            'id, description, unit, note, low_threshold, critical_threshold, table_key, image_url, image_base64')
+        .eq('table_key', _stationeryKey)
+        .ilike('description', normalized)
+        .limit(1)
+        .maybeSingle();
+    if (data == null) return null;
+    final existingDescription =
+        (data['description'] ?? '').toString().trim().toLowerCase();
+    if (existingDescription != normalized.toLowerCase()) {
+      return null;
+    }
+    return data;
   }
 
   String _inferType({
