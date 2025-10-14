@@ -514,7 +514,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   String _composeDescription(
       {required Map<String, dynamic> baseRow,
       required Map<String, dynamic> logRow,
-      required String typeKey}) {
+      required String typeKey,
+      String? itemId}) {
     final baseDescr = (baseRow['description'] ?? '').toString().trim();
     if (baseDescr.isNotEmpty) return baseDescr;
 
@@ -541,6 +542,18 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (fallback != null && fallback.trim().isNotEmpty) {
       return fallback.trim();
     }
+
+    if (itemId != null && itemId.isNotEmpty) {
+      try {
+        final provider = context.read<WarehouseProvider>();
+        final tmc = provider.allTmc.firstWhere((e) => e.id == itemId);
+        final desc = (tmc.description ?? '').trim();
+        if (desc.isNotEmpty) {
+          return desc;
+        }
+      } catch (_) {}
+    }
+
     return '—';
   }
 
@@ -660,8 +673,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr =
-          _composeDescription(baseRow: baseRow, logRow: e, typeKey: typeKey);
+      final descr = _composeDescription(
+        baseRow: baseRow,
+        logRow: e,
+        typeKey: typeKey,
+        itemId: baseId,
+      );
       String unit = (baseRow['unit'] ?? '').toString();
       if (unit.trim().isEmpty) {
         unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
@@ -686,6 +703,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'by',
         'user_name',
         'employee_name',
+        'employee',
         'operator',
         'who'
       ]);
@@ -748,8 +766,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr =
-          _composeDescription(baseRow: baseRow, logRow: e, typeKey: typeKey);
+      final descr = _composeDescription(
+        baseRow: baseRow,
+        logRow: e,
+        typeKey: typeKey,
+        itemId: baseId,
+      );
       String unit = (baseRow['unit'] ?? '').toString();
       if (unit.trim().isEmpty) {
         unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
@@ -769,6 +791,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'by',
         'user_name',
         'employee_name',
+        'employee',
         'operator',
         'who'
       ]);
@@ -828,8 +851,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr =
-          _composeDescription(baseRow: baseRow, logRow: e, typeKey: typeKey);
+      final descr = _composeDescription(
+        baseRow: baseRow,
+        logRow: e,
+        typeKey: typeKey,
+        itemId: baseId,
+      );
       String unit = (baseRow['unit'] ?? '').toString();
       if (unit.trim().isEmpty) {
         unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
@@ -854,6 +881,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'by',
         'user_name',
         'employee_name',
+        'employee',
         'operator',
         'who'
       ]);
