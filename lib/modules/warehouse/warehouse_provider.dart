@@ -806,11 +806,13 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     if (!inserted) {
+      final String tableName =
+          (itemType == 'pens') ? 'warehouse_pens_writeoffs' : table;
       final code = (initialError?.code ?? '').toString().toLowerCase();
       final message = (initialError?.message ?? '').toLowerCase();
       if (itemType == 'pens' &&
           (initialError == null ||
-              code == '42p01' ||
+              _isMissingRelationError(initialError, tableName) ||
               message.contains('warehouse_pens_writeoffs'))) {
         for (final key in _tableKeyCandidatesFor('pens')) {
           final fallback = Map<String, dynamic>.from(payload)
@@ -824,7 +826,8 @@ class WarehouseProvider with ChangeNotifier {
             Map<String, dynamic>.from(payload),
           );
         }
-      } else if (initialError != null) {
+      } else if (initialError != null &&
+          !_isMissingRelationError(initialError, tableName)) {
         throw initialError!;
       }
     }
@@ -1313,12 +1316,54 @@ class WarehouseProvider with ChangeNotifier {
         return false;
       }
 
+      if (_isMissingRelationError(e, table)) {
+        return false;
+      }
+
       if (code == '42703') {
         return false;
       }
 
       rethrow;
     }
+  }
+
+  bool _isMissingRelationError(PostgrestException? error, [String? relation]) {
+    if (error == null) return false;
+    final String code = (error.code?.toString() ?? '').toLowerCase();
+    final String message = (error.message?.toString() ?? '').toLowerCase();
+    final String details = (error.details?.toString() ?? '').toLowerCase();
+    final String hint = (error.hint?.toString() ?? '').toLowerCase();
+    final String? relationLower = relation?.toLowerCase();
+    bool containsRelation(String value) {
+      if (relationLower == null || relationLower.isEmpty) return false;
+      return value.contains(relationLower);
+    }
+
+    if (code == '42p01' ||
+        code == 'pgrst201' ||
+        code == 'pgrst202' ||
+        code == 'pgrst301' ||
+        code == 'pgrst302') {
+      return true;
+    }
+
+    if (containsRelation(message) &&
+        (message.contains('does not exist') ||
+            message.contains('could not find'))) {
+      return true;
+    }
+    if (containsRelation(details) &&
+        (details.contains('does not exist') ||
+            details.contains('could not find'))) {
+      return true;
+    }
+    if (containsRelation(hint) &&
+        (hint.contains('does not exist') || hint.contains('could not find'))) {
+      return true;
+    }
+
+    return false;
   }
 
   String? _normalizeType(String? type) {
