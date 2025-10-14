@@ -882,9 +882,7 @@ class WarehouseProvider with ChangeNotifier {
       'item_id': itemId,
       'qty': qty,
       if (reason != null && reason.isNotEmpty) 'reason': reason,
-      'by_name': byName,
-      'employee': byName,
-    };
+    }..addAll(_byNameAliases(byName));
     if (itemType == 'pens') {
       penExtras = await _resolvePenLogExtras(itemId: itemId);
       payload.addAll(penExtras);
@@ -1074,10 +1072,8 @@ class WarehouseProvider with ChangeNotifier {
                 final payload = <String, dynamic>{
                   fk: itemId,
                   qtyCol: invValue,
-                  'by_name': byName,
-                  'employee': byName,
                   'type': itemType,
-                };
+                }..addAll(_byNameAliases(byName));
                 if (penExtras.isNotEmpty) {
                   payload.addAll(penExtras);
                 }
@@ -1326,9 +1322,7 @@ class WarehouseProvider with ChangeNotifier {
       for (final fk in fkCandidates) {
         final basePayload = <String, dynamic>{
           fk: itemId,
-          'by_name': byName,
-          'employee': byName,
-        };
+        }..addAll(_byNameAliases(byName));
         if (extraPayload != null && extraPayload.isNotEmpty) {
           basePayload.addAll(extraPayload);
         }
@@ -1464,6 +1458,19 @@ class WarehouseProvider with ChangeNotifier {
     sanitized.remove('pen_name');
     sanitized.remove('pen_color');
     return sanitized;
+  }
+
+  Map<String, String> _byNameAliases(String byName) {
+    final value = byName.trim().isEmpty ? byName : byName.trim();
+    return {
+      'by_name': value,
+      'employee': value,
+      'employee_name': value,
+      'by': value,
+      'user_name': value,
+      'operator': value,
+      'who': value,
+    };
   }
 
   bool _isMissingRelationError(PostgrestException? error, [String? relation]) {
