@@ -72,7 +72,7 @@ class WarehouseProvider with ChangeNotifier {
       'note': 'note'
     },
     'paper': {
-      'table': 'paper_inventories',
+      'table': 'papers_inventories',
       'fk': 'paper_id',
       'qty': 'counted_qty',
       'note': 'note'
@@ -392,13 +392,17 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     // ----------- Остальные типы -----------
+    final bool adjustViaArrival =
+        normalizedType == 'paint' || normalizedType == 'stationery';
+    final double initialQuantity = adjustViaArrival ? 0 : quantity;
+
     final common = <String, dynamic>{
       'id': newId,
       'date': nowInKostanayIsoString(),
       'supplier': supplier,
       'description': description,
       'unit': unit,
-      'quantity': quantity,
+      'quantity': initialQuantity,
       'note': note,
       'low_threshold': lowThreshold ?? 0,
       'critical_threshold': criticalThreshold ?? 0,
@@ -815,7 +819,7 @@ class WarehouseProvider with ChangeNotifier {
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
-      if (typeKey == 'paper') 'paper_inventories',
+      if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
       if (typeKey == 'material') 'materials_inventories',
     ];
