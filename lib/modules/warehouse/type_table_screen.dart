@@ -386,6 +386,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   Future<void> _loadAll() async {
+    if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
     try {
       await provider.fetchTmc();
