@@ -977,6 +977,7 @@ class WarehouseProvider with ChangeNotifier {
       await _resolvePensTable();
     }
     final tables = _inventoryTables(itemType);
+    final String? createdBy = _sb.auth.currentUser?.id;
     final fkCandidates = <String>{
       'item_id',
       'stationery_id',
@@ -1081,6 +1082,8 @@ class WarehouseProvider with ChangeNotifier {
                   'by_name': byName,
                   'employee': byName,
                   'type': itemType,
+                  if (createdBy != null) 'created_by': createdBy,
+                  'created_name': byName,
                 };
                 if (penExtras.isNotEmpty) {
                   payload.addAll(penExtras);
@@ -1150,6 +1153,8 @@ class WarehouseProvider with ChangeNotifier {
       'note': trimmedNote,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'by_name': byName,
+      if (createdBy != null) 'created_by': createdBy,
+      'created_name': byName,
     };
     if (penExtras.isNotEmpty) invEntry.addAll(penExtras);
     list.insert(0, invEntry);
