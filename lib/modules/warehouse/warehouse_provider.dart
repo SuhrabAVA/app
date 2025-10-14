@@ -844,9 +844,9 @@ class WarehouseProvider with ChangeNotifier {
                 inserted = true;
                 break;
               } on PostgrestException catch (e) {
-                final code = (e.code ?? '').toLowerCase();
-                final message = (e.message ?? '').toLowerCase();
-                final details = (e.details ?? '').toLowerCase();
+                final code = (e.code?.toString() ?? '').toLowerCase();
+                final message = (e.message?.toString() ?? '').toLowerCase();
+                final details = (e.details?.toString() ?? '').toLowerCase();
 
                 if (message.contains('by_name') ||
                     details.contains('by_name') ||
@@ -864,7 +864,7 @@ class WarehouseProvider with ChangeNotifier {
                     inserted = true;
                     break;
                   } on PostgrestException catch (inner) {
-                    if ((inner.code ?? '').toLowerCase() == '42703') {
+                    if ((inner.code?.toString() ?? '').toLowerCase() == '42703') {
                       continue;
                     }
                     rethrow;
