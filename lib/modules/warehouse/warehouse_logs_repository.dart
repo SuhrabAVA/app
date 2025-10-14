@@ -272,6 +272,9 @@ class WarehouseLogsRepository {
           if (columnMissing) {
             continue;
           }
+          if (_isMissingRelationError(error, table)) {
+            break;
+          }
           debugPrint('WarehouseLogsRepository: $error for table $table');
         } catch (error, stack) {
           debugPrint('WarehouseLogsRepository: $error for table $table');
@@ -303,11 +306,43 @@ class WarehouseLogsRepository {
         final dynamic data = await query;
         return (data as List).cast<Map<String, dynamic>>();
       } catch (error, stack) {
+        if (error is PostgrestException &&
+            _isMissingRelationError(error, table)) {
+          continue;
+        }
         debugPrint('WarehouseLogsRepository: $error for table $table');
         debugPrintStack(stackTrace: stack);
       }
     }
     return <Map<String, dynamic>>[];
+  }
+
+  static bool _isMissingRelationError(
+      PostgrestException error, String relationName) {
+    final String code = (error.code?.toString() ?? '').toLowerCase();
+    if (code == '42p01' ||
+        code == 'pgrst201' ||
+        code == 'pgrst202' ||
+        code == 'pgrst301' ||
+        code == 'pgrst302') {
+      return true;
+    }
+
+    final String message = (error.message?.toString() ?? '').toLowerCase();
+    final String details = (error.details?.toString() ?? '').toLowerCase();
+    final String hint = (error.hint?.toString() ?? '').toLowerCase();
+    final String relationLower = relationName.toLowerCase();
+
+    bool matches(String source) {
+      if (source.isEmpty) return false;
+      return source.contains(relationLower) &&
+          (source.contains('does not exist') ||
+              source.contains('could not find') ||
+              source.contains('missing') ||
+              source.contains('not found'));
+    }
+
+    return matches(message) || matches(details) || matches(hint);
   }
 
   static num? _pickNumDynamic(Map<String, dynamic> e, List<String?> keys) {
