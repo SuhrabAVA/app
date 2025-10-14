@@ -1404,8 +1404,9 @@ class WarehouseProvider with ChangeNotifier {
 
   Future<bool> _tryInsertWarehouseLog(
       String table, Map<String, dynamic> payload) async {
+    final sanitized = _sanitizeWarehouseLogPayload(table, payload);
     try {
-      await _sb.from(table).insert(payload);
+      await _sb.from(table).insert(sanitized);
       return true;
     } on PostgrestException catch (e) {
       String _lowercase(Object? value) =>
@@ -1419,24 +1420,25 @@ class WarehouseProvider with ChangeNotifier {
           (message.contains(column.toLowerCase()) ||
               details.contains(column.toLowerCase()));
 
-      if (payload.containsKey('by_name') &&
+      if (sanitized.containsKey('by_name') &&
           (matches('by_name') || code == '42703')) {
-        final next = Map<String, dynamic>.from(payload)..remove('by_name');
+        final next = Map<String, dynamic>.from(sanitized)..remove('by_name');
         return _tryInsertWarehouseLog(table, next);
       }
 
-      if (payload.containsKey('employee') &&
+      if (sanitized.containsKey('employee') &&
           (matches('employee') || code == '42703')) {
-        final next = Map<String, dynamic>.from(payload)..remove('employee');
+        final next = Map<String, dynamic>.from(sanitized)..remove('employee');
         return _tryInsertWarehouseLog(table, next);
       }
 
-      if (payload.containsKey('type') && (matches('type') || code == '42703')) {
-        final next = Map<String, dynamic>.from(payload)..remove('type');
+      if (sanitized.containsKey('type') &&
+          (matches('type') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)..remove('type');
         return _tryInsertWarehouseLog(table, next);
       }
 
-      if (payload.containsKey('table_key') &&
+      if (sanitized.containsKey('table_key') &&
           (matches('table_key') || code == '42703')) {
         return false;
       }
@@ -1451,6 +1453,17 @@ class WarehouseProvider with ChangeNotifier {
 
       rethrow;
     }
+  }
+
+  Map<String, dynamic> _sanitizeWarehouseLogPayload(
+      String table, Map<String, dynamic> payload) {
+    final sanitized = Map<String, dynamic>.from(payload)
+      ..removeWhere((key, value) => value == null);
+    sanitized.remove('name');
+    sanitized.remove('color');
+    sanitized.remove('pen_name');
+    sanitized.remove('pen_color');
+    return sanitized;
   }
 
   bool _isMissingRelationError(PostgrestException? error, [String? relation]) {
