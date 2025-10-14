@@ -894,9 +894,14 @@ class WarehouseProvider with ChangeNotifier {
 
     final baseTable = _tableByType(itemType);
     try {
-      await _sb
+      var updateQuery = _sb
           .from(baseTable)
-          .update({'quantity': invValue < 0 ? 0 : invValue}).eq('id', itemId);
+          .update({'quantity': invValue < 0 ? 0 : invValue})
+          .eq('id', itemId);
+      if (itemType == 'stationery') {
+        updateQuery = updateQuery.eq('table_key', _stationeryKey);
+      }
+      await updateQuery;
     } catch (e) {
       debugPrint('⚠️ failed to update quantity after inventory: $e');
     }
