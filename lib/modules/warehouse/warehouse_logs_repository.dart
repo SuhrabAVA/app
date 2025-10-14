@@ -343,6 +343,38 @@ class WarehouseLogsRepository {
     return null;
   }
 
+  static String _resolveDescription({
+    Map<String, dynamic>? baseRow,
+    required Map<String, dynamic> raw,
+    required String typeKey,
+  }) {
+    final List<String> parts = <String>[];
+    void add(dynamic value) {
+      if (value == null) return;
+      final String text = value.toString().trim();
+      if (text.isEmpty) return;
+      final bool exists = parts.any(
+          (String existing) => existing.toLowerCase() == text.toLowerCase());
+      if (!exists) parts.add(text);
+    }
+
+    final Map<String, dynamic> base = baseRow ?? const <String, dynamic>{};
+    add(base['description']);
+    add(base['name']);
+    add(base['title']);
+    add(base['product_name']);
+    add(raw['description']);
+    add(raw['name']);
+    add(raw['title']);
+    if (typeKey == 'pens') {
+      add(base['color']);
+      add(raw['color']);
+    }
+
+    if (parts.isEmpty) return '—';
+    return parts.join(' • ');
+  }
+
   static List<String> _baseTables(String typeKey) {
     switch (typeKey) {
       case 'paint':
@@ -423,8 +455,18 @@ class WarehouseLogsRepository {
     required String? itemId,
     required num qty,
   }) {
-    final String description = (baseRow?['description'] ?? '').toString();
-    final String unit = (baseRow?['unit'] ?? '').toString();
+    final String description = _resolveDescription(
+      baseRow: baseRow,
+      raw: raw,
+      typeKey: typeKey,
+    );
+    final String unit = (_pickStr(
+              baseRow ?? const <String, dynamic>{},
+              <String?>['unit', 'units'],
+            ) ??
+            _pickStr(raw, <String?>['unit', 'units']) ??
+            '')
+        .toString();
     final String? format = baseRow?['format']?.toString();
     final String? grammage = baseRow?['grammage']?.toString();
     final String timestampIso = (raw['created_at'] ?? raw['date'] ?? raw['timestamp'] ?? '').toString();
@@ -442,6 +484,7 @@ class WarehouseLogsRepository {
       'by',
       'user_name',
       'employee_name',
+      'employee',
       'operator',
       'who',
     ]);

@@ -776,27 +776,50 @@ class WarehouseProvider with ChangeNotifier {
       'qty': qty,
       if (reason != null && reason.isNotEmpty) 'reason': reason,
       'by_name': byName,
+      'employee': byName,
     };
 
-    Future<void> insertInto(String table, Map<String, dynamic> data) async {
-      await _sb.from(table).insert(data);
+    Future<bool> insertInto(String table, Map<String, dynamic> data) async {
+      return _tryInsertWarehouseLog(table, data);
     }
 
+    bool inserted = false;
+    PostgrestException? initialError;
+    final table = (itemType == 'pens')
+        ? 'warehouse_pens_writeoffs'
+        : 'warehouse_stationery_writeoffs';
     try {
-      final table =
-          (itemType == 'pens') ? 'warehouse_pens_writeoffs' : 'warehouse_stationery_writeoffs';
-      await insertInto(table, payload);
+      inserted = await insertInto(table, payload);
     } on PostgrestException catch (e) {
-      final code = (e.code ?? '').toString().toLowerCase();
-      final message = (e.message ?? '').toLowerCase();
+      initialError = e;
+    }
+
+    if (!inserted) {
+      final code = (initialError?.code ?? '').toString().toLowerCase();
+      final message = (initialError?.message ?? '').toLowerCase();
       if (itemType == 'pens' &&
-          (code == '42p01' || message.contains('warehouse_pens_writeoffs'))) {
-        final fallback = Map<String, dynamic>.from(payload)
-          ..['table_key'] = _stationeryKey;
-        await insertInto('warehouse_stationery_writeoffs', fallback);
-      } else {
-        rethrow;
+          (initialError == null ||
+              code == '42p01' ||
+              message.contains('warehouse_pens_writeoffs'))) {
+        for (final key in _tableKeyCandidatesFor('pens')) {
+          final fallback = Map<String, dynamic>.from(payload)
+            ..['table_key'] = key;
+          inserted = await insertInto('warehouse_stationery_writeoffs', fallback);
+          if (inserted) break;
+        }
+        if (!inserted) {
+          inserted = await insertInto(
+            'warehouse_stationery_writeoffs',
+            Map<String, dynamic>.from(payload),
+          );
+        }
+      } else if (initialError != null) {
+        throw initialError!;
       }
+    }
+
+    if (!inserted) {
+      throw Exception('Не удалось сохранить списание для $itemType');
     }
 
     final list = _writeoffsByItem.putIfAbsent(itemId, () => []);
@@ -911,89 +934,53 @@ class WarehouseProvider with ChangeNotifier {
       for (final table in tables) {
         for (final fk in fkCandidates) {
           for (final qtyCol in qtyColumns) {
+            final List<String?> keyCandidates =
+                (itemType == 'stationery' || itemType == 'pens')
+                    ? <String?>[
+                        ..._tableKeyCandidatesFor(itemType),
+                        null,
+                      ]
+                    : const <String?>[null];
             for (final String? noteCol in [...noteColumns, null]) {
-              final payload = <String, dynamic>{
-                fk: itemId,
-                qtyCol: invValue,
-                'by_name': byName,
-                'type': itemType,
-              };
-              if (itemType == 'stationery' || itemType == 'pens') {
-                payload['table_key'] = _stationeryKey;
-              }
-              if (noteCol != null && trimmedNote != null) {
-                payload[noteCol] = trimmedNote;
-              }
-              try {
-                try {
-                  await _sb.from(table).insert(payload);
+              for (final String? tableKey in keyCandidates) {
+                final payload = <String, dynamic>{
+                  fk: itemId,
+                  qtyCol: invValue,
+                  'by_name': byName,
+                  'employee': byName,
+                  'type': itemType,
+                };
+                if (tableKey != null) {
+                  payload['table_key'] = tableKey;
+                }
+                if (noteCol != null && trimmedNote != null) {
+                  payload[noteCol] = trimmedNote;
+                }
+
+                final success = await _tryInsertWarehouseLog(table, payload);
+                if (success) {
                   inserted = true;
                   break;
-                } on PostgrestException catch (e) {
-                  final code = (e.code?.toString() ?? '').toLowerCase();
-                  final message = (e.message?.toString() ?? '').toLowerCase();
-                  final details = (e.details?.toString() ?? '').toLowerCase();
-
-                  if (message.contains('by_name') ||
-                      details.contains('by_name') ||
-                      (code == '42703' && payload.containsKey('by_name'))) {
-                    final p2 = Map<String, dynamic>.from(payload)..remove('by_name');
-                    await _sb.from(table).insert(p2);
-                    inserted = true;
-                    break;
-                  }
-
-                  if (message.contains('table_key') || details.contains('table_key')) {
-                    final p3 = Map<String, dynamic>.from(payload)..remove('table_key');
+                } else {
+                  final updatePayload = Map<String, dynamic>.from(payload)
+                    ..remove(fk);
+                  final dynamic tableKeyValue = updatePayload.remove('table_key');
+                  if (updatePayload.isNotEmpty) {
                     try {
-                      await _sb.from(table).insert(p3);
+                      var updateQuery =
+                          _sb.from(table).update(updatePayload).eq(fk, itemId);
+                      if (tableKeyValue != null) {
+                        updateQuery =
+                            updateQuery.eq('table_key', tableKeyValue as Object);
+                      }
+                      await updateQuery;
                       inserted = true;
                       break;
-                    } on PostgrestException catch (inner) {
-                      if ((inner.code?.toString() ?? '').toLowerCase() == '42703') {
-                        continue;
-                      }
-                      rethrow;
-                    }
+                    } catch (_) {}
                   }
-
-                  if (code == '23505') {
-                    final updatePayload = Map<String, dynamic>.from(payload)
-                      ..remove(fk);
-                    final dynamic tableKeyValue = updatePayload.remove('table_key');
-                    if (updatePayload.isNotEmpty) {
-                      try {
-                        var updateQuery =
-                            _sb.from(table).update(updatePayload).eq(fk, itemId);
-                        if (tableKeyValue != null) {
-                          updateQuery =
-                              updateQuery.eq('table_key', tableKeyValue as Object);
-                        }
-                        await updateQuery;
-                        inserted = true;
-                        break;
-                      } catch (_) {
-                        // allow fallback attempts below
-                      }
-                    }
-                  }
-
-                  if (code == '42703' && payload.containsKey('type')) {
-                    final p4 = Map<String, dynamic>.from(payload)..remove('type');
-                    await _sb.from(table).insert(p4);
-                    inserted = true;
-                    break;
-                  }
-
-                  if (code == '42703') {
-                    // try next combination if column missing
-                    continue;
-                  }
-                  rethrow;
                 }
-              } catch (_) {
-                // try next combination
               }
+              if (inserted) break;
             }
             if (inserted) break;
           }
@@ -1120,48 +1107,126 @@ class WarehouseProvider with ChangeNotifier {
 
     for (final table in tables) {
       for (final fk in fkCandidates) {
-        try {
-          final payload = <String, dynamic>{fk: itemId, 'by_name': byName};
-          bool qtySet = false;
-          for (final q in qtyCandidates) {
-            if (!qtySet) {
-              payload[q] = qty;
-              qtySet = true;
+        final basePayload = <String, dynamic>{
+          fk: itemId,
+          'by_name': byName,
+          'employee': byName,
+        };
+        bool qtySet = false;
+        for (final q in qtyCandidates) {
+          if (!qtySet) {
+            basePayload[q] = qty;
+            qtySet = true;
+          }
+        }
+        if (note != null && note.trim().isNotEmpty) {
+          for (final n in noteCandidates) {
+            if (!basePayload.containsKey(n)) {
+              basePayload[n] = note.trim();
+              break;
             }
           }
-          if (note != null && note.trim().isNotEmpty) {
-            bool noteSet = false;
-            for (final n in noteCandidates) {
-              if (!noteSet) {
-                payload[n] = note.trim();
-                noteSet = true;
-              }
-            }
+        }
+
+        final bool requiresKey = _tableRequiresStationeryKey(table);
+        final List<String> keyCandidates = requiresKey
+            ? _tableKeyCandidatesFor(typeKey)
+            : const <String>[];
+
+        if (requiresKey) {
+          bool inserted = false;
+          for (final key in keyCandidates) {
+            final payload = Map<String, dynamic>.from(basePayload)
+              ..['table_key'] = key;
+            inserted = await _tryInsertWarehouseLog(table, payload);
+            if (inserted) return;
           }
-          try {
-            await _sb.from(table).insert(payload);
-            return;
-          } on PostgrestException catch (e) {
-            if ((e.message ?? '').contains('by_name') ||
-                (e.code ?? '') == '42703') {
-              final p2 = Map<String, dynamic>.from(payload)
-                ..remove('by_name');
-              await _sb.from(table).insert(p2);
-              return;
-            }
-            if ((e.code ?? '') == '42703') {
-              continue;
-            }
-            rethrow;
+          if (!inserted) {
+            if (await _tryInsertWarehouseLog(table, basePayload)) return;
           }
-        } catch (_) {
-          // try next combination
+        } else {
+          if (await _tryInsertWarehouseLog(table, basePayload)) return;
         }
       }
     }
   }
 
   // ===================== HELPERS =====================
+  bool _tableRequiresStationeryKey(String table) {
+    final lower = table.toLowerCase();
+    return lower.contains('stationery');
+  }
+
+  List<String> _tableKeyCandidatesFor(String typeKey) {
+    final Set<String> keys = <String>{};
+    final String trimmed = _stationeryKey.trim();
+    if (trimmed.isNotEmpty) keys.add(trimmed);
+    switch (typeKey) {
+      case 'pens':
+        for (final candidate in const ['ручки', 'pens', 'handles']) {
+          if (candidate.trim().isNotEmpty) {
+            keys.add(candidate);
+          }
+        }
+        break;
+      case 'stationery':
+        for (final candidate in const ['канцелярия', 'stationery']) {
+          if (candidate.trim().isNotEmpty) {
+            keys.add(candidate);
+          }
+        }
+        break;
+    }
+    return keys.map((String e) => e.trim()).where((String e) => e.isNotEmpty).toList();
+  }
+
+  Future<bool> _tryInsertWarehouseLog(
+      String table, Map<String, dynamic> payload) async {
+    try {
+      await _sb.from(table).insert(payload);
+      return true;
+    } on PostgrestException catch (e) {
+      String _lowercase(Object? value) =>
+          (value is String ? value : value?.toString() ?? '').toLowerCase();
+      final String code = _lowercase(e.code);
+      final String message = _lowercase(e.message);
+      final String details = _lowercase(e.details);
+
+      bool matches(String column) =>
+          column.isNotEmpty &&
+          (message.contains(column.toLowerCase()) ||
+              details.contains(column.toLowerCase()));
+
+      if (payload.containsKey('by_name') &&
+          (matches('by_name') || code == '42703')) {
+        final next = Map<String, dynamic>.from(payload)..remove('by_name');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (payload.containsKey('employee') &&
+          (matches('employee') || code == '42703')) {
+        final next = Map<String, dynamic>.from(payload)..remove('employee');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (payload.containsKey('type') && (matches('type') || code == '42703')) {
+        final next = Map<String, dynamic>.from(payload)..remove('type');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (payload.containsKey('table_key') &&
+          (matches('table_key') || code == '42703')) {
+        return false;
+      }
+
+      if (code == '42703') {
+        return false;
+      }
+
+      rethrow;
+    }
+  }
+
   String? _normalizeType(String? type) {
     if (type == null) return null;
     final t = type.toLowerCase().trim();
