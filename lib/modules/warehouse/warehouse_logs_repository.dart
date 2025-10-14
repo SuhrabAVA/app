@@ -425,7 +425,12 @@ class WarehouseLogsRepository {
           'warehouse_stationeries',
         ];
       case 'pens':
-        return const <String>['warehouse_pens', 'pens'];
+        return const <String>[
+          'warehouse_pens',
+          'pens',
+          'warehouse_stationery',
+          'stationery',
+        ];
       default:
         return const <String>['papers'];
     }
@@ -437,6 +442,8 @@ class WarehouseLogsRepository {
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
+      if (typeKey == 'pens') 'warehouse_stationery_writeoffs',
+      if (typeKey == 'pens') 'stationery_writeoffs',
       if (typeKey == 'paper') 'paper_writeoffs',
       if (typeKey == 'paint') 'paints_writeoffs',
       if (typeKey == 'material') 'materials_writeoffs',
@@ -452,6 +459,8 @@ class WarehouseLogsRepository {
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'stationery') 'stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'pens') 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'stationery_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
       if (typeKey == 'material') 'materials_inventories',
@@ -466,6 +475,8 @@ class WarehouseLogsRepository {
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'pens') 'warehouse_stationery_arrivals',
+      if (typeKey == 'pens') 'stationery_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
