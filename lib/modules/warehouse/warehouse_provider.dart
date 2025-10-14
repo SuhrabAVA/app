@@ -839,9 +839,11 @@ class WarehouseProvider with ChangeNotifier {
           await _sb.rpc('inventory_set', params: params);
           inserted = true;
         } on PostgrestException catch (e) {
-          final msg = (e.message ?? '').toLowerCase();
-          final details = (e.details ?? '').toLowerCase();
-          final hint = (e.hint ?? '').toLowerCase();
+          String _lowercaseMessage(Object? value) =>
+              (value is String ? value : value?.toString() ?? '').toLowerCase();
+          final msg = _lowercaseMessage(e.message);
+          final details = _lowercaseMessage(e.details);
+          final hint = _lowercaseMessage(e.hint);
           if (msg.contains('by_name')) {
             final p2 = Map<String, dynamic>.from(params)..remove('by_name');
             try {
