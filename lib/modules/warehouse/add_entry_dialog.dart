@@ -204,6 +204,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       // Список уникальных названий без дублей
       _paperNameChoices = _paperOptions.map((o) => o.name).toSet().toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      if (!mounted) return;
       setState(() {
         _rollItems = rolls;
         if (_isEdit && _selectedTable == 'Бумага' && widget.existing != null) {
