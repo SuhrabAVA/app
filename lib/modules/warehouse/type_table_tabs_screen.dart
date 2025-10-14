@@ -533,11 +533,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           final code = e.code?.toLowerCase() ?? '';
           final message = e.message?.toLowerCase() ?? '';
           final details = e.details?.toLowerCase() ?? '';
-          final columnMissing = order != null &&
+          final orderLower = order?.toLowerCase();
+          final columnMissing = orderLower != null &&
               (code == '42703' ||
-                  message.contains(order.toLowerCase()) &&
+                  message.contains(orderLower) &&
                       message.contains('column') ||
-                  details.contains(order.toLowerCase()) &&
+                  details.contains(orderLower) &&
                       details.contains('column'));
           if (columnMissing) {
             continue; // попробуем следующую колонку сортировки

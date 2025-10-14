@@ -262,11 +262,12 @@ class WarehouseLogsRepository {
           final String code = (error.code ?? '').toLowerCase();
           final String message = (error.message ?? '').toLowerCase();
           final String details = (error.details ?? '').toLowerCase();
-          final bool columnMissing = order != null &&
+          final String? orderLower = order?.toLowerCase();
+          final bool columnMissing = orderLower != null &&
               (code == '42703' ||
-                  message.contains(order.toLowerCase()) &&
+                  message.contains(orderLower) &&
                       message.contains('column') ||
-                  details.contains(order.toLowerCase()) &&
+                  details.contains(orderLower) &&
                       details.contains('column'));
           if (columnMissing) {
             continue;
