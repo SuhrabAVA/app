@@ -978,7 +978,25 @@ class WarehouseProvider with ChangeNotifier {
     }
     final tables = _inventoryTables(itemType);
     final String? createdBy = _sb.auth.currentUser?.id;
-    final fkCandidates = _prioritizeCandidates(
+    List<String> prioritize(String? preferred, List<String> fallbacks) {
+      final seen = <String>{};
+      final ordered = <String>[];
+
+      void addCandidate(String? value) {
+        final candidate = value?.trim();
+        if (candidate == null || candidate.isEmpty) return;
+        if (seen.add(candidate)) ordered.add(candidate);
+      }
+
+      addCandidate(preferred);
+      for (final value in fallbacks) {
+        addCandidate(value);
+      }
+
+      return ordered;
+    }
+
+    final fkCandidates = prioritize(
       _invMap[itemType]?['fk'],
       const [
         'item_id',
@@ -990,7 +1008,7 @@ class WarehouseProvider with ChangeNotifier {
         'fk_id',
       ],
     );
-    final qtyColumns = _prioritizeCandidates(
+    final qtyColumns = prioritize(
       _invMap[itemType]?['qty'],
       const [
         'counted_qty',
@@ -999,7 +1017,7 @@ class WarehouseProvider with ChangeNotifier {
         'factual',
       ],
     );
-    final noteColumns = _prioritizeCandidates(
+    final noteColumns = prioritize(
       _invMap[itemType]?['note'],
       const [
         'note',
@@ -1393,25 +1411,6 @@ class WarehouseProvider with ChangeNotifier {
     return lower == 'warehouse_stationery' ||
         lower == 'stationery' ||
         lower == 'warehouse_stationeries';
-  }
-
-  List<String> _prioritizeCandidates(
-    String? preferred,
-    List<String> fallbacks,
-  ) {
-    final seen = <String>{};
-    final ordered = <String>[];
-    void addCandidate(String? value) {
-      final candidate = value?.trim();
-      if (candidate == null || candidate.isEmpty) return;
-      if (seen.add(candidate)) ordered.add(candidate);
-    }
-
-    addCandidate(preferred);
-    for (final value in fallbacks) {
-      addCandidate(value);
-    }
-    return ordered;
   }
 
   List<String> _tableKeyCandidatesFor(String typeKey) {
