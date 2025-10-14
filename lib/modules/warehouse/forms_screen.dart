@@ -502,10 +502,12 @@ class _FormsScreenState extends State<FormsScreen> {
                     final sizeStr = (row['size'] ?? '').toString();
                     final typeStr = (row['product_type'] ?? '').toString();
                     final colorsStr = (row['colors'] ?? '').toString();
-                    final subtitle = <String>[];
-                    if (sizeStr.isNotEmpty) subtitle.add('Размер: $sizeStr');
-                    if (typeStr.isNotEmpty) subtitle.add('Тип: $typeStr');
-                    if (colorsStr.isNotEmpty) subtitle.add('Цвета: $colorsStr');
+                    final subtitleParts = <String>[];
+                    if (sizeStr.isNotEmpty) subtitleParts.add('Размер: $sizeStr');
+                    if (typeStr.isNotEmpty) subtitleParts.add('Тип: $typeStr');
+                    if (colorsStr.isNotEmpty) subtitleParts.add('Цвета: $colorsStr');
+                    final subtitleText =
+                        subtitleParts.isEmpty ? null : subtitleParts.join('  |  ');
 
                     final imageUrl = (row['image_url'] ?? '').toString();
                     final status = (row['status'] ?? '').toString();
@@ -521,8 +523,9 @@ class _FormsScreenState extends State<FormsScreen> {
                       onTap: () => _showFormDialog(row: row),
                       tileColor:
                           isEnabled ? null : Colors.red.withOpacity(0.12),
-                      isThreeLine:
-                          !isEnabled && disabledComment.isNotEmpty,
+                      isThreeLine: !isEnabled &&
+                          disabledComment.isNotEmpty &&
+                          subtitleText != null,
                       leading: imageUrl.isNotEmpty
                           ? GestureDetector(
                               onTap: () => showImagePreview(
@@ -558,10 +561,10 @@ class _FormsScreenState extends State<FormsScreen> {
                                 fontWeight: FontWeight.w600,
                               ),
                       ),
-                      subtitle: subtitle.isEmpty
+                      subtitle: subtitleText == null
                           ? null
                           : Text(
-                              subtitle.join('  |  '),
+                              subtitleText,
                               style: isEnabled
                                   ? null
                                   : TextStyle(color: Colors.red.shade700),
