@@ -230,7 +230,8 @@ class _DeletedRecordsScreenState extends State<DeletedRecordsScreen> {
     final rows = <MapEntry<String, String>>[];
 
     final quantity = _firstNumber(payload,
-        const ['quantity', 'qty', 'amount', 'count', 'counted_qty'], usedKeys);
+        const ['quantity', 'qty', 'amount', 'count', 'counted_qty', 'factual'],
+        usedKeys);
     final unit = _firstString(
         payload, const ['unit', 'units', 'measure'], usedKeys);
     if (quantity != null || (unit != null && unit.isNotEmpty)) {
