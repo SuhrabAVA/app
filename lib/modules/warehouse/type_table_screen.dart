@@ -565,13 +565,17 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }) async {
     final s = Supabase.instance.client;
     for (final t in tables) {
-      final attemptedOrders = <String?>[orderBy, if (orderBy != null) ...{
-        'created_at',
-        'createdAt',
-        'createdat',
-        'date',
-        'timestamp',
-      }, null];
+      final attemptedOrders = <String?>[
+        orderBy,
+        if (orderBy != null) ...{
+          'created_at',
+          'createdAt',
+          'createdat',
+          'date',
+          'timestamp',
+        },
+        null
+      ];
       final seen = <String?>{};
       for (final order in attemptedOrders.where((c) => seen.add(c))) {
         try {
@@ -1501,15 +1505,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           final __by = (AuthHelper.currentUserName ?? '').trim().isEmpty
               ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
               : AuthHelper.currentUserName!;
-          payload.addAll({
-            'by_name': __by,
-            'employee': __by,
-            'employee_name': __by,
-            'by': __by,
-            'user_name': __by,
-            'operator': __by,
-            'who': __by,
-          });
+          payload['by_name'] = __by;
           bool setQty = false;
           for (final q in qtyCandidates) {
             if (!setQty) {
