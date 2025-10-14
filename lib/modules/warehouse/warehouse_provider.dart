@@ -419,6 +419,12 @@ class WarehouseProvider with ChangeNotifier {
       };
       await _sb.from(table).insert(body);
       await fetchTmc();
+      await _logArrivalGeneric(
+        typeKey: 'pens',
+        itemId: newId,
+        qty: quantity,
+        note: safeNote,
+      );
       await _logTmcEvent(
         tmcId: newId,
         eventType: 'Приход (ручки)',
@@ -761,14 +767,37 @@ class WarehouseProvider with ChangeNotifier {
     await _ensureAuthed();
     String itemType = _normalizeType(typeHint) ??
         (await _detectTypeById(itemId) ?? 'stationery');
-    final table = (itemType == 'pens')
-        ? 'warehouse_pens_writeoffs'
-        : 'warehouse_stationery_writeoffs';
-    await _sb.from(table).insert({
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+
+    final payload = <String, dynamic>{
       'item_id': itemId,
       'qty': qty,
       if (reason != null && reason.isNotEmpty) 'reason': reason,
-    });
+      'by_name': byName,
+    };
+
+    Future<void> insertInto(String table, Map<String, dynamic> data) async {
+      await _sb.from(table).insert(data);
+    }
+
+    try {
+      final table =
+          (itemType == 'pens') ? 'warehouse_pens_writeoffs' : 'warehouse_stationery_writeoffs';
+      await insertInto(table, payload);
+    } on PostgrestException catch (e) {
+      final code = (e.code ?? '').toString().toLowerCase();
+      final message = (e.message ?? '').toLowerCase();
+      if (itemType == 'pens' &&
+          (code == '42p01' || message.contains('warehouse_pens_writeoffs'))) {
+        final fallback = Map<String, dynamic>.from(payload)
+          ..['table_key'] = _stationeryKey;
+        await insertInto('warehouse_stationery_writeoffs', fallback);
+      } else {
+        rethrow;
+      }
+    }
 
     final list = _writeoffsByItem.putIfAbsent(itemId, () => []);
     list.insert(0, {
@@ -776,6 +805,7 @@ class WarehouseProvider with ChangeNotifier {
       'qty': qty,
       'reason': reason,
       'created_at': DateTime.now().toUtc().toIso8601String(),
+      'by_name': byName,
     });
 
     await fetchTmc();
@@ -832,7 +862,7 @@ class WarehouseProvider with ChangeNotifier {
           'counted': invValue,
           'by_name': byName,
         };
-        if (itemType == 'stationery') {
+        if (itemType == 'stationery' || itemType == 'pens') {
           params['table_key'] = _stationeryKey;
         }
         if (trimmedNote != null) {
@@ -863,6 +893,18 @@ class WarehouseProvider with ChangeNotifier {
         } catch (_) {
           inserted = false;
         }
+
+        if (!inserted && itemType == 'pens') {
+          final fallbackParams = Map<String, dynamic>.from(params)
+            ..['type'] = 'stationery'
+            ..['table_key'] = _stationeryKey;
+          try {
+            await _sb.rpc('inventory_set', params: fallbackParams);
+            inserted = true;
+          } catch (_) {
+            inserted = false;
+          }
+        }
       }
     }
     if (!inserted) {
@@ -876,7 +918,7 @@ class WarehouseProvider with ChangeNotifier {
                 'by_name': byName,
                 'type': itemType,
               };
-              if (itemType == 'stationery') {
+              if (itemType == 'stationery' || itemType == 'pens') {
                 payload['table_key'] = _stationeryKey;
               }
               if (noteCol != null && trimmedNote != null) {
@@ -985,6 +1027,7 @@ class WarehouseProvider with ChangeNotifier {
       'factual': invValue,
       'note': trimmedNote,
       'created_at': DateTime.now().toUtc().toIso8601String(),
+      'by_name': byName,
     });
 
     await fetchTmc();
@@ -996,7 +1039,11 @@ class WarehouseProvider with ChangeNotifier {
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'pens') 'warehouse_stationery_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
+      if (typeKey == 'pens') 'stationery_arrivals',
+      if (typeKey == 'pens' && _resolvedPensTable != null)
+        '${_resolvedPensTable!}_arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
       if (typeKey == 'material') 'materials_arrivals',
@@ -1012,6 +1059,10 @@ class WarehouseProvider with ChangeNotifier {
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'stationery') 'stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'pens') 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'stationery_inventories',
+      if (typeKey == 'pens' && _resolvedPensTable != null)
+        '${_resolvedPensTable!}_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
       if (typeKey == 'material') 'materials_inventories',
