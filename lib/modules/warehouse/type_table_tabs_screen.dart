@@ -530,9 +530,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               : await query.order(order, ascending: ascending);
           return (data as List).cast<Map<String, dynamic>>();
         } on PostgrestException catch (e) {
-          final code = e.code?.toLowerCase() ?? '';
-          final message = e.message?.toLowerCase() ?? '';
-          final details = e.details?.toLowerCase() ?? '';
+          final code = (e.code?.toString() ?? '').toLowerCase();
+          final message = (e.message?.toString() ?? '').toLowerCase();
+          final details = (e.details?.toString() ?? '').toLowerCase();
           final orderLower = order?.toLowerCase();
           final columnMissing = orderLower != null &&
               (code == '42703' ||

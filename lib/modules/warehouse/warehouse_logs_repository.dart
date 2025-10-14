@@ -259,9 +259,9 @@ class WarehouseLogsRepository {
               : await query.order(order, ascending: ascending);
           return (data as List).cast<Map<String, dynamic>>();
         } on PostgrestException catch (error) {
-          final String code = (error.code ?? '').toLowerCase();
-          final String message = (error.message ?? '').toLowerCase();
-          final String details = (error.details ?? '').toLowerCase();
+          final String code = (error.code?.toString() ?? '').toLowerCase();
+          final String message = (error.message?.toString() ?? '').toLowerCase();
+          final String details = (error.details?.toString() ?? '').toLowerCase();
           final String? orderLower = order?.toLowerCase();
           final bool columnMissing = orderLower != null &&
               (code == '42703' ||
