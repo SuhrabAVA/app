@@ -1041,7 +1041,7 @@ class WarehouseProvider with ChangeNotifier {
     if (normalized.isEmpty) return null;
     final data = await _sb
         .from('paints')
-        .select<Map<String, dynamic>>(
+        .select(
             'id, description, unit, note, low_threshold, critical_threshold, image_url, image_base64')
         .ilike('description', normalized)
         .limit(1)
@@ -1061,7 +1061,7 @@ class WarehouseProvider with ChangeNotifier {
     if (normalized.isEmpty) return null;
     final data = await _sb
         .from('warehouse_stationery')
-        .select<Map<String, dynamic>>(
+        .select(
             'id, description, unit, note, low_threshold, critical_threshold, table_key, image_url, image_base64')
         .eq('table_key', _stationeryKey)
         .ilike('description', normalized)
