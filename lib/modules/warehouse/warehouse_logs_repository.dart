@@ -242,16 +242,41 @@ class WarehouseLogsRepository {
     bool ascending = true,
   }) async {
     for (final String table in tables) {
-      try {
-        final PostgrestFilterBuilder<dynamic> query =
-            _client.from(table).select(selectFields);
-        final dynamic data = orderBy == null
-            ? await query
-            : await query.order(orderBy, ascending: ascending);
-        return (data as List).cast<Map<String, dynamic>>();
-      } catch (error, stack) {
-        debugPrint('WarehouseLogsRepository: $error for table $table');
-        debugPrintStack(stackTrace: stack);
+      final List<String?> attemptedOrders = <String?>[orderBy, if (orderBy != null) ...{
+        'created_at',
+        'createdAt',
+        'createdat',
+        'date',
+        'timestamp',
+      }, null];
+      final Set<String?> seen = <String?>{};
+      for (final String? order in attemptedOrders.where((String? c) => seen.add(c))) {
+        try {
+          final PostgrestFilterBuilder<dynamic> query =
+              _client.from(table).select(selectFields);
+          final dynamic data = order == null
+              ? await query
+              : await query.order(order, ascending: ascending);
+          return (data as List).cast<Map<String, dynamic>>();
+        } on PostgrestException catch (error) {
+          final String code = (error.code ?? '').toLowerCase();
+          final String message = (error.message ?? '').toLowerCase();
+          final String details = (error.details ?? '').toLowerCase();
+          final bool columnMissing = order != null &&
+              (code == '42703' ||
+                  message.contains(order.toLowerCase()) &&
+                      message.contains('column') ||
+                  details.contains(order.toLowerCase()) &&
+                      details.contains('column'));
+          if (columnMissing) {
+            continue;
+          }
+          debugPrint('WarehouseLogsRepository: $error for table $table');
+        } catch (error, stack) {
+          debugPrint('WarehouseLogsRepository: $error for table $table');
+          debugPrintStack(stackTrace: stack);
+        }
+        break;
       }
     }
     return <Map<String, dynamic>>[];
