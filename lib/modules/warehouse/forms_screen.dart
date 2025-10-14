@@ -398,13 +398,11 @@ class _FormsScreenState extends State<FormsScreen> {
           id: id,
           isEnabled: false,
           disabledComment: comment,
-          status: 'disabled',
         );
         if (!mounted) return;
         setState(() {
           row['is_enabled'] = false;
           row['disabled_comment'] = comment;
-          row['status'] = 'disabled';
         });
       } catch (e) {
         if (!mounted) return;
@@ -423,13 +421,11 @@ class _FormsScreenState extends State<FormsScreen> {
           id: id,
           isEnabled: true,
           disabledComment: null,
-          status: 'in_stock',
         );
         if (!mounted) return;
         setState(() {
           row['is_enabled'] = true;
           row['disabled_comment'] = null;
-          row['status'] = 'in_stock';
         });
       } catch (e) {
         if (!mounted) return;
