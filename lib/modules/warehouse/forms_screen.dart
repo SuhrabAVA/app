@@ -521,6 +521,8 @@ class _FormsScreenState extends State<FormsScreen> {
                       onTap: () => _showFormDialog(row: row),
                       tileColor:
                           isEnabled ? null : Colors.red.withOpacity(0.12),
+                      isThreeLine:
+                          !isEnabled && disabledComment.isNotEmpty,
                       leading: imageUrl.isNotEmpty
                           ? GestureDetector(
                               onTap: () => showImagePreview(
