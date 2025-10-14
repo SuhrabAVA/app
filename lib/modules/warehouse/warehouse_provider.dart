@@ -912,6 +912,27 @@ class WarehouseProvider with ChangeNotifier {
                     }
                   }
 
+                  if (code == '23505') {
+                    final updatePayload = Map<String, dynamic>.from(payload)
+                      ..remove(fk);
+                    final dynamic tableKeyValue = updatePayload.remove('table_key');
+                    if (updatePayload.isNotEmpty) {
+                      try {
+                        var updateQuery =
+                            _sb.from(table).update(updatePayload).eq(fk, itemId);
+                        if (tableKeyValue != null) {
+                          updateQuery =
+                              updateQuery.eq('table_key', tableKeyValue as Object);
+                        }
+                        await updateQuery;
+                        inserted = true;
+                        break;
+                      } catch (_) {
+                        // allow fallback attempts below
+                      }
+                    }
+                  }
+
                   if (code == '42703' && payload.containsKey('type')) {
                     final p4 = Map<String, dynamic>.from(payload)..remove('type');
                     await _sb.from(table).insert(p4);
