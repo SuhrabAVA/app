@@ -17,7 +17,7 @@ extension WarehouseProviderWoInv on WarehouseProvider {
     'paint': {'table': 'paints_writeoffs', 'fk': 'paint_id'},
     'material': {'table': 'materials_writeoffs', 'fk': 'material_id'},
     'paper': {'table': 'papers_writeoffs', 'fk': 'paper_id'},
-    'stationery': {'table': 'stationery_writeoffs', 'fk': 'item_id'},
+    'stationery': {'table': 'warehouse_stationery_writeoffs', 'fk': 'item_id'},
   };
 
   // Карта соответствий: тип -> таблица инвентаризаций и имя FK
@@ -25,7 +25,7 @@ extension WarehouseProviderWoInv on WarehouseProvider {
     'paint': {'table': 'paints_inventories', 'fk': 'paint_id'},
     'material': {'table': 'materials_inventories', 'fk': 'material_id'},
     'paper': {'table': 'papers_inventories', 'fk': 'paper_id'},
-    'stationery': {'table': 'stationery_inventories', 'fk': 'item_id'},
+    'stationery': {'table': 'warehouse_stationery_inventories', 'fk': 'item_id'},
   };
 
   // Нормализация ключей типа (рус/англ)
