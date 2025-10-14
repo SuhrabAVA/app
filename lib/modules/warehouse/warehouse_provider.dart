@@ -844,13 +844,34 @@ class WarehouseProvider with ChangeNotifier {
                 inserted = true;
                 break;
               } on PostgrestException catch (e) {
-                if ((e.message ?? '').contains('by_name') || (e.code ?? '') == '42703') {
+                final code = (e.code ?? '').toLowerCase();
+                final message = (e.message ?? '').toLowerCase();
+                final details = (e.details ?? '').toLowerCase();
+
+                if (message.contains('by_name') ||
+                    details.contains('by_name') ||
+                    (code == '42703' && payload.containsKey('by_name'))) {
                   final p2 = Map<String, dynamic>.from(payload)..remove('by_name');
                   await _sb.from(table).insert(p2);
                   inserted = true;
                   break;
                 }
-                if ((e.code ?? '') == '42703') {
+
+                if (message.contains('table_key') || details.contains('table_key')) {
+                  final p3 = Map<String, dynamic>.from(payload)..remove('table_key');
+                  try {
+                    await _sb.from(table).insert(p3);
+                    inserted = true;
+                    break;
+                  } on PostgrestException catch (inner) {
+                    if ((inner.code ?? '').toLowerCase() == '42703') {
+                      continue;
+                    }
+                    rethrow;
+                  }
+                }
+
+                if (code == '42703') {
                   // try next combination if column missing
                   continue;
                 }
@@ -911,6 +932,7 @@ class WarehouseProvider with ChangeNotifier {
     final base = <String>[
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
+      if (typeKey == 'stationery') 'stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
