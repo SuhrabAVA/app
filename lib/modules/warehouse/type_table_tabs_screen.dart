@@ -1536,7 +1536,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           final __by = (AuthHelper.currentUserName ?? '').trim().isEmpty
               ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
               : AuthHelper.currentUserName!;
-          payload['by_name'] = __by;
+          payload.addAll({
+            'by_name': __by,
+            'employee': __by,
+            'employee_name': __by,
+            'by': __by,
+            'user_name': __by,
+            'operator': __by,
+            'who': __by,
+          });
           bool setQty = false;
           for (final q in qtyCandidates) {
             if (!setQty) {
