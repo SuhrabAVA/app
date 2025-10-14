@@ -78,10 +78,17 @@ class WarehouseProvider with ChangeNotifier {
 
   static const Map<String, Map<String, String>> _arrMap = {
     'paint': {'table': 'paints_arrivals', 'fk': 'paint_id', 'qty': 'qty'},
-    'material': {'table': 'materials_arrivals', 'fk': 'material_id', 'qty': 'qty'},
+    'material': {
+      'table': 'materials_arrivals',
+      'fk': 'material_id',
+      'qty': 'qty'
+    },
     'paper': {'table': 'papers_arrivals', 'fk': 'paper_id', 'qty': 'qty'},
-    'stationery':
-        {'table': 'warehouse_stationery_arrivals', 'fk': 'item_id', 'qty': 'qty'},
+    'stationery': {
+      'table': 'warehouse_stationery_arrivals',
+      'fk': 'item_id',
+      'qty': 'qty'
+    },
     'pens': {'table': 'warehouse_pens_arrivals', 'fk': 'item_id', 'qty': 'qty'},
   };
 
@@ -237,10 +244,7 @@ class WarehouseProvider with ChangeNotifier {
                 .order('description');
             final filtered = (sRaw as List)
                 .where((row) => pensKeys.contains(
-                      (row['table_key'] ?? '')
-                          .toString()
-                          .toLowerCase()
-                          .trim(),
+                      (row['table_key'] ?? '').toString().toLowerCase().trim(),
                     ))
                 .toList();
             s = filtered.map((e) {
@@ -441,8 +445,7 @@ class WarehouseProvider with ChangeNotifier {
     // ----------- РУЧКИ (dedicated table) -----------
     if (normalizedType == 'pens') {
       final pensTable = await _resolvePensTable();
-      final bool useFallback =
-          pensTable == null || _pensUseStationeryFallback;
+      final bool useFallback = pensTable == null || _pensUseStationeryFallback;
       // Expect description like "Вид • Цвет" or just name; try to split
       String raw = description;
       String name = raw;
@@ -490,8 +493,9 @@ class WarehouseProvider with ChangeNotifier {
           'unit': unitValue,
           'quantity': 0,
           'note': safeNote,
-          'table_key':
-              _stationeryKey.trim().isNotEmpty ? _stationeryKey.trim() : 'ручки',
+          'table_key': _stationeryKey.trim().isNotEmpty
+              ? _stationeryKey.trim()
+              : 'ручки',
           'low_threshold': lowThreshold ?? 0,
           'critical_threshold': criticalThreshold ?? 0,
           if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
@@ -882,7 +886,9 @@ class WarehouseProvider with ChangeNotifier {
       'item_id': itemId,
       'qty': qty,
       if (reason != null && reason.isNotEmpty) 'reason': reason,
-    }..addAll(_byNameAliases(byName));
+      'by_name': byName,
+      'employee': byName,
+    };
     if (itemType == 'pens') {
       penExtras = await _resolvePenLogExtras(itemId: itemId);
       payload.addAll(penExtras);
@@ -894,8 +900,7 @@ class WarehouseProvider with ChangeNotifier {
 
     bool inserted = false;
     PostgrestException? initialError;
-    final bool pensFallback =
-        itemType == 'pens' && _pensUseStationeryFallback;
+    final bool pensFallback = itemType == 'pens' && _pensUseStationeryFallback;
     final table = itemType == 'pens'
         ? (pensFallback
             ? 'warehouse_stationery_writeoffs'
@@ -919,7 +924,8 @@ class WarehouseProvider with ChangeNotifier {
         for (final key in _tableKeyCandidatesFor('pens')) {
           final fallback = Map<String, dynamic>.from(payload)
             ..['table_key'] = key;
-          inserted = await insertInto('warehouse_stationery_writeoffs', fallback);
+          inserted =
+              await insertInto('warehouse_stationery_writeoffs', fallback);
           if (inserted) break;
         }
         if (!inserted) {
@@ -965,8 +971,8 @@ class WarehouseProvider with ChangeNotifier {
     final rawNote = note?.trim() ?? '';
     final String? trimmedNote = rawNote.isEmpty ? null : rawNote;
     await _ensureAuthed();
-    final itemType =
-        _normalizeType(typeHint) ?? (await _detectTypeById(itemId) ?? 'stationery');
+    final itemType = _normalizeType(typeHint) ??
+        (await _detectTypeById(itemId) ?? 'stationery');
     if (itemType == 'pens') {
       await _resolvePensTable();
     }
@@ -1072,8 +1078,10 @@ class WarehouseProvider with ChangeNotifier {
                 final payload = <String, dynamic>{
                   fk: itemId,
                   qtyCol: invValue,
+                  'by_name': byName,
+                  'employee': byName,
                   'type': itemType,
-                }..addAll(_byNameAliases(byName));
+                };
                 if (penExtras.isNotEmpty) {
                   payload.addAll(penExtras);
                 }
@@ -1091,14 +1099,15 @@ class WarehouseProvider with ChangeNotifier {
                 } else {
                   final updatePayload = Map<String, dynamic>.from(payload)
                     ..remove(fk);
-                  final dynamic tableKeyValue = updatePayload.remove('table_key');
+                  final dynamic tableKeyValue =
+                      updatePayload.remove('table_key');
                   if (updatePayload.isNotEmpty) {
                     try {
                       var updateQuery =
                           _sb.from(table).update(updatePayload).eq(fk, itemId);
                       if (tableKeyValue != null) {
-                        updateQuery =
-                            updateQuery.eq('table_key', tableKeyValue as Object);
+                        updateQuery = updateQuery.eq(
+                            'table_key', tableKeyValue as Object);
                       }
                       await updateQuery;
                       inserted = true;
@@ -1125,8 +1134,7 @@ class WarehouseProvider with ChangeNotifier {
     try {
       var updateQuery = _sb
           .from(baseTable)
-          .update({'quantity': invValue < 0 ? 0 : invValue})
-          .eq('id', itemId);
+          .update({'quantity': invValue < 0 ? 0 : invValue}).eq('id', itemId);
       if (itemType == 'stationery') {
         updateQuery = updateQuery.eq('table_key', _stationeryKey);
       }
@@ -1152,19 +1160,19 @@ class WarehouseProvider with ChangeNotifier {
   List<String> _arrivalTables(String typeKey) {
     final hint = _arrMap[typeKey]?['table'];
     final resolved = _resolvedPensTable;
-    final bool pensFallback = typeKey == 'pens' &&
-        (resolved == null || _pensUseStationeryFallback);
+    final bool pensFallback =
+        typeKey == 'pens' && (resolved == null || _pensUseStationeryFallback);
     final base = <String>[
       if (hint != null &&
-          !(pensFallback && hint.toLowerCase().contains('pens'))) hint,
+          !(pensFallback && hint.toLowerCase().contains('pens')))
+        hint,
       if (typeKey == 'stationery' || pensFallback)
         'warehouse_stationery_arrivals',
       if (typeKey == 'stationery' || pensFallback) 'stationery_arrivals',
       if (typeKey == 'pens' && !pensFallback) 'warehouse_pens_arrivals',
       if (typeKey == 'pens' && !pensFallback && resolved != null)
         '${resolved}_arrivals',
-      if (typeKey == 'pens' && !pensFallback)
-        'warehouse_stationery_arrivals',
+      if (typeKey == 'pens' && !pensFallback) 'warehouse_stationery_arrivals',
       if (typeKey == 'pens' && !pensFallback) 'stationery_arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
@@ -1177,8 +1185,8 @@ class WarehouseProvider with ChangeNotifier {
   List<String> _inventoryTables(String typeKey) {
     final hint = _invMap[typeKey]?['table'];
     final resolved = _resolvedPensTable;
-    final bool pensFallback = typeKey == 'pens' &&
-        (resolved == null || _pensUseStationeryFallback);
+    final bool pensFallback =
+        typeKey == 'pens' && (resolved == null || _pensUseStationeryFallback);
     final base = <String>[
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
@@ -1189,8 +1197,7 @@ class WarehouseProvider with ChangeNotifier {
       if (typeKey == 'pens' && !pensFallback)
         'warehouse_stationery_inventories',
       if (typeKey == 'pens' && !pensFallback) 'stationery_inventories',
-      if (typeKey == 'pens' && pensFallback)
-        'warehouse_stationery_inventories',
+      if (typeKey == 'pens' && pensFallback) 'warehouse_stationery_inventories',
       if (typeKey == 'pens' && pensFallback) 'stationery_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
@@ -1222,8 +1229,10 @@ class WarehouseProvider with ChangeNotifier {
     String? name,
     String? color,
   }) async {
-    String? resolvedName = name?.trim().isNotEmpty == true ? name!.trim() : null;
-    String? resolvedColor = color?.trim().isNotEmpty == true ? color!.trim() : null;
+    String? resolvedName =
+        name?.trim().isNotEmpty == true ? name!.trim() : null;
+    String? resolvedColor =
+        color?.trim().isNotEmpty == true ? color!.trim() : null;
 
     bool needsLookup =
         (resolvedName == null || resolvedColor == null) && (itemId != null);
@@ -1232,8 +1241,7 @@ class WarehouseProvider with ChangeNotifier {
       try {
         TmcModel? tmc;
         try {
-          tmc = _allTmc
-              .firstWhere((e) => e.id == itemId && e.type == 'pens');
+          tmc = _allTmc.firstWhere((e) => e.id == itemId && e.type == 'pens');
         } catch (_) {
           try {
             tmc = _allTmc.firstWhere((e) => e.id == itemId);
@@ -1322,7 +1330,9 @@ class WarehouseProvider with ChangeNotifier {
       for (final fk in fkCandidates) {
         final basePayload = <String, dynamic>{
           fk: itemId,
-        }..addAll(_byNameAliases(byName));
+          'by_name': byName,
+          'employee': byName,
+        };
         if (extraPayload != null && extraPayload.isNotEmpty) {
           basePayload.addAll(extraPayload);
         }
@@ -1343,9 +1353,8 @@ class WarehouseProvider with ChangeNotifier {
         }
 
         final bool requiresKey = _tableRequiresStationeryKey(table);
-        final List<String> keyCandidates = requiresKey
-            ? _tableKeyCandidatesFor(typeKey)
-            : const <String>[];
+        final List<String> keyCandidates =
+            requiresKey ? _tableKeyCandidatesFor(typeKey) : const <String>[];
 
         if (requiresKey) {
           bool inserted = false;
@@ -1393,7 +1402,10 @@ class WarehouseProvider with ChangeNotifier {
         }
         break;
     }
-    return keys.map((String e) => e.trim()).where((String e) => e.isNotEmpty).toList();
+    return keys
+        .map((String e) => e.trim())
+        .where((String e) => e.isNotEmpty)
+        .toList();
   }
 
   Future<bool> _tryInsertWarehouseLog(
@@ -1458,19 +1470,6 @@ class WarehouseProvider with ChangeNotifier {
     sanitized.remove('pen_name');
     sanitized.remove('pen_color');
     return sanitized;
-  }
-
-  Map<String, String> _byNameAliases(String byName) {
-    final value = byName.trim().isEmpty ? byName : byName.trim();
-    return {
-      'by_name': value,
-      'employee': value,
-      'employee_name': value,
-      'by': value,
-      'user_name': value,
-      'operator': value,
-      'who': value,
-    };
   }
 
   bool _isMissingRelationError(PostgrestException? error, [String? relation]) {
@@ -1627,11 +1626,8 @@ class WarehouseProvider with ChangeNotifier {
           await _sb.from('papers').select('id').eq('id', id).maybeSingle();
       if (pr != null) return 'paper';
       if (pensTable != null && !pensFallback) {
-        final pe = await _sb
-            .from(pensTable)
-            .select('id')
-            .eq('id', id)
-            .maybeSingle();
+        final pe =
+            await _sb.from(pensTable).select('id').eq('id', id).maybeSingle();
         if (pe != null) return 'pens';
       }
       final sNew = await _sb
@@ -1641,12 +1637,10 @@ class WarehouseProvider with ChangeNotifier {
           .maybeSingle();
       if (sNew != null) {
         if (pensFallback) {
-          final key = (sNew['table_key'] ?? '')
-              .toString()
-              .toLowerCase()
-              .trim();
-          final pensKeys =
-              _tableKeyCandidatesFor('pens').map((k) => k.toLowerCase()).toSet();
+          final key = (sNew['table_key'] ?? '').toString().toLowerCase().trim();
+          final pensKeys = _tableKeyCandidatesFor('pens')
+              .map((k) => k.toLowerCase())
+              .toSet();
           if (pensKeys.contains(key)) {
             return 'pens';
           }
