@@ -312,7 +312,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           'warehouse_stationeries'
         ];
       case 'pens':
-        return const ['warehouse_pens', 'pens'];
+        return const [
+          'warehouse_pens',
+          'pens',
+          'warehouse_stationery',
+          'stationery',
+        ];
       default:
         return const ['papers'];
     }
@@ -325,6 +330,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
+      if (typeKey == 'pens') 'warehouse_stationery_writeoffs',
       if (typeKey == 'paper') 'paper_writeoffs',
       if (typeKey == 'paint') 'paints_writeoffs',
       if (typeKey == 'material') 'materials_writeoffs',
@@ -341,6 +347,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'stationery') 'stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'pens') 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'stationery_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
       if (typeKey == 'material') 'materials_inventories',
@@ -356,7 +364,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'pens') 'warehouse_stationery_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
+      if (typeKey == 'pens') 'stationery_arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
       if (typeKey == 'material') 'materials_arrivals',
@@ -369,6 +379,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   String _baseSelectFieldsForLogs(String typeKey) {
     if (typeKey == 'paper') {
       return 'id, description, unit, format, grammage';
+    }
+    if (typeKey == 'pens') {
+      return 'id, description, unit, name, color';
     }
     return 'id, description, unit';
   }
@@ -506,6 +519,39 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     return null;
   }
 
+  String _composeDescription(
+      {required Map<String, dynamic> baseRow,
+      required Map<String, dynamic> logRow,
+      required String typeKey}) {
+    final baseDescr = (baseRow['description'] ?? '').toString().trim();
+    if (baseDescr.isNotEmpty) return baseDescr;
+
+    if (typeKey == 'pens') {
+      final parts = <String>[];
+      void addPart(dynamic value) {
+        final s = (value ?? '').toString().trim();
+        if (s.isNotEmpty) parts.add(s);
+      }
+
+      addPart(baseRow['name']);
+      addPart(baseRow['color']);
+      if (parts.isEmpty) {
+        addPart(logRow['name']);
+        addPart(logRow['color']);
+      }
+      if (parts.isNotEmpty) {
+        return parts.join(' • ');
+      }
+    }
+
+    final fallback =
+        _pickStr(logRow, ['description', 'name', 'item_name', 'title']);
+    if (fallback != null && fallback.trim().isNotEmpty) {
+      return fallback.trim();
+    }
+    return '—';
+  }
+
   Future<List<Map<String, dynamic>>> _selectAnyTable({
     required List<String> tables,
     required String selectFields,
@@ -624,8 +670,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr = (baseRow['description'] ?? '').toString();
-      final unit = (baseRow['unit'] ?? '').toString();
+      final descr =
+          _composeDescription(baseRow: baseRow, logRow: e, typeKey: typeKey);
+      String unit = (baseRow['unit'] ?? '').toString();
+      if (unit.trim().isEmpty) {
+        unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
+      }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
       final qty = _pickNumDynamic(e, [
@@ -708,8 +758,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr = (baseRow['description'] ?? '').toString();
-      final unit = (baseRow['unit'] ?? '').toString();
+      final descr =
+          _composeDescription(baseRow: baseRow, logRow: e, typeKey: typeKey);
+      String unit = (baseRow['unit'] ?? '').toString();
+      if (unit.trim().isEmpty) {
+        unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
+      }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
       final qty = _pickNumDynamic(e,
@@ -784,8 +838,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr = (baseRow['description'] ?? '').toString();
-      final unit = (baseRow['unit'] ?? '').toString();
+      final descr =
+          _composeDescription(baseRow: baseRow, logRow: e, typeKey: typeKey);
+      String unit = (baseRow['unit'] ?? '').toString();
+      if (unit.trim().isEmpty) {
+        unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
+      }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
       final qty = _pickNumDynamic(e, [
