@@ -1,9 +1,11 @@
 // lib/modules/warehouse/forms_screen.dart
 // ignore_for_file: use_build_context_synchronously
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:image_picker/image_picker.dart';
+import 'dart:async';
 import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
 import '../../utils/media_viewer.dart';
 
@@ -69,6 +71,7 @@ class _FormsScreenState extends State<FormsScreen> {
     colorsCtl.text =
         ((row?['colors'] ?? row?['description'] ?? '')?.toString() ?? '');
     Uint8List? pickedImageBytes;
+    bool numberManuallyEdited = isEditing;
 
     // Prefill default number: global max(number)+1
     if (!isEditing) {
@@ -85,6 +88,7 @@ class _FormsScreenState extends State<FormsScreen> {
     }
     // При вводе названия номенклатуры вычисляем следующий номер
     Future<void> _updateNumber() async {
+      if (numberManuallyEdited) return;
       final name = seriesCtl.text.trim();
       if (name.isEmpty) {
         if (!isEditing) numberCtl.text = '';
@@ -133,7 +137,11 @@ class _FormsScreenState extends State<FormsScreen> {
                         hintText: 'Введите название номенклатуры',
                         border: OutlineInputBorder(),
                       ),
-                      onChanged: (v) {},
+                      onChanged: (v) {
+                        if (!isEditing && !numberManuallyEdited) {
+                          _updateNumber();
+                        }
+                      },
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -142,7 +150,9 @@ class _FormsScreenState extends State<FormsScreen> {
                         labelText: 'Нумерация',
                         border: OutlineInputBorder(),
                       ),
-                      readOnly: !isEditing,
+                      onChanged: (_) {
+                        numberManuallyEdited = true;
+                      },
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -271,45 +281,168 @@ class _FormsScreenState extends State<FormsScreen> {
     await _showFormDialog();
   }
 
-  Future<bool> _confirmDeleteDialog(BuildContext ctx, String code) async {
-    return await showDialog<bool>(
-          context: ctx,
-          builder: (dCtx) => AlertDialog(
-            title: const Text('Удалить форму?'),
-            content: Text('Удалить форму $code безвозвратно?'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(dCtx, false),
-                  child: const Text('Отмена')),
-              ElevatedButton(
-                  onPressed: () => Navigator.pop(dCtx, true),
-                  child: const Text('Удалить')),
-            ],
-          ),
-        ) ??
-        false;
+  Future<String?> _promptDisableComment({
+    required String formName,
+    String? initialComment,
+  }) async {
+    final controller = TextEditingController(text: initialComment ?? '');
+    String? errorText;
+
+    final result = await showDialog<String?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Форма отключена'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Укажите причину отключения формы $formName'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: 'Комментарий',
+                      border: const OutlineInputBorder(),
+                      errorText: errorText,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: const Text('Отмена'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final value = controller.text.trim();
+                    if (value.isEmpty) {
+                      setDialogState(() {
+                        errorText = 'Комментарий обязателен';
+                      });
+                      return;
+                    }
+                    Navigator.pop(ctx, value);
+                  },
+                  child: const Text('Сохранить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+    return result;
   }
 
-  Future<void> _deleteRow(Map<String, dynamic> row) async {
-    final wp = context.read<WarehouseProvider>();
-    final id = (row['id'] ?? '').toString();
-    final series = (row['series'] ?? '').toString();
-    final number = (row['number'] as num?)?.toInt();
-
-    if (id.isNotEmpty) {
-      await wp.deleteForm(id: id);
-    } else if (series.isNotEmpty && number != null) {
-      await wp.deleteForm(series: series, number: number);
+  Future<void> _handleToggleForm(
+    Map<String, dynamic> row,
+    bool newValue,
+    String formLabel,
+  ) async {
+    final previousEnabledRaw = row['is_enabled'];
+    bool previousEnabled;
+    if (previousEnabledRaw is bool) {
+      previousEnabled = previousEnabledRaw;
     } else {
-      throw Exception('Не могу определить форму для удаления');
+      final status = (row['status'] ?? '').toString();
+      previousEnabled = status != 'disabled';
+    }
+    final previousComment =
+        (row['disabled_comment'] ?? row['disable_comment'] ?? '')
+            .toString();
+    final previousStatus = (row['status'] ?? '').toString();
+    final id = (row['id'] ?? '').toString();
+
+    if (id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Не удалось определить форму для изменения статуса'),
+      ));
+      setState(() {
+        row['is_enabled'] = previousEnabled;
+        row['disabled_comment'] = previousComment;
+        row['status'] = previousStatus;
+      });
+      return;
     }
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Форма удалена')),
-    );
-    _reload(
-        search: _searchCtl.text.trim().isEmpty ? null : _searchCtl.text.trim());
+    final wp = context.read<WarehouseProvider>();
+
+    if (!newValue) {
+      final comment = await _promptDisableComment(
+        formName: formLabel,
+        initialComment: previousComment,
+      );
+
+      if (!mounted) return;
+
+      if (comment == null) {
+        setState(() {
+          row['is_enabled'] = previousEnabled;
+          row['disabled_comment'] = previousComment;
+          row['status'] = previousStatus;
+        });
+        return;
+      }
+
+      try {
+        await wp.updateForm(
+          id: id,
+          isEnabled: false,
+          disabledComment: comment,
+          status: 'disabled',
+        );
+        if (!mounted) return;
+        setState(() {
+          row['is_enabled'] = false;
+          row['disabled_comment'] = comment;
+          row['status'] = 'disabled';
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          row['is_enabled'] = previousEnabled;
+          row['disabled_comment'] = previousComment;
+          row['status'] = previousStatus;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Не удалось отключить форму: $e'),
+        ));
+      }
+    } else {
+      try {
+        await wp.updateForm(
+          id: id,
+          isEnabled: true,
+          disabledComment: null,
+          status: 'in_stock',
+        );
+        if (!mounted) return;
+        setState(() {
+          row['is_enabled'] = true;
+          row['disabled_comment'] = null;
+          row['status'] = 'in_stock';
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          row['is_enabled'] = previousEnabled;
+          row['disabled_comment'] = previousComment;
+          row['status'] = previousStatus;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Не удалось включить форму: $e'),
+        ));
+      }
+    }
   }
 
   @override
@@ -379,70 +512,98 @@ class _FormsScreenState extends State<FormsScreen> {
                     if (colorsStr.isNotEmpty) subtitle.add('Цвета: $colorsStr');
 
                     final imageUrl = (row['image_url'] ?? '').toString();
+                    final status = (row['status'] ?? '').toString();
+                    final bool isEnabled = row['is_enabled'] is bool
+                        ? row['is_enabled'] as bool
+                        : status != 'disabled';
+                    final disabledComment =
+                        (row['disabled_comment'] ?? row['disable_comment'] ?? '')
+                            .toString()
+                            .trim();
 
-                    return Dismissible(
-                      key: ValueKey('form_${row['id'] ?? '$series/$n'}'),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        color: Colors.red.withOpacity(0.1),
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: const Icon(Icons.delete_outline),
-                      ),
-                      confirmDismiss: (_) =>
-                          _confirmDeleteDialog(context, nameNumber),
-                      onDismissed: (_) => _deleteRow(row),
-                      child: ListTile(
-                        onTap: () => _showFormDialog(row: row),
-                        leading: imageUrl.isNotEmpty
-                            ? GestureDetector(
-                                onTap: () => showImagePreview(
-                                  context,
-                                  imageUrl: imageUrl,
-                                  title: nameNumber,
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(20),
-                                  child: Image.network(
-                                    imageUrl,
-                                    width: 40,
-                                    height: 40,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>
-                                        const Icon(Icons.image_not_supported),
-                                  ),
-                                ),
-                              )
-                            : CircleAvatar(
-                                child: Text(
-                                  series.isEmpty
-                                      ? '?'
-                                      : series.substring(0, 1),
+                    return ListTile(
+                      onTap: () => _showFormDialog(row: row),
+                      tileColor:
+                          isEnabled ? null : Colors.red.withOpacity(0.12),
+                      leading: imageUrl.isNotEmpty
+                          ? GestureDetector(
+                              onTap: () => showImagePreview(
+                                context,
+                                imageUrl: imageUrl,
+                                title: nameNumber,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: Image.network(
+                                  imageUrl,
+                                  width: 40,
+                                  height: 40,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      const Icon(Icons.image_not_supported),
                                 ),
                               ),
-                        title: Text(nameNumber),
-                        subtitle: subtitle.isEmpty
+                            )
+                          : CircleAvatar(
+                              child: Text(
+                                series.isEmpty
+                                    ? '?'
+                                    : series.substring(0, 1),
+                              ),
+                            ),
+                      title: Text(
+                        nameNumber,
+                        style: isEnabled
                             ? null
-                            : Text(subtitle.join('  |  ')),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              tooltip: 'Изменить',
-                              icon: const Icon(Icons.edit_outlined),
-                              onPressed: () => _showFormDialog(row: row),
+                            : TextStyle(
+                                color: Colors.red.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                      ),
+                      subtitle: subtitle.isEmpty
+                          ? null
+                          : Text(
+                              subtitle.join('  |  '),
+                              style: isEnabled
+                                  ? null
+                                  : TextStyle(color: Colors.red.shade700),
                             ),
-                            IconButton(
-                              tooltip: 'Удалить',
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () async {
-                                final ok = await _confirmDeleteDialog(
-                                    context, nameNumber);
-                                if (ok) await _deleteRow(row);
-                              },
-                            ),
-                          ],
-                        ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Изменить',
+                            icon: const Icon(Icons.edit_outlined),
+                            onPressed: () => _showFormDialog(row: row),
+                          ),
+                          const SizedBox(width: 8),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Switch(
+                                value: isEnabled,
+                                onChanged: (value) => unawaited(
+                                  _handleToggleForm(row, value, nameNumber),
+                                ),
+                              ),
+                              if (!isEnabled && disabledComment.isNotEmpty)
+                                SizedBox(
+                                  width: 180,
+                                  child: Text(
+                                    disabledComment,
+                                    textAlign: TextAlign.end,
+                                    style: TextStyle(
+                                      color: Colors.red.shade700,
+                                      fontSize: 12,
+                                    ),
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                       ),
                     );
                   },

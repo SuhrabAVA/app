@@ -1366,6 +1366,8 @@ class WarehouseProvider with ChangeNotifier {
     String? formSize,
     String? formProductType,
     String? formColors,
+    bool isEnabled = true,
+    String? disabledComment,
   }) async {
     await _ensureAuthed();
 
@@ -1379,6 +1381,9 @@ class WarehouseProvider with ChangeNotifier {
       if (formProductType != null) 'product_type': formProductType,
       if (formColors != null) 'colors': formColors,
       'status': 'in_stock',
+      'is_enabled': isEnabled,
+      if (disabledComment != null && disabledComment.trim().isNotEmpty)
+        'disabled_comment': disabledComment.trim(),
     };
     final inserted =
         await _sb.from('forms').insert(insertData).select().single();
@@ -1483,6 +1488,9 @@ class WarehouseProvider with ChangeNotifier {
     String? formSize,
     String? formProductType,
     String? formColors,
+    bool? isEnabled,
+    String? disabledComment,
+    String? status,
   }) async {
     await _ensureAuthed();
     final updates = <String, dynamic>{};
@@ -1493,6 +1501,14 @@ class WarehouseProvider with ChangeNotifier {
     if (formSize != null) updates['size'] = formSize;
     if (formProductType != null) updates['product_type'] = formProductType;
     if (formColors != null) updates['colors'] = formColors;
+    if (isEnabled != null) updates['is_enabled'] = isEnabled;
+    if (disabledComment != null) {
+      updates['disabled_comment'] =
+          disabledComment.trim().isEmpty ? null : disabledComment.trim();
+    } else if (isEnabled == true) {
+      updates['disabled_comment'] = null;
+    }
+    if (status != null) updates['status'] = status;
 
     if (imageBytes != null && imageBytes.isNotEmpty) {
       try {
