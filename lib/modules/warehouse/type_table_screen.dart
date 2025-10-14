@@ -336,10 +336,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     final base = <String>[
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
-      if (typeKey == 'stationery') 'stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
       if (typeKey == 'pens') 'warehouse_stationery_inventories',
-      if (typeKey == 'pens') 'stationery_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paint_inventories',
       if (typeKey == 'material') 'material_inventories',
