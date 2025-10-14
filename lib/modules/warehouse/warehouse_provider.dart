@@ -831,6 +831,7 @@ class WarehouseProvider with ChangeNotifier {
               fk: itemId,
               qtyCol: invValue,
               'by_name': byName,
+              'type': itemType,
             };
             if (itemType == 'stationery') {
               payload['table_key'] = _stationeryKey;
@@ -869,6 +870,13 @@ class WarehouseProvider with ChangeNotifier {
                     }
                     rethrow;
                   }
+                }
+
+                if (code == '42703' && payload.containsKey('type')) {
+                  final p4 = Map<String, dynamic>.from(payload)..remove('type');
+                  await _sb.from(table).insert(p4);
+                  inserted = true;
+                  break;
                 }
 
                 if (code == '42703') {
