@@ -888,6 +888,7 @@ class WarehouseProvider with ChangeNotifier {
       if (reason != null && reason.isNotEmpty) 'reason': reason,
       'by_name': byName,
       'employee': byName,
+      'employee_name': byName,
     };
     if (itemType == 'pens') {
       penExtras = await _resolvePenLogExtras(itemId: itemId);
@@ -951,6 +952,7 @@ class WarehouseProvider with ChangeNotifier {
       'reason': reason,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'by_name': byName,
+      'employee_name': byName,
     };
     if (itemType == 'pens') {
       writeoffEntry.addAll(penExtras);
@@ -1080,6 +1082,7 @@ class WarehouseProvider with ChangeNotifier {
                   qtyCol: invValue,
                   'by_name': byName,
                   'employee': byName,
+                  'employee_name': byName,
                   'type': itemType,
                 };
                 if (penExtras.isNotEmpty) {
@@ -1150,6 +1153,7 @@ class WarehouseProvider with ChangeNotifier {
       'note': trimmedNote,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'by_name': byName,
+      'employee_name': byName,
     };
     if (penExtras.isNotEmpty) invEntry.addAll(penExtras);
     list.insert(0, invEntry);
@@ -1435,6 +1439,13 @@ class WarehouseProvider with ChangeNotifier {
       if (sanitized.containsKey('employee') &&
           (matches('employee') || code == '42703')) {
         final next = Map<String, dynamic>.from(sanitized)..remove('employee');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (sanitized.containsKey('employee_name') &&
+          (matches('employee_name') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)
+          ..remove('employee_name');
         return _tryInsertWarehouseLog(table, next);
       }
 
