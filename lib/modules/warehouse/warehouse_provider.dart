@@ -978,29 +978,35 @@ class WarehouseProvider with ChangeNotifier {
     }
     final tables = _inventoryTables(itemType);
     final String? createdBy = _sb.auth.currentUser?.id;
-    final fkCandidates = <String>{
-      'item_id',
-      'stationery_id',
-      'paper_id',
-      'paint_id',
-      'material_id',
-      'tmc_id',
-      'fk_id',
-      if (_invMap[itemType]?['fk'] != null) _invMap[itemType]!['fk']!,
-    }.toList();
-    final qtyColumns = <String>{
-      'counted_qty',
-      'quantity',
-      'qty',
-      'factual',
-      if (_invMap[itemType]?['qty'] != null) _invMap[itemType]!['qty']!,
-    }.toList();
-    final noteColumns = <String>{
-      'note',
-      'comment',
-      'reason',
-      if (_invMap[itemType]?['note'] != null) _invMap[itemType]!['note']!,
-    }.toList();
+    final fkCandidates = _prioritizeCandidates(
+      _invMap[itemType]?['fk'],
+      const [
+        'item_id',
+        'stationery_id',
+        'paper_id',
+        'paint_id',
+        'material_id',
+        'tmc_id',
+        'fk_id',
+      ],
+    );
+    final qtyColumns = _prioritizeCandidates(
+      _invMap[itemType]?['qty'],
+      const [
+        'counted_qty',
+        'quantity',
+        'qty',
+        'factual',
+      ],
+    );
+    final noteColumns = _prioritizeCandidates(
+      _invMap[itemType]?['note'],
+      const [
+        'note',
+        'comment',
+        'reason',
+      ],
+    );
     final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
         ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
         : AuthHelper.currentUserName!;
@@ -1112,9 +1118,11 @@ class WarehouseProvider with ChangeNotifier {
                         updateQuery = updateQuery.eq(
                             'table_key', tableKeyValue as Object);
                       }
-                      await updateQuery;
-                      inserted = true;
-                      break;
+                      final response = await updateQuery.select();
+                      if (_hasAffectedRows(response)) {
+                        inserted = true;
+                        break;
+                      }
                     } catch (_) {}
                   }
                 }
@@ -1387,6 +1395,25 @@ class WarehouseProvider with ChangeNotifier {
         lower == 'warehouse_stationeries';
   }
 
+  List<String> _prioritizeCandidates(
+    String? preferred,
+    List<String> fallbacks,
+  ) {
+    final seen = <String>{};
+    final ordered = <String>[];
+    void addCandidate(String? value) {
+      final candidate = value?.trim();
+      if (candidate == null || candidate.isEmpty) return;
+      if (seen.add(candidate)) ordered.add(candidate);
+    }
+
+    addCandidate(preferred);
+    for (final value in fallbacks) {
+      addCandidate(value);
+    }
+    return ordered;
+  }
+
   List<String> _tableKeyCandidatesFor(String typeKey) {
     final Set<String> keys = <String>{};
     final String trimmed = _stationeryKey.trim();
@@ -1411,6 +1438,13 @@ class WarehouseProvider with ChangeNotifier {
         .map((String e) => e.trim())
         .where((String e) => e.isNotEmpty)
         .toList();
+  }
+
+  bool _hasAffectedRows(dynamic response) {
+    if (response == null) return false;
+    if (response is List) return response.isNotEmpty;
+    if (response is Map) return response.isNotEmpty;
+    return true;
   }
 
   Future<bool> _tryInsertWarehouseLog(
