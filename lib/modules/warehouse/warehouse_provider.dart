@@ -832,6 +832,9 @@ class WarehouseProvider with ChangeNotifier {
           'counted': invValue,
           'by_name': byName,
         };
+        if (itemType == 'stationery') {
+          params['table_key'] = _stationeryKey;
+        }
         if (trimmedNote != null) {
           params['note'] = trimmedNote;
         }
