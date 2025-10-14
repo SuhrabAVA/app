@@ -1165,24 +1165,46 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                     const TextInputType.numberWithOptions(decimal: true),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _paperDiameterColor,
-                decoration: const InputDecoration(
-                  labelText: 'Тип бумаги',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(
-                      value: 'white', child: Text('Белая бумага')),
-                  DropdownMenuItem(
-                      value: 'brown', child: Text('Коричневая бумага')),
-                ],
-                onChanged: (v) => setState(() => _paperDiameterColor = v),
-                validator: (v) {
-                  if (_paperMethod == 'diameter' && (v == null || v.isEmpty)) {
+              FormField<String>(
+                initialValue: _paperDiameterColor,
+                validator: (value) {
+                  final current = value ?? _paperDiameterColor;
+                  if (_paperMethod == 'diameter' && (current == null || current.isEmpty)) {
                     return 'Выберите тип бумаги';
                   }
                   return null;
+                },
+                builder: (state) {
+                  final options = const <Map<String, String>>[
+                    {'key': 'white', 'label': 'Белый крафт'},
+                    {'key': 'brown', 'label': 'Крафт коричневый'},
+                  ];
+                  return InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Тип бумаги',
+                      border: const OutlineInputBorder(),
+                      errorText: state.errorText,
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: options.map((opt) {
+                        final key = opt['key']!;
+                        final label = opt['label']!;
+                        final isSelected = _paperDiameterColor == key;
+                        return ChoiceChip(
+                          label: Text(label),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _paperDiameterColor = selected ? key : null;
+                            });
+                            state.didChange(selected ? key : null);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  );
                 },
               ),
             ],

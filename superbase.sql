@@ -920,3 +920,106 @@ begin
     alter table public.analytics add column "timestamp" bigint;
   end if;
 end $$;
+-- Warehouse deleted records archive
+create extension if not exists pgcrypto;
+
+create table if not exists public.warehouse_deleted_records (
+  id uuid primary key default gen_random_uuid(),
+  entity_type text not null,
+  entity_id text,
+  payload jsonb not null default '{}'::jsonb,
+  reason text,
+  extra jsonb not null default '{}'::jsonb,
+  deleted_by text,
+  deleted_at timestamptz not null default now(),
+  name text generated always as (
+    nullif(coalesce(payload->>'description', payload->>'name', payload->>'title'), '')
+  ) stored,
+  quantity numeric generated always as (
+    case
+      when coalesce(payload->>'quantity', payload->>'qty', payload->>'count') ~ '^-?[0-9]+(\.[0-9]+)?$'
+        then coalesce(payload->>'quantity', payload->>'qty', payload->>'count')::numeric
+      else null
+    end
+  ) stored,
+  unit text generated always as (
+    nullif(coalesce(payload->>'unit', payload->>'units'), '')
+  ) stored,
+  paper_format text generated always as (
+    nullif(coalesce(payload->>'format', payload->>'size'), '')
+  ) stored,
+  grammage text generated always as (
+    nullif(payload->>'grammage', '')
+  ) stored,
+  comment text generated always as (
+    nullif(coalesce(payload->>'note', payload->>'comment'), '')
+  ) stored,
+  employee text generated always as (
+    nullif(coalesce(extra->>'employee', payload->>'by_name', deleted_by), '')
+  ) stored
+);
+
+alter table public.warehouse_deleted_records enable row level security;
+
+create index if not exists warehouse_deleted_records_entity_type_idx
+  on public.warehouse_deleted_records (entity_type, deleted_at desc);
+
+create index if not exists warehouse_deleted_records_employee_idx
+  on public.warehouse_deleted_records (employee);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'warehouse_deleted_records'
+      and policyname = 'warehouse_deleted_records_select'
+  ) then
+    create policy warehouse_deleted_records_select on public.warehouse_deleted_records
+      for select
+      using (auth.uid() is not null);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'warehouse_deleted_records'
+      and policyname = 'warehouse_deleted_records_insert'
+  ) then
+    create policy warehouse_deleted_records_insert on public.warehouse_deleted_records
+      for insert
+      with check (auth.uid() is not null);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'warehouse_deleted_records'
+      and policyname = 'warehouse_deleted_records_update'
+  ) then
+    create policy warehouse_deleted_records_update on public.warehouse_deleted_records
+      for update
+      using (auth.uid() is not null);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'warehouse_deleted_records'
+      and policyname = 'warehouse_deleted_records_delete'
+  ) then
+    create policy warehouse_deleted_records_delete on public.warehouse_deleted_records
+      for delete
+      using (auth.uid() is not null);
+  end if;
+end $$;
+

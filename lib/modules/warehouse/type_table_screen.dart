@@ -223,7 +223,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       'note': 'note'
     },
     'paper': {
-      'table': 'paper_inventories',
+      'table': 'papers_inventories',
       'fk': 'paper_id',
       'qty': 'counted_qty',
       'note': 'note'
@@ -331,7 +331,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
-      if (typeKey == 'paper') 'paper_inventories',
+      if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paint_inventories',
       if (typeKey == 'material') 'material_inventories',
     ];
