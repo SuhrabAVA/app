@@ -228,12 +228,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         Timer(const Duration(milliseconds: 250), () => _reloadForms(search: value));
   }
 
+  void _updateManagerDisplayController() {
+    if (widget.order != null) return;
+    final display = _selectedManager?.trim() ?? '';
+    if (_managerDisplayController.text == display) {
+      return;
+    }
+    _managerDisplayController.value = TextEditingValue(
+      text: display,
+      selection: TextSelection.collapsed(offset: display.length),
+    );
+  }
+
   final _formKey = GlobalKey<FormState>();
   final _uuid = const Uuid();
   final SupabaseClient _sb = Supabase.instance.client;
 
   // Персонал: выбранный менеджер из списка сотрудников с ролью «Менеджер»
   String? _selectedManager;
+  final TextEditingController _managerDisplayController = TextEditingController();
   // Список доступных менеджеров (ФИО), загружается из PersonnelProvider
   List<String> _managerNames = [];
   // Клиент и комментарии
@@ -370,6 +383,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _selectedManager = currentUser;
       }
     }
+    _updateManagerDisplayController();
     _customerController = TextEditingController(text: template?.customer ?? '');
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
@@ -642,6 +656,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           !_managerNames.contains(_selectedManager)) {
         _selectedManager = null;
       }
+      _updateManagerDisplayController();
       final warehouse = context.read<WarehouseProvider>();
       // Восстановим краски из параметров заказа, если есть
       _restorePaints(warehouse);
@@ -733,6 +748,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _formSearchDebounce?.cancel();
     _formSearchFocusNode.dispose();
     _formSearchCtl.dispose();
+    _managerDisplayController.dispose();
 
     _stageTemplateController.removeListener(_onStageTemplateTextChanged);
     _stageTemplateController.dispose();
@@ -1874,27 +1890,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             const SizedBox(height: 8),
             // Менеджер: при создании заказ назначается автоматически текущему сотруднику.
             if (widget.order == null)
-              FormField<String>(
+              TextFormField(
+                controller: _managerDisplayController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Менеджер',
+                  border: OutlineInputBorder(),
+                  hintText: '—',
+                ),
                 validator: (_) {
                   final name = _selectedManager?.trim() ?? '';
                   if (name.isEmpty) {
                     return 'Менеджер не определён';
                   }
                   return null;
-                },
-                builder: (field) {
-                  final display = _selectedManager?.trim() ?? '';
-                  if (field.value != display) {
-                    field.didChange(display);
-                  }
-                  return InputDecorator(
-                    decoration: InputDecoration(
-                      labelText: 'Менеджер',
-                      border: const OutlineInputBorder(),
-                      errorText: field.errorText,
-                    ),
-                    child: Text(display.isEmpty ? '—' : display),
-                  );
                 },
               )
             else

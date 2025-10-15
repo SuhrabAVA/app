@@ -2039,17 +2039,40 @@ class WarehouseProvider with ChangeNotifier {
 
     if (query != null && query.trim().isNotEmpty) {
       final q = query.trim();
-      sel = sel.or('series.ilike.%' +
-          q +
-          '%,code.ilike.%' +
-          q +
-          '%,title.ilike.%' +
-          q +
-          '%,description.ilike.%' +
-          q +
-          '%,number::text.ilike.%' +
-          q +
-          '%');
+      final sanitized = q.replaceAll("'", "''");
+      final normalized = q.replaceAll(RegExp(r'\s+'), '');
+      final sanitizedNormalized = normalized.replaceAll("'", "''");
+      final List<String> orFilters = [
+        'series.ilike.%$sanitized%',
+        'code.ilike.%$sanitized%',
+        'title.ilike.%$sanitized%',
+        'description.ilike.%$sanitized%',
+        'number::text.ilike.%$sanitized%',
+      ];
+      if (sanitizedNormalized != sanitized) {
+        orFilters.addAll(<String>[
+          'series.ilike.%$sanitizedNormalized%',
+          'code.ilike.%$sanitizedNormalized%',
+          'number::text.ilike.%$sanitizedNormalized%',
+        ]);
+      }
+      final combinationMatch =
+          RegExp(r'^([^\d]+?)(\d+)$', unicode: true).firstMatch(normalized);
+      if (combinationMatch != null) {
+        final rawSeries = combinationMatch.group(1)!.trim();
+        final rawNumber = combinationMatch.group(2)!;
+        if (rawSeries.isNotEmpty) {
+          final sanitizedSeries = rawSeries.replaceAll("'", "''");
+          var numberPart = rawNumber.replaceFirst(RegExp(r'^0+'), '');
+          if (numberPart.isEmpty) {
+            numberPart = '0';
+          }
+          final sanitizedNumber = numberPart.replaceAll("'", "''");
+          orFilters.add(
+              'and(series.ilike.%$sanitizedSeries%,number::text.ilike.%$sanitizedNumber%)');
+        }
+      }
+      sel = sel.or(orFilters.join(','));
     }
 
     final data = await sel.order('number', ascending: false).limit(limit);
