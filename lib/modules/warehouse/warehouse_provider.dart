@@ -977,7 +977,8 @@ class WarehouseProvider with ChangeNotifier {
       await _resolvePensTable();
     }
     final tables = _inventoryTables(itemType);
-    final String? createdBy = _sb.auth.currentUser?.id;
+    final String? createdBy =
+        _sb.auth.currentUser?.id ?? AuthHelper.currentUserId;
     List<String> prioritize(String? preferred, List<String> fallbacks) {
       final seen = <String>{};
       final ordered = <String>[];
@@ -1033,6 +1034,59 @@ class WarehouseProvider with ChangeNotifier {
         : const {};
 
     bool inserted = false;
+    String _formatSupabaseError(PostgrestException error) {
+      final parts = <String>[
+        if ((error.message ?? '').trim().isNotEmpty) error.message!.trim(),
+        if ((error.details ?? '').trim().isNotEmpty) error.details!.trim(),
+        if ((error.hint ?? '').trim().isNotEmpty) error.hint!.trim(),
+      ];
+      return parts.isEmpty ? 'Неизвестная ошибка Supabase' : parts.join(' ');
+    }
+
+    if (itemType == 'stationery' && !inserted) {
+      const tableName = 'warehouse_stationery_inventories';
+      const requiredColumns = <String>{
+        'item_id',
+        'factual',
+        'note',
+        'created_by',
+        'by_name',
+        'created_at',
+      };
+      try {
+        await _sb
+            .from(tableName)
+            .select(requiredColumns.join(','))
+            .limit(0);
+      } on PostgrestException catch (error) {
+        final message = _formatSupabaseError(error);
+        throw Exception(
+          'Ошибка структуры таблицы $tableName: $message',
+        );
+      }
+
+      final payload = <String, dynamic>{
+        'item_id': itemId,
+        'factual': invValue,
+        if (trimmedNote != null) 'note': trimmedNote,
+        'by_name': byName,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      if (createdBy != null) {
+        payload['created_by'] = createdBy;
+      }
+
+      try {
+        await _sb.from(tableName).insert(payload);
+        inserted = true;
+      } on PostgrestException catch (error) {
+        final message = _formatSupabaseError(error);
+        throw Exception(
+          'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
+        );
+      }
+    }
+
     if (!inserted) {
       final rpcType = _inventoryRpcType(itemType);
       if (rpcType != null) {
