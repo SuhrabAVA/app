@@ -1,4 +1,6 @@
 // lib/modules/orders/edit_order_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
@@ -73,6 +75,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Переключатель новая/старая форма
   // В UI далее используем _useOldForm для показа блоков
   final TextEditingController _formSearchCtl = TextEditingController();
+  final FocusNode _formSearchFocusNode = FocusNode();
+  Timer? _formSearchDebounce;
   String _formSeries = 'F';
   List<Map<String, dynamic>> _formResults = [];
   Map<String, dynamic>? _selectedOldFormRow;
@@ -145,18 +149,47 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Future<void> _reloadForms({String? search}) async {
+    if (!mounted) return;
     setState(() => _loadingForms = true);
     try {
       final wp = WarehouseProvider();
-      // Не фильтруем по _formSeries, поскольку series теперь хранит полное название
-      _formResults = await wp.searchForms(
+      final results = await wp.searchForms(
         query: search ?? _formSearchCtl.text,
         limit: 50,
       );
+      if (!mounted) return;
+      setState(() {
+        _formResults = results;
+        _loadingForms = false;
+      });
     } catch (_) {
-    } finally {
-      if (mounted) setState(() => _loadingForms = false);
+      if (mounted) {
+        setState(() => _loadingForms = false);
+      }
     }
+  }
+
+  void _onFormSearchChanged(String value) {
+    final trimmed = value.trim();
+    setState(() {
+      if (trimmed.isEmpty) {
+        _selectedOldFormRow = null;
+        _selectedOldForm = null;
+      } else {
+        final selectedValue =
+            _selectedOldFormRow != null ? _oldFormInputValue(_selectedOldFormRow!) : null;
+        if (_selectedOldFormRow != null && selectedValue != trimmed) {
+          _selectedOldFormRow = null;
+        }
+        if (_selectedOldFormRow == null) {
+          _selectedOldForm = trimmed;
+        }
+      }
+    });
+
+    _formSearchDebounce?.cancel();
+    _formSearchDebounce =
+        Timer(const Duration(milliseconds: 250), () => _reloadForms(search: value));
   }
 
   final _formKey = GlobalKey<FormState>();
@@ -646,6 +679,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _customerController.removeListener(_updateStockExtra);
     _customerController.dispose();
     _commentsController.dispose();
+
+    _formSearchDebounce?.cancel();
+    _formSearchFocusNode.dispose();
+    _formSearchCtl.dispose();
 
     _stageTemplateController.removeListener(_onStageTemplateTextChanged);
     _stageTemplateController.dispose();
@@ -1382,7 +1419,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       try {
         final wp = WarehouseProvider();
         int? selectedFormNumber;
-        String series;
+        String series = 'F';
         String? formCodeToSave;
 
         if (_isOldForm) {
@@ -1408,29 +1445,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             formCodeToSave = code;
           }
         } else {
-          // Создание новой формы: собираем данные автоматически
-          final customer = _customerController.text.trim();
-          final formSize = _composeFormSize();
-          final formProductType = _composeFormProductType();
+          // Создание новой формы: сохраняем только если указаны краски
           final formColors = _composeFormColors();
-          series = customer.isNotEmpty ? customer : 'F';
-          final created = await wp.createFormAndReturn(
-            series: series,
-            title: formSize,
-            description: formColors,
-            formSize: formSize,
-            formProductType: formProductType,
-            formColors: formColors,
-            imageBytes: _newFormImageBytes,
-          );
-          selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
-          final s = (created['series'] ?? '').toString();
-          if (s.isNotEmpty) series = s;
-          final c = (created['code'] ?? '').toString();
-          if (c.isNotEmpty) formCodeToSave = c;
-          try {
-            await _reloadForms();
-          } catch (_) {}
+          if (formColors != null && formColors.trim().isNotEmpty) {
+            final customer = _customerController.text.trim();
+            final formSize = _composeFormSize();
+            final formProductType = _composeFormProductType();
+            series = customer.isNotEmpty ? customer : 'F';
+            final created = await wp.createFormAndReturn(
+              series: series,
+              title: formSize,
+              description: formColors,
+              formSize: formSize,
+              formProductType: formProductType,
+              formColors: formColors,
+              imageBytes: _newFormImageBytes,
+            );
+            selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
+            final s = (created['series'] ?? '').toString();
+            if (s.isNotEmpty) series = s;
+            final c = (created['code'] ?? '').toString();
+            if (c.isNotEmpty) formCodeToSave = c;
+            try {
+              await _reloadForms();
+            } catch (_) {}
+          }
         }
 
         if (selectedFormNumber != null) {
@@ -1819,7 +1858,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             const SizedBox(height: 4),
             if (widget.order == null) ...[
               SwitchListTile(
-                title: const Text('Старая форма'),
+                title: Text(_isOldForm ? 'Старая форма' : 'Новая форма'),
                 value: _isOldForm,
                 onChanged: (val) {
                   setState(() {
@@ -1833,59 +1872,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       _selectedOldForm = null;
                     }
                   });
+                  if (val) {
+                    _reloadForms();
+                  }
                 },
                 contentPadding: EdgeInsets.zero,
               ),
               if (_isOldForm) ...[
                 TextField(
                   controller: _formSearchCtl,
+                  focusNode: _formSearchFocusNode,
                   decoration: const InputDecoration(
                     hintText: 'Поиск формы (название или номер)',
                     prefixIcon: Icon(Icons.search),
                     border: OutlineInputBorder(),
                   ),
-                  onChanged: (v) => _reloadForms(search: v),
+                  onChanged: _onFormSearchChanged,
                 ),
                 const SizedBox(height: 8),
-                DropdownButtonFormField<Map<String, dynamic>>(
-                  value: _selectedOldFormRow,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Формы со склада',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: _formResults.map((f) {
-                    final series = (f['series'] ?? '').toString();
-                    final n = ((f['number'] ?? 0) as num).toInt();
-                    final nameNumber = series.isNotEmpty
-                        ? '$series ${n > 0 ? n.toString() : ''}'
-                        : (n > 0 ? n.toString() : '?');
-                    final size =
-                        (f['size'] ?? f['title'] ?? '').toString().trim();
-                    final productType =
-                        (f['product_type'] ?? '').toString().trim();
-                    final colors =
-                        (f['colors'] ?? f['description'] ?? '').toString().trim();
-                    final subtitle = <String>[];
-                    if (size.isNotEmpty) subtitle.add('Размер: $size');
-                    if (productType.isNotEmpty) {
-                      subtitle.add('Тип: $productType');
-                    }
-                    if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
-                    return DropdownMenuItem<Map<String, dynamic>>(
-                      value: f,
-                      child: Text(subtitle.isEmpty
-                          ? nameNumber
-                          : '$nameNumber - ${subtitle.join(' - ')}'),
-                    );
-                  }).toList(),
-                  onChanged: (v) => setState(() => _selectedOldFormRow = v),
-                ),
                 if (_loadingForms)
                   const Padding(
-                    padding: EdgeInsets.only(top: 8),
+                    padding: EdgeInsets.only(bottom: 8),
                     child: LinearProgressIndicator(minHeight: 2),
                   ),
+                _buildOldFormSearchResults(),
               ] else ...[
                 const SizedBox(height: 8),
                 if (_newFormImageBytes != null)
@@ -3302,6 +3312,93 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildOldFormSearchResults() {
+    if (_formResults.isEmpty) {
+      if (_loadingForms || _formSearchCtl.text.trim().isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            'Ничего не найдено',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      );
+    }
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 240),
+      child: Material(
+        elevation: 2,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: _formResults.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final form = _formResults[index];
+            final series = (form['series'] ?? '').toString().trim();
+            final number = ((form['number'] ?? 0) as num).toInt();
+            final code = (form['code'] ?? '').toString().trim();
+            final size = (form['size'] ?? form['title'] ?? '').toString().trim();
+            final productType = (form['product_type'] ?? '').toString().trim();
+            final colors = (form['colors'] ?? form['description'] ?? '')
+                .toString()
+                .trim();
+            final subtitle = <String>[];
+            if (size.isNotEmpty) subtitle.add('Размер: $size');
+            if (productType.isNotEmpty) subtitle.add('Тип: $productType');
+            if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
+            final primaryTitle = () {
+              if (series.isNotEmpty && number > 0) {
+                return '$series $number';
+              }
+              if (number > 0) return number.toString();
+              if (code.isNotEmpty) return code;
+              return series.isNotEmpty ? series : 'Форма';
+            }();
+            final isSelected = identical(form, _selectedOldFormRow);
+            return ListTile(
+              title: Text(subtitle.isEmpty
+                  ? primaryTitle
+                  : '$primaryTitle - ${subtitle.join(' - ')}'),
+              selected: isSelected,
+              trailing: isSelected ? const Icon(Icons.check) : null,
+              onTap: () {
+                setState(() {
+                  _selectedOldFormRow = form;
+                  _selectedOldForm = null;
+                });
+                final value = _oldFormInputValue(form);
+                _formSearchCtl.value = TextEditingValue(
+                  text: value,
+                  selection: TextSelection.collapsed(offset: value.length),
+                );
+                FocusScope.of(context).unfocus();
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _oldFormInputValue(Map<String, dynamic> form) {
+    final series = (form['series'] ?? '').toString().trim();
+    final number = ((form['number'] ?? 0) as num).toInt();
+    final code = (form['code'] ?? '').toString().trim();
+    if (series.isNotEmpty && number > 0) {
+      return '$series $number';
+    }
+    if (number > 0) return number.toString();
+    if (code.isNotEmpty) return code;
+    return series;
   }
 
 // Формируем отображаемый код формы для текущего состояния (создание/редактирование)
