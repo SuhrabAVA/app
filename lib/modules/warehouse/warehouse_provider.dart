@@ -1115,8 +1115,20 @@ class WarehouseProvider with ChangeNotifier {
 
       try {
         await _sb.from(tableName).insert(payload);
+        debugPrint('✅ Инвентаризация сохранена в $tableName');
         inserted = true;
       } on PostgrestException catch (error) {
+        debugPrint(
+            '❌ Ошибка Supabase при сохранении инвентаризации в $tableName: ${error.message}');
+        debugPrint('📋 Детали: ${error.details}');
+        debugPrint('🧩 Код: ${error.code}');
+        final Map<String, dynamic> postgrestPayload = error.toJson();
+        final dynamic postgrestMessage = postgrestPayload['message'];
+        if (postgrestMessage != null) {
+          debugPrint('🪲 PostgREST сообщение: $postgrestMessage');
+        } else {
+          debugPrint('🪲 PostgREST ответ: $postgrestPayload');
+        }
         if (supportsTableKey && _isMissingColumn(error, 'table_key')) {
           final fallbackPayload = Map<String, dynamic>.from(payload)
             ..remove('table_key');
@@ -1135,6 +1147,10 @@ class WarehouseProvider with ChangeNotifier {
             'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
           );
         }
+      } catch (error) {
+        debugPrint(
+            '⚠️ Общая ошибка при сохранении инвентаризации в $tableName: $error');
+        rethrow;
       }
     }
 
