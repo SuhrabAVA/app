@@ -1459,9 +1459,34 @@ class WarehouseProvider with ChangeNotifier {
   // ===================== HELPERS =====================
   bool _tableRequiresStationeryKey(String table) {
     final lower = table.toLowerCase();
-    return lower == 'warehouse_stationery' ||
-        lower == 'stationery' ||
-        lower == 'warehouse_stationeries';
+    const keyRequired = {
+      'warehouse_stationery',
+      'warehouse_stationeries',
+      'warehouse_stationery_arrivals',
+      'warehouse_stationery_writeoffs',
+      'warehouse_stationery_inventories',
+      'stationery',
+      'stationery_arrivals',
+      'stationery_writeoffs',
+      'stationery_inventories',
+    };
+
+    if (keyRequired.contains(lower)) {
+      return true;
+    }
+
+    // На некоторых проектах таблицы создаются с префиксом или суффиксом,
+    // но всё равно содержат обязательный столбец table_key.
+    // Если в названии есть "stationery" и "arrival"/"writeoff"/"inventory",
+    // считаем, что ключ нужен.
+    if (lower.contains('stationery') &&
+        (lower.contains('arrival') ||
+            lower.contains('writeoff') ||
+            lower.contains('inventor'))) {
+      return true;
+    }
+
+    return false;
   }
 
   List<String> _tableKeyCandidatesFor(String typeKey) {
