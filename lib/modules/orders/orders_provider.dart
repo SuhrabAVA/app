@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'material_model.dart';
 import 'order_model.dart';
 import 'product_model.dart';
+import '../../utils/auth_helper.dart';
 
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -259,6 +260,147 @@ class OrdersProvider with ChangeNotifier {
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
     }
+  }
+
+  Future<void> shipOrder(OrderModel order) async {
+    await _ensureAuthed();
+
+    final index = _orders.indexWhere((o) => o.id == order.id);
+    if (index == -1) return;
+
+    final double plannedQty = order.product.quantity.toDouble();
+    final double actualQty =
+        order.actualQty ?? order.product.quantity.toDouble();
+    final double safeActual = actualQty < 0 ? 0 : actualQty;
+    final double writeoffQty =
+        safeActual < plannedQty ? safeActual : plannedQty.toDouble();
+    final double leftoverQty =
+        safeActual > plannedQty ? (safeActual - plannedQty) : 0;
+
+    try {
+      await _processCategoryShipment(
+        order: order,
+        actualQty: safeActual,
+        writeoffQty: writeoffQty,
+        leftoverQty: leftoverQty,
+      );
+    } catch (e, st) {
+      debugPrint('❌ shipOrder stock error: $e\n$st');
+      rethrow;
+    }
+
+    final DateTime now = DateTime.now();
+    final previous = _orders[index];
+    final updated = order.copyWith(
+      status: OrderStatus.completed.name,
+      shippedAt: now,
+      shippedBy: AuthHelper.currentUserName ?? '',
+      shippedQty: writeoffQty,
+    );
+
+    _orders[index] = updated;
+    notifyListeners();
+
+    try {
+      await _supabase
+          .from('orders')
+          .update(updated.toMap()..remove('id'))
+          .eq('id', order.id);
+      await _logOrderEvent(order.id, 'Отгрузка', 'Заказ отгружен');
+    } catch (e, st) {
+      debugPrint('❌ shipOrder update error: $e\n$st');
+      _orders[index] = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> _processCategoryShipment({
+    required OrderModel order,
+    required double actualQty,
+    required double writeoffQty,
+    required double leftoverQty,
+  }) async {
+    final productName = order.product.type.trim();
+    final customerName = order.customer.trim();
+    if (productName.isEmpty || customerName.isEmpty) {
+      return;
+    }
+
+    if (writeoffQty <= 0 && leftoverQty <= 0) {
+      return;
+    }
+
+    final sanitizedProduct = productName.replaceAll("'", "''");
+    final category = await _supabase
+        .from('warehouse_categories')
+        .select('id')
+        .or('title.eq.' + sanitizedProduct + ',code.eq.' + sanitizedProduct)
+        .maybeSingle();
+
+    if (category == null || category['id'] == null) {
+      throw Exception('Категория для "$productName" не найдена');
+    }
+
+    final String categoryId = category['id'].toString();
+
+    Map<String, dynamic>? item;
+    try {
+      final rows = await _supabase
+          .from('warehouse_category_items')
+          .select('id, quantity, table_key')
+          .eq('category_id', categoryId)
+          .eq('description', customerName);
+      if (rows is List && rows.isNotEmpty) {
+        final raw = rows.first;
+        if (raw is Map) {
+          item = Map<String, dynamic>.from(raw);
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ load category items error: $e');
+    }
+
+    final double initialQty = actualQty > 0 ? actualQty : writeoffQty;
+    if (item == null) {
+      final inserted = await _supabase
+          .from('warehouse_category_items')
+          .insert({
+            'category_id': categoryId,
+            'description': customerName,
+            'quantity': initialQty,
+          })
+          .select('id, quantity, table_key')
+          .single();
+      item = Map<String, dynamic>.from(inserted);
+    } else {
+      final double currentQty =
+          (item['quantity'] is num) ? (item['quantity'] as num).toDouble() : 0.0;
+      if (initialQty > currentQty) {
+        await _supabase
+            .from('warehouse_category_items')
+            .update({'quantity': initialQty})
+            .match({'id': item['id']});
+        item['quantity'] = initialQty;
+      }
+    }
+
+    final String itemId = item['id'].toString();
+
+    if (writeoffQty > 0) {
+      await _supabase.from('warehouse_category_writeoffs').insert({
+        'item_id': itemId,
+        'qty': writeoffQty,
+        'reason': customerName,
+        'by_name': AuthHelper.currentUserName ?? '',
+      });
+    }
+
+    final double nextQty = leftoverQty > 0 ? leftoverQty : 0;
+    await _supabase
+        .from('warehouse_category_items')
+        .update({'quantity': nextQty})
+        .match({'id': itemId});
   }
 
   // ===== HISTORY =====

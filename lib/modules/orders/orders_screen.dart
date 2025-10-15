@@ -38,6 +38,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<String> _filterCustomers = [];
   List<String> _filterProducts = [];
   DateTimeRange? _filterDateRange;
+  final Set<String> _shippingInProgress = <String>{};
 
   /// Проверяет, полностью ли заполнены ключевые поля заказа для отправки
   /// в производство. Заказ считается «незавершённым», если не выбран
@@ -281,6 +282,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // Filter by search query
     final query = _searchController.text.toLowerCase();
     List<OrderModel> filtered = all.where((order) {
+      if (order.isShipped) return false;
       final matchesSearch = query.isEmpty ||
           order.id.toLowerCase().contains(query) ||
           order.customer.toLowerCase().contains(query);
@@ -352,6 +354,80 @@ class _OrdersScreenState extends State<OrdersScreen> {
         break;
     }
     return filtered;
+  }
+
+  String _formatQuantity(num value) {
+    final doubleVal = value.toDouble();
+    if (doubleVal == doubleVal.roundToDouble()) {
+      return doubleVal.toInt().toString();
+    }
+    return doubleVal.toStringAsFixed(2);
+  }
+
+  Future<void> _confirmShipment(OrderModel order) async {
+    final double plannedQty = order.product.quantity.toDouble();
+    final double actualQty = order.actualQty ?? plannedQty;
+    final double safeActual = actualQty < 0 ? 0 : actualQty;
+    final double writeoffQty =
+        safeActual < plannedQty ? safeActual : plannedQty.toDouble();
+    final double leftoverQty =
+        safeActual > plannedQty ? (safeActual - plannedQty) : 0;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Подтвердить отгрузку?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Заказчик: ${order.customer}'),
+              const SizedBox(height: 8),
+              Text('Тираж: ${_formatQuantity(plannedQty)}'),
+              Text('Факт: ${_formatQuantity(safeActual)}'),
+              const SizedBox(height: 8),
+              Text('К списанию: ${_formatQuantity(writeoffQty)}'),
+              Text('Остаток: ${_formatQuantity(leftoverQty)}'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Отгрузить'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _shippingInProgress.add(order.id));
+    try {
+      await context.read<OrdersProvider>().shipOrder(order);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Заказ отправлен в архив')), 
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось выполнить отгрузку: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _shippingInProgress.remove(order.id));
+      }
+    }
   }
 
   void _showSortOptions() {
@@ -639,6 +715,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final product = order.product;
     final totalQty = product.quantity;
     final missing = _isIncomplete(order);
+    final bool isCompleted = statusLabel == 'Завершено';
+    final bool isShipping = _shippingInProgress.contains(order.id);
     return SizedBox(
       width: 320,
       child: Card(
@@ -775,6 +853,53 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     },
                     child: const Text('Редактировать'),
                   ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Менеджер: ${order.manager.isEmpty ? '—' : order.manager}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        if (isCompleted)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Text(
+                              'Факт: ${order.actualQty != null ? _formatQuantity(order.actualQty!) : '—'} шт.',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (isCompleted && !order.isShipped)
+                    ElevatedButton(
+                      onPressed: isShipping ? null : () => _confirmShipment(order),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: isShipping
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text('Отгрузить'),
+                    ),
                 ],
               ),
             ],
