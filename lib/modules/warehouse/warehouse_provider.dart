@@ -2047,15 +2047,26 @@ class WarehouseProvider with ChangeNotifier {
         'code.ilike.%$sanitized%',
         'title.ilike.%$sanitized%',
         'description.ilike.%$sanitized%',
-        'number::text.ilike.%$sanitized%',
       ];
+
+      final int? numericQuery = int.tryParse(normalized);
+      if (numericQuery != null) {
+        orFilters.add('number.eq.$numericQuery');
+      }
+
       if (sanitizedNormalized != sanitized) {
         orFilters.addAll(<String>[
           'series.ilike.%$sanitizedNormalized%',
           'code.ilike.%$sanitizedNormalized%',
-          'number::text.ilike.%$sanitizedNormalized%',
         ]);
+        if (numericQuery == null) {
+          final maybeNumeric = int.tryParse(sanitizedNormalized);
+          if (maybeNumeric != null) {
+            orFilters.add('number.eq.$maybeNumeric');
+          }
+        }
       }
+
       final combinationMatch =
           RegExp(r'^([^\d]+?)(\d+)$', unicode: true).firstMatch(normalized);
       if (combinationMatch != null) {
@@ -2063,15 +2074,14 @@ class WarehouseProvider with ChangeNotifier {
         final rawNumber = combinationMatch.group(2)!;
         if (rawSeries.isNotEmpty) {
           final sanitizedSeries = rawSeries.replaceAll("'", "''");
-          var numberPart = rawNumber.replaceFirst(RegExp(r'^0+'), '');
-          if (numberPart.isEmpty) {
-            numberPart = '0';
+          final parsedNumber = int.tryParse(rawNumber);
+          if (parsedNumber != null) {
+            orFilters.add(
+              'and(series.ilike.%$sanitizedSeries%,number.eq.$parsedNumber)');
           }
-          final sanitizedNumber = numberPart.replaceAll("'", "''");
-          orFilters.add(
-              'and(series.ilike.%$sanitizedSeries%,number::text.ilike.%$sanitizedNumber%)');
         }
       }
+
       sel = sel.or(orFilters.join(','));
     }
 
