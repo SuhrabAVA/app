@@ -118,14 +118,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (series.isNotEmpty && no != null) {
           final form = await _sb
               .from('forms')
-              .select('title, description, image_url')
+              .select('title, description, image_url, size, product_type, colors')
               .eq('series', series)
               .eq('number', no)
               .maybeSingle();
           if (mounted) {
             setState(() {
-              _orderFormSize = (form?['title'] ?? '').toString();
-              _orderFormColors = (form?['description'] ?? '').toString();
+              final sizeValue =
+                  (form?['size'] ?? form?['title'] ?? '').toString();
+              final colorsValue =
+                  (form?['colors'] ?? form?['description'] ?? '').toString();
+              _orderFormSize = sizeValue;
+              _orderFormProductType = (form?['product_type'] ?? '').toString();
+              _orderFormColors = colorsValue;
               final url = form?['image_url'];
               if (url is String && url.isNotEmpty) {
                 _orderFormImageUrl = url;
@@ -227,17 +232,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String? _orderFormDisplay;
   // Детали формы для существующего заказа
   String? _orderFormSize;
+  String? _orderFormProductType;
   String? _orderFormColors;
   String? _orderFormImageUrl;
 
   List<String> _availableForms = [];
   // Номер новой формы по умолчанию (max+1)
   int _defaultFormNumber = 1;
-  final TextEditingController _newFormNoCtl = TextEditingController();
-  // Поля для создания новой формы (название, размер/тип, цвета)
-  final TextEditingController _newFormNameCtl = TextEditingController();
-  final TextEditingController _newFormSizeCtl = TextEditingController();
-  final TextEditingController _newFormColorsCtl = TextEditingController();
   // Фото новой формы (при создании)
   Uint8List? _newFormImageBytes;
   // Выбранный номер старой формы
@@ -570,7 +571,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             setState(() {
               _availableForms = [];
               _defaultFormNumber = next;
-              _newFormNoCtl.text = _defaultFormNumber.toString();
               _dataLoaded = true;
             });
           }
@@ -654,10 +654,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _matNameCtl.dispose();
     _matFormatCtl.dispose();
     _matGramCtl.dispose();
-    _newFormNoCtl.dispose();
-    _newFormNameCtl.dispose();
-    _newFormSizeCtl.dispose();
-    _newFormColorsCtl.dispose();
     super.dispose();
   }
 
@@ -715,24 +711,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraItem = null;
         });
       }
-    }
-  }
-
-  /// Обновляет номер новой формы в зависимости от введённого названия.
-  Future<void> _updateNewFormNumber() async {
-    // Только при создании нового заказа и при выборе «новая форма»
-    if (widget.order != null || _isOldForm) return;
-    final name = _newFormNameCtl.text.trim();
-    if (name.isEmpty) {
-      setState(() => _newFormNoCtl.text = '');
-      return;
-    }
-    try {
-      final wp = context.read<WarehouseProvider>();
-      final next = await wp.getNextFormNumber(series: name);
-      setState(() => _newFormNoCtl.text = next.toString());
-    } catch (_) {
-      // ignore errors
     }
   }
 
@@ -1430,15 +1408,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             formCodeToSave = code;
           }
         } else {
-          // Создание новой формы: используем введённые данные
-          final name = _newFormNameCtl.text.trim();
-          final size = _newFormSizeCtl.text.trim();
-          final colors = _newFormColorsCtl.text.trim();
-          series = name.isNotEmpty ? name : 'F';
+          // Создание новой формы: собираем данные автоматически
+          final customer = _customerController.text.trim();
+          final formSize = _composeFormSize();
+          final formProductType = _composeFormProductType();
+          final formColors = _composeFormColors();
+          series = customer.isNotEmpty ? customer : 'F';
           final created = await wp.createFormAndReturn(
             series: series,
-            title: size.isNotEmpty ? size : null,
-            description: colors.isNotEmpty ? colors : null,
+            title: formSize,
+            description: formColors,
+            formSize: formSize,
+            formProductType: formProductType,
+            formColors: formColors,
             imageBytes: _newFormImageBytes,
           );
           selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
@@ -1767,7 +1749,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 labelText: 'Заказчик',
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) => _updateStockExtra(),
+              onChanged: (_) {
+                setState(() {});
+                _updateStockExtra();
+              },
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
                   return 'Введите заказчика';
@@ -1841,10 +1826,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     _isOldForm = val;
                     if (_isOldForm) {
                       // Переключение на старые формы - очищаем поля новой формы
-                      _newFormNameCtl.clear();
-                      _newFormSizeCtl.clear();
-                      _newFormColorsCtl.clear();
-                      _newFormNoCtl.clear();
                       _newFormImageBytes = null;
                     } else {
                       // Переключение на новые формы - сбрасываем выбранные старые
@@ -1879,10 +1860,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     final nameNumber = series.isNotEmpty
                         ? '$series ${n > 0 ? n.toString() : ''}'
                         : (n > 0 ? n.toString() : '?');
-                    final size = (f['title'] ?? '').toString();
-                    final colors = (f['description'] ?? '').toString();
+                    final size =
+                        (f['size'] ?? f['title'] ?? '').toString().trim();
+                    final productType =
+                        (f['product_type'] ?? '').toString().trim();
+                    final colors =
+                        (f['colors'] ?? f['description'] ?? '').toString().trim();
                     final subtitle = <String>[];
-                    if (size.isNotEmpty) subtitle.add(size);
+                    if (size.isNotEmpty) subtitle.add('Размер: $size');
+                    if (productType.isNotEmpty) {
+                      subtitle.add('Тип: $productType');
+                    }
                     if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
                     return DropdownMenuItem<Map<String, dynamic>>(
                       value: f,
@@ -1899,46 +1887,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     child: LinearProgressIndicator(minHeight: 2),
                   ),
               ] else ...[
-                // Ввод данных для новой формы
-                TextFormField(
-                  controller: _newFormNameCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'Название формы',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Введите название формы';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _newFormSizeCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'Размер, Тип продукта',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _newFormColorsCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'Цвета',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _newFormNoCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'Номер новой формы',
-                    border: OutlineInputBorder(),
-                  ),
-                  readOnly: true,
-                ),
-                // Предпросмотр и выбор фото новой формы
+                _buildNewFormSummary(),
                 const SizedBox(height: 8),
                 if (_newFormImageBytes != null)
                   Padding(
@@ -1962,7 +1911,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     Text('Номер формы: ${_orderFormNo}'),
                   if (_orderFormSize != null &&
                       _orderFormSize!.trim().isNotEmpty)
-                    Text('Размер, Тип продукта: ${_orderFormSize!}'),
+                    Text('Размер: ${_orderFormSize!}'),
+                  if (_orderFormProductType != null &&
+                      _orderFormProductType!.trim().isNotEmpty)
+                    Text('Тип продукта: ${_orderFormProductType!}'),
                   if (_orderFormColors != null &&
                       _orderFormColors!.trim().isNotEmpty)
                     Text('Цвета: ${_orderFormColors!}'),
@@ -2363,12 +2315,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       border: OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.number,
-                    onChanged: (val) {
-                      // Разрешаем ввод дробей с запятой, заменяем запятую на точку.
-                      final normalized = val.replaceAll(',', '.');
+                  onChanged: (val) {
+                    // Разрешаем ввод дробей с запятой, заменяем запятую на точку.
+                    final normalized = val.replaceAll(',', '.');
+                    setState(() {
                       product.width = double.tryParse(normalized) ?? 0;
-                      _scheduleStagePreviewUpdate();
-                    },
+                    });
+                    _scheduleStagePreviewUpdate();
+                  },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2381,10 +2335,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       border: OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.number,
-                    onChanged: (val) {
-                      final normalized = val.replaceAll(',', '.');
+                  onChanged: (val) {
+                    final normalized = val.replaceAll(',', '.');
+                    setState(() {
                       product.height = double.tryParse(normalized) ?? 0;
-                    },
+                    });
+                  },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2397,10 +2353,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       border: OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.number,
-                    onChanged: (val) {
-                      final normalized = val.replaceAll(',', '.');
+                  onChanged: (val) {
+                    final normalized = val.replaceAll(',', '.');
+                    setState(() {
                       product.depth = double.tryParse(normalized) ?? 0;
-                    },
+                    });
+                  },
                   ),
                 ),
               ],
@@ -3122,6 +3080,101 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  String? _composeFormProductType() {
+    final type = _product.type.trim();
+    return type.isEmpty ? null : type;
+  }
+
+  String? _composeFormColors() {
+    final names = <String>[];
+    final seen = <String>{};
+    for (final paint in _paints) {
+      final name = paint.displayName.trim();
+      if (name.isEmpty) continue;
+      if (seen.add(name)) {
+        names.add(name);
+      }
+    }
+    if (names.isEmpty) return null;
+    return names.join(', ');
+  }
+
+  String? _composeFormSize() {
+    final parts = <String>[];
+    final width = _formatDimension(_product.width);
+    if (width != null) parts.add('Ширина: $width мм');
+
+    double? lengthValue;
+    if (_product.length != null && _product.length! > 0) {
+      lengthValue = _product.length;
+    } else if (_product.depth > 0) {
+      lengthValue = _product.depth;
+    }
+    final length = _formatDimension(lengthValue);
+    if (length != null) parts.add('Длина: $length мм');
+
+    final height = _formatDimension(_product.height);
+    if (height != null) parts.add('Высота: $height мм');
+
+    if (parts.isEmpty) return null;
+    return parts.join(', ');
+  }
+
+  String? _formatDimension(double? value) {
+    if (value == null) return null;
+    if (value.isNaN || value.isInfinite) return null;
+    if (value <= 0) return null;
+    final double normalized = value;
+    final int rounded = normalized.round();
+    if ((normalized - rounded).abs() < 1e-6) {
+      return rounded.toString();
+    }
+    var str = normalized.toStringAsFixed(2);
+    while (str.contains('.') &&
+        (str.endsWith('0') || str.endsWith('.'))) {
+      str = str.substring(0, str.length - 1);
+    }
+    return str;
+  }
+
+  Widget _buildNewFormSummary() {
+    String displayOrDash(String? value) {
+      if (value == null) return '—';
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? '—' : trimmed;
+    }
+
+    final items = <MapEntry<String, String>>[
+      MapEntry('Название формы (заказчик)',
+          displayOrDash(_customerController.text)),
+      MapEntry('Размер', displayOrDash(_composeFormSize())),
+      MapEntry('Тип продукта', displayOrDash(_composeFormProductType())),
+      MapEntry('Цвета', displayOrDash(_composeFormColors())),
+    ];
+
+    final children = <Widget>[];
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      children.add(
+        InputDecorator(
+          decoration: InputDecoration(
+            labelText: item.key,
+            border: const OutlineInputBorder(),
+          ),
+          child: Text(item.value),
+        ),
+      );
+      if (i != items.length - 1) {
+        children.add(const SizedBox(height: 8));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
+  }
+
   Widget _buildPaintsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3167,13 +3220,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         ),
                         onChanged: (value) {
                           final trimmed = value.trim();
-                          row.name = trimmed.isEmpty ? null : trimmed;
-                          if (row.tmc != null &&
-                              row.tmc!.description.toLowerCase() !=
-                                  trimmed.toLowerCase()) {
-                            row.tmc = null;
-                            row.exceeded = false;
-                          }
+                          setState(() {
+                            row.name = trimmed.isEmpty ? null : trimmed;
+                            if (row.tmc != null &&
+                                row.tmc!.description.toLowerCase() !=
+                                    trimmed.toLowerCase()) {
+                              row.tmc = null;
+                              row.exceeded = false;
+                            }
+                          });
                           _handlePaintsChanged();
                         },
                       );
@@ -3308,12 +3363,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         return '-';
       } else {
-        // Отображаем название и номер новой формы. Номер не дополняем нулями,
-        // чтобы сохранить читаемость (например: "Орал Пик 585").
-        final name = _newFormNameCtl.text.trim();
-        final n = int.tryParse(_newFormNoCtl.text) ?? _defaultFormNumber;
-        if (name.isNotEmpty && n > 0) {
-          return '$name ${n.toString()}';
+        // Отображаем заказчика и номер новой формы, если данные доступны.
+        final customer = _customerController.text.trim();
+        final n = _defaultFormNumber;
+        if (customer.isNotEmpty && n > 0) {
+          return '$customer $n';
         }
         if (n > 0) return n.toString();
         return '-';
