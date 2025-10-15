@@ -100,6 +100,9 @@ class OrderModel {
   String comments;
 
   double? actualQty;
+  DateTime? shippedAt;
+  String? shippedBy;
+  double? shippedQty;
 
   /// Храним строкой (name), чтобы не падать на незнакомых значениях
   String status;
@@ -133,6 +136,9 @@ class OrderModel {
     this.assignmentId,
     bool? assignmentCreated,
     this.actualQty,
+    this.shippedAt,
+    this.shippedBy,
+    this.shippedQty,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -176,6 +182,9 @@ class OrderModel {
         if (assignmentId != null) 'assignment_id': assignmentId,
         'assignment_created': assignmentCreated,
         if (actualQty != null) 'actual_qty': actualQty,
+        if (shippedAt != null) 'shipped_at': shippedAt!.toIso8601String(),
+        if (shippedBy != null) 'shipped_by': shippedBy,
+        if (shippedQty != null) 'shipped_qty': shippedQty,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -261,6 +270,71 @@ class OrderModel {
       assignmentCreated: assignmentCreatedBool,
       actualQty: _parseDouble(
           _pickAny(map, const ['actual_qty', 'actualQty', 'actualQuantity'])),
+      shippedAt:
+          _parseDate(_pickAny(map, const ['shipped_at', 'shippedAt'])),
+      shippedBy: (_pickAny(map, const ['shipped_by', 'shippedBy']) as String?),
+      shippedQty:
+          _parseDouble(_pickAny(map, const ['shipped_qty', 'shippedQty'])),
+    );
+  }
+
+  bool get isShipped => shippedAt != null;
+
+  OrderModel copyWith({
+    String? manager,
+    String? customer,
+    DateTime? orderDate,
+    DateTime? dueDate,
+    ProductModel? product,
+    List<String>? additionalParams,
+    String? handle,
+    String? cardboard,
+    MaterialModel? material,
+    double? makeready,
+    double? val,
+    String? pdfUrl,
+    String? stageTemplateId,
+    bool? contractSigned,
+    bool? paymentDone,
+    String? comments,
+    String? status,
+    String? assignmentId,
+    bool? assignmentCreated,
+    double? actualQty,
+    DateTime? shippedAt,
+    String? shippedBy,
+    double? shippedQty,
+  }) {
+    return OrderModel(
+      id: id,
+      manager: manager ?? this.manager,
+      customer: customer ?? this.customer,
+      orderDate: orderDate ?? this.orderDate,
+      dueDate: dueDate ?? this.dueDate,
+      product: product ?? this.product,
+      additionalParams:
+          additionalParams ?? List<String>.from(this.additionalParams),
+      handle: handle ?? this.handle,
+      cardboard: cardboard ?? this.cardboard,
+      material: material ?? this.material,
+      makeready: makeready ?? this.makeready,
+      val: val ?? this.val,
+      pdfUrl: pdfUrl ?? this.pdfUrl,
+      stageTemplateId: stageTemplateId ?? this.stageTemplateId,
+      isOldForm: isOldForm,
+      newFormNo: newFormNo,
+      formSeries: formSeries,
+      formCode: formCode,
+      contractSigned: contractSigned ?? this.contractSigned,
+      paymentDone: paymentDone ?? this.paymentDone,
+      comments: comments ?? this.comments,
+      status: status ?? this.status,
+      assignmentId: assignmentId ?? this.assignmentId,
+      assignmentCreated: assignmentCreated ?? this.assignmentCreated,
+      actualQty: actualQty ?? this.actualQty,
+      shippedAt: shippedAt ?? this.shippedAt,
+      shippedBy: shippedBy ?? this.shippedBy,
+      shippedQty: shippedQty ?? this.shippedQty,
     );
   }
 }
