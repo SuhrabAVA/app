@@ -1035,19 +1035,27 @@ class WarehouseProvider with ChangeNotifier {
 
     bool inserted = false;
     String _formatSupabaseError(PostgrestException error) {
-      final parts = <String>[
-        if ((error.message ?? '').trim().isNotEmpty) error.message!.trim(),
-        if ((error.details ?? '').trim().isNotEmpty) error.details!.trim(),
-        if ((error.hint ?? '').trim().isNotEmpty) error.hint!.trim(),
-      ];
+      String? _normalize(Object? value) {
+        if (value == null) return null;
+        final text = value.toString().trim();
+        return text.isEmpty ? null : text;
+      }
+
+      final parts = <String>[];
+      final message = _normalize(error.message);
+      if (message != null) parts.add(message);
+      final details = _normalize(error.details);
+      if (details != null) parts.add(details);
+      final hint = _normalize(error.hint);
+      if (hint != null) parts.add(hint);
       return parts.isEmpty ? 'Неизвестная ошибка Supabase' : parts.join(' ');
     }
 
     bool _isMissingColumn(PostgrestException error, String column) {
       final needle = column.toLowerCase();
-      bool containsNeedle(String? value) {
+      bool containsNeedle(Object? value) {
         if (value == null) return false;
-        final lower = value.toLowerCase();
+        final lower = value.toString().toLowerCase();
         return lower.contains(needle) &&
             (lower.contains('column') ||
                 lower.contains('does not exist') ||
