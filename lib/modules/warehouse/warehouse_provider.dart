@@ -1043,6 +1043,24 @@ class WarehouseProvider with ChangeNotifier {
       return parts.isEmpty ? 'Неизвестная ошибка Supabase' : parts.join(' ');
     }
 
+    bool _isMissingColumn(PostgrestException error, String column) {
+      final needle = column.toLowerCase();
+      bool containsNeedle(String? value) {
+        if (value == null) return false;
+        final lower = value.toLowerCase();
+        return lower.contains(needle) &&
+            (lower.contains('column') ||
+                lower.contains('does not exist') ||
+                lower.contains('undefined'));
+      }
+
+      final code = (error.code ?? '').toLowerCase();
+      if (code == '42703') return true;
+      return containsNeedle(error.message) ||
+          containsNeedle(error.details) ||
+          containsNeedle(error.hint);
+    }
+
     if (itemType == 'stationery' && !inserted) {
       const tableName = 'warehouse_stationery_inventories';
       const requiredColumns = <String>{
@@ -1053,16 +1071,32 @@ class WarehouseProvider with ChangeNotifier {
         'by_name',
         'created_at',
       };
+      const optionalColumns = <String>{'table_key'};
+      bool supportsTableKey = false;
+
+      Future<void> _ensureColumns(Iterable<String> columns) async {
+        await _sb.from(tableName).select(columns.join(',')).limit(0);
+      }
+
       try {
-        await _sb
-            .from(tableName)
-            .select(requiredColumns.join(','))
-            .limit(0);
+        await _ensureColumns([...requiredColumns, ...optionalColumns]);
+        supportsTableKey = true;
       } on PostgrestException catch (error) {
-        final message = _formatSupabaseError(error);
-        throw Exception(
-          'Ошибка структуры таблицы $tableName: $message',
-        );
+        if (_isMissingColumn(error, 'table_key')) {
+          try {
+            await _ensureColumns(requiredColumns);
+          } on PostgrestException catch (inner) {
+            final message = _formatSupabaseError(inner);
+            throw Exception(
+              'Ошибка структуры таблицы $tableName: $message',
+            );
+          }
+        } else {
+          final message = _formatSupabaseError(error);
+          throw Exception(
+            'Ошибка структуры таблицы $tableName: $message',
+          );
+        }
       }
 
       final payload = <String, dynamic>{
@@ -1075,19 +1109,36 @@ class WarehouseProvider with ChangeNotifier {
       if (createdBy != null) {
         payload['created_by'] = createdBy;
       }
+      if (supportsTableKey) {
+        payload['table_key'] = _stationeryKey;
+      }
 
       try {
         await _sb.from(tableName).insert(payload);
         inserted = true;
       } on PostgrestException catch (error) {
-        final message = _formatSupabaseError(error);
-        throw Exception(
-          'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
-        );
+        if (supportsTableKey && _isMissingColumn(error, 'table_key')) {
+          final fallbackPayload = Map<String, dynamic>.from(payload)
+            ..remove('table_key');
+          try {
+            await _sb.from(tableName).insert(fallbackPayload);
+            inserted = true;
+          } on PostgrestException catch (fallbackError) {
+            final message = _formatSupabaseError(fallbackError);
+            throw Exception(
+              'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
+            );
+          }
+        } else {
+          final message = _formatSupabaseError(error);
+          throw Exception(
+            'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
+          );
+        }
       }
     }
 
-    if (!inserted) {
+    if (!inserted && itemType != 'stationery') {
       final rpcType = _inventoryRpcType(itemType);
       if (rpcType != null) {
         final params = <String, dynamic>{
@@ -1460,6 +1511,9 @@ class WarehouseProvider with ChangeNotifier {
   bool _tableRequiresStationeryKey(String table) {
     final lower = table.toLowerCase();
     return lower == 'warehouse_stationery' ||
+        lower == 'warehouse_stationery_inventories' ||
+        lower == 'warehouse_stationery_writeoffs' ||
+        lower == 'warehouse_stationery_arrivals' ||
         lower == 'stationery' ||
         lower == 'warehouse_stationeries';
   }
@@ -1542,7 +1596,8 @@ class WarehouseProvider with ChangeNotifier {
 
       if (sanitized.containsKey('table_key') &&
           (matches('table_key') || code == '42703')) {
-        return false;
+        final next = Map<String, dynamic>.from(sanitized)..remove('table_key');
+        return _tryInsertWarehouseLog(table, next);
       }
 
       if (_isMissingRelationError(e, table)) {
