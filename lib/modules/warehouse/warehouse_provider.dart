@@ -784,12 +784,15 @@ class WarehouseProvider with ChangeNotifier {
       if (qty > currentQty) {
         throw Exception('Недостаточно материала на складе');
       }
+      final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+          ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+          : AuthHelper.currentUserName!;
       await _sb.rpc('writeoff', params: {
         'type': resolvedType,
         'item': id,
         'qty': qty,
         'reason': reason,
-        'by_name': (AuthHelper.currentUserName ?? '')
+        'by_name': byName,
       });
       await fetchTmc();
     } catch (e) {

@@ -370,6 +370,7 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'item_id': r['item_id'],
                 'qty': r['qty'],
                 'reason': r['reason'],
+                'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
               })
           .toList()
@@ -404,6 +405,12 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
       m[it['id'].toString()] = (it['description'] ?? '').toString();
     }
     return m;
+  }
+
+  String _resolveOperatorName() {
+    final raw = (AuthHelper.currentUserName ?? '').trim();
+    if (raw.isNotEmpty) return raw;
+    return AuthHelper.isTechLeader ? 'Технический лидер' : '—';
   }
 
   // ======== CRUD: items ========
@@ -574,11 +581,13 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
 
     final q = (double.tryParse(qty.text.trim()) ?? 0).abs();
 
+    final byName = _resolveOperatorName();
+
     await _sb.from('warehouse_category_writeoffs').insert({
       'item_id': itemId,
       'qty': q,
       'reason': reason.text.trim(),
-      'by_name': AuthHelper.currentUserName ?? '',
+      'by_name': byName,
     });
 
     final newQty = (((item['quantity'] as num?) ?? 0).toDouble() - q);
@@ -631,11 +640,13 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
 
     final q = (double.tryParse(counted.text.trim()) ?? 0);
 
+    final byName = _resolveOperatorName();
+
     await _sb.from('warehouse_category_inventories').insert({
       'item_id': itemId,
       'counted_qty': q,
       'note': note.text.trim(),
-      'by_name': AuthHelper.currentUserName ?? '',
+      'by_name': byName,
     });
 
     await _sb
@@ -774,9 +785,14 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final dtIso = (r['created_at'] ?? '').toString();
                     final dt = formatKostanayTimestamp(dtIso);
                     final reason = (r['reason'] ?? '').toString();
+                    final by = (r['by_name'] ?? '').toString();
+                    final subtitleParts = <String>[];
+                    if (dt.trim().isNotEmpty) subtitleParts.add(dt);
+                    if (reason.isNotEmpty) subtitleParts.add(reason);
+                    if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • −$qty'),
-                      subtitle: Text(reason.isEmpty ? dt : '$dt  •  $reason'),
+                      subtitle: Text(subtitleParts.join('  •  ')),
                     );
                   },
                 ),
