@@ -173,14 +173,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     try {
-      final wp = WarehouseProvider();
+      if (!mounted) return;
+      final wp = context.read<WarehouseProvider>();
       final results = await wp.searchForms(
         query: query,
         limit: 50,
       );
       if (!mounted) return;
       setState(() {
-        _formResults = results;
+        _formResults = results
+            .where((row) {
+              final dynamic enabledRaw = row['is_enabled'];
+              final bool enabled =
+                  enabledRaw is bool ? enabledRaw : ((row['status'] ?? '') != 'disabled');
+              return enabled;
+            })
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList();
         _loadingForms = false;
       });
     } catch (_) {
@@ -355,6 +364,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final initialManager =
         template is OrderModel ? (template as OrderModel).manager : '';
     _selectedManager = initialManager.isNotEmpty ? initialManager : null;
+    if (widget.order == null) {
+      final currentUser = AuthHelper.currentUserName?.trim();
+      if (currentUser != null && currentUser.isNotEmpty) {
+        _selectedManager = currentUser;
+      }
+    }
     _customerController = TextEditingController(text: template?.customer ?? '');
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
@@ -622,7 +637,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
       _managerNames = names;
-      if (_selectedManager != null &&
+      if (widget.order != null &&
+          _selectedManager != null &&
           !_managerNames.contains(_selectedManager)) {
         _selectedManager = null;
       }
@@ -1856,27 +1872,52 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             Text('Информация о заказе',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            // Менеджер: выбираем из списка сотрудников с должностью «Менеджер»
-            DropdownButtonFormField<String>(
-              value: _selectedManager,
-              decoration: const InputDecoration(
-                labelText: 'Менеджер',
-                border: OutlineInputBorder(),
+            // Менеджер: при создании заказ назначается автоматически текущему сотруднику.
+            if (widget.order == null)
+              FormField<String>(
+                validator: (_) {
+                  final name = _selectedManager?.trim() ?? '';
+                  if (name.isEmpty) {
+                    return 'Менеджер не определён';
+                  }
+                  return null;
+                },
+                builder: (field) {
+                  final display = _selectedManager?.trim() ?? '';
+                  if (field.value != display) {
+                    field.didChange(display);
+                  }
+                  return InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Менеджер',
+                      border: const OutlineInputBorder(),
+                      errorText: field.errorText,
+                    ),
+                    child: Text(display.isEmpty ? '—' : display),
+                  );
+                },
+              )
+            else
+              DropdownButtonFormField<String>(
+                value: _selectedManager,
+                decoration: const InputDecoration(
+                  labelText: 'Менеджер',
+                  border: OutlineInputBorder(),
+                ),
+                items: _managerNames
+                    .map((name) => DropdownMenuItem(
+                          value: name,
+                          child: Text(name),
+                        ))
+                    .toList(),
+                onChanged: (val) => setState(() => _selectedManager = val),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Выберите менеджера';
+                  }
+                  return null;
+                },
               ),
-              items: _managerNames
-                  .map((name) => DropdownMenuItem(
-                        value: name,
-                        child: Text(name),
-                      ))
-                  .toList(),
-              onChanged: (val) => setState(() => _selectedManager = val),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Выберите менеджера';
-                }
-                return null;
-              },
-            ),
             const SizedBox(height: 8),
             // Customer
             TextFormField(

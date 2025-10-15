@@ -406,6 +406,8 @@ class _FormsScreenState extends State<FormsScreen> {
           row['disabled_comment'] = comment;
           row['status'] = 'disabled';
         });
+        final search = _searchCtl.text.trim();
+        _reload(search: search.isEmpty ? null : search);
       } catch (e) {
         if (!mounted) return;
         setState(() {
@@ -435,6 +437,8 @@ class _FormsScreenState extends State<FormsScreen> {
           row['disabled_comment'] = null;
           row['status'] = nextStatus;
         });
+        final search = _searchCtl.text.trim();
+        _reload(search: search.isEmpty ? null : search);
       } catch (e) {
         if (!mounted) return;
         setState(() {
