@@ -398,11 +398,13 @@ class _FormsScreenState extends State<FormsScreen> {
           id: id,
           isEnabled: false,
           disabledComment: comment,
+          status: 'disabled',
         );
         if (!mounted) return;
         setState(() {
           row['is_enabled'] = false;
           row['disabled_comment'] = comment;
+          row['status'] = 'disabled';
         });
       } catch (e) {
         if (!mounted) return;
@@ -417,15 +419,21 @@ class _FormsScreenState extends State<FormsScreen> {
       }
     } else {
       try {
+        final nextStatus =
+            previousStatus == 'disabled' || previousStatus.isEmpty
+                ? 'in_stock'
+                : previousStatus;
         await wp.updateForm(
           id: id,
           isEnabled: true,
           disabledComment: null,
+          status: nextStatus,
         );
         if (!mounted) return;
         setState(() {
           row['is_enabled'] = true;
           row['disabled_comment'] = null;
+          row['status'] = nextStatus;
         });
       } catch (e) {
         if (!mounted) return;
