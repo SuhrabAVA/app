@@ -1887,7 +1887,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     child: LinearProgressIndicator(minHeight: 2),
                   ),
               ] else ...[
-                _buildNewFormSummary(),
                 const SizedBox(height: 8),
                 if (_newFormImageBytes != null)
                   Padding(
@@ -3135,44 +3134,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       str = str.substring(0, str.length - 1);
     }
     return str;
-  }
-
-  Widget _buildNewFormSummary() {
-    String displayOrDash(String? value) {
-      if (value == null) return '—';
-      final trimmed = value.trim();
-      return trimmed.isEmpty ? '—' : trimmed;
-    }
-
-    final items = <MapEntry<String, String>>[
-      MapEntry('Название формы (заказчик)',
-          displayOrDash(_customerController.text)),
-      MapEntry('Размер', displayOrDash(_composeFormSize())),
-      MapEntry('Тип продукта', displayOrDash(_composeFormProductType())),
-      MapEntry('Цвета', displayOrDash(_composeFormColors())),
-    ];
-
-    final children = <Widget>[];
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      children.add(
-        InputDecorator(
-          decoration: InputDecoration(
-            labelText: item.key,
-            border: const OutlineInputBorder(),
-          ),
-          child: Text(item.value),
-        ),
-      );
-      if (i != items.length - 1) {
-        children.add(const SizedBox(height: 8));
-      }
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
-    );
   }
 
   Widget _buildPaintsSection() {
