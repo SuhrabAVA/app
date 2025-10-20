@@ -12,38 +12,29 @@ import '../../utils/kostanay_time.dart';
 
 class WarehouseProvider with ChangeNotifier {
   // ====== PENS DEDICATED TABLE RESOLUTION ======
-  String? _resolvedPensTable; // e.g. 'handles', 'pens', 'warehouse_pens', etc.
+  String? _resolvedPensTable; // cached pens table name (expected 'warehouse_pens')
 
-  Future<String?> _resolvePensTable() async {
+  Future<String> _resolvePensTable() async {
     if (_resolvedPensTable != null) {
-      return _resolvedPensTable;
+      return _resolvedPensTable!;
     }
 
-    const candidates = <String>['warehouse_pens', 'pens', 'handles'];
+    const candidates = <String>['warehouse_pens'];
     for (final table in candidates) {
       try {
         await _sb.from(table).select('id').limit(1);
         _resolvedPensTable = table;
-        return _resolvedPensTable;
+        return _resolvedPensTable!;
       } on PostgrestException catch (error) {
         if (_isMissingRelationError(error, table)) {
           continue;
         }
         _resolvedPensTable = table;
-        return _resolvedPensTable;
-      } catch (_) {
-        continue;
+        return _resolvedPensTable!;
       }
     }
 
-    _resolvedPensTable = 'warehouse_stationery';
-    return _resolvedPensTable;
-  }
-
-  bool get _pensUseStationeryFallback {
-    final resolved = _resolvedPensTable;
-    if (resolved == null) return false;
-    return resolved.toLowerCase().contains('stationery');
+    throw Exception('Таблица склада ручек недоступна');
   }
 
   final SupabaseClient _sb = Supabase.instance.client;
@@ -212,47 +203,24 @@ class WarehouseProvider with ChangeNotifier {
       final m = await _sb.from('materials').select().order('description');
       final pr = await _sb.from('papers').select().order('description');
 
-      // --- Stationery (with optional dedicated pens table) ---
+      // --- Stationery (pens use dedicated table) ---
       List s = [];
       try {
         final keyLc = (_stationeryKey).toLowerCase().trim();
         final isPens =
             keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
-        String? pensTable;
         if (isPens) {
-          pensTable = await _resolvePensTable();
-          final bool useFallback =
-              pensTable == null || _pensUseStationeryFallback;
-          if (!useFallback && pensTable != null) {
-            // warehouse_pens обычно не имеет 'description' -> сортируем по created_at
-            final pensRaw =
-                await _sb.from(pensTable).select().order('created_at');
-            s = (pensRaw as List)
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-            s = s.map((row) {
-              row['__force_type__'] = 'pens';
-              return row;
-            }).toList();
-          } else {
-            final pensKeys = _tableKeyCandidatesFor('pens')
-                .map((k) => k.toLowerCase())
-                .toSet();
-            final sRaw = await _sb
-                .from('warehouse_stationery')
-                .select()
-                .order('description');
-            final filtered = (sRaw as List)
-                .where((row) => pensKeys.contains(
-                      (row['table_key'] ?? '').toString().toLowerCase().trim(),
-                    ))
-                .toList();
-            s = filtered.map((e) {
-              final mapped = Map<String, dynamic>.from(e);
-              mapped['__force_type__'] = 'pens';
-              return mapped;
-            }).toList();
-          }
+          final pensTable = await _resolvePensTable();
+          // warehouse_pens обычно не имеет 'description' -> сортируем по created_at
+          final pensRaw =
+              await _sb.from(pensTable).select().order('created_at');
+          s = (pensRaw as List)
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+          s = s.map((row) {
+            row['__force_type__'] = 'pens';
+            return row;
+          }).toList();
         } else {
           final sRaw = await _sb
               .from('warehouse_stationery')
@@ -445,7 +413,6 @@ class WarehouseProvider with ChangeNotifier {
     // ----------- РУЧКИ (dedicated table) -----------
     if (normalizedType == 'pens') {
       final pensTable = await _resolvePensTable();
-      final bool useFallback = pensTable == null || _pensUseStationeryFallback;
       // Expect description like "Вид • Цвет" or just name; try to split
       String raw = description;
       String name = raw;
@@ -482,42 +449,7 @@ class WarehouseProvider with ChangeNotifier {
         await _sb.from(tableName).insert(payload);
       }
 
-      Future<void> insertIntoStationeryFallback() async {
-        final fallbackDescription =
-            pensDescription.isEmpty ? description : pensDescription;
-        final payload = <String, dynamic>{
-          'id': newId,
-          'date': nowInKostanayIsoString(),
-          'supplier': supplier,
-          'description': fallbackDescription,
-          'unit': unitValue,
-          'quantity': 0,
-          'note': safeNote,
-          'table_key': _stationeryKey.trim().isNotEmpty
-              ? _stationeryKey.trim()
-              : 'ручки',
-          'low_threshold': lowThreshold ?? 0,
-          'critical_threshold': criticalThreshold ?? 0,
-          if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
-          if (resolvedBase64 != null) 'image_base64': resolvedBase64,
-        };
-        await _sb.from('warehouse_stationery').insert(payload);
-        _resolvedPensTable = 'warehouse_stationery';
-      }
-
-      if (!useFallback && pensTable != null) {
-        try {
-          await insertIntoPensTable(pensTable);
-        } on PostgrestException catch (error) {
-          if (_isMissingRelationError(error, pensTable)) {
-            await insertIntoStationeryFallback();
-          } else {
-            rethrow;
-          }
-        }
-      } else {
-        await insertIntoStationeryFallback();
-      }
+      await insertIntoPensTable(pensTable);
 
       await _logArrivalGeneric(
         typeKey: 'pens',
@@ -903,11 +835,8 @@ class WarehouseProvider with ChangeNotifier {
 
     bool inserted = false;
     PostgrestException? initialError;
-    final bool pensFallback = itemType == 'pens' && _pensUseStationeryFallback;
     final table = itemType == 'pens'
-        ? (pensFallback
-            ? 'warehouse_stationery_writeoffs'
-            : 'warehouse_pens_writeoffs')
+        ? 'warehouse_pens_writeoffs'
         : 'warehouse_stationery_writeoffs';
     try {
       inserted = await insertInto(table, payload);
@@ -916,34 +845,10 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     if (!inserted) {
-      final String tableName =
-          (itemType == 'pens') ? 'warehouse_pens_writeoffs' : table;
-      final code = (initialError?.code ?? '').toString().toLowerCase();
-      final message = (initialError?.message ?? '').toLowerCase();
-      if (itemType == 'pens' &&
-          (initialError == null ||
-              _isMissingRelationError(initialError, tableName) ||
-              message.contains('warehouse_pens_writeoffs'))) {
-        for (final key in _tableKeyCandidatesFor('pens')) {
-          final fallback = Map<String, dynamic>.from(payload)
-            ..['table_key'] = key;
-          inserted =
-              await insertInto('warehouse_stationery_writeoffs', fallback);
-          if (inserted) break;
-        }
-        if (!inserted) {
-          inserted = await insertInto(
-            'warehouse_stationery_writeoffs',
-            Map<String, dynamic>.from(payload),
-          );
-        }
-      } else if (initialError != null &&
-          !_isMissingRelationError(initialError, tableName)) {
+      if (initialError != null &&
+          !_isMissingRelationError(initialError, table)) {
         throw initialError!;
       }
-    }
-
-    if (!inserted) {
       throw Exception('Не удалось сохранить списание для $itemType');
     }
 
@@ -1174,45 +1079,35 @@ class WarehouseProvider with ChangeNotifier {
           'counted': invValue,
           'by_name': byName,
         };
-        if (itemType == 'stationery' || itemType == 'pens') {
+        if (itemType == 'stationery') {
           params['table_key'] = _stationeryKey;
         }
         if (trimmedNote != null) {
           params['note'] = trimmedNote;
         }
-        try {
-          await _sb.rpc('inventory_set', params: params);
-          inserted = true;
-        } on PostgrestException catch (e) {
-          String _lowercaseMessage(Object? value) =>
-              (value is String ? value : value?.toString() ?? '').toLowerCase();
-          final msg = _lowercaseMessage(e.message);
-          final details = _lowercaseMessage(e.details);
-          final hint = _lowercaseMessage(e.hint);
-          if (msg.contains('by_name')) {
-            final p2 = Map<String, dynamic>.from(params)..remove('by_name');
-            try {
-              await _sb.rpc('inventory_set', params: p2);
-              inserted = true;
-            } catch (_) {
+        if (itemType != 'pens') {
+          try {
+            await _sb.rpc('inventory_set', params: params);
+            inserted = true;
+          } on PostgrestException catch (e) {
+            String _lowercaseMessage(Object? value) =>
+                (value is String ? value : value?.toString() ?? '').toLowerCase();
+            final msg = _lowercaseMessage(e.message);
+            final details = _lowercaseMessage(e.details);
+            final hint = _lowercaseMessage(e.hint);
+            if (msg.contains('by_name')) {
+              final p2 = Map<String, dynamic>.from(params)..remove('by_name');
+              try {
+                await _sb.rpc('inventory_set', params: p2);
+                inserted = true;
+              } catch (_) {
+                inserted = false;
+              }
+            } else if (msg.contains('function inventory_set') ||
+                details.contains('function inventory_set') ||
+                hint.contains('function inventory_set')) {
               inserted = false;
             }
-          } else if (msg.contains('function inventory_set') ||
-              details.contains('function inventory_set') ||
-              hint.contains('function inventory_set')) {
-            inserted = false;
-          }
-        } catch (_) {
-          inserted = false;
-        }
-
-        if (!inserted && itemType == 'pens') {
-          final fallbackParams = Map<String, dynamic>.from(params)
-            ..['type'] = 'stationery'
-            ..['table_key'] = _stationeryKey;
-          try {
-            await _sb.rpc('inventory_set', params: fallbackParams);
-            inserted = true;
           } catch (_) {
             inserted = false;
           }
@@ -1322,21 +1217,15 @@ class WarehouseProvider with ChangeNotifier {
 
   List<String> _arrivalTables(String typeKey) {
     final hint = _arrMap[typeKey]?['table'];
-    final resolved = _resolvedPensTable;
-    final bool pensFallback =
-        typeKey == 'pens' && (resolved == null || _pensUseStationeryFallback);
     final base = <String>[
-      if (hint != null &&
-          !(pensFallback && hint.toLowerCase().contains('pens')))
-        hint,
-      if (typeKey == 'stationery' || pensFallback)
-        'warehouse_stationery_arrivals',
-      if (typeKey == 'stationery' || pensFallback) 'stationery_arrivals',
-      if (typeKey == 'pens' && !pensFallback) 'warehouse_pens_arrivals',
-      if (typeKey == 'pens' && !pensFallback && resolved != null)
-        '${resolved}_arrivals',
-      if (typeKey == 'pens' && !pensFallback) 'warehouse_stationery_arrivals',
-      if (typeKey == 'pens' && !pensFallback) 'stationery_arrivals',
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
+      if (typeKey == 'stationery') 'stationery_arrivals',
+      if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'pens' &&
+          _resolvedPensTable != null &&
+          _resolvedPensTable != 'warehouse_pens')
+        '${_resolvedPensTable}_arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
       if (typeKey == 'material') 'materials_arrivals',
@@ -1347,18 +1236,14 @@ class WarehouseProvider with ChangeNotifier {
 
   List<String> _inventoryTables(String typeKey) {
     final hint = _invMap[typeKey]?['table'];
-    final resolved = _resolvedPensTable;
-    final bool pensFallback =
-        typeKey == 'pens' && (resolved == null || _pensUseStationeryFallback);
     final base = <String>[
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
-      if (typeKey == 'pens' && !pensFallback) 'warehouse_pens_inventories',
-      if (typeKey == 'pens' && !pensFallback && resolved != null)
-        '${resolved}_inventories',
-      if (typeKey == 'pens' && !pensFallback)
-        'warehouse_stationery_inventories',
-      if (typeKey == 'pens' && pensFallback) 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'pens' &&
+          _resolvedPensTable != null &&
+          _resolvedPensTable != 'warehouse_pens')
+        '${_resolvedPensTable}_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paints_inventories',
       if (typeKey == 'material') 'materials_inventories',
@@ -1547,16 +1432,11 @@ class WarehouseProvider with ChangeNotifier {
 
   List<String> _tableKeyCandidatesFor(String typeKey) {
     final Set<String> keys = <String>{};
-    final String trimmed = _stationeryKey.trim();
-    if (trimmed.isNotEmpty) keys.add(trimmed);
+    if (typeKey == 'stationery') {
+      final String trimmed = _stationeryKey.trim();
+      if (trimmed.isNotEmpty) keys.add(trimmed);
+    }
     switch (typeKey) {
-      case 'pens':
-        for (final candidate in const ['ручки', 'pens', 'handles']) {
-          if (candidate.trim().isNotEmpty) {
-            keys.add(candidate);
-          }
-        }
-        break;
       case 'stationery':
         for (final candidate in const ['канцелярия', 'stationery']) {
           if (candidate.trim().isNotEmpty) {
@@ -1792,8 +1672,6 @@ class WarehouseProvider with ChangeNotifier {
   Future<String?> _detectTypeById(String id) async {
     try {
       final pensTable = await _resolvePensTable();
-      final bool pensFallback =
-          pensTable != null && pensTable.toLowerCase().contains('stationery');
       final p =
           await _sb.from('paints').select('id').eq('id', id).maybeSingle();
       if (p != null) return 'paint';
@@ -1803,39 +1681,20 @@ class WarehouseProvider with ChangeNotifier {
       final pr =
           await _sb.from('papers').select('id').eq('id', id).maybeSingle();
       if (pr != null) return 'paper';
-      if (pensTable != null && !pensFallback) {
-        final pe =
-            await _sb.from(pensTable).select('id').eq('id', id).maybeSingle();
-        if (pe != null) return 'pens';
-      }
+      final pe =
+          await _sb.from(pensTable).select('id').eq('id', id).maybeSingle();
+      if (pe != null) return 'pens';
       final sNew = await _sb
           .from('warehouse_stationery')
           .select('id, table_key')
           .eq('id', id)
           .maybeSingle();
       if (sNew != null) {
-        if (pensFallback) {
-          final key = (sNew['table_key'] ?? '').toString().toLowerCase().trim();
-          final pensKeys = _tableKeyCandidatesFor('pens')
-              .map((k) => k.toLowerCase())
-              .toSet();
-          if (pensKeys.contains(key)) {
-            return 'pens';
-          }
-        }
         return 'stationery';
       }
       final sOld =
           await _sb.from('stationery').select('id').eq('id', id).maybeSingle();
       if (sOld != null) return 'stationery';
-      if (pensTable == null || pensFallback) {
-        final pe = await _sb
-            .from('warehouse_pens')
-            .select('id')
-            .eq('id', id)
-            .maybeSingle();
-        if (pe != null) return 'pens';
-      }
     } catch (_) {}
     return null;
   }

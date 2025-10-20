@@ -306,8 +306,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         return const [
           'warehouse_pens',
           'pens',
-          'warehouse_stationery',
-          'stationery',
         ];
       default:
         return const ['papers'];
@@ -321,7 +319,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
-      if (typeKey == 'pens') 'warehouse_stationery_writeoffs',
       if (typeKey == 'paper') 'paper_writeoffs',
       if (typeKey == 'paint') 'paint_writeoffs',
       if (typeKey == 'material') 'material_writeoffs',
@@ -337,7 +334,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
-      if (typeKey == 'pens') 'warehouse_stationery_inventories',
       if (typeKey == 'paper') 'papers_inventories',
       if (typeKey == 'paint') 'paint_inventories',
       if (typeKey == 'material') 'material_inventories',
@@ -353,9 +349,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
-      if (typeKey == 'pens') 'warehouse_stationery_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
-      if (typeKey == 'pens') 'stationery_arrivals',
       'arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
