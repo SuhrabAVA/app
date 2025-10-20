@@ -1495,6 +1495,13 @@ class WarehouseProvider with ChangeNotifier {
         return _tryInsertWarehouseLog(table, next);
       }
 
+      if (sanitized.containsKey('created_by') &&
+          (matches('created_by') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)
+          ..remove('created_by');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
       if (sanitized.containsKey('type') &&
           (matches('type') || code == '42703')) {
         final next = Map<String, dynamic>.from(sanitized)..remove('type');
