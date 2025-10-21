@@ -1097,7 +1097,57 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         } catch (_) {}
 
+        int _findBobbinIndex() {
+          return stageMaps.indexWhere((m) {
+            final sid = (m['stageId'] as String?) ??
+                (m['stageid'] as String?) ??
+                (m['stage_id'] as String?) ??
+                (m['workplaceId'] as String?) ??
+                (m['workplace_id'] as String?) ??
+                (m['id'] as String?);
+            final title =
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            final byId = (__bobbinId != null && sid == __bobbinId);
+            final byName = title.contains('бобинорезка') ||
+                title.contains('бабинорезка') ||
+                title.contains('bobbin');
+            return byId || byName;
+          });
+        }
+
+        bool _removeBobbinStage() {
+          final idxBob = _findBobbinIndex();
+          if (idxBob >= 0) {
+            stageMaps.removeAt(idxBob);
+            return true;
+          }
+          return false;
+        }
+
+        bool _formatMatchesWidth() {
+          double? fmtW;
+          if (_matSelectedFormat != null &&
+              _matSelectedFormat!.trim().isNotEmpty) {
+            final match =
+                RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
+            if (match != null) {
+              fmtW = double.tryParse(match.group(1)!.replaceAll(',', '.'));
+            }
+          }
+          final dynamic widthValue = _product.widthB ?? _product.width;
+          double? widthB;
+          if (widthValue is num) {
+            widthB = widthValue.toDouble();
+          } else if (widthValue is String) {
+            widthB = double.tryParse(widthValue.replaceAll(',', '.'));
+          }
+          return fmtW != null && widthB != null && widthB > 0 &&
+              (fmtW - widthB).abs() <= 0.001;
+        }
+
         // paints present?
+        final bool __formatMatchesWidth = _formatMatchesWidth();
+
         bool __paintsFilled = _paints.any((p) {
           final hasTmc = p.tmc != null;
           final hasQty = p.qty != null;
@@ -1135,21 +1185,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
           if (!hasFlexo && __flexoId != null && __flexoId!.isNotEmpty) {
             int insertIndex = 0;
-            final bobIndex = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                  (m['stageid'] as String?) ??
-                  (m['stage_id'] as String?) ??
-                  (m['workplaceId'] as String?) ??
-                  (m['workplace_id'] as String?) ??
-                  (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
-            });
+            final bobIndex = _findBobbinIndex();
             if (bobIndex >= 0) insertIndex = bobIndex + 1;
 
             debugPrint('➕ Inserting Flexo at index ' + insertIndex.toString());
@@ -1163,46 +1199,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             });
           }
 
-          bool _formatMatchesWidth() {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final match =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (match != null) {
-                fmtW = double.tryParse(match.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            return fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001;
-          }
+        }
 
-          bool _removeBobbinStage() {
-            final idxBob = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                  (m['stageid'] as String?) ??
-                  (m['stage_id'] as String?) ??
-                  (m['workplaceId'] as String?) ??
-                  (m['workplace_id'] as String?) ??
-                  (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
+        if (__formatMatchesWidth && _removeBobbinStage()) {
+          __shouldCompleteBobbin = true;
+        } else if (!__formatMatchesWidth) {
+          final hasBobbin = _findBobbinIndex() >= 0;
+          if (!hasBobbin && __bobbinId != null && __bobbinId!.isNotEmpty) {
+            final resolvedBobbinTitle = (__bobbinTitle?.trim().isNotEmpty ?? false)
+                ? __bobbinTitle!.trim()
+                : 'Бабинорезка';
+            stageMaps.insert(0, {
+              'stageId': __bobbinId,
+              'workplaceId': __bobbinId,
+              'stageName': resolvedBobbinTitle,
+              'workplaceName': resolvedBobbinTitle,
+              'order': 0,
             });
-            if (idxBob >= 0) {
-              stageMaps.removeAt(idxBob);
-              return true;
-            }
-            return false;
-          }
-
-          if (_formatMatchesWidth() && _removeBobbinStage()) {
-            __shouldCompleteBobbin = true;
           }
         }
         // === /Custom stage logic ===
