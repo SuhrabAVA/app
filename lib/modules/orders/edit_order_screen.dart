@@ -907,7 +907,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           .eq('category_id', cat['id'])
           .order('description');
       if (search.isNotEmpty) {
-        builder = builder.ilike('description', '%$search%');
+        builder = builder.filter('description', 'ilike', '%$search%');
       }
       final rows = await builder.limit(100);
       double total = 0.0;
