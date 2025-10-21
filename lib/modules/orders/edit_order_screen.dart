@@ -80,6 +80,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String _formSeries = 'F';
   List<Map<String, dynamic>> _formResults = [];
   Map<String, dynamic>? _selectedOldFormRow;
+  String? _selectedOldFormImageUrl;
   bool _loadingForms = false;
 
   bool _useOldForm = false;
@@ -210,11 +211,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _selectedOldForm = null;
         _formResults = [];
         _loadingForms = false;
+        _selectedOldFormImageUrl = null;
       } else {
         final selectedValue =
             _selectedOldFormRow != null ? _oldFormInputValue(_selectedOldFormRow!) : null;
         if (_selectedOldFormRow != null && selectedValue != trimmed) {
           _selectedOldFormRow = null;
+          _selectedOldFormImageUrl = null;
         }
         if (_selectedOldFormRow == null) {
           _selectedOldForm = trimmed;
@@ -226,6 +229,95 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (trimmed.isEmpty) return;
     _formSearchDebounce =
         Timer(const Duration(milliseconds: 250), () => _reloadForms(search: value));
+  }
+
+  void _onStockExtraSearchChanged(String value) {
+    final trimmed = value.trim();
+    _stockExtraSearchDebounce?.cancel();
+    setState(() {
+      if (trimmed.isEmpty) {
+        _selectedStockExtraRow = null;
+        _stockExtraResults = [];
+      } else {
+        _selectedStockExtraRow = null;
+      }
+    });
+    if (trimmed.isEmpty) {
+      _updateStockExtra(query: '');
+    } else {
+      _stockExtraSearchDebounce = Timer(
+          const Duration(milliseconds: 250), () => _updateStockExtra(query: trimmed));
+    }
+  }
+
+  void _selectStockExtraRow(Map<String, dynamic> row) {
+    final description = (row['description'] ?? '').toString();
+    final qv = row['quantity'];
+    final qty =
+        (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
+    _stockExtraSearchDebounce?.cancel();
+    setState(() {
+      _selectedStockExtraRow = Map<String, dynamic>.from(row);
+      _stockExtra = qty;
+      _stockExtraResults = [];
+      _loadingStockExtra = false;
+    });
+    _stockExtraSearchController.value = TextEditingValue(
+      text: description,
+      selection: TextSelection.collapsed(offset: description.length),
+    );
+    _stockExtraFocusNode.unfocus();
+  }
+
+  Widget _buildStockExtraResults() {
+    if (_stockExtraResults.isEmpty) {
+      if (_loadingStockExtra ||
+          _stockExtraSearchController.text.trim().isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            'Ничего не найдено',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      );
+    }
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 200),
+      child: Material(
+        elevation: 2,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: _stockExtraResults.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final row = _stockExtraResults[index];
+            final description = (row['description'] ?? '').toString().trim();
+            final qv = row['quantity'];
+            final qty = (qv is num)
+                ? qv.toDouble()
+                : double.tryParse('${qv ?? ''}') ?? 0.0;
+            final selected = _selectedStockExtraRow != null &&
+                (_selectedStockExtraRow!['id']?.toString() ==
+                    row['id']?.toString());
+            return ListTile(
+              title: Text(description.isEmpty ? 'Без названия' : description),
+              subtitle: Text('Количество: ${qty.toStringAsFixed(2)}'),
+              selected: selected,
+              trailing: selected ? const Icon(Icons.check) : null,
+              onTap: () => _selectStockExtraRow(row),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   void _updateManagerDisplayController() {
@@ -294,6 +386,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Готовая продукция (лишнее)
   TmcModel? _stockExtraItem;
   double? _stockExtra;
+  final TextEditingController _stockExtraSearchController = TextEditingController();
+  final FocusNode _stockExtraFocusNode = FocusNode();
+  Timer? _stockExtraSearchDebounce;
+  bool _loadingStockExtra = false;
+  List<Map<String, dynamic>> _stockExtraResults = [];
+  Map<String, dynamic>? _selectedStockExtraRow;
   bool _writeOffStockExtra =
       false; // <-- добавлено: списывать ли лишнее при сохранении
 
@@ -453,7 +551,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         leftover: null,
       );
     }
-    _customerController.addListener(_updateStockExtra);
     // ensure at least one paint row only for new orders (not editing)
     if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
     _loadCategoriesForProduct();
@@ -651,11 +748,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
       _managerNames = names;
-      if (widget.order != null &&
-          _selectedManager != null &&
-          !_managerNames.contains(_selectedManager)) {
-        _selectedManager = null;
+      if (_selectedManager != null && _selectedManager!.trim().isNotEmpty) {
+        if (!_managerNames.contains(_selectedManager)) {
+          _managerNames = List<String>.from(_managerNames)..add(_selectedManager!);
+        }
       }
+      _managerNames.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       _updateManagerDisplayController();
       final warehouse = context.read<WarehouseProvider>();
       // Восстановим краски из параметров заказа, если есть
@@ -741,13 +839,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   @override
   void dispose() {
-    _customerController.removeListener(_updateStockExtra);
     _customerController.dispose();
     _commentsController.dispose();
 
     _formSearchDebounce?.cancel();
     _formSearchFocusNode.dispose();
     _formSearchCtl.dispose();
+    _stockExtraSearchDebounce?.cancel();
+    _stockExtraFocusNode.dispose();
+    _stockExtraSearchController.dispose();
     _managerDisplayController.dispose();
 
     _stageTemplateController.removeListener(_onStageTemplateTextChanged);
@@ -760,19 +860,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     super.dispose();
   }
 
-  void _updateStockExtra() async {
-    final customer = _customerController.text.trim();
+  Future<void> _updateStockExtra({String? query}) async {
     final typeTitle = _product.type.trim();
-    // Сбрасываем, если нет данных
-    if (customer.isEmpty || typeTitle.isEmpty) {
-      setState(() {
-        _stockExtra = null;
-        _stockExtraItem = null;
-      });
+    final search = query ?? _stockExtraSearchController.text.trim();
+    if (typeTitle.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _stockExtra = null;
+          _stockExtraItem = null;
+          _stockExtraResults = [];
+          _selectedStockExtraRow = null;
+          _loadingStockExtra = false;
+        });
+      }
       return;
     }
+
+    if (mounted) {
+      setState(() {
+        _loadingStockExtra = true;
+      });
+    }
+
     try {
-      // Ищем категорию по названию (совпадает с «Наименование изделия»)
       final cat = await _sb
           .from('warehouse_categories')
           .select('id, title, code')
@@ -783,28 +893,64 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           setState(() {
             _stockExtra = null;
             _stockExtraItem = null;
+            _stockExtraResults = [];
+            _selectedStockExtraRow = null;
+            _loadingStockExtra = false;
           });
         }
         return;
       }
-      // Ищем записи внутри категории, где description == заказчик
-      final rows = await _sb
+
+      var builder = _sb
           .from('warehouse_category_items')
           .select('id, description, quantity, table_key')
           .eq('category_id', cat['id'])
-          .eq('description', customer);
+          .order('description');
+      if (search.isNotEmpty) {
+        builder = builder.ilike('description', '%$search%');
+      }
+      final rows = await builder.limit(100);
       double total = 0.0;
+      final List<Map<String, dynamic>> results = [];
       for (final r in (rows as List)) {
-        final qv = r['quantity'];
+        final map = Map<String, dynamic>.from(r as Map);
+        final qv = map['quantity'];
         final q =
             (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
         total += q;
+        results.add(map);
       }
+
+      Map<String, dynamic>? selectedRow;
+      if (_selectedStockExtraRow != null) {
+        final selectedId = _selectedStockExtraRow!['id']?.toString();
+        if (selectedId != null) {
+          final candidate = results.firstWhere(
+              (row) => row['id']?.toString() == selectedId,
+              orElse: () => <String, dynamic>{});
+          if (candidate.isNotEmpty) {
+            selectedRow = candidate;
+          }
+        }
+      }
+
+      double displayQty;
+      if (selectedRow != null) {
+        final qv = selectedRow['quantity'];
+        displayQty =
+            (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
+      } else {
+        displayQty = results.isEmpty ? 0.0 : total;
+      }
+
       if (mounted) {
         setState(() {
-          _stockExtra = total > 0 ? total : 0.0;
-          // _stockExtraItem не используется для динамических категорий
+          _stockExtra = displayQty;
           _stockExtraItem = null;
+          _selectedStockExtraRow = selectedRow;
+          _stockExtraResults =
+              search.isEmpty ? <Map<String, dynamic>>[] : results;
+          _loadingStockExtra = false;
         });
       }
     } catch (e) {
@@ -812,6 +958,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         setState(() {
           _stockExtra = null;
           _stockExtraItem = null;
+          _stockExtraResults = [];
+          _selectedStockExtraRow = null;
+          _loadingStockExtra = false;
         });
       }
     }
@@ -1192,13 +1341,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         );
       return;
     }
+    final managerName = (_selectedManager?.trim().isNotEmpty ?? false)
+        ? _selectedManager!.trim()
+        : (widget.order?.manager ?? '');
+    final penName = _selectedHandle == '-' ? '' : _selectedHandle;
+    _upsertPensInParameters(penName, _handleQty ?? 0);
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
       final _created = await provider.createOrder(
-        manager: _selectedManager?.trim() ?? '',
+        manager: managerName,
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate,
@@ -1226,7 +1380,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
       final updated = OrderModel(
         id: widget.order!.id,
-        manager: _selectedManager?.trim() ?? '',
+        manager: managerName,
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
         dueDate: _dueDate,
@@ -1487,53 +1641,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     // === Конец обработки формы ===
 
-    // Списание ручек (канцтовары/ручки), если выбраны и указано количество
-    if (_selectedHandle != '-' && (_handleQty ?? 0) > 0) {
-      try {
-        final warehouse =
-            Provider.of<WarehouseProvider>(context, listen: false);
-        // Ищем позицию ручек по описанию среди типа 'pens'
-        final items = warehouse
-            .getTmcByType('pens')
-            .where((t) => t.description == _selectedHandle)
-            .toList(growable: false);
-        if (items.isNotEmpty) {
-          final item = items.first;
-          final double newQty = (_handleQty ?? 0);
-          // Определяем, сколько было ранее (если редактируем)
-          double prevQty = 0;
-          try {
-            prevQty = _previousPenQty(penName: _selectedHandle);
-          } catch (_) {}
-          final double diff = (newQty - prevQty);
-          if (diff > 0) {
-            // Списываем ТОЛЬКО разницу
-            await warehouse.writeOff(
-              itemId: item.id,
-              qty: diff,
-              currentQty: item.quantity,
-              reason: _customerController.text.trim(),
-              typeHint: 'pens',
-            );
-          } else if (diff < 0) {
-            // Если уменьшили количество по сравнению с прошлой версией - вернём на склад разницу
-            await warehouse.registerReturn(
-              id: item.id,
-              type: 'pens',
-              qty: -diff,
-              note: 'Коррекция заказа: ' + _customerController.text.trim(),
-            );
-          }
-          // Запишем выбранные ручки в parameters, чтобы при следующем сохранении посчитать дельту
-          _upsertPensInParameters(_selectedHandle, newQty);
-        }
-      } catch (e) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Ошибка списания ручек: $e')),
-          );
-      }
-    }
 // Списание материалов/готовой продукции (бумага по длине L)
     if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
       // Перепроверим остаток по актуальным данным провайдера склада
@@ -1573,52 +1680,41 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       await AppAuth.ensureSignedIn();
 
       try {
-        final String customer = _customerController.text.trim();
         final String typeTitle = _product.type.trim();
-        if (customer.isNotEmpty && typeTitle.isNotEmpty) {
+        final selectedExtra = _selectedStockExtraRow;
+        if (selectedExtra != null && typeTitle.isNotEmpty) {
           final cat = await _sb
               .from('warehouse_categories')
               .select('id, title, code')
               .or('title.eq.' + typeTitle + ',code.eq.' + typeTitle)
               .maybeSingle();
           if (cat != null) {
-            final rows = await _sb
-                .from('warehouse_category_items')
-                .select('id, description, quantity, table_key')
-                .eq('category_id', cat['id'])
-                .eq('description', customer);
-            final toWriteOffRows = <Map<String, dynamic>>[];
-            for (final r in (rows as List)) {
-              final qv = r['quantity'];
-              final q = (qv is num)
-                  ? qv.toDouble()
-                  : double.tryParse('${qv ?? ''}') ?? 0.0;
-              if (q > 0) {
-                toWriteOffRows.add({'id': r['id'].toString(), 'quantity': q});
-              }
-            }
-            // Выполним списание, если нашли что списывать
-            for (final it in toWriteOffRows) {
-              final String itemId = it['id'].toString();
-              final double q = (it['quantity'] as num).toDouble();
-              // Лог списаний
-              await _sb.from('warehouse_category_writeoffs').insert({
-                'item_id': itemId,
-                'qty': q,
-                'reason': _customerController.text.trim(),
-                'by_name': AuthHelper.currentUserName ?? '',
-              });
-              // Обновим остаток
+            final itemId = selectedExtra['id']?.toString();
+            if (itemId != null) {
               final row = await _sb
                   .from('warehouse_category_items')
-                  .select('quantity')
+                  .select('quantity, category_id')
                   .eq('id', itemId)
                   .maybeSingle();
-              final double cur =
-                  ((row?['quantity'] ?? 0) as num?)?.toDouble() ?? 0.0;
-              final double newQty = (cur - q);
-              await _sb.from('warehouse_category_items').update(
-                  {'quantity': newQty < 0 ? 0 : newQty}).match({'id': itemId});
+              if (row != null &&
+                  row['category_id']?.toString() == cat['id']?.toString()) {
+                final qv = row['quantity'];
+                final double q = (qv is num)
+                    ? qv.toDouble()
+                    : double.tryParse('${qv ?? ''}') ?? 0.0;
+                if (q > 0) {
+                  await _sb.from('warehouse_category_writeoffs').insert({
+                    'item_id': itemId,
+                    'qty': q,
+                    'reason': _customerController.text.trim(),
+                    'by_name': AuthHelper.currentUserName ?? '',
+                  });
+                  await _sb
+                      .from('warehouse_category_items')
+                      .update({'quantity': 0})
+                      .match({'id': itemId});
+                }
+              }
             }
           }
         }
@@ -1627,36 +1723,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           if (mounted)
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text('Ошибка списания лишнего: ' + e.toString())));
-        }
-      }
-    }
-
-    // Списание красок (если указано несколько)
-    // При редактировании списываем только ДЕЛЬТУ, чтобы не дублировать списания
-    if (_paints.isNotEmpty) {
-      final prevRows = (widget.order == null)
-          ? <Map<String, dynamic>>[]
-          : await OrdersRepository().getPaints(createdOrUpdatedOrder.id);
-      final Map<String, double> prevByName = {};
-      for (final it in prevRows) {
-        final name = (it['name'] ?? '').toString();
-        final q = (it['qty_kg'] as num?)?.toDouble() ?? 0.0;
-        if (name.isNotEmpty) prevByName[name] = q;
-      }
-      for (final row in _paints) {
-        if (row.tmc != null && row.qty != null && row.qty! > 0) {
-          final name = row.tmc!.description;
-          final double newQ = (row.qty ?? 0);
-          final double oldQ = prevByName[name] ?? 0.0;
-          final double delta = newQ - oldQ;
-          if (delta > 0) {
-            await warehouse.registerShipment(
-              id: row.tmc!.id,
-              type: 'paint',
-              qty: delta,
-              reason: _customerController.text.trim(),
-            );
-          }
         }
       }
     }
@@ -1812,6 +1878,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (!_isOldForm) {
           _newFormImageBytes = null;
         }
+        _selectedOldFormImageUrl = null;
       });
     } catch (e) {
       if (mounted) {
@@ -2366,7 +2433,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         onChanged: (val) {
                           setState(() {
                             _product.type = val ?? '';
+                            _selectedStockExtraRow = null;
+                            _stockExtraResults = [];
                           });
+                          _stockExtraSearchDebounce?.cancel();
+                          _stockExtraSearchController.clear();
                           _updateStockExtra();
                         },
                       );
@@ -2792,15 +2863,48 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: TextFormField(
-                    readOnly: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Лишнее на складе',
-                      border: OutlineInputBorder(),
-                    ),
-                    controller: TextEditingController(
-                        text:
-                            _stockExtra != null ? _stockExtra.toString() : '-'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: _stockExtraSearchController,
+                        focusNode: _stockExtraFocusNode,
+                        decoration: InputDecoration(
+                          labelText: 'Лишнее на складе',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: _loadingStockExtra
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child:
+                                        CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                )
+                              : (_stockExtraSearchController.text.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      icon: const Icon(Icons.clear),
+                                      onPressed: () {
+                                        _stockExtraSearchController.clear();
+                                        _onStockExtraSearchChanged('');
+                                      },
+                                    )),
+                        ),
+                        onChanged: _onStockExtraSearchChanged,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _stockExtra != null
+                            ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
+                            : 'Доступно: —',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 4),
+                      _buildStockExtraResults(),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -3419,12 +3523,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 _formResults = [];
               }
               _loadingForms = false;
+              _selectedOldFormImageUrl = null;
             } else {
               _selectedOldFormRow = null;
               _selectedOldForm = null;
               _formResults = [];
               _formSearchCtl.clear();
               _loadingForms = false;
+              _selectedOldFormImageUrl = null;
             }
           });
           if (val) {
@@ -3457,6 +3563,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ));
       }
       widgets.add(_buildOldFormSearchResults());
+      final imageUrl = _selectedOldFormImageUrl;
+      if (imageUrl != null && imageUrl.isNotEmpty) {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Image.network(imageUrl, height: 120),
+        ));
+      }
     } else {
       widgets.add(const SizedBox(height: 8));
       if (_newFormImageBytes != null) {
@@ -3532,6 +3645,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _isOldForm = _orderFormIsOld!;
       }
       if (_isOldForm) {
+        _selectedOldFormImageUrl = _orderFormImageUrl;
         final display = () {
           if (_orderFormCode != null && _orderFormCode!.isNotEmpty) {
             return _orderFormCode!;
@@ -3575,6 +3689,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _formSearchCtl.clear();
       _loadingForms = false;
       _newFormImageBytes = null;
+      _selectedOldFormImageUrl = null;
     });
     if (mounted) {
       _formSearchFocusNode.unfocus();
@@ -3641,6 +3756,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 setState(() {
                   _selectedOldFormRow = form;
                   _selectedOldForm = null;
+                  final imageUrl = (form['image_url'] ?? '').toString().trim();
+                  _selectedOldFormImageUrl = imageUrl.isNotEmpty ? imageUrl : null;
+                  _formResults = [];
+                  _loadingForms = false;
                 });
                 final value = _oldFormInputValue(form);
                 _formSearchCtl.value = TextEditingValue(
