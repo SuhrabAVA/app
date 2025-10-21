@@ -904,12 +904,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       var builder = _sb
           .from('warehouse_category_items')
           .select('id, description, quantity, table_key')
-          .eq('category_id', cat['id'])
-          .order('description');
+          .eq('category_id', cat['id']);
       if (search.isNotEmpty) {
         builder = builder.ilike('description', '%$search%');
       }
-      final rows = await builder.limit(100);
+      final rows = await builder.order('description').limit(100);
       double total = 0.0;
       final List<Map<String, dynamic>> results = [];
       for (final r in (rows as List)) {
