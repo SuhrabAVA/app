@@ -1055,10 +1055,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           if (flexo != null) {
             __flexoId = (flexo['id'] as String?);
             __flexoTitle = (flexo['title'] as String?) ?? (flexo['name'] as String?);
-          if (__flexoTitle == null || __flexoTitle.trim().isEmpty) __flexoTitle = 'Флексопечать';
-          if (__flexoTitle == null || RegExp(r'^[a-z0-9_\-]+$').hasMatch(__flexoTitle)) {
-            __flexoTitle = 'Флексопечать';
-          }
+            if (__flexoTitle == null || __flexoTitle!.trim().isEmpty) {
+              __flexoTitle = 'Флексопечать';
+            }
+            if (__flexoTitle != null &&
+                RegExp(r'^[a-z0-9_\-]+$')
+                    .hasMatch(__flexoTitle!.toLowerCase())) {
+              __flexoTitle = 'Флексопечать';
+            }
           }
           // Bobbin by multiple patterns
           Map<String, dynamic>? bob = await _sb
@@ -1091,9 +1095,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .ilike('name', 'Bobbin%')
               .limit(1)
               .maybeSingle();
+          if (bob == null) {
+            bob = await _sb
+                .from('workplaces')
+                .select('id,title,name')
+                .eq('id', 'w_bobbiner')
+                .maybeSingle();
+          }
           if (bob != null) {
             __bobbinId = (bob['id'] as String?);
-            __bobbinTitle = (bob['title'] as String?);
+            __bobbinTitle = (bob['title'] as String?) ?? (bob['name'] as String?);
           }
         } catch (_) {}
 
@@ -1205,13 +1216,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           __shouldCompleteBobbin = true;
         } else if (!__formatMatchesWidth) {
           final hasBobbin = _findBobbinIndex() >= 0;
-          if (!hasBobbin && __bobbinId != null && __bobbinId!.isNotEmpty) {
+          if (!hasBobbin && (__bobbinId != null && __bobbinId!.isNotEmpty)) {
             final resolvedBobbinTitle = (__bobbinTitle?.trim().isNotEmpty ?? false)
                 ? __bobbinTitle!.trim()
                 : 'Бабинорезка';
             stageMaps.insert(0, {
               'stageId': __bobbinId,
               'workplaceId': __bobbinId,
+              'stageName': resolvedBobbinTitle,
+              'workplaceName': resolvedBobbinTitle,
+              'order': 0,
+            });
+          } else if (!hasBobbin && (__bobbinId == null || __bobbinId!.isEmpty)) {
+            final resolvedBobbinTitle = (__bobbinTitle?.trim().isNotEmpty ?? false)
+                ? __bobbinTitle!.trim()
+                : 'Бабинорезка';
+            stageMaps.insert(0, {
+              'stageId': 'w_bobbiner',
+              'workplaceId': 'w_bobbiner',
               'stageName': resolvedBobbinTitle,
               'workplaceName': resolvedBobbinTitle,
               'order': 0,

@@ -3101,6 +3101,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           .ilike('name', 'Bobbin%')
           .limit(1)
           .maybeSingle();
+      if (bob == null) {
+        bob = await _sb
+            .from('workplaces')
+            .select('id,title,name')
+            .eq('id', 'w_bobbiner')
+            .maybeSingle();
+      }
       if (bob != null) {
         bobbinId = bob['id'] as String?;
         final rawTitle = (bob['title'] as String?) ?? (bob['name'] as String?);
@@ -3189,7 +3196,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     } else {
       final bobIndex = findBobbinIndex();
-      if (bobIndex < 0 && bobbinId != null && bobbinId.isNotEmpty) {
+      if (bobIndex < 0 && (bobbinId != null && bobbinId.isNotEmpty)) {
         final resolvedBobbinTitle =
             (bobbinTitle?.trim().isNotEmpty ?? false)
                 ? bobbinTitle!.trim()
@@ -3197,6 +3204,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         stageMaps.insert(0, {
           'stageId': bobbinId,
           'workplaceId': bobbinId,
+          'stageName': resolvedBobbinTitle,
+          'workplaceName': resolvedBobbinTitle,
+          'order': 0,
+        });
+      } else if (bobIndex < 0 && (bobbinId == null || bobbinId!.isEmpty)) {
+        final resolvedBobbinTitle =
+            (bobbinTitle?.trim().isNotEmpty ?? false)
+                ? bobbinTitle!.trim()
+                : 'Бабинорезка';
+        stageMaps.insert(0, {
+          'stageId': 'w_bobbiner',
+          'workplaceId': 'w_bobbiner',
           'stageName': resolvedBobbinTitle,
           'workplaceName': resolvedBobbinTitle,
           'order': 0,
