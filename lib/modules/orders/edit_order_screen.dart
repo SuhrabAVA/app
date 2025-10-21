@@ -321,14 +321,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   void _updateManagerDisplayController() {
-    if (widget.order != null) return;
-    final display = _selectedManager?.trim() ?? '';
-    if (_managerDisplayController.text == display) {
+    final selectedName = (_selectedManager?.trim().isNotEmpty ?? false)
+        ? _selectedManager!.trim()
+        : (widget.order?.manager ?? '');
+    if (_managerDisplayController.text == selectedName) {
       return;
     }
     _managerDisplayController.value = TextEditingValue(
-      text: display,
-      selection: TextSelection.collapsed(offset: display.length),
+      text: selectedName,
+      selection: TextSelection.collapsed(offset: selectedName.length),
     );
   }
 
@@ -1340,9 +1341,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         );
       return;
     }
-    final managerName = (_selectedManager?.trim().isNotEmpty ?? false)
-        ? _selectedManager!.trim()
-        : (widget.order?.manager ?? '');
+    final managerName = widget.order != null
+        ? widget.order!.manager
+        : (_selectedManager?.trim().isNotEmpty ?? false)
+            ? _selectedManager!.trim()
+            : '';
     final penName = _selectedHandle == '-' ? '' : _selectedHandle;
     _upsertPensInParameters(penName, _handleQty ?? 0);
     final provider = Provider.of<OrdersProvider>(context, listen: false);
@@ -1954,45 +1957,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             Text('Информация о заказе',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            // Менеджер: при создании заказ назначается автоматически текущему сотруднику.
-            if (widget.order == null)
-              TextFormField(
-                controller: _managerDisplayController,
-                readOnly: true,
-                decoration: const InputDecoration(
-                  labelText: 'Менеджер',
-                  border: OutlineInputBorder(),
-                  hintText: '—',
-                ),
-                validator: (_) {
-                  final name = _selectedManager?.trim() ?? '';
-                  if (name.isEmpty) {
-                    return 'Менеджер не определён';
-                  }
-                  return null;
-                },
-              )
-            else
-              DropdownButtonFormField<String>(
-                value: _selectedManager,
-                decoration: const InputDecoration(
-                  labelText: 'Менеджер',
-                  border: OutlineInputBorder(),
-                ),
-                items: _managerNames
-                    .map((name) => DropdownMenuItem(
-                          value: name,
-                          child: Text(name),
-                        ))
-                    .toList(),
-                onChanged: (val) => setState(() => _selectedManager = val),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Выберите менеджера';
-                  }
-                  return null;
-                },
+            // Менеджер фиксируется после создания заказа и не может быть изменён при редактировании.
+            TextFormField(
+              controller: _managerDisplayController,
+              readOnly: true,
+              decoration: const InputDecoration(
+                labelText: 'Менеджер',
+                border: OutlineInputBorder(),
+                hintText: '—',
               ),
+              validator: (_) {
+                final resolvedName = (_selectedManager?.trim().isNotEmpty ?? false)
+                    ? _selectedManager!.trim()
+                    : (widget.order?.manager ?? '');
+                if (resolvedName.isEmpty) {
+                  return 'Менеджер не определён';
+                }
+                return null;
+              },
+            ),
             const SizedBox(height: 8),
             // Customer
             TextFormField(
@@ -3025,6 +3008,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     String? flexoId;
     String? flexoTitle;
     String? bobbinId;
+    String? bobbinTitle;
     bool shouldCompleteBobbin = false;
 
     double? formatWidth;
@@ -3119,6 +3103,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           .maybeSingle();
       if (bob != null) {
         bobbinId = bob['id'] as String?;
+        final rawTitle = (bob['title'] as String?) ?? (bob['name'] as String?);
+        if (rawTitle != null && rawTitle.trim().isNotEmpty) {
+          bobbinTitle = rawTitle.trim();
+        }
       }
     } catch (_) {}
 
@@ -3198,6 +3186,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (bobIndex >= 0) {
         shouldCompleteBobbin = true;
         stageMaps.removeAt(bobIndex);
+      }
+    } else {
+      final bobIndex = findBobbinIndex();
+      if (bobIndex < 0 && bobbinId != null && bobbinId.isNotEmpty) {
+        final resolvedBobbinTitle =
+            (bobbinTitle?.trim().isNotEmpty ?? false)
+                ? bobbinTitle!.trim()
+                : 'Бабинорезка';
+        stageMaps.insert(0, {
+          'stageId': bobbinId,
+          'workplaceId': bobbinId,
+          'stageName': resolvedBobbinTitle,
+          'workplaceName': resolvedBobbinTitle,
+          'order': 0,
+        });
       }
     }
 
