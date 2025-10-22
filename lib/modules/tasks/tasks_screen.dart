@@ -287,6 +287,18 @@ Future<ExecutionMode?> _askExecMode(BuildContext context) async {
   return res;
 }
 
+class _StageComment {
+  final TaskComment comment;
+  final String stageId;
+  final String taskId;
+
+  const _StageComment({
+    required this.comment,
+    required this.stageId,
+    required this.taskId,
+  });
+}
+
 class _TasksScreenState extends State<TasksScreen>
     with AutomaticKeepAliveClientMixin<TasksScreen> {
   @override
@@ -469,15 +481,6 @@ class _TasksScreenState extends State<TasksScreen>
         return comment.text;
     }
   }
-
-class _StageComment {
-  final TaskComment comment;
-  final String stageId;
-  final String taskId;
-
-  const _StageComment(
-      {required this.comment, required this.stageId, required this.taskId});
-}
 
   /// Handles joining an already started task. Presents a modal to choose between
   /// separate execution (individual performer) or helper (joint). If the user
@@ -2684,7 +2687,7 @@ class _StageComment {
             .from('forms')
             .select('image_url')
             .eq('series', order.formSeries!.trim())
-            .eq('number', order.newFormNo)
+            .eq('number', order.newFormNo!)
             .maybeSingle();
         if (res != null && res is Map) {
           row = Map<String, dynamic>.from(res);
