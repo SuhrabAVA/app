@@ -1978,7 +1978,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           children: [
             _buildOrderInfoSection(context),
             _buildProductCard(_product),
-            _buildAdditionalParametersSection(context),
             _buildAccessoriesSection(context),
             _buildPaintsSection(),
             _buildFormSection(
@@ -1988,6 +1987,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               isEditing: isEditing,
               hasAssignedForm: hasAssignedForm,
             ),
+            _buildMaterialSection(context, _product),
+            _buildAdditionalParametersSection(context),
             // === Комментарии ===
             TextFormField(
               controller: _commentsController,
@@ -2022,9 +2023,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  /// Карточка продукта (тип, размеры, материал, краски, вложения и пр.)
+  /// Карточка продукта (тип, размеры, вложения и дополнительные сведения)
   Widget _buildProductCard(ProductModel product) {
-    final paperQty = _currentAvailablePaperQty();
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       elevation: 1,
@@ -2141,427 +2141,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
             const SizedBox(height: 12),
 
-            // === Материал (каскадный каскад: Материал → Формат → Грамаж) ===
-            Builder(
-              builder: (context) {
-                final papers = _paperItems();
-                // Уникальные названия материалов
-                final nameSet = <String>{};
-                for (final t in papers) {
-                  final n = (t.description).trim();
-                  if (n.isNotEmpty) nameSet.add(n);
-                }
-                final allNames = nameSet.toList()
-                  ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-
-                List<String> formatsFor(String name) {
-                  final s = <String>{};
-                  for (final t in papers) {
-                    if (t.description.trim().toLowerCase() ==
-                        name.trim().toLowerCase()) {
-                      final f = (t.format ?? '').trim();
-                      if (f.isNotEmpty) s.add(f);
-                    }
-                  }
-                  final list = s.toList()
-                    ..sort(
-                        (a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-                  return list;
-                }
-
-                List<String> gramsFor(String name, String fmt) {
-                  final s = <String>{};
-                  for (final t in papers) {
-                    if (t.description.trim().toLowerCase() ==
-                            name.trim().toLowerCase() &&
-                        (t.format ?? '').trim().toLowerCase() ==
-                            fmt.trim().toLowerCase()) {
-                      final g = (t.grammage ?? '').trim();
-                      if (g.isNotEmpty) s.add(g);
-                    }
-                  }
-                  final list = s.toList()
-                    ..sort(
-                        (a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-                  return list;
-                }
-
-                TmcModel? findExact(String name, String fmt, String gram) {
-                  for (final t in papers) {
-                    if (t.description.trim().toLowerCase() ==
-                            name.trim().toLowerCase() &&
-                        (t.format ?? '').trim().toLowerCase() ==
-                            fmt.trim().toLowerCase() &&
-                        (t.grammage ?? '').trim().toLowerCase() ==
-                            gram.trim().toLowerCase()) {
-                      return t;
-                    }
-                  }
-                  return null;
-                }
-
-                Iterable<String> filter(Iterable<String> source, String q) {
-                  final query = q.trim().toLowerCase();
-                  if (query.isEmpty) return source;
-                  return source.where((o) => o.toLowerCase().contains(query));
-                }
-
-                final formatOptions = _matSelectedName != null
-                    ? formatsFor(_matSelectedName!)
-                    : const <String>[];
-                final gramOptions =
-                    (_matSelectedName != null && _matSelectedFormat != null)
-                        ? gramsFor(_matSelectedName!, _matSelectedFormat!)
-                        : const <String>[];
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Материал (имена, без дублей)
-                    Autocomplete<String>(
-                      optionsBuilder: (text) => filter(allNames, text.text),
-                      displayStringForOption: (s) => s,
-                      fieldViewBuilder:
-                          (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matNameCtl.text;
-                        controller.selection = _matNameCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matNameCtl.text) {
-                            setState(() {
-                              _matNameCtl.text = controller.text;
-                              _matNameCtl.selection = controller.selection;
-                              // Сбрасываем выбор, пока не будет выбран вариант из списка
-                              _matSelectedName = null;
-                              _matSelectedFormat = null;
-                              _matSelectedGrammage = null;
-                              _matFormatCtl.text = '';
-                              _matGramCtl.text = '';
-                              _matNameError =
-                                  (_matNameCtl.text.trim().isEmpty ||
-                                          allNames
-                                              .map((e) => e.toLowerCase())
-                                              .contains(_matNameCtl.text
-                                                  .trim()
-                                                  .toLowerCase()))
-                                      ? null
-                                      : 'Выберите материал из списка';
-                              _matFormatError = null;
-                              _matGramError = null;
-                              // если текст точно совпадает с вариантом - считаем выбранным
-                              final lowerNames =
-                                  allNames.map((e) => e.toLowerCase()).toList();
-                              final typed =
-                                  _matNameCtl.text.trim().toLowerCase();
-                              if (lowerNames.contains(typed)) {
-                                _matSelectedName =
-                                    allNames[lowerNames.indexOf(typed)];
-                              }
-                            });
-                            _scheduleStagePreviewUpdate();
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: 'Материал',
-                            border: const OutlineInputBorder(),
-                            errorText: _matNameError,
-                          ),
-                          onSubmitted: (_) => onFieldSubmitted(),
-                        );
-                      },
-                      onSelected: (value) {
-                        setState(() {
-                          _matNameCtl.text = value;
-                          _matSelectedName = value;
-                          _matSelectedFormat = null;
-                          _matSelectedGrammage = null;
-                          _matFormatCtl.text = '';
-                          _matGramCtl.text = '';
-                          _matNameError = null;
-                          _matFormatError = null;
-                          _matGramError = null;
-                          // Очистим выбранный TMC/Material до полного выбора
-                          _selectedMaterialTmc = null;
-                          _selectedMaterial = null;
-                        });
-                        _scheduleStagePreviewUpdate();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    // Формат (только форматы выбранного материала)
-                    Autocomplete<String>(
-                      optionsBuilder: (text) =>
-                          filter(formatOptions, text.text),
-                      displayStringForOption: (s) => s,
-                      fieldViewBuilder:
-                          (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matFormatCtl.text;
-                        controller.selection = _matFormatCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matFormatCtl.text) {
-                            setState(() {
-                              _matFormatCtl.text = controller.text;
-                              _matFormatCtl.selection = controller.selection;
-                              _matSelectedFormat = null;
-                              _matSelectedGrammage = null;
-                              _matGramCtl.text = '';
-                              _matFormatError =
-                                  (_matFormatCtl.text.trim().isEmpty ||
-                                          formatOptions
-                                              .map((e) => e.toLowerCase())
-                                              .contains(_matFormatCtl.text
-                                                  .trim()
-                                                  .toLowerCase()))
-                                      ? null
-                                      : 'Выберите формат из списка';
-                              // auto-accept exact match
-                              final lowerF = formatOptions
-                                  .map((e) => e.toLowerCase())
-                                  .toList();
-                              final typedF =
-                                  _matFormatCtl.text.trim().toLowerCase();
-                              if (lowerF.contains(typedF)) {
-                                _matSelectedFormat =
-                                    formatOptions[lowerF.indexOf(typedF)];
-                              }
-                            });
-                            _scheduleStagePreviewUpdate();
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null,
-                          decoration: InputDecoration(
-                            labelText: 'Формат',
-                            border: const OutlineInputBorder(),
-                            helperText: _matSelectedName != null
-                                ? null
-                                : 'Сначала выберите материал',
-                            errorText: _matSelectedName != null
-                                ? _matFormatError
-                                : null,
-                          ),
-                          onSubmitted: (_) => onFieldSubmitted(),
-                        );
-                      },
-                      onSelected: (value) {
-                        setState(() {
-                          _matFormatCtl.text = value;
-                          _matSelectedFormat = value;
-                          _matSelectedGrammage = null;
-                          _matGramCtl.text = '';
-                          _matFormatError = null;
-                          _matGramError = null;
-                          _selectedMaterialTmc = null;
-                          _selectedMaterial = null;
-                        });
-                        _scheduleStagePreviewUpdate();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    // Грамаж (только для пары Материал+Формат)
-                    Autocomplete<String>(
-                      optionsBuilder: (text) => filter(gramOptions, text.text),
-                      displayStringForOption: (s) => s,
-                      fieldViewBuilder:
-                          (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matGramCtl.text;
-                        controller.selection = _matGramCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matGramCtl.text) {
-                            setState(() {
-                              _matGramCtl.text = controller.text;
-                              _matGramCtl.selection = controller.selection;
-                              _matSelectedGrammage = null;
-                              _matGramError = null; // обновится при выборе
-                              final lowerG = gramOptions
-                                  .map((e) => e.toLowerCase())
-                                  .toList();
-                              final typedG =
-                                  _matGramCtl.text.trim().toLowerCase();
-                              if (lowerG.contains(typedG)) {
-                                _matSelectedGrammage =
-                                    gramOptions[lowerG.indexOf(typedG)];
-                                // Если все три заданы - найдём TMC
-                                if (_matSelectedName != null &&
-                                    _matSelectedFormat != null &&
-                                    _matSelectedGrammage != null) {
-                                  final tmc = (() {
-                                    for (final t in _paperItems()) {
-                                      if (t.description.trim().toLowerCase() ==
-                                              _matSelectedName!
-                                                  .trim()
-                                                  .toLowerCase() &&
-                                          (t.format ?? '')
-                                                  .trim()
-                                                  .toLowerCase() ==
-                                              _matSelectedFormat!
-                                                  .trim()
-                                                  .toLowerCase() &&
-                                          (t.grammage ?? '')
-                                                  .trim()
-                                                  .toLowerCase() ==
-                                              _matSelectedGrammage!
-                                                  .trim()
-                                                  .toLowerCase()) {
-                                        return t;
-                                      }
-                                    }
-                                    return null;
-                                  })();
-                                  if (tmc != null) {
-                                    _selectMaterial(tmc);
-                                  }
-                                }
-                              }
-                            });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null &&
-                              _matSelectedFormat != null,
-                          decoration: InputDecoration(
-                            labelText: 'Грамаж',
-                            border: const OutlineInputBorder(),
-                            helperText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? null
-                                : 'Сначала выберите формат',
-                            errorText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? _matGramError
-                                : null,
-                          ),
-                          onSubmitted: (_) => onFieldSubmitted(),
-                        );
-                      },
-                      onSelected: (value) {
-                        setState(() {
-                          _matGramCtl.text = value;
-                          _matSelectedGrammage = value;
-                          _matGramError = null;
-                          // Когда тройка выбрана, найдём точную позицию на складе
-                          final tmc = findExact(_matSelectedName!,
-                              _matSelectedFormat!, _matSelectedGrammage!);
-                          if (tmc != null) {
-                            _selectMaterial(tmc);
-                          }
-                        });
-                      },
-                    ),
-                    if (paperQty != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
-                    ],
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            _buildStockExtraLayout(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _stockExtraSearchController,
-                    focusNode: _stockExtraFocusNode,
-                    decoration: InputDecoration(
-                      labelText: 'Лишнее на складе',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: _loadingStockExtra
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          : (_stockExtraSearchController.text.isEmpty
-                              ? null
-                              : IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    _stockExtraSearchController.clear();
-                                    _onStockExtraSearchChanged('');
-                                  },
-                                )),
-                    ),
-                    onChanged: _onStockExtraSearchChanged,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _stockExtra != null
-                        ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
-                        : 'Доступно: —',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 4),
-                  _buildStockExtraResults(),
-                ],
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Списать лишнее при сохранении'),
-                value: _writeOffStockExtra,
-                onChanged: (v) => setState(() => _writeOffStockExtra = v),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildFieldGrid([
-              TextFormField(
-                initialValue: product.widthB?.toString() ?? '',
-                decoration: const InputDecoration(
-                  labelText: 'Ширина b',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  product.widthB = double.tryParse(normalized);
-                  _scheduleStagePreviewUpdate();
-                },
-              ),
-              TextFormField(
-                initialValue: product.length?.toString() ?? '',
-                decoration: InputDecoration(
-                  labelText: 'Длина L',
-                  border: const OutlineInputBorder(),
-                  errorText: _lengthExceeded ? 'Недостаточно' : null,
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  final d = double.tryParse(normalized);
-                  setState(() {
-                    product.length = d;
-                    if (_selectedMaterialTmc != null && d != null) {
-                      _lengthExceeded = () {
-                        final current = Provider.of<WarehouseProvider>(context,
-                                listen: false)
-                            .allTmc
-                            .where((t) => t.id == _selectedMaterialTmc!.id)
-                            .toList();
-                        final available = current.isNotEmpty
-                            ? current.first.quantity
-                            : _selectedMaterialTmc!.quantity;
-                        return d > available;
-                      }();
-                    } else {
-                      _lengthExceeded = false;
-                    }
-                  });
-                },
-              ),
-            ], breakpoint: 680, minItemWidth: 200),
             const SizedBox(height: 12),
             // PDF вложение
             Row(
@@ -3220,6 +2799,423 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 runSpacing: 16);
           },
         ),
+      ],
+    );
+  }
+
+  Widget _buildMaterialSection(BuildContext context, ProductModel product) {
+    final paperQty = _currentAvailablePaperQty();
+    return _buildSectionCard(
+      context: context,
+      title: 'Материал, формат и грамаж',
+      children: [
+        Builder(
+          builder: (context) {
+            final papers = _paperItems();
+            final nameSet = <String>{};
+            for (final t in papers) {
+              final n = (t.description).trim();
+              if (n.isNotEmpty) nameSet.add(n);
+            }
+            final allNames = nameSet.toList()
+              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+            List<String> formatsFor(String name) {
+              final s = <String>{};
+              for (final t in papers) {
+                if (t.description.trim().toLowerCase() ==
+                    name.trim().toLowerCase()) {
+                  final f = (t.format ?? '').trim();
+                  if (f.isNotEmpty) s.add(f);
+                }
+              }
+              final list = s.toList()
+                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              return list;
+            }
+
+            List<String> gramsFor(String name, String fmt) {
+              final s = <String>{};
+              for (final t in papers) {
+                if (t.description.trim().toLowerCase() ==
+                        name.trim().toLowerCase() &&
+                    (t.format ?? '').trim().toLowerCase() ==
+                        fmt.trim().toLowerCase()) {
+                  final g = (t.grammage ?? '').trim();
+                  if (g.isNotEmpty) s.add(g);
+                }
+              }
+              final list = s.toList()
+                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              return list;
+            }
+
+            TmcModel? findExact(String name, String fmt, String gram) {
+              for (final t in papers) {
+                if (t.description.trim().toLowerCase() ==
+                        name.trim().toLowerCase() &&
+                    (t.format ?? '').trim().toLowerCase() ==
+                        fmt.trim().toLowerCase() &&
+                    (t.grammage ?? '').trim().toLowerCase() ==
+                        gram.trim().toLowerCase()) {
+                  return t;
+                }
+              }
+              return null;
+            }
+
+            Iterable<String> filter(Iterable<String> source, String q) {
+              final query = q.trim().toLowerCase();
+              if (query.isEmpty) return source;
+              return source.where((o) => o.toLowerCase().contains(query));
+            }
+
+            final formatOptions = _matSelectedName != null
+                ? formatsFor(_matSelectedName!)
+                : const <String>[];
+            final gramOptions =
+                (_matSelectedName != null && _matSelectedFormat != null)
+                    ? gramsFor(_matSelectedName!, _matSelectedFormat!)
+                    : const <String>[];
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(allNames, text.text),
+                  displayStringForOption: (s) => s,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    controller.text = _matNameCtl.text;
+                    controller.selection = _matNameCtl.selection;
+                    controller.addListener(() {
+                      if (controller.text != _matNameCtl.text) {
+                        setState(() {
+                          _matNameCtl.text = controller.text;
+                          _matNameCtl.selection = controller.selection;
+                          _matSelectedName = null;
+                          _matSelectedFormat = null;
+                          _matSelectedGrammage = null;
+                          _matFormatCtl.text = '';
+                          _matGramCtl.text = '';
+                          _matNameError =
+                              (_matNameCtl.text.trim().isEmpty ||
+                                      allNames
+                                          .map((e) => e.toLowerCase())
+                                          .contains(_matNameCtl.text
+                                              .trim()
+                                              .toLowerCase()))
+                                  ? null
+                                  : 'Выберите материал из списка';
+                          _matFormatError = null;
+                          _matGramError = null;
+                          final lowerNames =
+                              allNames.map((e) => e.toLowerCase()).toList();
+                          final typed =
+                              _matNameCtl.text.trim().toLowerCase();
+                          if (lowerNames.contains(typed)) {
+                            _matSelectedName =
+                                allNames[lowerNames.indexOf(typed)];
+                          }
+                        });
+                        _scheduleStagePreviewUpdate();
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        labelText: 'Материал',
+                        border: const OutlineInputBorder(),
+                        errorText: _matNameError,
+                      ),
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      _matNameCtl.text = value;
+                      _matSelectedName = value;
+                      _matSelectedFormat = null;
+                      _matSelectedGrammage = null;
+                      _matFormatCtl.text = '';
+                      _matGramCtl.text = '';
+                      _matNameError = null;
+                      _matFormatError = null;
+                      _matGramError = null;
+                      _selectedMaterialTmc = null;
+                      _selectedMaterial = null;
+                    });
+                    _scheduleStagePreviewUpdate();
+                  },
+                ),
+                const SizedBox(height: 8),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(formatOptions, text.text),
+                  displayStringForOption: (s) => s,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    controller.text = _matFormatCtl.text;
+                    controller.selection = _matFormatCtl.selection;
+                    controller.addListener(() {
+                      if (controller.text != _matFormatCtl.text) {
+                        setState(() {
+                          _matFormatCtl.text = controller.text;
+                          _matFormatCtl.selection = controller.selection;
+                          _matSelectedFormat = null;
+                          _matSelectedGrammage = null;
+                          _matGramCtl.text = '';
+                          _matFormatError =
+                              (_matFormatCtl.text.trim().isEmpty ||
+                                      formatOptions
+                                          .map((e) => e.toLowerCase())
+                                          .contains(_matFormatCtl.text
+                                              .trim()
+                                              .toLowerCase()))
+                                  ? null
+                                  : 'Выберите формат из списка';
+                          final lowerF = formatOptions
+                              .map((e) => e.toLowerCase())
+                              .toList();
+                          final typedF =
+                              _matFormatCtl.text.trim().toLowerCase();
+                          if (lowerF.contains(typedF)) {
+                            _matSelectedFormat =
+                                formatOptions[lowerF.indexOf(typedF)];
+                          }
+                        });
+                        _scheduleStagePreviewUpdate();
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled: _matSelectedName != null,
+                      decoration: InputDecoration(
+                        labelText: 'Формат',
+                        border: const OutlineInputBorder(),
+                        helperText: _matSelectedName != null
+                            ? null
+                            : 'Сначала выберите материал',
+                        errorText: _matSelectedName != null
+                            ? _matFormatError
+                            : null,
+                      ),
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      _matFormatCtl.text = value;
+                      _matSelectedFormat = value;
+                      _matSelectedGrammage = null;
+                      _matGramCtl.text = '';
+                      _matFormatError = null;
+                      _matGramError = null;
+                      _selectedMaterialTmc = null;
+                      _selectedMaterial = null;
+                    });
+                    _scheduleStagePreviewUpdate();
+                  },
+                ),
+                const SizedBox(height: 8),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(gramOptions, text.text),
+                  displayStringForOption: (s) => s,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    controller.text = _matGramCtl.text;
+                    controller.selection = _matGramCtl.selection;
+                    controller.addListener(() {
+                      if (controller.text != _matGramCtl.text) {
+                        setState(() {
+                          _matGramCtl.text = controller.text;
+                          _matGramCtl.selection = controller.selection;
+                          _matSelectedGrammage = null;
+                          _matGramError = null;
+                          final lowerG = gramOptions
+                              .map((e) => e.toLowerCase())
+                              .toList();
+                          final typedG =
+                              _matGramCtl.text.trim().toLowerCase();
+                          if (lowerG.contains(typedG)) {
+                            _matSelectedGrammage =
+                                gramOptions[lowerG.indexOf(typedG)];
+                            if (_matSelectedName != null &&
+                                _matSelectedFormat != null &&
+                                _matSelectedGrammage != null) {
+                              final tmc = (() {
+                                for (final t in _paperItems()) {
+                                  if (t.description.trim().toLowerCase() ==
+                                          _matSelectedName!
+                                              .trim()
+                                              .toLowerCase() &&
+                                      (t.format ?? '')
+                                              .trim()
+                                              .toLowerCase() ==
+                                          _matSelectedFormat!
+                                              .trim()
+                                              .toLowerCase() &&
+                                      (t.grammage ?? '')
+                                              .trim()
+                                              .toLowerCase() ==
+                                          _matSelectedGrammage!
+                                              .trim()
+                                              .toLowerCase()) {
+                                    return t;
+                                  }
+                                }
+                                return null;
+                              })();
+                              if (tmc != null) {
+                                _selectMaterial(tmc);
+                              }
+                            }
+                          }
+                        });
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled:
+                          _matSelectedName != null && _matSelectedFormat != null,
+                      decoration: InputDecoration(
+                        labelText: 'Грамаж',
+                        border: const OutlineInputBorder(),
+                        helperText: (_matSelectedName != null &&
+                                _matSelectedFormat != null)
+                            ? null
+                            : 'Сначала выберите формат',
+                        errorText: (_matSelectedName != null &&
+                                _matSelectedFormat != null)
+                            ? _matGramError
+                            : null,
+                      ),
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      _matGramCtl.text = value;
+                      _matSelectedGrammage = value;
+                      _matGramError = null;
+                      final tmc = findExact(
+                          _matSelectedName!, _matSelectedFormat!, value);
+                      if (tmc != null) {
+                        _selectMaterial(tmc);
+                      }
+                    });
+                  },
+                ),
+                if (paperQty != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                      'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
+                ],
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        _buildStockExtraLayout(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _stockExtraSearchController,
+                focusNode: _stockExtraFocusNode,
+                decoration: InputDecoration(
+                  labelText: 'Лишнее на складе',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: _loadingStockExtra
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : (_stockExtraSearchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _stockExtraSearchController.clear();
+                                _onStockExtraSearchChanged('');
+                              },
+                            )),
+                ),
+                onChanged: _onStockExtraSearchChanged,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _stockExtra != null
+                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
+                    : 'Доступно: —',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 4),
+              _buildStockExtraResults(),
+            ],
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Списать лишнее при сохранении'),
+            value: _writeOffStockExtra,
+            onChanged: (v) => setState(() => _writeOffStockExtra = v),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildFieldGrid([
+          TextFormField(
+            initialValue: product.widthB?.toString() ?? '',
+            decoration: const InputDecoration(
+              labelText: 'Ширина b',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              product.widthB = double.tryParse(normalized);
+              _scheduleStagePreviewUpdate();
+            },
+          ),
+          TextFormField(
+            initialValue: product.length?.toString() ?? '',
+            decoration: InputDecoration(
+              labelText: 'Длина L',
+              border: const OutlineInputBorder(),
+              errorText: _lengthExceeded ? 'Недостаточно' : null,
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              final d = double.tryParse(normalized);
+              setState(() {
+                product.length = d;
+                if (_selectedMaterialTmc != null && d != null) {
+                  _lengthExceeded = () {
+                    final current =
+                        Provider.of<WarehouseProvider>(context, listen: false)
+                            .allTmc
+                            .where((t) => t.id == _selectedMaterialTmc!.id)
+                            .toList();
+                    final available = current.isNotEmpty
+                        ? current.first.quantity
+                        : _selectedMaterialTmc!.quantity;
+                    return d > available;
+                  }();
+                } else {
+                  _lengthExceeded = false;
+                }
+              });
+            },
+          ),
+        ], breakpoint: 680, minItemWidth: 200),
       ],
     );
   }
