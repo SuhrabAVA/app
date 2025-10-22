@@ -329,6 +329,13 @@ class OrdersProvider with ChangeNotifier {
         targetQty: safeActual,
         context: 'Отгрузка заказа',
       );
+      final double? actualQtyForPens = order.actualQty;
+      if (actualQtyForPens != null && actualQtyForPens > 0) {
+        await _logPensCompletionWriteoff(
+          order: order,
+          quantity: actualQtyForPens,
+        );
+      }
     } catch (e, st) {
       debugPrint('❌ shipOrder stock error: $e\n$st');
       rethrow;
@@ -560,6 +567,56 @@ class OrdersProvider with ChangeNotifier {
       } else {
         rethrow;
       }
+    }
+  }
+
+  Future<void> _logPensCompletionWriteoff({
+    required OrderModel order,
+    required double quantity,
+  }) async {
+    final double safeQty = quantity;
+    if (safeQty <= 0) {
+      return;
+    }
+    final handle = order.handle.trim();
+    if (handle.isEmpty || handle == '-') {
+      return;
+    }
+    try {
+      final handleRow = await _findHandleRow(handle);
+      if (handleRow == null) {
+        return;
+      }
+      final String itemId = (handleRow['id'] ?? '').toString().trim();
+      if (itemId.isEmpty) {
+        return;
+      }
+      final String name = (handleRow['name'] ?? '').toString().trim();
+      final String color = (handleRow['color'] ?? '').toString().trim();
+      final String customer = order.customer.trim();
+      final String author = (AuthHelper.currentUserName ?? '').trim();
+
+      final payload = <String, dynamic>{
+        'item_id': itemId,
+        'qty': safeQty,
+      };
+      if (name.isNotEmpty) {
+        payload['name'] = name;
+      }
+      if (color.isNotEmpty) {
+        payload['color'] = color;
+      }
+      if (customer.isNotEmpty) {
+        payload['reason'] = customer;
+      }
+      if (author.isNotEmpty) {
+        payload['by_name'] = author;
+        payload['employee'] = author;
+      }
+
+      await _supabase.from('warehouse_pens_writeoffs').insert(payload);
+    } catch (e, st) {
+      debugPrint('⚠️ pens completion writeoff log error: $e\n$st');
     }
   }
 
