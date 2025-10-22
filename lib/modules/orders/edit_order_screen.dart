@@ -599,6 +599,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _stageTemplateSearchText = value;
   }
 
+  void _onStageTemplateSelected(TemplateModel template) {
+    _setStageTemplateText(template.name);
+    _stageTemplateFocusNode.unfocus();
+
+    if (_stageTemplateId == template.id &&
+        _selectedStageTemplateName == template.name) {
+      _scheduleStagePreviewUpdate(immediate: true);
+      return;
+    }
+
+    setState(() {
+      _stageTemplateId = template.id;
+      _selectedStageTemplateName = template.name;
+      _stagePreviewStages = <Map<String, dynamic>>[];
+      _stagePreviewError = null;
+      _stagePreviewLoading = true;
+      _stagePreviewInitialized = false;
+      _stagePreviewScheduled = false;
+    });
+
+    _scheduleStagePreviewUpdate(immediate: true);
+  }
+
   void _onStageTemplateTextChanged() {
     if (_updatingStageTemplateText) return;
     final text = _stageTemplateController.text;
