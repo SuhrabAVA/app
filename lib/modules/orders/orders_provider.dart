@@ -284,6 +284,7 @@ class OrdersProvider with ChangeNotifier {
         writeoffQty: writeoffQty,
         leftoverQty: leftoverQty,
       );
+      await _processHandleWriteoff(order: order, actualQty: safeActual);
     } catch (e, st) {
       debugPrint('❌ shipOrder stock error: $e\n$st');
       rethrow;
@@ -401,6 +402,125 @@ class OrdersProvider with ChangeNotifier {
         .from('warehouse_category_items')
         .update({'quantity': nextQty})
         .match({'id': itemId});
+  }
+
+  Future<void> _processHandleWriteoff({
+    required OrderModel order,
+    required double actualQty,
+  }) async {
+    final handle = order.handle.trim();
+    if (handle.isEmpty || handle == '-') {
+      return;
+    }
+    if (actualQty <= 0) {
+      return;
+    }
+
+    final handleRow = await _findHandleRow(handle);
+    if (handleRow == null) {
+      throw Exception('Ручки "$handle" не найдены на складе');
+    }
+    final String itemId = (handleRow['id'] ?? '').toString().trim();
+    if (itemId.isEmpty) {
+      throw Exception('Ручки "$handle" не найдены на складе');
+    }
+
+    final double available = _toDouble(handleRow['quantity']);
+    if (available < actualQty) {
+      throw Exception(
+        'Недостаточно ручек "$handle" на складе (осталось ${_formatQtyValue(available)})',
+      );
+    }
+
+    final String name = (handleRow['name'] ?? '').toString().trim();
+    final String color = (handleRow['color'] ?? '').toString().trim();
+
+    final List<String> reasonParts = <String>[];
+    if (name.isNotEmpty) {
+      reasonParts.add('Название: $name');
+    }
+    if (color.isNotEmpty) {
+      reasonParts.add('Цвет: $color');
+    }
+    reasonParts.add('Количество пар: ${_formatQtyValue(actualQty)}');
+    final String customer = order.customer.trim();
+    if (customer.isNotEmpty) {
+      reasonParts.add('Заказчик: $customer');
+    }
+    final String reason = reasonParts.join(' | ');
+
+    final String byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+
+    await _supabase.rpc('writeoff', params: {
+      'type': 'pens',
+      'item': itemId,
+      'qty': actualQty,
+      'reason': reason,
+      'by_name': byName,
+    });
+  }
+
+  Future<Map<String, dynamic>?> _findHandleRow(String description) async {
+    final trimmed = description.trim();
+    if (trimmed.isEmpty || trimmed == '-') {
+      return null;
+    }
+    try {
+      final response = await _supabase
+          .from('warehouse_pens')
+          .select('id, name, color, quantity')
+          .order('created_at');
+      if (response is! List) {
+        return null;
+      }
+      Map<String, dynamic>? fallback;
+      for (final raw in response) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw as Map);
+        final name = (row['name'] ?? '').toString().trim();
+        final color = (row['color'] ?? '').toString().trim();
+        final desc = [name, color]
+            .where((part) => part.isNotEmpty)
+            .join(' • ')
+            .trim();
+        if (desc.toLowerCase() == trimmed.toLowerCase()) {
+          return row;
+        }
+        if (fallback == null &&
+            name.isNotEmpty &&
+            name.toLowerCase() == trimmed.toLowerCase()) {
+          fallback = row;
+        }
+      }
+      return fallback;
+    } catch (e, st) {
+      debugPrint('❌ _findHandleRow error: $e\n$st');
+      return null;
+    }
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value == null) {
+      return 0;
+    }
+    return double.tryParse(value.toString()) ?? 0;
+  }
+
+  String _formatQtyValue(double value) {
+    if (value % 1 == 0) {
+      return value.toInt().toString();
+    }
+    String text = value.toStringAsFixed(2);
+    text = text.replaceAll(RegExp(r'0+$'), '');
+    if (text.endsWith('.') || text.endsWith(',')) {
+      text = text.substring(0, text.length - 1);
+    }
+    return text;
   }
 
   // ===== HISTORY =====
