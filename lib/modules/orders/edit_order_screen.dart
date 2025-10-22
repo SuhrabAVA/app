@@ -351,8 +351,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _paymentDone = false;
   late ProductModel _product;
   List<String> _selectedParams = [];
-  // Ручки (из склада): выбранная ручка
-  String _selectedHandle = '-';
+  // Ручки (из склада)
+  String? _selectedHandleId;
+  String _selectedHandleDescription = '-';
   // Картон: либо «нет», либо «есть»
   String _selectedCardboard = 'нет';
   double _makeready = 0;
@@ -369,8 +370,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _stagePreviewInitialized = false;
   bool _updatingStageTemplateText = false;
   bool _lastPreviewPaintsFilled = false;
-  // Кол-во ручек для списания
-  double? _handleQty;
   MaterialModel? _selectedMaterial;
   TmcModel? _selectedMaterialTmc;
   // === Каскадный выбор Материал → Формат → Грамаж (строгий) ===
@@ -490,14 +489,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _contractSigned = template?.contractSigned ?? false;
     _paymentDone = template?.paymentDone ?? false;
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
-    _selectedHandle = template?.handle ?? '-';
-    // Если редактируем и есть строка 'Ручки:' в параметрах - подставим предыдущее количество
-    try {
-      if (_selectedHandle != '-' && widget.order != null) {
-        final q = _previousPenQty(penName: _selectedHandle);
-        if (q > 0) _handleQty = q;
-      }
-    } catch (_) {}
+    final initialHandle = template?.handle?.trim();
+    if (initialHandle != null && initialHandle.isNotEmpty && initialHandle != '-') {
+      _selectedHandleDescription = initialHandle;
+    } else {
+      _selectedHandleDescription = '-';
+    }
 
     // Заменяем старое значение «офсет» на «есть», если встречается в переданном заказе
     final rawCardboard = template?.cardboard ?? 'нет';
@@ -1290,23 +1287,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   /// --- Helpers for idempotent write-offs ---
 
-  /// Parses previous pen quantity from product.parameters like: "Ручки: NAME QTY шт"
-  double _previousPenQty({required String penName}) {
-    try {
-      final prev = widget.order?.product.parameters ?? '';
-      final re = RegExp(r'Ручки:\s*(.+?)\s+([0-9]+(?:[\.,][0-9]+)?)\s*шт',
-          caseSensitive: false);
-      final m = re.firstMatch(prev);
-      if (m == null) return 0.0;
-      final name = (m.group(1) ?? '').trim();
-      final qty = (m.group(2) ?? '').replaceAll(',', '.');
-      if (name.toLowerCase() != penName.trim().toLowerCase()) return 0.0;
-      return double.tryParse(qty) ?? 0.0;
-    } catch (_) {
-      return 0.0;
-    }
-  }
-
   /// Build a map of previous paints {name -> qty_kg}
   Future<Map<String, double>> _loadPreviousPaints(String orderId) async {
     try {
@@ -1327,14 +1307,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   /// Update product.parameters with single line for pens so we can diff next time.
-  void _upsertPensInParameters(String penName, double qty) {
+  void _upsertPensInParameters(String penName) {
     final re =
         RegExp(r'(?:^|;\s*)Ручки:\s*.+?(?=(?:;|$))', caseSensitive: false);
     var p = _product.parameters;
     p = p.replaceAll(re, '').trim();
     if (p.isNotEmpty && !p.trim().endsWith(';')) p = p + '; ';
-    if (penName.trim().isNotEmpty && qty > 0) {
-      p = p + 'Ручки: ' + penName.trim() + ' ' + qty.toString() + ' шт';
+    if (penName.trim().isNotEmpty) {
+      p = p + 'Ручки: ' + penName.trim();
     }
     _product.parameters = p.trim();
   }
@@ -1369,8 +1349,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         : (_selectedManager?.trim().isNotEmpty ?? false)
             ? _selectedManager!.trim()
             : '';
-    final penName = _selectedHandle == '-' ? '' : _selectedHandle;
-    _upsertPensInParameters(penName, _handleQty ?? 0);
+    final penName =
+        _selectedHandleDescription == '-' ? '' : _selectedHandleDescription;
+    _upsertPensInParameters(penName);
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     late OrderModel createdOrUpdatedOrder;
@@ -1383,7 +1364,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         dueDate: _dueDate,
         product: _product,
         additionalParams: _selectedParams,
-        handle: _selectedHandle,
+        handle: _selectedHandleDescription == '-' ? '-' : _selectedHandleDescription,
         cardboard: _selectedCardboard,
         material: _selectedMaterial,
         makeready: _makeready,
@@ -1411,7 +1392,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         dueDate: _dueDate,
         product: _product,
         additionalParams: _selectedParams,
-        handle: _selectedHandle,
+        handle: _selectedHandleDescription == '-' ? '-' : _selectedHandleDescription,
         cardboard: _selectedCardboard,
         material: _selectedMaterial,
         makeready: _makeready,
@@ -1978,8 +1959,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           children: [
             _buildOrderInfoSection(context),
             _buildProductCard(_product),
-            _buildAdditionalParametersSection(context),
-            _buildAccessoriesSection(context),
+            _buildHandlesSection(context),
             _buildPaintsSection(),
             _buildFormSection(
               context: context,
@@ -3121,83 +3101,108 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildAdditionalParametersSection(BuildContext context) {
+  Widget _buildHandlesSection(BuildContext context) {
     return _buildSectionCard(
       context: context,
       title: 'Дополнительные параметры',
       children: [
-        Consumer<ProductsProvider>(
-          builder: (context, provider, _) {
-            final params = provider.parameters;
-            if (params.isEmpty) {
-              return const Text('Нет дополнительных параметров.');
-            }
-            return Column(
-              children: params.map((p) {
-                final selected = _selectedParams.contains(p);
-                return CheckboxListTile(
-                  value: selected,
-                  title: Text(p),
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedParams.add(p);
-                      } else {
-                        _selectedParams.remove(p);
-                      }
-                    });
-                  },
-                  contentPadding: EdgeInsets.zero,
-                );
-              }).toList(),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAccessoriesSection(BuildContext context) {
-    return _buildSectionCard(
-      context: context,
-      title: 'Комплектация',
-      children: [
         Consumer<WarehouseProvider>(
           builder: (context, warehouse, _) {
-            final uniqueHandles = <String>{};
-            final handleItems = warehouse.getTmcByType('Ручки');
-            for (final t in handleItems) {
-              final desc = t.description;
-              if (desc.isNotEmpty) uniqueHandles.add(desc);
+            final seen = <String>{};
+            final List<TmcModel> handleItems = [
+              ...warehouse.getTmcByType('Ручки'),
+              ...warehouse.getTmcByType('ручки'),
+            ]
+                .where((item) => seen.add(item.id))
+                .toList(growable: true);
+            handleItems.sort((a, b) =>
+                a.description.toLowerCase().compareTo(b.description.toLowerCase()));
+
+            TmcModel? _findHandleMatch() {
+              if (_selectedHandleDescription == '-' ||
+                  _selectedHandleDescription.trim().isEmpty) {
+                return null;
+              }
+              final target = _selectedHandleDescription.trim().toLowerCase();
+              for (final item in handleItems) {
+                final desc = item.description.trim().toLowerCase();
+                if (desc == target) {
+                  return item;
+                }
+              }
+              return null;
             }
-            for (final t in warehouse.getTmcByType('ручки')) {
-              final desc = t.description;
-              if (desc.isNotEmpty) uniqueHandles.add(desc);
+
+            if (_selectedHandleId == null &&
+                _selectedHandleDescription != '-' &&
+                _selectedHandleDescription.trim().isNotEmpty) {
+              final match = _findHandleMatch();
+              if (match != null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() {
+                    _selectedHandleId = match.id;
+                    _selectedHandleDescription = match.description;
+                  });
+                });
+              }
             }
-            final handles = ['-'] + uniqueHandles.toList();
+
+            final bool hasSelectedHandle = _selectedHandleId != null &&
+                handleItems.any((item) => item.id == _selectedHandleId);
+
+            final dropdownItems = <DropdownMenuItem<String?>>[
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('-'),
+              ),
+              ...handleItems.map(
+                (item) => DropdownMenuItem<String?>(
+                  value: item.id,
+                  child: Text(item.description.isEmpty ? item.id : item.description),
+                ),
+              ),
+              if (!hasSelectedHandle &&
+                  _selectedHandleId != null &&
+                  _selectedHandleDescription != '-')
+                DropdownMenuItem<String?>(
+                  value: _selectedHandleId,
+                  child: Text(_selectedHandleDescription),
+                ),
+            ];
+
             return _buildFieldGrid([
-              DropdownButtonFormField<String>(
-                value: handles.contains(_selectedHandle)
-                    ? _selectedHandle
-                    : '-',
+              DropdownButtonFormField<String?>(
+                value: hasSelectedHandle
+                    ? _selectedHandleId
+                    : (_selectedHandleId != null &&
+                            _selectedHandleDescription != '-'
+                        ? _selectedHandleId
+                        : null),
                 decoration: const InputDecoration(
                   labelText: 'Ручки',
                   border: OutlineInputBorder(),
                 ),
-                items: handles
-                    .map((h) => DropdownMenuItem(value: h, child: Text(h)))
-                    .toList(),
-                onChanged: (val) => setState(() => _selectedHandle = val ?? '-'),
-              ),
-              TextFormField(
-                decoration: const InputDecoration(
-                  labelText: 'Кол-во ручек',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (v) {
-                  final normalized = v.replaceAll(',', '.');
-                  _handleQty = double.tryParse(normalized);
+                items: dropdownItems,
+                onChanged: (val) {
+                  setState(() {
+                    _selectedHandleId = val;
+                    if (val == null) {
+                      _selectedHandleDescription = '-';
+                    } else {
+                      final matches =
+                          handleItems.where((item) => item.id == val).toList();
+                      if (matches.isEmpty) {
+                        _selectedHandleDescription =
+                            _selectedHandleDescription == '-' ? '-' :
+                                _selectedHandleDescription;
+                      } else {
+                        final desc = matches.first.description.trim();
+                        _selectedHandleDescription =
+                            desc.isEmpty ? '-' : matches.first.description;
+                      }
+                    }
+                  });
                 },
               ),
               DropdownButtonFormField<String>(
