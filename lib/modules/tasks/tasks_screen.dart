@@ -570,8 +570,10 @@ class _TasksScreenState extends State<TasksScreen>
     final templateProvider = context.watch<TemplateProvider>();
 
     final media = MediaQuery.of(context);
-    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final bool isTablet =
+        media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
     final double scale = isTablet ? 0.85 : 1.0;
+    final double textScaleFactor = isTablet ? 0.95 : 1.0;
     double scaled(double value) => value * scale;
     final double outerPadding = scaled(16);
     final double columnGap = scaled(16);
@@ -666,8 +668,8 @@ class _TasksScreenState extends State<TasksScreen>
     final selectedOrder =
         currentTask != null ? findOrder(currentTask.orderId) : null;
 
-    return Scaffold(
-      key: PageStorageKey('TasksScreen-\${widget.employeeId}'),
+    final scaffold = Scaffold(
+      key: PageStorageKey('TasksScreen-${widget.employeeId}'),
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: const Text('Производственный терминал'),
@@ -743,6 +745,10 @@ class _TasksScreenState extends State<TasksScreen>
                                   visualDensity: isTablet
                                       ? const VisualDensity(horizontal: -1, vertical: -1)
                                       : VisualDensity.standard,
+                                  labelPadding: EdgeInsets.symmetric(
+                                    horizontal: scaled(8),
+                                    vertical: scaled(4),
+                                  ),
                                   onSelected: (selected) {
                                     if (!selected) return;
                                     setState(() {
@@ -775,6 +781,7 @@ class _TasksScreenState extends State<TasksScreen>
                                           order: findOrder(task.orderId),
                                           selected:
                                               _selectedTask?.id == task.id,
+                                          scale: scale,
                                           onTap: () {
                                             _persistTask(task.id);
                                             setState(() {
@@ -800,9 +807,14 @@ class _TasksScreenState extends State<TasksScreen>
                   DropdownButton<String>(
                     value: _selectedWorkplaceId,
                     isDense: isTablet,
+                    style: TextStyle(fontSize: scaled(13), color: Colors.black87),
+                    itemHeight: scaled(44),
                     items: [
                       for (final w in workplaces)
-                        DropdownMenuItem(value: w.id, child: Text(w.name)),
+                        DropdownMenuItem(
+                          value: w.id,
+                          child: Text(w.name, style: TextStyle(fontSize: scaled(13))),
+                        ),
                     ],
                     onChanged: (val) {
                       setState(() {
@@ -849,6 +861,20 @@ class _TasksScreenState extends State<TasksScreen>
             ),
           ],
         ),
+      ),
+    );
+
+    if (!isTablet) return scaffold;
+
+    return MediaQuery(
+      data: media.copyWith(
+        textScaleFactor: media.textScaleFactor * textScaleFactor,
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          visualDensity: const VisualDensity(horizontal: -1, vertical: -1),
+        ),
+        child: scaffold,
       ),
     );
   }
@@ -2802,6 +2828,9 @@ class _TaskCard extends StatelessWidget {
       horizontal: scaled(compact ? 10 : 14),
       vertical: scaled(compact ? 6 : 10),
     );
+    final double titleSize = scaled(compact ? 13 : 15);
+    final double subtitleSize = scaled(compact ? 11.5 : 13);
+    final double statusSize = scaled(12);
 
     return Card(
       margin: EdgeInsets.symmetric(vertical: scaled(compact ? 4 : 6)),
@@ -2813,11 +2842,33 @@ class _TaskCard extends StatelessWidget {
       child: ListTile(
         onTap: onTap,
         dense: compact,
-        visualDensity:
-            compact ? const VisualDensity(horizontal: -2, vertical: -2) : null,
+        visualDensity: compact
+            ? const VisualDensity(horizontal: -2, vertical: -2)
+            : (scale < 1
+                ? const VisualDensity(horizontal: -1, vertical: -1)
+                : null),
         contentPadding: contentPadding,
-        title: Text(displayTitle),
-        subtitle: name.isNotEmpty ? Text(name) : null,
+        title: Text(
+          displayTitle,
+          style: TextStyle(
+            fontSize: titleSize,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: name.isNotEmpty
+            ? Text(
+                name,
+                style: TextStyle(
+                  fontSize: subtitleSize,
+                  color: Colors.grey[600],
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              )
+            : null,
         trailing: Container(
           padding: EdgeInsets.symmetric(
             horizontal: scaled(10),
@@ -2829,7 +2880,11 @@ class _TaskCard extends StatelessWidget {
           ),
           child: Text(
             _statusText(task.status),
-            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.bold,
+              fontSize: statusSize,
+            ),
           ),
         ),
       ),
