@@ -119,7 +119,9 @@ bool _containsFlexo(String text) {
 
 bool _containsBobbin(String text) {
   final lower = text.toLowerCase();
-  return lower.contains('бобин') || lower.contains('бабин') || lower.contains('bobbin');
+  return lower.contains('бобин') ||
+      lower.contains('бабин') ||
+      lower.contains('bobbin');
 }
 
 String _workplaceName(PersonnelProvider personnel, String stageId) {
@@ -436,9 +438,7 @@ class _TasksScreenState extends State<TasksScreen>
       case 'start':
         return 'Начал(а) этап';
       case 'pause':
-        return comment.text.isEmpty
-            ? 'Пауза'
-            : 'Пауза: ${comment.text}';
+        return comment.text.isEmpty ? 'Пауза' : 'Пауза: ${comment.text}';
       case 'resume':
         return 'Возобновил(а) этап';
       case 'user_done':
@@ -625,8 +625,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     if (_selectedTask == null && savedTid != null) {
       try {
-        _selectedTask =
-            tasksForWorkplace.firstWhere((t) => t.id == savedTid);
+        _selectedTask = tasksForWorkplace.firstWhere((t) => t.id == savedTid);
         _selectedStatus = _sectionForTask(_selectedTask!);
       } catch (_) {}
     } else if (_selectedTask != null &&
@@ -741,9 +740,11 @@ class _TasksScreenState extends State<TasksScreen>
                                     style: TextStyle(fontSize: scaled(13)),
                                   ),
                                   selected: _selectedStatus == entry.key,
-                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
                                   visualDensity: isTablet
-                                      ? const VisualDensity(horizontal: -1, vertical: -1)
+                                      ? const VisualDensity(
+                                          horizontal: -1, vertical: -1)
                                       : VisualDensity.standard,
                                   labelPadding: EdgeInsets.symmetric(
                                     horizontal: scaled(8),
@@ -807,13 +808,15 @@ class _TasksScreenState extends State<TasksScreen>
                   DropdownButton<String>(
                     value: _selectedWorkplaceId,
                     isDense: isTablet,
-                    style: TextStyle(fontSize: scaled(13), color: Colors.black87),
+                    style:
+                        TextStyle(fontSize: scaled(13), color: Colors.black87),
                     itemHeight: scaled(44),
                     items: [
                       for (final w in workplaces)
                         DropdownMenuItem(
                           value: w.id,
-                          child: Text(w.name, style: TextStyle(fontSize: scaled(13))),
+                          child: Text(w.name,
+                              style: TextStyle(fontSize: scaled(13))),
                         ),
                     ],
                     onChanged: (val) {
@@ -879,13 +882,14 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Widget _buildDetailsPanel(
-      OrderModel order, WorkplaceModel stage, List<TemplateModel> templates, double scale) {
+  Widget _buildDetailsPanel(OrderModel order, WorkplaceModel stage,
+      List<TemplateModel> templates, double scale) {
     final product = order.product;
-    final templateLabel = (order.stageTemplateId != null && order.stageTemplateId!.isNotEmpty)
-        ? (_resolveTemplateName(order.stageTemplateId, templates) ??
-            (templates.isEmpty ? 'загрузка...' : 'не найден'))
-        : null;
+    final templateLabel =
+        (order.stageTemplateId != null && order.stageTemplateId!.isNotEmpty)
+            ? (_resolveTemplateName(order.stageTemplateId, templates) ??
+                (templates.isEmpty ? 'загрузка...' : 'не найден'))
+            : null;
     double scaled(double value) => value * scale;
     final double panelPadding = scaled(16);
     final double radius = scaled(12);
@@ -908,8 +912,9 @@ class _TasksScreenState extends State<TasksScreen>
       if (value == null) return '—';
       final doubleValue = value.toDouble();
       final bool isInt = (doubleValue - doubleValue.round()).abs() < 0.0001;
-      final String formatted =
-          isInt ? doubleValue.round().toString() : doubleValue.toStringAsFixed(2);
+      final String formatted = isInt
+          ? doubleValue.round().toString()
+          : doubleValue.toStringAsFixed(2);
       if (unit == null) return formatted;
       final trimmed = unit.trim();
       return trimmed.isEmpty ? formatted : '$formatted $trimmed';
@@ -1034,7 +1039,8 @@ class _TasksScreenState extends State<TasksScreen>
     }
     generalSection
         .add(infoLine('Договор подписан', order.contractSigned ? 'Да' : 'Нет'));
-    generalSection.add(infoLine('Оплата', order.paymentDone ? 'Проведена' : 'Нет'));
+    generalSection
+        .add(infoLine('Оплата', order.paymentDone ? 'Проведена' : 'Нет'));
     if (order.actualQty != null) {
       generalSection
           .add(infoLine('Фактическое количество', formatQty(order.actualQty)));
@@ -1061,20 +1067,20 @@ class _TasksScreenState extends State<TasksScreen>
       productSection.add(infoLine('Глубина', formatDimension(product.depth)));
     }
     if (product.widthB != null) {
-      productSection
-          .add(infoLine('Ширина B', formatOptionalDouble(product.widthB, unit: 'мм')));
+      productSection.add(infoLine(
+          'Ширина B', formatOptionalDouble(product.widthB, unit: 'мм')));
     }
     if (product.length != null) {
-      productSection
-          .add(infoLine('Длина L', formatOptionalDouble(product.length, unit: 'м')));
+      productSection.add(
+          infoLine('Длина L', formatOptionalDouble(product.length, unit: 'м')));
     }
     if (product.roll != null) {
-      productSection
-          .add(infoLine('Рулон', formatOptionalDouble(product.roll, unit: 'мм')));
+      productSection.add(
+          infoLine('Рулон', formatOptionalDouble(product.roll, unit: 'мм')));
     }
     if (product.leftover != null) {
-      productSection.add(
-          infoLine('Остаток', formatOptionalDouble(product.leftover, unit: 'шт.')));
+      productSection.add(infoLine(
+          'Остаток', formatOptionalDouble(product.leftover, unit: 'шт.')));
     }
 
     final material = order.material;
@@ -1092,7 +1098,8 @@ class _TasksScreenState extends State<TasksScreen>
           formatNum(material.quantity,
               unit: material.unit.isNotEmpty ? material.unit : null)));
       if (material.weight != null && material.weight! > 0) {
-        materialSection.add(infoLine('Вес', formatNum(material.weight, unit: 'кг')));
+        materialSection
+            .add(infoLine('Вес', formatNum(material.weight, unit: 'кг')));
       }
     }
 
@@ -1104,8 +1111,8 @@ class _TasksScreenState extends State<TasksScreen>
       equipmentSection.add(infoLine('Картон', order.cardboard));
     }
     if (order.additionalParams.isNotEmpty) {
-      equipmentSection
-          .add(infoMultiline('Доп. параметры', order.additionalParams.join(', ')));
+      equipmentSection.add(
+          infoMultiline('Доп. параметры', order.additionalParams.join(', ')));
     }
     if (order.makeready > 0) {
       equipmentSection.add(infoLine('Приладка', formatNum(order.makeready)));
@@ -1115,7 +1122,8 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     final List<Widget> formSection = [];
-    formSection.add(infoLine('Тип формы', order.isOldForm ? 'Старая' : 'Новая'));
+    formSection
+        .add(infoLine('Тип формы', order.isOldForm ? 'Старая' : 'Новая'));
     if (order.formCode != null && order.formCode!.trim().isNotEmpty) {
       formSection.add(infoLine('Код формы', order.formCode!.trim()));
     }
@@ -1291,8 +1299,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 if (!context.mounted) return;
                                 Navigator.of(context).push(
                                   MaterialPageRoute(
-                                    builder: (_) =>
-                                        PdfViewScreen(url: url, title: 'PDF заказа'),
+                                    builder: (_) => PdfViewScreen(
+                                        url: url, title: 'PDF заказа'),
                                   ),
                                 );
                               },
@@ -1323,6 +1331,7 @@ class _TasksScreenState extends State<TasksScreen>
       ),
     );
   }
+
   /// Список этапов производства с иконками выполнено/ожидание.
   Widget _buildStageList(OrderModel order, double scale) {
     final taskProvider = context.read<TaskProvider>();
@@ -1381,7 +1390,8 @@ class _TasksScreenState extends State<TasksScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Этапы производства',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: scaled(14))),
+            style:
+                TextStyle(fontWeight: FontWeight.bold, fontSize: scaled(14))),
         SizedBox(height: verticalSpacing),
         for (final id in orderedStageIds)
           Builder(
@@ -1415,8 +1425,8 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Widget _buildControlPanel(
-      TaskModel task, WorkplaceModel stage, TaskProvider provider, double scale, bool isTablet) {
+  Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
+      TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
     final List<TaskModel> allRelated = _relatedTasks(provider, task);
     final int activeCount = _activeExecutorsCountForStage(provider, task);
@@ -1455,8 +1465,11 @@ class _TasksScreenState extends State<TasksScreen>
 
     final bool alreadyAssigned = task.assignees.contains(widget.employeeId);
     final bool isFirstAssignee = task.assignees.isEmpty;
-    final bool canAutoAssign = !alreadyAssigned && !isFirstAssignee && _slotAvailable();
-    final bool canStart = (((isFirstAssignee || alreadyAssigned || canAutoAssign)) &&
+    final bool canAutoAssign =
+        !alreadyAssigned && !isFirstAssignee && _slotAvailable();
+    final bool canStart = (((isFirstAssignee ||
+                alreadyAssigned ||
+                canAutoAssign)) &&
             (task.status == TaskStatus.waiting ||
                 task.status == TaskStatus.paused ||
                 task.status == TaskStatus.problem ||
@@ -1492,7 +1505,8 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Управление заданием',
-              style: TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
+              style:
+                  TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
           SizedBox(height: gapSmall),
           Column(
             children: [
@@ -1780,7 +1794,8 @@ class _TasksScreenState extends State<TasksScreen>
                           orElse: () => task,
                         );
                         final _secs = _elapsed(latestTask).inSeconds;
-                        await taskProvider.updateStatus(task.id, TaskStatus.completed,
+                        await taskProvider.updateStatus(
+                            task.id, TaskStatus.completed,
                             spentSeconds: _secs, startedAt: null);
                         if (!mounted) return;
                         final note = await _askFinishNote();
@@ -1831,7 +1846,8 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                         if (allDone) {
                           final _secs = _elapsed(latestTask).inSeconds;
-                          await taskProvider.updateStatus(task.id, TaskStatus.completed,
+                          await taskProvider.updateStatus(
+                              task.id, TaskStatus.completed,
                               spentSeconds: _secs, startedAt: null);
                           if (!mounted) return;
                           final note = await _askFinishNote();
@@ -1901,7 +1917,8 @@ class _TasksScreenState extends State<TasksScreen>
                         final related = _relatedTasks(taskProvider, task);
                         for (final rel in related) {
                           if (rel.status == TaskStatus.inProgress) {
-                            await taskProvider.updateStatus(rel.id, TaskStatus.paused,
+                            await taskProvider.updateStatus(
+                                rel.id, TaskStatus.paused,
                                 startedAt: null);
                           }
                         }
@@ -1965,7 +1982,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 children: [
                                   if (label != null)
                                     Padding(
-                                        padding: const EdgeInsets.only(right: 8),
+                                        padding:
+                                            const EdgeInsets.only(right: 8),
                                         child: Text(label,
                                             style: const TextStyle(
                                                 fontWeight: FontWeight.w600))),
@@ -1980,7 +1998,8 @@ class _TasksScreenState extends State<TasksScreen>
                                       onPressed: canFinishRow ? onFinish : null,
                                       child: const Text('✓ Завершить')),
                                   ElevatedButton(
-                                      onPressed: canProblemRow ? onProblem : null,
+                                      onPressed:
+                                          canProblemRow ? onProblem : null,
                                       child: const Text('⚠ Проблема')),
                                   SizedBox(width: gapMedium),
                                   // Обновляем отображение времени для каждой строки каждую секунду
@@ -2067,10 +2086,12 @@ class _TasksScreenState extends State<TasksScreen>
                       children: rows);
                 },
               ),
-              _AssignedEmployeesRow(task: task, scale: scale, compact: isTablet),
+              _AssignedEmployeesRow(
+                  task: task, scale: scale, compact: isTablet),
               SizedBox(height: scaled(8)),
               Text('Комментарии к этапу',
-                  style: TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
+                  style: TextStyle(
+                      fontSize: scaled(14), fontWeight: FontWeight.bold)),
               SizedBox(height: gapSmall),
               Builder(
                 builder: (context) {
@@ -2119,7 +2140,8 @@ class _TasksScreenState extends State<TasksScreen>
                                     color = Colors.teal;
                                     break;
                                   case 'exec_mode':
-                                    icon = Icons.settings_input_component_outlined;
+                                    icon =
+                                        Icons.settings_input_component_outlined;
                                     color = Colors.purple;
                                     break;
                                   case 'shift_pause':
@@ -2144,13 +2166,13 @@ class _TasksScreenState extends State<TasksScreen>
                                     final c = entry.comment;
                                     final ts = _formatTimestamp(c.timestamp);
                                     if (ts.isNotEmpty) headerParts.add(ts);
-                                    final author =
-                                        _employeeDisplayName(personnel, c.userId);
+                                    final author = _employeeDisplayName(
+                                        personnel, c.userId);
                                     if (author.isNotEmpty) {
                                       headerParts.add(author);
                                     }
-                                    final stageName =
-                                        _workplaceName(personnel, entry.stageId);
+                                    final stageName = _workplaceName(
+                                        personnel, entry.stageId);
                                     if (stageName.isNotEmpty) {
                                       headerParts.add('Этап: $stageName');
                                     }
@@ -2165,11 +2187,10 @@ class _TasksScreenState extends State<TasksScreen>
                                             style: const TextStyle(
                                                 fontSize: 10,
                                                 color: Colors.grey),
-                                        ),
+                                          ),
                                         Text(
                                           _describeComment(entry.comment),
-                                          style:
-                                              const TextStyle(fontSize: 14),
+                                          style: const TextStyle(fontSize: 14),
                                         ),
                                       ],
                                     );
@@ -2654,9 +2675,8 @@ class _TasksScreenState extends State<TasksScreen>
 
   List<_StageComment> _collectOrderComments(
       TaskProvider provider, TaskModel pivot) {
-    final related = provider.tasks
-        .where((t) => t.orderId == pivot.orderId)
-        .toList();
+    final related =
+        provider.tasks.where((t) => t.orderId == pivot.orderId).toList();
     final seen = <String>{};
     final result = <_StageComment>[];
     for (final task in related) {
@@ -2727,8 +2747,7 @@ class _TasksScreenState extends State<TasksScreen>
         }
       }
       final raw = row?['image_url'];
-      final url =
-          (raw is String && raw.trim().isNotEmpty) ? raw.trim() : null;
+      final url = (raw is String && raw.trim().isNotEmpty) ? raw.trim() : null;
       _formImageCache[key] = url;
       return url;
     } catch (e) {
@@ -2896,7 +2915,8 @@ class _AssignedEmployeesRow extends StatelessWidget {
   final TaskModel task;
   final double scale;
   final bool compact;
-  const _AssignedEmployeesRow({required this.task, required this.scale, this.compact = false});
+  const _AssignedEmployeesRow(
+      {required this.task, required this.scale, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -3020,10 +3040,11 @@ class _AssignedEmployeesRow extends StatelessWidget {
             String two(int n) => n.toString().padLeft(2, '0');
             final s =
                 '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-            return Text('⏱ ' + s, style: TextStyle(
-                              color: Colors.grey,
-                              fontSize: scaled(13),
-                            ));
+            return Text('⏱ ' + s,
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontSize: scaled(13),
+                ));
           },
         ),
         SizedBox(width: scaled(4)),
