@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 import '../orders/id_format.dart';
@@ -296,6 +297,8 @@ class _TasksScreenState extends State<TasksScreen>
   final TextEditingController _chatController = TextEditingController();
   String? _selectedWorkplaceId;
   TaskModel? _selectedTask;
+  final Map<String, String?> _formImageCache = {};
+  final Map<String, Future<String?>> _formImagePending = {};
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
   static const Map<TaskStatus, String> _statusLabels = {
@@ -454,10 +457,27 @@ class _TasksScreenState extends State<TasksScreen>
           return 'Режим: совместное исполнение';
         }
         return 'Режим: отдельный исполнитель';
+      case 'shift_pause':
+        return comment.text.isNotEmpty
+            ? comment.text
+            : 'Пересмена: этап приостановлен';
+      case 'shift_resume':
+        return comment.text.isNotEmpty
+            ? comment.text
+            : 'Пересмена: работа возобновлена';
       default:
         return comment.text;
     }
   }
+
+class _StageComment {
+  final TaskComment comment;
+  final String stageId;
+  final String taskId;
+
+  const _StageComment(
+      {required this.comment, required this.stageId, required this.taskId});
+}
 
   /// Handles joining an already started task. Presents a modal to choose between
   /// separate execution (individual performer) or helper (joint). If the user
@@ -1077,6 +1097,114 @@ class _TasksScreenState extends State<TasksScreen>
       formSection.add(infoLine('Номер формы', order.newFormNo.toString()));
     }
 
+    Widget formSectionWidget() {
+      if (formSection.isEmpty) return const SizedBox.shrink();
+      final double previewSize = scaled(110);
+      final borderRadius = BorderRadius.circular(scaled(8));
+      final boxDecoration = BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: borderRadius,
+        color: Colors.grey.shade100,
+      );
+      return Padding(
+        padding: EdgeInsets.only(bottom: mediumSpacing),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Форма',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: scaled(14),
+              ),
+            ),
+            SizedBox(height: smallSpacing),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: formSection,
+                  ),
+                ),
+                SizedBox(width: scaled(12)),
+                FutureBuilder<String?>(
+                  future: _getFormImageFuture(order),
+                  builder: (context, snapshot) {
+                    final url = snapshot.data;
+                    final bool waiting =
+                        snapshot.connectionState == ConnectionState.waiting &&
+                            !snapshot.hasData;
+                    Widget child;
+                    if (waiting) {
+                      child = const Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      );
+                    } else if (url == null || url.isEmpty) {
+                      child = Center(
+                        child: Text('Нет фото',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: scaled(11),
+                            )),
+                      );
+                    } else {
+                      child = GestureDetector(
+                        onTap: () => _openFormImage(url),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: borderRadius,
+                              child: Image.network(
+                                url,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    Center(
+                                  child: Icon(Icons.broken_image,
+                                      color: Colors.red.shade300,
+                                      size: scaled(28)),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              right: 6,
+                              bottom: 6,
+                              child: Container(
+                                padding: EdgeInsets.all(scaled(4)),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius:
+                                      BorderRadius.circular(scaled(12)),
+                                ),
+                                child: Icon(Icons.fullscreen,
+                                    size: scaled(14), color: Colors.white),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return Container(
+                      width: previewSize,
+                      height: previewSize,
+                      decoration: boxDecoration,
+                      child: child,
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     final bool hasPdf = order.pdfUrl != null && order.pdfUrl!.isNotEmpty;
 
     return Container(
@@ -1113,8 +1241,7 @@ class _TasksScreenState extends State<TasksScreen>
                       section('Материал', materialSection),
                     if (equipmentSection.isNotEmpty)
                       section('Комплектация', equipmentSection),
-                    if (formSection.isNotEmpty)
-                      section('Форма', formSection),
+                    if (formSection.isNotEmpty) formSectionWidget(),
                     if (hasPdf)
                       section('Файлы', [
                         Row(
@@ -1264,6 +1391,7 @@ class _TasksScreenState extends State<TasksScreen>
     // === Derived state & permissions ===
     final List<TaskModel> allRelated = _relatedTasks(provider, task);
     final int activeCount = _activeExecutorsCountForStage(provider, task);
+    final bool shiftPaused = _isShiftPausedForStage(provider, task);
     final dynamic _rawCap = (stage as dynamic).maxConcurrentWorkers;
     final int capacity = (_rawCap is num ? _rawCap.toInt() : 1);
     final int effCap = capacity <= 0 ? 1 : capacity;
@@ -1305,15 +1433,19 @@ class _TasksScreenState extends State<TasksScreen>
                 task.status == TaskStatus.problem ||
                 (task.status == TaskStatus.inProgress && _slotAvailable()))) &&
         _isFirstPendingStage(context.read<TaskProvider>(),
-            context.read<PersonnelProvider>(), task);
+            context.read<PersonnelProvider>(), task) &&
+        !shiftPaused;
 
     // Пауза/Завершить/Проблема доступны только своим исполнителям
-    final bool canPause = task.status == TaskStatus.inProgress && isAssignee;
+    final bool canPause =
+        task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
     final bool canFinish = (task.status == TaskStatus.inProgress ||
             task.status == TaskStatus.paused ||
             task.status == TaskStatus.problem) &&
-        isAssignee;
-    final bool canProblem = task.status == TaskStatus.inProgress && isAssignee;
+        isAssignee &&
+        !shiftPaused;
+    final bool canProblem =
+        task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
     final Widget panel = Container(
       padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
@@ -1503,6 +1635,12 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool canProblemRow = isMyRow &&
                         canProblem &&
                         stateRowUser == UserRunState.active;
+                    final bool canShiftControl = shiftPaused
+                        ? true
+                        : (isMyRow &&
+                            (stateRowUser == UserRunState.active ||
+                                stateRowUser == UserRunState.paused ||
+                                stateRowUser == UserRunState.problem));
 
                     Future<void> onStart() async {
                       // Sequential stage guard
@@ -1702,6 +1840,79 @@ class _TasksScreenState extends State<TasksScreen>
                       }
                     }
 
+                    Future<void> onShift() async {
+                      final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: Text(shiftPaused
+                                  ? 'Продолжить после пересмены?'
+                                  : 'Пересмена'),
+                              content: Text(shiftPaused
+                                  ? 'Подтвердите возобновление работы на этапе.'
+                                  : 'Этап будет остановлен до следующего сотрудника. Продолжить?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(false),
+                                  child: const Text('Отмена'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(true),
+                                  child: const Text('Подтвердить'),
+                                ),
+                              ],
+                            ),
+                          ) ??
+                          false;
+                      if (!confirmed) return;
+
+                      final taskProvider = context.read<TaskProvider>();
+                      final analytics = context.read<AnalyticsProvider>();
+
+                      if (!shiftPaused) {
+                        final related = _relatedTasks(taskProvider, task);
+                        for (final rel in related) {
+                          if (rel.status == TaskStatus.inProgress) {
+                            await taskProvider.updateStatus(rel.id, TaskStatus.paused,
+                                startedAt: null);
+                          }
+                        }
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'shift_pause',
+                            text: 'Пересмена: этап приостановлен',
+                            userIdOverride: widget.employeeId);
+                        await analytics.logEvent(
+                          orderId: task.orderId,
+                          stageId: task.stageId,
+                          userId: widget.employeeId,
+                          action: 'shift_pause',
+                          category: 'production',
+                          details: 'Этап остановлен для пересмены',
+                        );
+                      } else {
+                        await onStart();
+                        final latest = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        if (latest.status == TaskStatus.inProgress) {
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'shift_resume',
+                              text: 'Пересмена: работа возобновлена',
+                              userIdOverride: widget.employeeId);
+                          await analytics.logEvent(
+                            orderId: task.orderId,
+                            stageId: task.stageId,
+                            userId: widget.employeeId,
+                            action: 'shift_resume',
+                            category: 'production',
+                            details: 'Работа возобновлена после пересмены',
+                          );
+                        }
+                      }
+                    }
+
                     String timeText() {
                       final d = (jointGroup != null)
                           ? _elapsed(task)
@@ -1747,6 +1958,14 @@ class _TasksScreenState extends State<TasksScreen>
                               builder: (context, _) {
                                 return Text('Время: ' + timeText());
                               },
+                            ),
+                            const Spacer(),
+                            ElevatedButton.icon(
+                              onPressed: canShiftControl ? onShift : null,
+                              icon: const Icon(Icons.autorenew),
+                              label: Text(shiftPaused
+                                  ? 'Продолжить пересмену'
+                                  : 'Пересмена'),
                             ),
                           ],
                         ),
@@ -1820,15 +2039,16 @@ class _TasksScreenState extends State<TasksScreen>
               Builder(
                 builder: (context) {
                   final personnel = context.watch<PersonnelProvider>();
-                  final comments = task.comments;
-                  if (comments.isEmpty) {
+                  final taskProvider = context.watch<TaskProvider>();
+                  final aggregated = _collectOrderComments(taskProvider, task);
+                  if (aggregated.isEmpty) {
                     return const Text('Нет комментариев',
                         style: TextStyle(color: Colors.grey));
                   }
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      for (final c in comments)
+                      for (final entry in aggregated)
                         Padding(
                           padding: EdgeInsets.symmetric(vertical: gapSmall / 2),
                           child: Row(
@@ -1837,6 +2057,7 @@ class _TasksScreenState extends State<TasksScreen>
                               Builder(builder: (_) {
                                 IconData icon = Icons.info_outline;
                                 Color color = Colors.blueGrey;
+                                final c = entry.comment;
                                 switch (c.type) {
                                   case 'problem':
                                     icon = Icons.error_outline;
@@ -1865,6 +2086,14 @@ class _TasksScreenState extends State<TasksScreen>
                                     icon = Icons.settings_input_component_outlined;
                                     color = Colors.purple;
                                     break;
+                                  case 'shift_pause':
+                                    icon = Icons.pause_circle_outline;
+                                    color = Colors.deepPurple;
+                                    break;
+                                  case 'shift_resume':
+                                    icon = Icons.play_circle_outline;
+                                    color = Colors.deepPurple;
+                                    break;
                                   default:
                                     icon = Icons.info_outline;
                                     color = Colors.blueGrey;
@@ -1876,12 +2105,18 @@ class _TasksScreenState extends State<TasksScreen>
                                 child: Builder(
                                   builder: (_) {
                                     final headerParts = <String>[];
+                                    final c = entry.comment;
                                     final ts = _formatTimestamp(c.timestamp);
                                     if (ts.isNotEmpty) headerParts.add(ts);
                                     final author =
                                         _employeeDisplayName(personnel, c.userId);
                                     if (author.isNotEmpty) {
                                       headerParts.add(author);
+                                    }
+                                    final stageName =
+                                        _workplaceName(personnel, entry.stageId);
+                                    if (stageName.isNotEmpty) {
+                                      headerParts.add('Этап: $stageName');
                                     }
                                     final header = headerParts.join(' • ');
                                     return Column(
@@ -1894,9 +2129,9 @@ class _TasksScreenState extends State<TasksScreen>
                                             style: const TextStyle(
                                                 fontSize: 10,
                                                 color: Colors.grey),
-                                          ),
+                                        ),
                                         Text(
-                                          _describeComment(c),
+                                          _describeComment(entry.comment),
                                           style:
                                               const TextStyle(fontSize: 14),
                                         ),
@@ -2379,6 +2614,130 @@ class _TasksScreenState extends State<TasksScreen>
     return provider.tasks
         .where((t) => t.orderId == pivot.orderId && t.stageId == pivot.stageId)
         .toList();
+  }
+
+  List<_StageComment> _collectOrderComments(
+      TaskProvider provider, TaskModel pivot) {
+    final related = provider.tasks
+        .where((t) => t.orderId == pivot.orderId)
+        .toList();
+    final seen = <String>{};
+    final result = <_StageComment>[];
+    for (final task in related) {
+      for (final comment in task.comments) {
+        final key =
+            '${task.id}-${comment.id}-${comment.timestamp}-${comment.type}-${comment.userId}-${comment.text}';
+        if (seen.add(key)) {
+          result.add(_StageComment(
+              comment: comment, stageId: task.stageId, taskId: task.id));
+        }
+      }
+    }
+    result.sort((a, b) {
+      final tsDiff = a.comment.timestamp.compareTo(b.comment.timestamp);
+      if (tsDiff != 0) return tsDiff;
+      final stageDiff = a.stageId.compareTo(b.stageId);
+      if (stageDiff != 0) return stageDiff;
+      return a.taskId.compareTo(b.taskId);
+    });
+    return result;
+  }
+
+  bool _isShiftPausedForStage(TaskProvider provider, TaskModel pivot) {
+    final related = _relatedTasks(provider, pivot);
+    final events = <TaskComment>[];
+    for (final t in related) {
+      for (final c in t.comments) {
+        if (c.type == 'shift_pause' || c.type == 'shift_resume') {
+          events.add(c);
+        }
+      }
+    }
+    if (events.isEmpty) return false;
+    events.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return events.last.type == 'shift_pause';
+  }
+
+  Future<String?> _fetchAndCacheFormImage(OrderModel order) async {
+    final key = order.id;
+    try {
+      Map<String, dynamic>? row;
+      final client = Supabase.instance.client;
+      final code = order.formCode?.trim();
+      if (code != null && code.isNotEmpty) {
+        final res = await client
+            .from('forms')
+            .select('image_url')
+            .eq('code', code)
+            .maybeSingle();
+        if (res != null && res is Map) {
+          row = Map<String, dynamic>.from(res);
+        }
+      }
+      final hasImage =
+          row != null && (row['image_url'] ?? '').toString().trim().isNotEmpty;
+      if (!hasImage &&
+          order.formSeries != null &&
+          order.formSeries!.trim().isNotEmpty &&
+          order.newFormNo != null) {
+        final res = await client
+            .from('forms')
+            .select('image_url')
+            .eq('series', order.formSeries!.trim())
+            .eq('number', order.newFormNo)
+            .maybeSingle();
+        if (res != null && res is Map) {
+          row = Map<String, dynamic>.from(res);
+        }
+      }
+      final raw = row?['image_url'];
+      final url =
+          (raw is String && raw.trim().isNotEmpty) ? raw.trim() : null;
+      _formImageCache[key] = url;
+      return url;
+    } catch (e) {
+      debugPrint('❌ load form image error: $e');
+      _formImageCache[key] = null;
+      return null;
+    } finally {
+      _formImagePending.remove(key);
+    }
+  }
+
+  Future<String?> _getFormImageFuture(OrderModel order) {
+    final key = order.id;
+    if (_formImageCache.containsKey(key)) {
+      return Future.value(_formImageCache[key]);
+    }
+    if (_formImagePending.containsKey(key)) {
+      return _formImagePending[key]!;
+    }
+    final future = _fetchAndCacheFormImage(order);
+    _formImagePending[key] = future;
+    return future;
+  }
+
+  Future<void> _openFormImage(String url) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Фото формы')),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => const Icon(
+                  Icons.broken_image,
+                  size: 96,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   int _activeExecutorsCountForStage(TaskProvider provider, TaskModel pivot) {
