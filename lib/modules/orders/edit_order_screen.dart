@@ -2048,84 +2048,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ],
             ),
             const SizedBox(height: 12),
-
-// === Форма ===
-            Text('Форма', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
-            if (showFormSummary) ...[
-              _buildFormSummary(context),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _startFormEditing,
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Изменить форму'),
-                ),
-              ),
-            ],
-            if (showFormEditor) ...[
-              if (isEditing && hasAssignedForm) ...[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _cancelFormEditing,
-                    icon: const Icon(Icons.close),
-                    label: const Text('Отменить изменения формы'),
-                  ),
-                ),
-                const SizedBox(height: 4),
-              ],
-              ..._buildFormEditorControls(),
-            ],
-            const SizedBox(height: 8),
-
-// Всегда показываем отображаемый номер формы (предпросмотр при создании, сохранённый при редактировании)
-            InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Номер формы',
-                border: OutlineInputBorder(),
-              ),
-              child: Text(_formDisplayPreview()),
-            ),
-            const SizedBox(height: 12),
-
-// Фактическое количество (пока не вычисляется)
-            TextFormField(
-              initialValue: _actualQuantity,
-              decoration: const InputDecoration(
-                labelText: 'Фактическое количество',
-                border: OutlineInputBorder(),
-              ),
-              readOnly: true,
-            ),
-            const SizedBox(height: 12),
-            // === Комментарии ===
-            TextFormField(
-              controller: _commentsController,
-              decoration: const InputDecoration(
-                labelText: 'Комментарии к заказу',
-                border: OutlineInputBorder(),
-              ),
-              minLines: 2,
-              maxLines: 5,
-            ),
-            const SizedBox(height: 12),
-            // contract and payment
-            CheckboxListTile(
-              value: _contractSigned,
-              onChanged: (val) =>
-                  setState(() => _contractSigned = val ?? false),
-              title: const Text('Договор подписан'),
-              contentPadding: EdgeInsets.zero,
-            ),
-            CheckboxListTile(
-              value: _paymentDone,
-              onChanged: (val) => setState(() => _paymentDone = val ?? false),
-              title: const Text('Оплата произведена'),
-              contentPadding: EdgeInsets.zero,
-            ),
-            const SizedBox(height: 16),
             Text('Продукт в заказе',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
@@ -2230,6 +2152,73 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ],
               onChanged: (val) =>
                   setState(() => _selectedCardboard = val ?? 'нет'),
+            ),
+            const SizedBox(height: 16),
+
+// === Форма ===
+            Text('Форма', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            if (showFormSummary) ...[
+              _buildFormSummary(context),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _startFormEditing,
+                  icon: const Icon(Icons.edit),
+                  label: const Text('Изменить форму'),
+                ),
+              ),
+            ],
+            if (showFormEditor) ...[
+              if (isEditing && hasAssignedForm) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _cancelFormEditing,
+                    icon: const Icon(Icons.close),
+                    label: const Text('Отменить изменения формы'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+              ..._buildFormEditorControls(),
+            ],
+            const SizedBox(height: 8),
+
+// Всегда показываем отображаемый номер формы (предпросмотр при создании, сохранённый при редактировании)
+            InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Номер формы',
+                border: OutlineInputBorder(),
+              ),
+              child: Text(_formDisplayPreview()),
+            ),
+            const SizedBox(height: 12),
+            // === Комментарии ===
+            TextFormField(
+              controller: _commentsController,
+              decoration: const InputDecoration(
+                labelText: 'Комментарии к заказу',
+                border: OutlineInputBorder(),
+              ),
+              minLines: 2,
+              maxLines: 5,
+            ),
+            const SizedBox(height: 12),
+            // contract and payment
+            CheckboxListTile(
+              value: _contractSigned,
+              onChanged: (val) =>
+                  setState(() => _contractSigned = val ?? false),
+              title: const Text('Договор подписан'),
+              contentPadding: EdgeInsets.zero,
+            ),
+            CheckboxListTile(
+              value: _paymentDone,
+              onChanged: (val) => setState(() => _paymentDone = val ?? false),
+              title: const Text('Оплата произведена'),
+              contentPadding: EdgeInsets.zero,
             ),
             const SizedBox(height: 12),
             // Приладка/ВАЛ
@@ -2370,6 +2359,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 );
               },
             ),
+            const SizedBox(height: 12),
+            // Фактическое количество (пока не вычисляется)
+            TextFormField(
+              initialValue: _actualQuantity,
+              decoration: const InputDecoration(
+                labelText: 'Фактическое количество',
+                border: OutlineInputBorder(),
+              ),
+              readOnly: true,
+            ),
+            const SizedBox(height: 12),
           ],
         ),
       ),
