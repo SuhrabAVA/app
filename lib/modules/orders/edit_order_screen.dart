@@ -1958,9 +1958,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             _buildOrderInfoSection(context),
-            _buildProductCard(_product),
+            const SizedBox(height: 12),
+            _buildProductBasics(_product),
+            const SizedBox(height: 12),
             _buildHandlesSection(context),
+            const SizedBox(height: 12),
             _buildPaintsSection(),
+            const SizedBox(height: 12),
             _buildFormSection(
               context: context,
               showFormSummary: showFormSummary,
@@ -1968,18 +1972,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               isEditing: isEditing,
               hasAssignedForm: hasAssignedForm,
             ),
-            // === Комментарии ===
-            TextFormField(
-              controller: _commentsController,
-              decoration: const InputDecoration(
-                labelText: 'Комментарии к заказу',
-                border: OutlineInputBorder(),
-              ),
-              minLines: 2,
-              maxLines: 5,
-            ),
             const SizedBox(height: 12),
-            // contract and payment
+            _buildProductMaterialAndExtras(_product),
+            const SizedBox(height: 12),
+            _buildProductionSection(context),
+            const SizedBox(height: 12),
             CheckboxListTile(
               value: _contractSigned,
               onChanged: (val) =>
@@ -1994,7 +1991,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               contentPadding: EdgeInsets.zero,
             ),
             const SizedBox(height: 12),
-            _buildProductionSection(context),
+            TextFormField(
+              controller: _commentsController,
+              decoration: const InputDecoration(
+                labelText: 'Комментарии к заказу',
+                border: OutlineInputBorder(),
+              ),
+              minLines: 2,
+              maxLines: 5,
+            ),
             const SizedBox(height: 12),
           ],
         ),
@@ -2002,944 +2007,514 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  /// Карточка продукта (тип, размеры, материал, краски, вложения и пр.)
-  Widget _buildProductCard(ProductModel product) {
+  /// Базовые поля продукта (наименование, тираж, габариты)
+  Widget _buildProductBasics(ProductModel product) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildFieldGrid([
+          Consumer<ProductsProvider>(
+            builder: (context, provider, _) {
+              final items = _categoryTitles;
+              return DropdownButtonFormField<String>(
+                value: items.contains(_product.type) ? _product.type : null,
+                decoration: const InputDecoration(
+                  labelText: 'Наименование изделия',
+                  border: OutlineInputBorder(),
+                ),
+                items: items
+                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                    .toList(),
+                onChanged: (val) {
+                  setState(() {
+                    _product.type = val ?? '';
+                    _selectedStockExtraRow = null;
+                    _stockExtraResults = [];
+                  });
+                  _stockExtraSearchDebounce?.cancel();
+                  _stockExtraSearchController.clear();
+                  _updateStockExtra();
+                },
+              );
+            },
+          ),
+          TextFormField(
+            initialValue: product.quantity > 0 ? product.quantity.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Тираж',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final qty = int.tryParse(val) ?? 0;
+              product.quantity = qty;
+            },
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Введите тираж';
+              }
+              final qty = int.tryParse(value);
+              if (qty == null || qty <= 0) {
+                return 'Тираж должен быть > 0';
+              }
+              return null;
+            },
+          ),
+        ], breakpoint: 680, minItemWidth: 220),
+        const SizedBox(height: 12),
+        _buildFieldGrid([
+          TextFormField(
+            initialValue: product.width > 0 ? product.width.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Ширина (мм)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.width = double.tryParse(normalized) ?? 0;
+              });
+              _scheduleStagePreviewUpdate();
+            },
+          ),
+          TextFormField(
+            initialValue: product.height > 0 ? product.height.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Высота (мм)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.height = double.tryParse(normalized) ?? 0;
+              });
+            },
+          ),
+          TextFormField(
+            initialValue: product.depth > 0 ? product.depth.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Глубина (мм)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.depth = double.tryParse(normalized) ?? 0;
+              });
+            },
+          ),
+        ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
+      ],
+    );
+  }
+
+  /// Дополнительные параметры продукта: материал, складские остатки и вложения
+  Widget _buildProductMaterialAndExtras(ProductModel product) {
     final paperQty = _currentAvailablePaperQty();
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text('Продукт',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-            _buildFieldGrid([
-              Consumer<ProductsProvider>(
-                builder: (context, provider, _) {
-                  final items = _categoryTitles;
-                  return DropdownButtonFormField<String>(
-                    value: items.contains(_product.type)
-                        ? _product.type
-                        : null,
-                    decoration: const InputDecoration(
-                      labelText: 'Наименование изделия',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: items
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                        .toList(),
-                    onChanged: (val) {
-                      setState(() {
-                        _product.type = val ?? '';
-                        _selectedStockExtraRow = null;
-                        _stockExtraResults = [];
-                      });
-                      _stockExtraSearchDebounce?.cancel();
-                      _stockExtraSearchController.clear();
-                      _updateStockExtra();
-                    },
-                  );
-                },
-              ),
-              TextFormField(
-                initialValue:
-                    product.quantity > 0 ? product.quantity.toString() : '',
-                decoration: const InputDecoration(
-                  labelText: 'Тираж',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final qty = int.tryParse(val) ?? 0;
-                  product.quantity = qty;
-                },
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Введите тираж';
-                  }
-                  final qty = int.tryParse(value);
-                  if (qty == null || qty <= 0) {
-                    return 'Тираж должен быть > 0';
-                  }
-                  return null;
-                },
-              ),
-            ], breakpoint: 680, minItemWidth: 220),
-            const SizedBox(height: 12),
-            // Размеры
-            _buildFieldGrid([
-              TextFormField(
-                initialValue:
-                    product.width > 0 ? product.width.toString() : '',
-                decoration: const InputDecoration(
-                  labelText: 'Ширина (мм)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  setState(() {
-                    product.width = double.tryParse(normalized) ?? 0;
-                  });
-                  _scheduleStagePreviewUpdate();
-                },
-              ),
-              TextFormField(
-                initialValue:
-                    product.height > 0 ? product.height.toString() : '',
-                decoration: const InputDecoration(
-                  labelText: 'Высота (мм)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  setState(() {
-                    product.height = double.tryParse(normalized) ?? 0;
-                  });
-                },
-              ),
-              TextFormField(
-                initialValue:
-                    product.depth > 0 ? product.depth.toString() : '',
-                decoration: const InputDecoration(
-                  labelText: 'Глубина (мм)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  setState(() {
-                    product.depth = double.tryParse(normalized) ?? 0;
-                  });
-                },
-              ),
-            ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
-            const SizedBox(height: 12),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Builder(
+          builder: (context) {
+            final papers = _paperItems();
+            final nameSet = <String>{};
+            for (final t in papers) {
+              final n = (t.description).trim();
+              if (n.isNotEmpty) nameSet.add(n);
+            }
+            final allNames = nameSet.toList()
+              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
-            // === Материал (каскадный каскад: Материал → Формат → Грамаж) ===
-            Builder(
-              builder: (context) {
-                final papers = _paperItems();
-                // Уникальные названия материалов
-                final nameSet = <String>{};
-                for (final t in papers) {
-                  final n = (t.description).trim();
-                  if (n.isNotEmpty) nameSet.add(n);
+            List<String> formatsFor(String name) {
+              final s = <String>{};
+              for (final t in papers) {
+                if (t.description.trim().toLowerCase() ==
+                    name.trim().toLowerCase()) {
+                  final f = (t.format ?? '').trim();
+                  if (f.isNotEmpty) s.add(f);
                 }
-                final allNames = nameSet.toList()
-                  ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              }
+              final list = s.toList()
+                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              return list;
+            }
 
-                List<String> formatsFor(String name) {
-                  final s = <String>{};
-                  for (final t in papers) {
-                    if (t.description.trim().toLowerCase() ==
-                        name.trim().toLowerCase()) {
-                      final f = (t.format ?? '').trim();
-                      if (f.isNotEmpty) s.add(f);
-                    }
-                  }
-                  final list = s.toList()
-                    ..sort(
-                        (a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-                  return list;
+            List<String> gramsFor(String name, String fmt) {
+              final s = <String>{};
+              for (final t in papers) {
+                if (t.description.trim().toLowerCase() ==
+                        name.trim().toLowerCase() &&
+                    (t.format ?? '').trim().toLowerCase() ==
+                        fmt.trim().toLowerCase()) {
+                  final g = (t.grammage ?? '').trim();
+                  if (g.isNotEmpty) s.add(g);
                 }
+              }
+              final list = s.toList()
+                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+              return list;
+            }
 
-                List<String> gramsFor(String name, String fmt) {
-                  final s = <String>{};
-                  for (final t in papers) {
-                    if (t.description.trim().toLowerCase() ==
-                            name.trim().toLowerCase() &&
-                        (t.format ?? '').trim().toLowerCase() ==
-                            fmt.trim().toLowerCase()) {
-                      final g = (t.grammage ?? '').trim();
-                      if (g.isNotEmpty) s.add(g);
-                    }
-                  }
-                  final list = s.toList()
-                    ..sort(
-                        (a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-                  return list;
+            TmcModel? findExact(String name, String fmt, String gram) {
+              for (final t in papers) {
+                if (t.description.trim().toLowerCase() ==
+                        name.trim().toLowerCase() &&
+                    (t.format ?? '').trim().toLowerCase() ==
+                        fmt.trim().toLowerCase() &&
+                    (t.grammage ?? '').trim().toLowerCase() ==
+                        gram.trim().toLowerCase()) {
+                  return t;
                 }
+              }
+              return null;
+            }
 
-                TmcModel? findExact(String name, String fmt, String gram) {
-                  for (final t in papers) {
-                    if (t.description.trim().toLowerCase() ==
-                            name.trim().toLowerCase() &&
-                        (t.format ?? '').trim().toLowerCase() ==
-                            fmt.trim().toLowerCase() &&
-                        (t.grammage ?? '').trim().toLowerCase() ==
-                            gram.trim().toLowerCase()) {
-                      return t;
-                    }
-                  }
-                  return null;
-                }
+            Iterable<String> filter(Iterable<String> source, String q) {
+              final query = q.trim().toLowerCase();
+              if (query.isEmpty) return source;
+              return source.where((o) => o.toLowerCase().contains(query));
+            }
 
-                Iterable<String> filter(Iterable<String> source, String q) {
-                  final query = q.trim().toLowerCase();
-                  if (query.isEmpty) return source;
-                  return source.where((o) => o.toLowerCase().contains(query));
-                }
-
-                final formatOptions = _matSelectedName != null
-                    ? formatsFor(_matSelectedName!)
+            final formatOptions = _matSelectedName != null
+                ? formatsFor(_matSelectedName!)
+                : const <String>[];
+            final gramOptions =
+                (_matSelectedName != null && _matSelectedFormat != null)
+                    ? gramsFor(_matSelectedName!, _matSelectedFormat!)
                     : const <String>[];
-                final gramOptions =
-                    (_matSelectedName != null && _matSelectedFormat != null)
-                        ? gramsFor(_matSelectedName!, _matSelectedFormat!)
-                        : const <String>[];
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Материал (имена, без дублей)
-                    Autocomplete<String>(
-                      optionsBuilder: (text) => filter(allNames, text.text),
-                      displayStringForOption: (s) => s,
-                      fieldViewBuilder:
-                          (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matNameCtl.text;
-                        controller.selection = _matNameCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matNameCtl.text) {
-                            setState(() {
-                              _matNameCtl.text = controller.text;
-                              _matNameCtl.selection = controller.selection;
-                              // Сбрасываем выбор, пока не будет выбран вариант из списка
-                              _matSelectedName = null;
-                              _matSelectedFormat = null;
-                              _matSelectedGrammage = null;
-                              _matFormatCtl.text = '';
-                              _matGramCtl.text = '';
-                              _matNameError =
-                                  (_matNameCtl.text.trim().isEmpty ||
-                                          allNames
-                                              .map((e) => e.toLowerCase())
-                                              .contains(_matNameCtl.text
-                                                  .trim()
-                                                  .toLowerCase()))
-                                      ? null
-                                      : 'Выберите материал из списка';
-                              _matFormatError = null;
-                              _matGramError = null;
-                              // если текст точно совпадает с вариантом - считаем выбранным
-                              final lowerNames =
-                                  allNames.map((e) => e.toLowerCase()).toList();
-                              final typed =
-                                  _matNameCtl.text.trim().toLowerCase();
-                              if (lowerNames.contains(typed)) {
-                                _matSelectedName =
-                                    allNames[lowerNames.indexOf(typed)];
-                              }
-                            });
-                            _scheduleStagePreviewUpdate();
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: 'Материал',
-                            border: const OutlineInputBorder(),
-                            errorText: _matNameError,
-                          ),
-                          onSubmitted: (_) => onFieldSubmitted(),
-                        );
-                      },
-                      onSelected: (value) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(allNames, text.text),
+                  displayStringForOption: (s) => s,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    controller.text = _matNameCtl.text;
+                    controller.selection = _matNameCtl.selection;
+                    controller.addListener(() {
+                      if (controller.text != _matNameCtl.text) {
                         setState(() {
-                          _matNameCtl.text = value;
-                          _matSelectedName = value;
+                          _matNameCtl.text = controller.text;
+                          _matNameCtl.selection = controller.selection;
+                          _matSelectedName = null;
                           _matSelectedFormat = null;
                           _matSelectedGrammage = null;
                           _matFormatCtl.text = '';
                           _matGramCtl.text = '';
-                          _matNameError = null;
+                          _matNameError = (_matNameCtl.text.trim().isEmpty ||
+                                  allNames
+                                      .map((e) => e.toLowerCase())
+                                      .contains(
+                                          _matNameCtl.text.trim().toLowerCase()))
+                              ? null
+                              : 'Выберите материал из списка';
                           _matFormatError = null;
                           _matGramError = null;
-                          // Очистим выбранный TMC/Material до полного выбора
-                          _selectedMaterialTmc = null;
-                          _selectedMaterial = null;
-                        });
-                        _scheduleStagePreviewUpdate();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    // Формат (только форматы выбранного материала)
-                    Autocomplete<String>(
-                      optionsBuilder: (text) =>
-                          filter(formatOptions, text.text),
-                      displayStringForOption: (s) => s,
-                      fieldViewBuilder:
-                          (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matFormatCtl.text;
-                        controller.selection = _matFormatCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matFormatCtl.text) {
-                            setState(() {
-                              _matFormatCtl.text = controller.text;
-                              _matFormatCtl.selection = controller.selection;
-                              _matSelectedFormat = null;
-                              _matSelectedGrammage = null;
-                              _matGramCtl.text = '';
-                              _matFormatError =
-                                  (_matFormatCtl.text.trim().isEmpty ||
-                                          formatOptions
-                                              .map((e) => e.toLowerCase())
-                                              .contains(_matFormatCtl.text
-                                                  .trim()
-                                                  .toLowerCase()))
-                                      ? null
-                                      : 'Выберите формат из списка';
-                              // auto-accept exact match
-                              final lowerF = formatOptions
-                                  .map((e) => e.toLowerCase())
-                                  .toList();
-                              final typedF =
-                                  _matFormatCtl.text.trim().toLowerCase();
-                              if (lowerF.contains(typedF)) {
-                                _matSelectedFormat =
-                                    formatOptions[lowerF.indexOf(typedF)];
-                              }
-                            });
-                            _scheduleStagePreviewUpdate();
+                          final lowerNames =
+                              allNames.map((e) => e.toLowerCase()).toList();
+                          final typed = _matNameCtl.text.trim().toLowerCase();
+                          if (lowerNames.contains(typed)) {
+                            _matSelectedName = allNames[lowerNames.indexOf(typed)];
                           }
                         });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null,
-                          decoration: InputDecoration(
-                            labelText: 'Формат',
-                            border: const OutlineInputBorder(),
-                            helperText: _matSelectedName != null
-                                ? null
-                                : 'Сначала выберите материал',
-                            errorText: _matSelectedName != null
-                                ? _matFormatError
-                                : null,
-                          ),
-                          onSubmitted: (_) => onFieldSubmitted(),
-                        );
-                      },
-                      onSelected: (value) {
+                        _scheduleStagePreviewUpdate();
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        labelText: 'Материал',
+                        border: const OutlineInputBorder(),
+                        errorText: _matNameError,
+                      ),
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      _matNameCtl.text = value;
+                      _matSelectedName = value;
+                      _matSelectedFormat = null;
+                      _matSelectedGrammage = null;
+                      _matFormatCtl.text = '';
+                      _matGramCtl.text = '';
+                      _matNameError = null;
+                      _matFormatError = null;
+                      _matGramError = null;
+                      _selectedMaterialTmc = null;
+                      _selectedMaterial = null;
+                    });
+                    _scheduleStagePreviewUpdate();
+                  },
+                ),
+                const SizedBox(height: 8),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(formatOptions, text.text),
+                  displayStringForOption: (s) => s,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    controller.text = _matFormatCtl.text;
+                    controller.selection = _matFormatCtl.selection;
+                    controller.addListener(() {
+                      if (controller.text != _matFormatCtl.text) {
                         setState(() {
-                          _matFormatCtl.text = value;
-                          _matSelectedFormat = value;
+                          _matFormatCtl.text = controller.text;
+                          _matFormatCtl.selection = controller.selection;
+                          _matSelectedFormat = null;
                           _matSelectedGrammage = null;
                           _matGramCtl.text = '';
-                          _matFormatError = null;
-                          _matGramError = null;
-                          _selectedMaterialTmc = null;
-                          _selectedMaterial = null;
+                          _matFormatError = (_matFormatCtl.text.trim().isEmpty ||
+                                  formatOptions
+                                      .map((e) => e.toLowerCase())
+                                      .contains(_matFormatCtl.text
+                                          .trim()
+                                          .toLowerCase()))
+                              ? null
+                              : 'Выберите формат из списка';
+                          final lowerF = formatOptions
+                              .map((e) => e.toLowerCase())
+                              .toList();
+                          final typed =
+                              _matFormatCtl.text.trim().toLowerCase();
+                          if (lowerF.contains(typed)) {
+                            _matSelectedFormat =
+                                formatOptions[lowerF.indexOf(typed)];
+                          }
                         });
                         _scheduleStagePreviewUpdate();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    // Грамаж (только для пары Материал+Формат)
-                    Autocomplete<String>(
-                      optionsBuilder: (text) => filter(gramOptions, text.text),
-                      displayStringForOption: (s) => s,
-                      fieldViewBuilder:
-                          (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matGramCtl.text;
-                        controller.selection = _matGramCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matGramCtl.text) {
-                            setState(() {
-                              _matGramCtl.text = controller.text;
-                              _matGramCtl.selection = controller.selection;
-                              _matSelectedGrammage = null;
-                              _matGramError = null; // обновится при выборе
-                              final lowerG = gramOptions
-                                  .map((e) => e.toLowerCase())
-                                  .toList();
-                              final typedG =
-                                  _matGramCtl.text.trim().toLowerCase();
-                              if (lowerG.contains(typedG)) {
-                                _matSelectedGrammage =
-                                    gramOptions[lowerG.indexOf(typedG)];
-                                // Если все три заданы - найдём TMC
-                                if (_matSelectedName != null &&
-                                    _matSelectedFormat != null &&
-                                    _matSelectedGrammage != null) {
-                                  final tmc = (() {
-                                    for (final t in _paperItems()) {
-                                      if (t.description.trim().toLowerCase() ==
-                                              _matSelectedName!
-                                                  .trim()
-                                                  .toLowerCase() &&
-                                          (t.format ?? '')
-                                                  .trim()
-                                                  .toLowerCase() ==
-                                              _matSelectedFormat!
-                                                  .trim()
-                                                  .toLowerCase() &&
-                                          (t.grammage ?? '')
-                                                  .trim()
-                                                  .toLowerCase() ==
-                                              _matSelectedGrammage!
-                                                  .trim()
-                                                  .toLowerCase()) {
-                                        return t;
-                                      }
-                                    }
-                                    return null;
-                                  })();
-                                  if (tmc != null) {
-                                    _selectMaterial(tmc);
-                                  }
-                                }
-                              }
-                            });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null &&
-                              _matSelectedFormat != null,
-                          decoration: InputDecoration(
-                            labelText: 'Грамаж',
-                            border: const OutlineInputBorder(),
-                            helperText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? null
-                                : 'Сначала выберите формат',
-                            errorText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? _matGramError
-                                : null,
-                          ),
-                          onSubmitted: (_) => onFieldSubmitted(),
-                        );
-                      },
-                      onSelected: (value) {
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled: _matSelectedName != null,
+                      decoration: InputDecoration(
+                        labelText: 'Формат',
+                        border: const OutlineInputBorder(),
+                        helperText: _matSelectedName != null
+                            ? null
+                            : 'Сначала выберите материал',
+                        errorText:
+                            _matSelectedName != null ? _matFormatError : null,
+                      ),
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      _matFormatCtl.text = value;
+                      _matSelectedFormat = value;
+                      _matSelectedGrammage = null;
+                      _matGramCtl.text = '';
+                      _matFormatError = null;
+                      _matGramError = null;
+                    });
+                    _scheduleStagePreviewUpdate();
+                  },
+                ),
+                const SizedBox(height: 8),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(gramOptions, text.text),
+                  displayStringForOption: (s) => s,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    controller.text = _matGramCtl.text;
+                    controller.selection = _matGramCtl.selection;
+                    controller.addListener(() {
+                      if (controller.text != _matGramCtl.text) {
                         setState(() {
-                          _matGramCtl.text = value;
-                          _matSelectedGrammage = value;
-                          _matGramError = null;
-                          // Когда тройка выбрана, найдём точную позицию на складе
-                          final tmc = findExact(_matSelectedName!,
-                              _matSelectedFormat!, _matSelectedGrammage!);
-                          if (tmc != null) {
-                            _selectMaterial(tmc);
+                          _matGramCtl.text = controller.text;
+                          _matGramCtl.selection = controller.selection;
+                          _matSelectedGrammage = null;
+                          _matGramError = (_matGramCtl.text.trim().isEmpty ||
+                                  gramOptions
+                                      .map((e) => e.toLowerCase())
+                                      .contains(
+                                          _matGramCtl.text.trim().toLowerCase()))
+                              ? null
+                              : 'Выберите грамаж из списка';
+                          final lowerG =
+                              gramOptions.map((e) => e.toLowerCase()).toList();
+                          final typed = _matGramCtl.text.trim().toLowerCase();
+                          if (lowerG.contains(typed)) {
+                            _matSelectedGrammage =
+                                gramOptions[lowerG.indexOf(typed)];
                           }
                         });
-                      },
-                    ),
-                    if (paperQty != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
-                    ],
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            _buildStockExtraLayout(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _stockExtraSearchController,
-                    focusNode: _stockExtraFocusNode,
-                    decoration: InputDecoration(
-                      labelText: 'Лишнее на складе',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: _loadingStockExtra
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          : (_stockExtraSearchController.text.isEmpty
-                              ? null
-                              : IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    _stockExtraSearchController.clear();
-                                    _onStockExtraSearchChanged('');
-                                  },
-                                )),
-                    ),
-                    onChanged: _onStockExtraSearchChanged,
-                  ),
-                  const SizedBox(height: 6),
+                        _scheduleStagePreviewUpdate();
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled:
+                          _matSelectedName != null && _matSelectedFormat != null,
+                      decoration: InputDecoration(
+                        labelText: 'Грамаж',
+                        border: const OutlineInputBorder(),
+                        helperText: (_matSelectedName != null &&
+                                _matSelectedFormat != null)
+                            ? null
+                            : 'Сначала выберите формат',
+                        errorText: (_matSelectedName != null &&
+                                _matSelectedFormat != null)
+                            ? _matGramError
+                            : null,
+                      ),
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      _matGramCtl.text = value;
+                      _matSelectedGrammage = value;
+                      _matGramError = null;
+                      final tmc =
+                          findExact(_matSelectedName!, _matSelectedFormat!, value);
+                      if (tmc != null) {
+                        _selectMaterial(tmc);
+                      }
+                    });
+                  },
+                ),
+                if (paperQty != null) ...[
+                  const SizedBox(height: 8),
                   Text(
-                    _stockExtra != null
-                        ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
-                        : 'Доступно: —',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 4),
-                  _buildStockExtraResults(),
+                      'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
                 ],
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Списать лишнее при сохранении'),
-                value: _writeOffStockExtra,
-                onChanged: (v) => setState(() => _writeOffStockExtra = v),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildFieldGrid([
-              TextFormField(
-                initialValue: product.widthB?.toString() ?? '',
-                decoration: const InputDecoration(
-                  labelText: 'Ширина b',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  product.widthB = double.tryParse(normalized);
-                  _scheduleStagePreviewUpdate();
-                },
-              ),
-              TextFormField(
-                initialValue: product.length?.toString() ?? '',
-                decoration: InputDecoration(
-                  labelText: 'Длина L',
-                  border: const OutlineInputBorder(),
-                  errorText: _lengthExceeded ? 'Недостаточно' : null,
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  final d = double.tryParse(normalized);
-                  setState(() {
-                    product.length = d;
-                    if (_selectedMaterialTmc != null && d != null) {
-                      _lengthExceeded = () {
-                        final current = Provider.of<WarehouseProvider>(context,
-                                listen: false)
-                            .allTmc
-                            .where((t) => t.id == _selectedMaterialTmc!.id)
-                            .toList();
-                        final available = current.isNotEmpty
-                            ? current.first.quantity
-                            : _selectedMaterialTmc!.quantity;
-                        return d > available;
-                      }();
-                    } else {
-                      _lengthExceeded = false;
-                    }
-                  });
-                },
-              ),
-            ], breakpoint: 680, minItemWidth: 200),
-            const SizedBox(height: 12),
-            // PDF вложение
-            Row(
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _pickPdf,
-                  icon: const Icon(Icons.attach_file),
-                  label: Text(
-                    _pickedPdf?.name ??
-                        (widget.order?.pdfUrl != null
-                            ? widget.order!.pdfUrl!.split('/').last
-                            : 'Прикрепить PDF'),
-                  ),
-                ),
-                if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: _openPdf,
-                  ),
-                ]
               ],
-            ),
-            const SizedBox(height: 8),
-            // Параметры продукта (свободный текст)
-            TextFormField(
-              initialValue: product.parameters,
-              decoration: const InputDecoration(
-                labelText: 'Параметры продукта',
-                border: OutlineInputBorder(),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        _buildStockExtraLayout(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _stockExtraSearchController,
+                focusNode: _stockExtraFocusNode,
+                decoration: InputDecoration(
+                  labelText: 'Лишнее на складе',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: _loadingStockExtra
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : (_stockExtraSearchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _stockExtraSearchController.clear();
+                                _onStockExtraSearchChanged('');
+                              },
+                            )),
+                ),
+                onChanged: _onStockExtraSearchChanged,
               ),
-              minLines: 1,
-              maxLines: 3,
-              onChanged: (val) => product.parameters = val,
+              const SizedBox(height: 6),
+              Text(
+                _stockExtra != null
+                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
+                    : 'Доступно: —',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 4),
+              _buildStockExtraResults(),
+            ],
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Списать лишнее при сохранении'),
+            value: _writeOffStockExtra,
+            onChanged: (v) => setState(() => _writeOffStockExtra = v),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildFieldGrid([
+          TextFormField(
+            initialValue: product.widthB?.toString() ?? '',
+            decoration: const InputDecoration(
+              labelText: 'Ширина b',
+              border: OutlineInputBorder(),
             ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              product.widthB = double.tryParse(normalized);
+              _scheduleStagePreviewUpdate();
+            },
+          ),
+          TextFormField(
+            initialValue: product.length?.toString() ?? '',
+            decoration: InputDecoration(
+              labelText: 'Длина L',
+              border: const OutlineInputBorder(),
+              errorText: _lengthExceeded ? 'Недостаточно' : null,
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              final d = double.tryParse(normalized);
+              setState(() {
+                product.length = d;
+                if (_selectedMaterialTmc != null && d != null) {
+                  _lengthExceeded = () {
+                    final current = Provider.of<WarehouseProvider>(context,
+                            listen: false)
+                        .allTmc
+                        .where((t) => t.id == _selectedMaterialTmc!.id)
+                        .toList();
+                    final available = current.isNotEmpty
+                        ? current.first.quantity
+                        : _selectedMaterialTmc!.quantity;
+                    return d > available;
+                  }();
+                } else {
+                  _lengthExceeded = false;
+                }
+              });
+            },
+          ),
+        ], breakpoint: 680, minItemWidth: 200),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            ElevatedButton.icon(
+              onPressed: _pickPdf,
+              icon: const Icon(Icons.attach_file),
+              label: Text(
+                _pickedPdf?.name ??
+                    (widget.order?.pdfUrl != null
+                        ? widget.order!.pdfUrl!.split('/').last
+                        : 'Прикрепить PDF'),
+              ),
+            ),
+            if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.open_in_new),
+                onPressed: _openPdf,
+              ),
+            ]
           ],
         ),
-      ),
+      ],
     );
-  }
-
-  Future<_StageRuleOutcome> _applyStageRules(List<Map<String, dynamic>> source) async {
-    final stageMaps = source.map((e) => Map<String, dynamic>.from(e)).toList();
-
-    String? flexoId;
-    String? flexoTitle;
-    String? bobbinId;
-    String? bobbinTitle;
-    bool shouldCompleteBobbin = false;
-
-    double? formatWidth;
-    final formatRaw = (_matSelectedFormat ?? _matFormatCtl.text).trim();
-    if (formatRaw.isNotEmpty) {
-      final match = RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(formatRaw);
-      if (match != null) {
-        formatWidth = double.tryParse(match.group(1)!.replaceAll(',', '.'));
-      }
-    }
-
-    double? orderWidth;
-    final dynamic widthValue = _product.widthB ?? _product.width;
-    if (widthValue is num) {
-      orderWidth = widthValue.toDouble();
-    } else if (widthValue is String) {
-      orderWidth = double.tryParse(widthValue.replaceAll(',', '.'));
-    }
-
-    final bool formatEqualsWidth = formatWidth != null &&
-        orderWidth != null &&
-        orderWidth > 0 &&
-        (formatWidth! - orderWidth!).abs() <= 0.001;
-
-    try {
-      Map<String, dynamic>? flexo = await _sb
-          .from('workplaces')
-          .select('id,title')
-          .ilike('title', 'Флексопечать%')
-          .limit(1)
-          .maybeSingle();
-      flexo ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Flexo%')
-          .limit(1)
-          .maybeSingle();
-      flexo ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('name', 'Flexo%')
-          .limit(1)
-          .maybeSingle();
-      flexo ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Флексо%')
-          .limit(1)
-          .maybeSingle();
-      if (flexo != null) {
-        flexoId = flexo['id'] as String?;
-        flexoTitle = (flexo['title'] as String?) ?? (flexo['name'] as String?) ?? 'Флексопечать';
-        if (flexoTitle == null || flexoTitle!.trim().isEmpty) {
-          flexoTitle = 'Флексопечать';
-        }
-        if (RegExp(r'^[a-z0-9_\-]+$').hasMatch(flexoTitle!.toLowerCase())) {
-          flexoTitle = 'Флексопечать';
-        }
-      }
-    } catch (_) {}
-
-    try {
-      Map<String, dynamic>? bob = await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Бобинорезка%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Бабинорезка%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('name', 'Бабинорезка%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Bobbin%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('name', 'Bobbin%')
-          .limit(1)
-          .maybeSingle();
-      if (bob == null) {
-        bob = await _sb
-            .from('workplaces')
-            .select('id,title,name')
-            .eq('id', 'w_bobbiner')
-            .maybeSingle();
-      }
-      if (bob != null) {
-        bobbinId = bob['id'] as String?;
-        final rawTitle = (bob['title'] as String?) ?? (bob['name'] as String?);
-        if (rawTitle != null && rawTitle.trim().isNotEmpty) {
-          bobbinTitle = rawTitle.trim();
-        }
-      }
-    } catch (_) {}
-
-    int findBobbinIndex() {
-      return stageMaps.indexWhere((m) {
-        final sid = (m['stageId'] as String?) ??
-            (m['stageid'] as String?) ??
-            (m['stage_id'] as String?) ??
-            (m['workplaceId'] as String?) ??
-            (m['workplace_id'] as String?) ??
-            (m['id'] as String?);
-        final title =
-            ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-        final byId = bobbinId != null && sid == bobbinId;
-        final byName = title.contains('бобинорезка') ||
-            title.contains('бабинорезка') ||
-            title.contains('bobbin');
-        return byId || byName;
-      });
-    }
-
-    final bool paintsFilled = _hasAnyPaints() ||
-        (_product.parameters.toLowerCase().contains('краска'));
-
-    if (paintsFilled) {
-      flexoId ??= 'w_flexoprint';
-      final normalizedFlexoTitle = (flexoTitle ?? '').trim();
-      if (normalizedFlexoTitle.isEmpty) {
-        flexoTitle = 'Флексопечать';
-      } else if (RegExp(r'^[a-z0-9_\-]+$')
-          .hasMatch(normalizedFlexoTitle.toLowerCase())) {
-        flexoTitle = 'Флексопечать';
-      } else {
-        flexoTitle = normalizedFlexoTitle;
-      }
-    }
-
-    if (paintsFilled && flexoId != null && flexoId.isNotEmpty) {
-      final hasFlexo = stageMaps.any((m) {
-        final sid = (m['stageId'] as String?) ??
-            (m['stageid'] as String?) ??
-            (m['stage_id'] as String?) ??
-            (m['workplaceId'] as String?) ??
-            (m['workplace_id'] as String?) ??
-            (m['id'] as String?);
-        final title =
-            ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-        final byId = (sid == flexoId) ||
-            (sid != null &&
-                (sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
-        final byName = title.contains('флексопечать') ||
-            title.contains('flexo');
-        return byId || byName;
-      });
-
-      if (!hasFlexo) {
-        int insertIndex = 0;
-        if (!formatEqualsWidth) {
-          final bobIndex = findBobbinIndex();
-          if (bobIndex >= 0) {
-            insertIndex = bobIndex + 1;
-          }
-        }
-
-        stageMaps.insert(insertIndex, {
-          'stageId': flexoId,
-          'workplaceId': flexoId,
-          'stageName': flexoTitle ?? 'Флексопечать',
-          'workplaceName': flexoTitle ?? 'Флексопечать',
-          'order': 0,
-        });
-      }
-    }
-
-    if (formatEqualsWidth) {
-      final bobIndex = findBobbinIndex();
-      if (bobIndex >= 0) {
-        shouldCompleteBobbin = true;
-        stageMaps.removeAt(bobIndex);
-      }
-    } else {
-      final bobIndex = findBobbinIndex();
-      if (bobIndex < 0 && (bobbinId != null && bobbinId.isNotEmpty)) {
-        final resolvedBobbinTitle =
-            (bobbinTitle?.trim().isNotEmpty ?? false)
-                ? bobbinTitle!.trim()
-                : 'Бабинорезка';
-        stageMaps.insert(0, {
-          'stageId': bobbinId,
-          'workplaceId': bobbinId,
-          'stageName': resolvedBobbinTitle,
-          'workplaceName': resolvedBobbinTitle,
-          'order': 0,
-        });
-      } else if (bobIndex < 0 && (bobbinId == null || bobbinId!.isEmpty)) {
-        final resolvedBobbinTitle =
-            (bobbinTitle?.trim().isNotEmpty ?? false)
-                ? bobbinTitle!.trim()
-                : 'Бабинорезка';
-        stageMaps.insert(0, {
-          'stageId': 'w_bobbiner',
-          'workplaceId': 'w_bobbiner',
-          'stageName': resolvedBobbinTitle,
-          'workplaceName': resolvedBobbinTitle,
-          'order': 0,
-        });
-      }
-    }
-
-    return _StageRuleOutcome(
-      stages: stageMaps,
-      shouldCompleteBobbin: shouldCompleteBobbin,
-      bobbinId: bobbinId,
-    );
-  }
-
-  Widget _buildStagePreviewSection(BuildContext context) {
-    if (_stageTemplateId == null || _stageTemplateId!.isEmpty) {
-      if (_stagePreviewStages.isEmpty && !_stagePreviewLoading) {
-        return const SizedBox.shrink();
-      }
-    }
-    if (_stagePreviewLoading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: LinearProgressIndicator(minHeight: 2),
-      );
-    }
-    if (_stagePreviewError != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(
-          'Не удалось загрузить этапы: $_stagePreviewError',
-          style: TextStyle(color: Theme.of(context).colorScheme.error),
-        ),
-      );
-    }
-    if (_stagePreviewStages.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Text('Этапы в выбранной очереди отсутствуют.'),
-      );
-    }
-    final theme = Theme.of(context);
-    final surface = theme.colorScheme.surfaceVariant.withOpacity(0.5);
-    final primary = theme.colorScheme.primary;
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: List.generate(_stagePreviewStages.length, (index) {
-          final name = _resolveStageName(_stagePreviewStages[index]);
-          return Padding(
-            padding: EdgeInsets.only(
-              left: 12,
-              right: 12,
-              top: index == 0 ? 12 : 6,
-              bottom: index == _stagePreviewStages.length - 1 ? 12 : 6,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CircleAvatar(
-                  radius: 14,
-                  backgroundColor: primary.withOpacity(0.12),
-                  child: Text(
-                    '${index + 1}',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: primary,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    name,
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  String? _composeFormProductType() {
-    final type = _product.type.trim();
-    return type.isEmpty ? null : type;
-  }
-
-  String? _composeFormColors() {
-    final names = <String>[];
-    final seen = <String>{};
-    for (final paint in _paints) {
-      final name = paint.displayName.trim();
-      if (name.isEmpty) continue;
-      if (seen.add(name)) {
-        names.add(name);
-      }
-    }
-    if (names.isEmpty) return null;
-    return names.join(', ');
-  }
-
-  String? _composeFormSize() {
-    final parts = <String>[];
-    final width = _formatDimension(_product.width);
-    if (width != null) parts.add('Ширина: $width мм');
-
-    double? lengthValue;
-    if (_product.length != null && _product.length! > 0) {
-      lengthValue = _product.length;
-    } else if (_product.depth > 0) {
-      lengthValue = _product.depth;
-    }
-    final length = _formatDimension(lengthValue);
-    if (length != null) parts.add('Длина: $length мм');
-
-    final height = _formatDimension(_product.height);
-    if (height != null) parts.add('Высота: $height мм');
-
-    if (parts.isEmpty) return null;
-    return parts.join(', ');
-  }
-
-  String? _formatDimension(double? value) {
-    if (value == null) return null;
-    if (value.isNaN || value.isInfinite) return null;
-    if (value <= 0) return null;
-    final double normalized = value;
-    final int rounded = normalized.round();
-    if ((normalized - rounded).abs() < 1e-6) {
-      return rounded.toString();
-    }
-    var str = normalized.toStringAsFixed(2);
-    while (str.contains('.') &&
-        (str.endsWith('0') || str.endsWith('.'))) {
-      str = str.substring(0, str.length - 1);
-    }
-    return str;
   }
 
   Widget _buildSectionCard({
@@ -2947,27 +2522,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required String title,
     required List<Widget> children,
   }) {
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              title,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 12),
-            ...children,
-          ],
-        ),
-      ),
+    final _ = title;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
     );
   }
 
@@ -3004,75 +2562,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .toList(),
         );
       },
-    );
-  }
-
-  Widget _buildManagerField() {
-    return TextFormField(
-      controller: _managerDisplayController,
-      readOnly: true,
-      decoration: const InputDecoration(
-        labelText: 'Менеджер',
-        border: OutlineInputBorder(),
-        hintText: '—',
-      ),
-      validator: (_) {
-        final resolvedName = (_selectedManager?.trim().isNotEmpty ?? false)
-            ? _selectedManager!.trim()
-            : (widget.order?.manager ?? '');
-        if (resolvedName.isEmpty) {
-          return 'Менеджер не определён';
-        }
-        return null;
-      },
-    );
-  }
-
-  Widget _buildCustomerField() {
-    return TextFormField(
-      controller: _customerController,
-      decoration: const InputDecoration(
-        labelText: 'Заказчик',
-        border: OutlineInputBorder(),
-      ),
-      onChanged: (_) {
-        setState(() {});
-        _updateStockExtra();
-      },
-      validator: (value) {
-        if (value == null || value.trim().isEmpty) {
-          return 'Введите заказчика';
-        }
-        return null;
-      },
-    );
-  }
-
-  Widget _buildDatePickerField({
-    required String label,
-    required DateTime? value,
-    required Future<void> Function(BuildContext context) onTap,
-    required String emptyError,
-  }) {
-    return GestureDetector(
-      onTap: () => onTap(context),
-      child: AbsorbPointer(
-        child: TextFormField(
-          controller: TextEditingController(
-            text: value != null ? _formatDate(value) : '',
-          ),
-          decoration: InputDecoration(
-            labelText: label,
-            border: const OutlineInputBorder(),
-          ),
-          validator: (text) {
-            if (text == null || text.trim().isEmpty) {
-              return emptyError;
-            }
-            return null;
-          },
-        ),
-      ),
     );
   }
 
@@ -3226,6 +2715,75 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildManagerField() {
+    return TextFormField(
+      controller: _managerDisplayController,
+      readOnly: true,
+      decoration: const InputDecoration(
+        labelText: 'Менеджер',
+        border: OutlineInputBorder(),
+        hintText: '—',
+      ),
+      validator: (_) {
+        final resolvedName = (_selectedManager?.trim().isNotEmpty ?? false)
+            ? _selectedManager!.trim()
+            : (widget.order?.manager ?? '');
+        if (resolvedName.isEmpty) {
+          return 'Менеджер не определён';
+        }
+        return null;
+      },
+    );
+  }
+
+  Widget _buildCustomerField() {
+    return TextFormField(
+      controller: _customerController,
+      decoration: const InputDecoration(
+        labelText: 'Заказчик',
+        border: OutlineInputBorder(),
+      ),
+      onChanged: (_) {
+        setState(() {});
+        _updateStockExtra();
+      },
+      validator: (value) {
+        if (value == null || value.trim().isEmpty) {
+          return 'Введите заказчика';
+        }
+        return null;
+      },
+    );
+  }
+
+  Widget _buildDatePickerField({
+    required String label,
+    required DateTime? value,
+    required Future<void> Function(BuildContext context) onTap,
+    required String emptyError,
+  }) {
+    return GestureDetector(
+      onTap: () => onTap(context),
+      child: AbsorbPointer(
+        child: TextFormField(
+          controller: TextEditingController(
+            text: value != null ? _formatDate(value) : '',
+          ),
+          decoration: InputDecoration(
+            labelText: label,
+            border: const OutlineInputBorder(),
+          ),
+          validator: (text) {
+            if (text == null || text.trim().isEmpty) {
+              return emptyError;
+            }
+            return null;
+          },
+        ),
+      ),
     );
   }
 
