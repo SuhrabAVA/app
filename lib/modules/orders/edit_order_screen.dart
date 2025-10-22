@@ -2339,20 +2339,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             const SizedBox(height: 12),
             _buildProductionSection(context),
             const SizedBox(height: 12),
-            CheckboxListTile(
-              value: _contractSigned,
-              onChanged: (val) =>
-                  setState(() => _contractSigned = val ?? false),
-              title: const Text('Договор подписан'),
-              contentPadding: EdgeInsets.zero,
-            ),
-            CheckboxListTile(
-              value: _paymentDone,
-              onChanged: (val) => setState(() => _paymentDone = val ?? false),
-              title: const Text('Оплата произведена'),
-              contentPadding: EdgeInsets.zero,
-            ),
-            const SizedBox(height: 12),
             TextFormField(
               controller: _commentsController,
               decoration: const InputDecoration(
@@ -2948,6 +2934,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             emptyError: 'Укажите срок',
           ),
         ], maxColumns: 2),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final bool narrow = constraints.maxWidth < 520;
+            final contractTile = _buildContractSignedTile();
+            final paymentTile = _buildPaymentDoneTile();
+            if (narrow) {
+              return Column(
+                children: [
+                  contractTile,
+                  const SizedBox(height: 8),
+                  paymentTile,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: contractTile),
+                const SizedBox(width: 16),
+                Expanded(child: paymentTile),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -3098,6 +3108,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         return null;
       },
+    );
+  }
+
+  Widget _buildContractSignedTile() {
+    return CheckboxListTile(
+      value: _contractSigned,
+      onChanged: (val) => setState(() => _contractSigned = val ?? false),
+      title: const Text('Договор подписан'),
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      controlAffinity: ListTileControlAffinity.leading,
+      contentPadding: EdgeInsets.zero,
+    );
+  }
+
+  Widget _buildPaymentDoneTile() {
+    return CheckboxListTile(
+      value: _paymentDone,
+      onChanged: (val) => setState(() => _paymentDone = val ?? false),
+      title: const Text('Оплата произведена'),
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      controlAffinity: ListTileControlAffinity.leading,
+      contentPadding: EdgeInsets.zero,
     );
   }
 
