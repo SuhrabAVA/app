@@ -1931,38 +1931,45 @@ class _TasksScreenState extends State<TasksScreen>
                       children: [
                         Row(
                           children: [
-                            if (label != null)
-                              Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: Text(label,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600))),
-                            ElevatedButton(
-                                onPressed: canStartButtonRow ? onStart : null,
-                                child: const Text('▶ Начать')),
-                            SizedBox(width: buttonSpacing),
-                            ElevatedButton(
-                                onPressed: canPauseRow ? onPause : null,
-                                child: const Text('⏸ Пауза')),
-                            SizedBox(width: buttonSpacing),
-                            ElevatedButton(
-                                onPressed: canFinishRow ? onFinish : null,
-                                child: const Text('✓ Завершить')),
-                            SizedBox(width: buttonSpacing),
-                            ElevatedButton(
-                                onPressed: canProblemRow ? onProblem : null,
-                                child: const Text('⚠ Проблема')),
-                            SizedBox(width: gapMedium),
-                            // Обновляем отображение времени для каждой строки каждую секунду
-                            StreamBuilder<DateTime>(
-                              stream: Stream<DateTime>.periodic(
-                                  const Duration(seconds: 1),
-                                  (_) => DateTime.now()),
-                              builder: (context, _) {
-                                return Text('Время: ' + timeText());
-                              },
+                            Expanded(
+                              child: Wrap(
+                                spacing: buttonSpacing,
+                                runSpacing: buttonSpacing,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  if (label != null)
+                                    Padding(
+                                        padding: const EdgeInsets.only(right: 8),
+                                        child: Text(label,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w600))),
+                                  ElevatedButton(
+                                      onPressed:
+                                          canStartButtonRow ? onStart : null,
+                                      child: const Text('▶ Начать')),
+                                  ElevatedButton(
+                                      onPressed: canPauseRow ? onPause : null,
+                                      child: const Text('⏸ Пауза')),
+                                  ElevatedButton(
+                                      onPressed: canFinishRow ? onFinish : null,
+                                      child: const Text('✓ Завершить')),
+                                  ElevatedButton(
+                                      onPressed: canProblemRow ? onProblem : null,
+                                      child: const Text('⚠ Проблема')),
+                                  SizedBox(width: gapMedium),
+                                  // Обновляем отображение времени для каждой строки каждую секунду
+                                  StreamBuilder<DateTime>(
+                                    stream: Stream<DateTime>.periodic(
+                                        const Duration(seconds: 1),
+                                        (_) => DateTime.now()),
+                                    builder: (context, _) {
+                                      return Text('Время: ' + timeText());
+                                    },
+                                  ),
+                                ],
+                              ),
                             ),
-                            const Spacer(),
+                            SizedBox(width: buttonSpacing),
                             ElevatedButton.icon(
                               onPressed: canShiftControl ? onShift : null,
                               icon: const Icon(Icons.autorenew),
