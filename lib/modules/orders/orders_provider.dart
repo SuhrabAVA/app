@@ -78,7 +78,9 @@ class OrdersProvider with ChangeNotifier {
           event: PostgresChangeEvent.update,
           schema: 'public',
           table: 'orders',
-          callback: (payload) async => refresh(),
+          callback: (payload) async {
+            await _handleOrderUpdatePayload(payload);
+          },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.delete,
@@ -87,6 +89,44 @@ class OrdersProvider with ChangeNotifier {
           callback: (payload) async => refresh(),
         )
         .subscribe();
+  }
+
+  Future<void> _handleOrderUpdatePayload(PostgresChangePayload payload) async {
+    Map<String, dynamic>? _castRecord(dynamic record) {
+      if (record == null) return null;
+      if (record is Map<String, dynamic>) {
+        return Map<String, dynamic>.from(record);
+      }
+      if (record is Map) {
+        return Map<String, dynamic>.from(record as Map);
+      }
+      return null;
+    }
+
+    try {
+      final Map<String, dynamic>? newRecord = _castRecord(payload.newRecord);
+      final Map<String, dynamic>? oldRecord = _castRecord(payload.oldRecord);
+      if (newRecord != null) {
+        final updated = OrderModel.fromMap(newRecord);
+        if (oldRecord != null) {
+          final previous = OrderModel.fromMap(oldRecord);
+          await _handleActualQtyChange(previous: previous, updated: updated);
+        }
+
+        final index = _orders.indexWhere((o) => o.id == updated.id);
+        if (index != -1) {
+          _orders[index] = updated;
+        } else {
+          _orders.add(updated);
+        }
+        notifyListeners();
+        return;
+      }
+    } catch (e, st) {
+      debugPrint('❌ orders update payload error: $e\n$st');
+    }
+
+    await refresh();
   }
 
   @override
@@ -284,7 +324,11 @@ class OrdersProvider with ChangeNotifier {
         writeoffQty: writeoffQty,
         leftoverQty: leftoverQty,
       );
-      await _processHandleWriteoff(order: order, actualQty: safeActual);
+      await _applyPensConsumption(
+        order: order,
+        targetQty: safeActual,
+        context: 'Отгрузка заказа',
+      );
     } catch (e, st) {
       debugPrint('❌ shipOrder stock error: $e\n$st');
       rethrow;
@@ -404,62 +448,145 @@ class OrdersProvider with ChangeNotifier {
         .match({'id': itemId});
   }
 
-  Future<void> _processHandleWriteoff({
+  Future<void> _handleActualQtyChange({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) async {
+    final double? prevQty = previous.actualQty;
+    final double? newQty = updated.actualQty;
+
+    if (newQty == null) {
+      return;
+    }
+
+    if (prevQty != null && newQty <= prevQty) {
+      return;
+    }
+
+    await _applyPensConsumption(
+      order: updated,
+      targetQty: newQty,
+      context: 'Обновление фактического количества',
+      silentOnError: true,
+    );
+  }
+
+  Future<void> _applyPensConsumption({
     required OrderModel order,
-    required double actualQty,
+    required double targetQty,
+    required String context,
+    bool silentOnError = false,
   }) async {
     final handle = order.handle.trim();
     if (handle.isEmpty || handle == '-') {
       return;
     }
-    if (actualQty <= 0) {
+    if (targetQty <= 0) {
       return;
     }
 
-    final handleRow = await _findHandleRow(handle);
-    if (handleRow == null) {
-      throw Exception('Ручки "$handle" не найдены на складе');
-    }
-    final String itemId = (handleRow['id'] ?? '').toString().trim();
-    if (itemId.isEmpty) {
-      throw Exception('Ручки "$handle" не найдены на складе');
-    }
+    try {
+      final handleRow = await _findHandleRow(handle);
+      if (handleRow == null) {
+        throw Exception('Ручки "$handle" не найдены на складе');
+      }
+      final String itemId = (handleRow['id'] ?? '').toString().trim();
+      if (itemId.isEmpty) {
+        throw Exception('Ручки "$handle" не найдены на складе');
+      }
 
-    final double available = _toDouble(handleRow['quantity']);
-    if (available < actualQty) {
-      throw Exception(
-        'Недостаточно ручек "$handle" на складе (осталось ${_formatQtyValue(available)})',
-      );
-    }
+      final String itemKey = 'pens:$itemId';
+      final Map<String, dynamic> snapshot =
+          await _ensureConsumptionSnapshot(order.id, itemKey);
+      final double already = _toDouble(snapshot['quantity']);
+      final double delta = targetQty - already;
+      if (delta <= 0) {
+        return;
+      }
 
-    final String name = (handleRow['name'] ?? '').toString().trim();
-    final String color = (handleRow['color'] ?? '').toString().trim();
+      final double available = _toDouble(handleRow['quantity']);
+      if (available < delta) {
+        throw Exception(
+          'Недостаточно ручек "$handle" на складе (осталось ${_formatQtyValue(available)})',
+        );
+      }
 
-    final List<String> reasonParts = <String>[];
-    if (name.isNotEmpty) {
-      reasonParts.add('Название: $name');
-    }
-    if (color.isNotEmpty) {
-      reasonParts.add('Цвет: $color');
-    }
-    reasonParts.add('Количество пар: ${_formatQtyValue(actualQty)}');
-    final String customer = order.customer.trim();
-    if (customer.isNotEmpty) {
-      reasonParts.add('Заказчик: $customer');
-    }
-    final String reason = reasonParts.join(' | ');
+      final String name = (handleRow['name'] ?? '').toString().trim();
+      final String color = (handleRow['color'] ?? '').toString().trim();
 
-    final String byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
-        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
-        : AuthHelper.currentUserName!;
+      final List<String> reasonParts = <String>[];
+      if (name.isNotEmpty) {
+        reasonParts.add('Название: $name');
+      }
+      if (color.isNotEmpty) {
+        reasonParts.add('Цвет: $color');
+      }
+      reasonParts.add('Списание: ${_formatQtyValue(delta)} пар');
+      reasonParts.add('Факт всего: ${_formatQtyValue(targetQty)}');
+      if (context.trim().isNotEmpty) {
+        reasonParts.add('Контекст: ${context.trim()}');
+      }
+      final String customer = order.customer.trim();
+      if (customer.isNotEmpty) {
+        reasonParts.add('Заказчик: $customer');
+      }
+      final String reason = reasonParts.join(' | ');
 
-    await _supabase.rpc('writeoff', params: {
-      'type': 'pens',
-      'item': itemId,
-      'qty': actualQty,
-      'reason': reason,
-      'by_name': byName,
-    });
+      final String byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+          ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+          : AuthHelper.currentUserName!;
+
+      await _supabase.rpc('writeoff', params: {
+        'type': 'pens',
+        'item': itemId,
+        'qty': delta,
+        'reason': reason,
+        'by_name': byName,
+      });
+
+      final String nowIso = DateTime.now().toIso8601String();
+      final Map<String, dynamic> payload = {
+        'quantity': targetQty,
+        'updated_at': nowIso,
+      };
+      await _supabase
+          .from('order_consumption_snapshots')
+          .update(payload)
+          .eq('order_id', order.id)
+          .eq('item_key', itemKey);
+    } catch (e, st) {
+      if (silentOnError) {
+        debugPrint('⚠️ pens consumption error: $e\n$st');
+      } else {
+        rethrow;
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _ensureConsumptionSnapshot(
+      String orderId, String itemKey) async {
+    try {
+      final existing = await _supabase
+          .from('order_consumption_snapshots')
+          .select()
+          .eq('order_id', orderId)
+          .eq('item_key', itemKey)
+          .maybeSingle();
+      if (existing != null) {
+        return Map<String, dynamic>.from(existing as Map);
+      }
+    } catch (_) {}
+
+    final String nowIso = DateTime.now().toIso8601String();
+    final Map<String, dynamic> payload = {
+      'order_id': orderId,
+      'item_key': itemKey,
+      'quantity': 0,
+      'created_at': nowIso,
+      'updated_at': nowIso,
+    };
+    await _supabase.from('order_consumption_snapshots').insert(payload);
+    return payload;
   }
 
   Future<Map<String, dynamic>?> _findHandleRow(String description) async {
