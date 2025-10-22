@@ -327,7 +327,6 @@ class OrdersProvider with ChangeNotifier {
       await _applyPensConsumption(
         order: order,
         targetQty: safeActual,
-        context: 'Отгрузка заказа',
       );
       final double? actualQtyForPens = order.actualQty;
       if (actualQtyForPens != null && actualQtyForPens > 0) {
@@ -473,7 +472,6 @@ class OrdersProvider with ChangeNotifier {
     await _applyPensConsumption(
       order: updated,
       targetQty: newQty,
-      context: 'Обновление фактического количества',
       silentOnError: true,
     );
   }
@@ -481,7 +479,6 @@ class OrdersProvider with ChangeNotifier {
   Future<void> _applyPensConsumption({
     required OrderModel order,
     required double targetQty,
-    required String context,
     bool silentOnError = false,
   }) async {
     final handle = order.handle.trim();
@@ -506,50 +503,9 @@ class OrdersProvider with ChangeNotifier {
       final Map<String, dynamic> snapshot =
           await _ensureConsumptionSnapshot(order.id, itemKey);
       final double already = _toDouble(snapshot['quantity']);
-      final double delta = targetQty - already;
-      if (delta <= 0) {
+      if (targetQty <= already) {
         return;
       }
-
-      final double available = _toDouble(handleRow['quantity']);
-      if (available < delta) {
-        throw Exception(
-          'Недостаточно ручек "$handle" на складе (осталось ${_formatQtyValue(available)})',
-        );
-      }
-
-      final String name = (handleRow['name'] ?? '').toString().trim();
-      final String color = (handleRow['color'] ?? '').toString().trim();
-
-      final List<String> reasonParts = <String>[];
-      if (name.isNotEmpty) {
-        reasonParts.add('Название: $name');
-      }
-      if (color.isNotEmpty) {
-        reasonParts.add('Цвет: $color');
-      }
-      reasonParts.add('Списание: ${_formatQtyValue(delta)} пар');
-      reasonParts.add('Факт всего: ${_formatQtyValue(targetQty)}');
-      if (context.trim().isNotEmpty) {
-        reasonParts.add('Контекст: ${context.trim()}');
-      }
-      final String customer = order.customer.trim();
-      if (customer.isNotEmpty) {
-        reasonParts.add('Заказчик: $customer');
-      }
-      final String reason = reasonParts.join(' | ');
-
-      final String byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
-          ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
-          : AuthHelper.currentUserName!;
-
-      await _supabase.rpc('writeoff', params: {
-        'type': 'pens',
-        'item': itemId,
-        'qty': delta,
-        'reason': reason,
-        'by_name': byName,
-      });
 
       final String nowIso = DateTime.now().toIso8601String();
       final Map<String, dynamic> payload = {

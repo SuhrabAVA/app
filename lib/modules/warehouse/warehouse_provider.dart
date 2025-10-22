@@ -204,24 +204,28 @@ class WarehouseProvider with ChangeNotifier {
       final pr = await _sb.from('papers').select().order('description');
 
       // --- Stationery (pens use dedicated table) ---
-      List s = [];
+      List<Map<String, dynamic>> pensRows = [];
+      try {
+        final pensTable = await _resolvePensTable();
+        final pensRaw =
+            await _sb.from(pensTable).select().order('created_at');
+        pensRows = (pensRaw as List)
+            .map((e) => Map<String, dynamic>.from(e))
+            .map((row) {
+          row['__force_type__'] = 'pens';
+          return row;
+        }).toList();
+      } catch (e) {
+        debugPrint('⚠️ load pens failed: $e');
+        pensRows = [];
+      }
+
+      List<Map<String, dynamic>> stationeryRows = [];
       try {
         final keyLc = (_stationeryKey).toLowerCase().trim();
         final isPens =
             keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
-        if (isPens) {
-          final pensTable = await _resolvePensTable();
-          // warehouse_pens обычно не имеет 'description' -> сортируем по created_at
-          final pensRaw =
-              await _sb.from(pensTable).select().order('created_at');
-          s = (pensRaw as List)
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-          s = s.map((row) {
-            row['__force_type__'] = 'pens';
-            return row;
-          }).toList();
-        } else {
+        if (!isPens) {
           final sRaw = await _sb
               .from('warehouse_stationery')
               .select()
@@ -229,13 +233,14 @@ class WarehouseProvider with ChangeNotifier {
           final filtered = (sRaw as List)
               .where((row) =>
                   ((row['table_key'] ?? '').toString().toLowerCase().trim() ==
-                      (_stationeryKey).toLowerCase().trim()))
+                      keyLc))
               .toList();
-          s = filtered.map((e) => Map<String, dynamic>.from(e)).toList();
+          stationeryRows =
+              filtered.map((e) => Map<String, dynamic>.from(e)).toList();
         }
       } catch (e) {
-        debugPrint('⚠️ load stationery/pens failed: $e');
-        s = const [];
+        debugPrint('⚠️ load stationery failed: $e');
+        stationeryRows = [];
       }
       final List<TmcModel> merged = [];
       for (final e in p) {
@@ -245,11 +250,15 @@ class WarehouseProvider with ChangeNotifier {
         merged
             .add(_fromRow(type: 'material', row: Map<String, dynamic>.from(e)));
       }
-      for (final e in s) {
+      for (final e in stationeryRows) {
         final row = Map<String, dynamic>.from(e);
         final force = row['__force_type__'];
         merged.add(
             _fromRow(type: force == 'pens' ? 'pens' : 'stationery', row: row));
+      }
+      for (final e in pensRows) {
+        final row = Map<String, dynamic>.from(e);
+        merged.add(_fromRow(type: 'pens', row: row));
       }
       for (final e in pr) {
         merged.add(_fromRow(type: 'paper', row: Map<String, dynamic>.from(e)));
