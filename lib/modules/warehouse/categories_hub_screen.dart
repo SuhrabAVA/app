@@ -292,7 +292,7 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
 
   // items
   List<Map<String, dynamic>> _items =
-      []; // id, description, quantity, table_key
+      []; // id, description, quantity, table_key, size, comment
   // logs
   List<Map<String, dynamic>> _writeoffs =
       []; // id, item_id, qty, reason, created_at
@@ -351,6 +351,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'description': r['description'],
                 'quantity': r['quantity'],
                 'table_key': r['table_key'],
+                'size': r['size'],
+                'comment': r['comment'],
               })
           .toList()
         ..sort((a, b) => (a['description'] ?? '')
@@ -362,6 +364,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
       final invRes = await _sb.from('warehouse_category_inventories').select();
       final itemIds = _items.map((e) => e['id'].toString()).toSet();
 
+      final itemMeta = {
+        for (final it in _items) it['id'].toString(): it,
+      };
+
       _writeoffs = ((wrRes as List?) ?? [])
           .cast<Map<String, dynamic>>()
           .where((r) => itemIds.contains(r['item_id']?.toString()))
@@ -372,6 +378,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'reason': r['reason'],
                 'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
+                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                'comment': r['comment'] ??
+                    r['reason'] ??
+                    itemMeta[r['item_id']?.toString()]?['comment'],
               })
           .toList()
         ..sort((a, b) => (b['created_at'] ?? '')
@@ -388,6 +398,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'note': r['note'],
                 'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
+                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                'comment': r['comment'] ??
+                    r['note'] ??
+                    itemMeta[r['item_id']?.toString()]?['comment'],
               })
           .toList()
         ..sort((a, b) => (b['created_at'] ?? '')
@@ -419,6 +433,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
         TextEditingController(text: existing?['description']?.toString() ?? '');
     final qty =
         TextEditingController(text: (existing?['quantity'] ?? 0).toString());
+    final size =
+        TextEditingController(text: existing?['size']?.toString() ?? '');
+    final comment =
+        TextEditingController(text: existing?['comment']?.toString() ?? '');
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -434,6 +452,15 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 controller: qty,
                 decoration: const InputDecoration(labelText: 'Количество'),
                 keyboardType: TextInputType.number),
+            TextField(
+              controller: size,
+              decoration: const InputDecoration(labelText: 'Размер'),
+            ),
+            TextField(
+              controller: comment,
+              decoration: const InputDecoration(labelText: 'Комментарий'),
+              maxLines: 2,
+            ),
           ],
         ),
         actions: [
@@ -448,11 +475,16 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     );
     if (ok != true) return;
 
+    final sizeText = size.text.trim();
+    final commentText = comment.text.trim();
+
     final payload = {
       'category_id': widget.categoryId,
       'table_key': widget.hasSubtables ? _tableKey : null,
       'description': name.text.trim(),
       'quantity': double.tryParse(qty.text.trim()) ?? 0,
+      'size': sizeText.isEmpty ? null : sizeText,
+      'comment': commentText.isEmpty ? null : commentText,
     };
 
     if (existing == null) {
@@ -588,6 +620,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
       'qty': q,
       'reason': reason.text.trim(),
       'by_name': byName,
+      'size': (item['size'] ?? '').toString().trim().isEmpty
+          ? null
+          : (item['size'] ?? '').toString().trim(),
+      'comment': reason.text.trim().isEmpty ? null : reason.text.trim(),
     });
 
     final newQty = (((item['quantity'] as num?) ?? 0).toDouble() - q);
@@ -647,6 +683,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
       'counted_qty': q,
       'note': note.text.trim(),
       'by_name': byName,
+      'size': (item['size'] ?? '').toString().trim().isEmpty
+          ? null
+          : (item['size'] ?? '').toString().trim(),
+      'comment': note.text.trim().isEmpty ? null : note.text.trim(),
     });
 
     await _sb
@@ -661,10 +701,16 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     final id = r['id'].toString();
     final name = (r['description'] ?? '').toString();
     final qty = (r['quantity'] ?? 0).toString();
+    final size = (r['size'] ?? '').toString();
+    final comment = (r['comment'] ?? '').toString();
+
+    final subtitleParts = <String>['Количество: $qty'];
+    if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+    if (comment.isNotEmpty) subtitleParts.add(comment);
 
     return ListTile(
       title: Text(name),
-      subtitle: Text('Количество: $qty'),
+      subtitle: Text(subtitleParts.join('\n')),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -683,11 +729,11 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
             icon: const Icon(Icons.edit_outlined),
             onPressed: () => _addOrEditItem(existing: r),
           ),
-      IconButton(
-        tooltip: 'Удалить',
-        icon: const Icon(Icons.delete_outline),
-        onPressed: () => _deleteItem(r),
-      ),
+          IconButton(
+            tooltip: 'Удалить',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => _deleteItem(r),
+          ),
         ],
       ),
       onTap: () => _addOrEditItem(existing: r),
@@ -784,11 +830,13 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final qty = (r['qty'] ?? 0).toString();
                     final dtIso = (r['created_at'] ?? '').toString();
                     final dt = formatKostanayTimestamp(dtIso);
-                    final reason = (r['reason'] ?? '').toString();
+                    final size = (r['size'] ?? '').toString();
+                    final comment = (r['comment'] ?? '').toString();
                     final by = (r['by_name'] ?? '').toString();
                     final subtitleParts = <String>[];
                     if (dt.trim().isNotEmpty) subtitleParts.add(dt);
-                    if (reason.isNotEmpty) subtitleParts.add(reason);
+                    if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
                     if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • −$qty'),
@@ -807,11 +855,13 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final qty = (r['counted_qty'] ?? 0).toString();
                     final dtIso = (r['created_at'] ?? '').toString();
                     final dt = formatKostanayTimestamp(dtIso);
-                    final note = (r['note'] ?? '').toString();
+                    final size = (r['size'] ?? '').toString();
+                    final comment = (r['comment'] ?? '').toString();
                     final by = (r['by_name'] ?? '').toString();
                     final subtitleParts = <String>[];
                     if (dt.trim().isNotEmpty) subtitleParts.add(dt);
-                    if (note.isNotEmpty) subtitleParts.add(note);
+                    if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
                     if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • $qty'),
