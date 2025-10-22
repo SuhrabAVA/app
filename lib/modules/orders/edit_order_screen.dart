@@ -619,6 +619,284 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _scheduleStagePreviewUpdate(immediate: true);
   }
 
+  Future<_StageRuleOutcome> _applyStageRules(
+      List<Map<String, dynamic>> rawStages) async {
+    final List<Map<String, dynamic>> stageMaps = rawStages
+        .map((stage) => Map<String, dynamic>.from(stage))
+        .toList(growable: true);
+
+    String? flexoId;
+    String? flexoTitle;
+    String? bobbinId;
+    String? bobbinTitle;
+    bool shouldCompleteBobbin = false;
+    Map<String, dynamic>? removedBobbinStage;
+
+    try {
+      Map<String, dynamic>? flexo = await _sb
+          .from('workplaces')
+          .select('id,title')
+          .ilike('title', 'Флексопечать%')
+          .limit(1)
+          .maybeSingle();
+      flexo ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('title', 'Flexo%')
+          .limit(1)
+          .maybeSingle();
+      flexo ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('name', 'Flexo%')
+          .limit(1)
+          .maybeSingle();
+      flexo ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('title', 'Флексо%')
+          .limit(1)
+          .maybeSingle();
+      if (flexo != null) {
+        flexoId = (flexo['id'] as String?);
+        flexoTitle = (flexo['title'] as String?) ?? (flexo['name'] as String?);
+        if (flexoTitle == null || flexoTitle!.trim().isEmpty) {
+          flexoTitle = 'Флексопечать';
+        }
+        if (flexoTitle != null &&
+            RegExp(r'^[a-z0-9_\-]+$')
+                .hasMatch(flexoTitle!.toLowerCase())) {
+          flexoTitle = 'Флексопечать';
+        }
+      }
+
+      Map<String, dynamic>? bob = await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('title', 'Бобинорезка%')
+          .limit(1)
+          .maybeSingle();
+      bob ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('title', 'Бабинорезка%')
+          .limit(1)
+          .maybeSingle();
+      bob ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('name', 'Бабинорезка%')
+          .limit(1)
+          .maybeSingle();
+      bob ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('title', 'Bobbin%')
+          .limit(1)
+          .maybeSingle();
+      bob ??= await _sb
+          .from('workplaces')
+          .select('id,title,name')
+          .ilike('name', 'Bobbin%')
+          .limit(1)
+          .maybeSingle();
+      if (bob == null) {
+        bob = await _sb
+            .from('workplaces')
+            .select('id,title,name')
+            .eq('id', 'w_bobbiner')
+            .maybeSingle();
+      }
+      if (bob != null) {
+        bobbinId = (bob['id'] as String?) ?? bobbinId;
+        bobbinTitle =
+            (bob['title'] as String?) ?? (bob['name'] as String?) ?? bobbinTitle;
+      }
+    } catch (_) {}
+
+    int findStageIndex(bool Function(Map<String, dynamic>) predicate) {
+      for (var i = 0; i < stageMaps.length; i++) {
+        if (predicate(stageMaps[i])) return i;
+      }
+      return -1;
+    }
+
+    Map<String, dynamic>? removeBobbinStage() {
+      final idx = findStageIndex((m) {
+        final sid = (m['stageId'] as String?) ??
+            (m['stageid'] as String?) ??
+            (m['stage_id'] as String?) ??
+            (m['workplaceId'] as String?) ??
+            (m['workplace_id'] as String?) ??
+            (m['id'] as String?);
+        final title =
+            ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+        final byId = bobbinId != null && sid == bobbinId;
+        final byName = title.contains('бобинорезка') ||
+            title.contains('бабинорезка') ||
+            title.contains('bobbin');
+        return byId || byName;
+      });
+      if (idx >= 0) {
+        return stageMaps.removeAt(idx);
+      }
+      return null;
+    }
+
+    double? _parseLeadingNumber(String? source) {
+      if (source == null) return null;
+      final match =
+          RegExp(r'[0-9]+(?:[.,][0-9]+)?').firstMatch(source.replaceAll(',', '.'));
+      if (match == null) return null;
+      return double.tryParse(match.group(0)!);
+    }
+
+    bool formatMatchesWidth() {
+      final candidates = <String?>[
+        _selectedMaterial?.format,
+        _matSelectedFormat,
+        _selectedMaterialTmc?.format,
+      ];
+      double? fmtWidth;
+      for (final candidate in candidates) {
+        fmtWidth = _parseLeadingNumber(candidate);
+        if (fmtWidth != null) break;
+      }
+
+      final double? productWidth = (_product.widthB ?? _product.width).toDouble();
+      return fmtWidth != null &&
+          productWidth != null &&
+          productWidth > 0 &&
+          (fmtWidth - productWidth).abs() <= 0.001;
+    }
+
+    bool paintsFilled = _hasAnyPaints();
+
+    if (paintsFilled) {
+      flexoId ??= 'w_flexoprint';
+      flexoTitle = (flexoTitle?.trim().isNotEmpty ?? false)
+          ? flexoTitle
+          : 'Флексопечать';
+      final hasFlexo = findStageIndex((m) {
+            final sid = (m['stageId'] as String?) ??
+                (m['stageid'] as String?) ??
+                (m['stage_id'] as String?) ??
+                (m['workplaceId'] as String?) ??
+                (m['workplace_id'] as String?) ??
+                (m['id'] as String?);
+            if (sid != null && flexoId != null && sid == flexoId) return true;
+            final title =
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            return title.contains('флексопечать') || title.contains('flexo');
+          }) >=
+          0;
+      if (!hasFlexo && flexoId != null && flexoId!.isNotEmpty) {
+        int insertIndex = 0;
+        final bobIndex = findStageIndex((m) {
+          final sid = (m['stageId'] as String?) ??
+              (m['stageid'] as String?) ??
+              (m['stage_id'] as String?) ??
+              (m['workplaceId'] as String?) ??
+              (m['workplace_id'] as String?) ??
+              (m['id'] as String?);
+          final title =
+              ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+          final byId = bobbinId != null && sid == bobbinId;
+          final byName = title.contains('бобинорезка') ||
+              title.contains('бабинорезка') ||
+              title.contains('bobbin');
+          return byId || byName;
+        });
+        if (bobIndex >= 0) insertIndex = bobIndex + 1;
+        stageMaps.insert(insertIndex, {
+          'stageId': flexoId,
+          'workplaceId': flexoId,
+          'stageName': flexoTitle,
+          'workplaceName': flexoTitle,
+          'order': 0,
+        });
+      }
+    }
+
+    if (formatMatchesWidth()) {
+      removedBobbinStage = removeBobbinStage();
+      if (removedBobbinStage != null) {
+        shouldCompleteBobbin = true;
+        bobbinId = (removedBobbinStage['stageId'] ??
+                removedBobbinStage['stage_id'] ??
+                removedBobbinStage['stageid'] ??
+                removedBobbinStage['workplaceId'] ??
+                removedBobbinStage['workplace_id'] ??
+                removedBobbinStage['id'])
+            ?.toString();
+      }
+    } else {
+      final hasBobbin = findStageIndex((m) {
+            final sid = (m['stageId'] as String?) ??
+                (m['stageid'] as String?) ??
+                (m['stage_id'] as String?) ??
+                (m['workplaceId'] as String?) ??
+                (m['workplace_id'] as String?) ??
+                (m['id'] as String?);
+            if (sid != null && bobbinId != null && sid == bobbinId) return true;
+            final title =
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            return title.contains('бобинорезка') ||
+                title.contains('бабинорезка') ||
+                title.contains('bobbin');
+          }) >=
+          0;
+      if (!hasBobbin) {
+        final resolvedId = (bobbinId != null && bobbinId!.isNotEmpty)
+            ? bobbinId
+            : (removedBobbinStage != null
+                ? (removedBobbinStage['stageId'] as String?)
+                : null);
+        final resolvedTitle = (bobbinTitle?.trim().isNotEmpty ?? false)
+            ? bobbinTitle
+            : 'Бабинорезка';
+        final fallbackId = resolvedId ?? 'w_bobbiner';
+        stageMaps.insert(0, {
+          'stageId': fallbackId,
+          'workplaceId': fallbackId,
+          'stageName': resolvedTitle,
+          'workplaceName': resolvedTitle,
+          'order': 0,
+        });
+        bobbinId = fallbackId;
+      }
+    }
+
+    final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
+    final Set<String> uniqueStageIds = <String>{};
+
+    for (final stage in stageMaps) {
+      final map = Map<String, dynamic>.from(stage);
+      final String? stageId = (map['stageId'] ??
+              map['stage_id'] ??
+              map['stageid'] ??
+              map['workplaceId'] ??
+              map['workplace_id'] ??
+              map['id'])
+          ?.toString();
+      if (stageId != null && stageId.isNotEmpty) {
+        if (uniqueStageIds.contains(stageId)) {
+          continue;
+        }
+        uniqueStageIds.add(stageId);
+        map['stageId'] = stageId;
+      }
+      map['stageName'] = _resolveStageName(map);
+      normalized.add(map);
+    }
+
+    return _StageRuleOutcome(
+      stages: normalized,
+      shouldCompleteBobbin: shouldCompleteBobbin,
+      bobbinId: bobbinId,
+    );
+  }
+
   void _onStageTemplateTextChanged() {
     if (_updatingStageTemplateText) return;
     final text = _stageTemplateController.text;
@@ -1737,6 +2015,90 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 // c полем product.parameters и таблицей order_paints.
     await _persistPaints(createdOrUpdatedOrder.id);
     if (mounted) Navigator.of(context).pop();
+  }
+
+  String _formatDecimal(double value, {int fractionDigits = 2}) {
+    final formatted = value.toStringAsFixed(fractionDigits);
+    return formatted
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  String? _composeFormColors() {
+    if (_isOldForm) return null;
+    final manual = _formColorsCtl.text.trim();
+    final parts = <String>[];
+    if (manual.isNotEmpty) {
+      parts.add(manual);
+    }
+
+    final paintDescriptions = <String>[];
+    for (final paint in _paints) {
+      final name = paint.displayName.trim();
+      if (name.isEmpty) continue;
+      final qty = paint.qty;
+      final memo = paint.memo.trim();
+      final buffer = StringBuffer(name);
+      if (qty != null && qty > 0) {
+        buffer.write(' ${_formatDecimal(qty)} кг');
+      }
+      if (memo.isNotEmpty) {
+        buffer.write(' (${memo})');
+      }
+      paintDescriptions.add(buffer.toString());
+    }
+
+    if (paintDescriptions.isNotEmpty) {
+      parts.add('Краски: ${paintDescriptions.join(', ')}');
+    }
+
+    if (parts.isEmpty) return null;
+    final joined = parts.join('; ').trim();
+    return joined.isEmpty ? null : joined;
+  }
+
+  String? _composeFormSize() {
+    if (_isOldForm) return null;
+    final manual = _formSizeCtl.text.trim();
+    if (manual.isNotEmpty) return manual;
+
+    String? formatDimension(double? value) {
+      if (value == null) return null;
+      if (value <= 0) return null;
+      return _formatDecimal(value);
+    }
+
+    final dims = <String>[];
+    final width = formatDimension(_product.width);
+    final height = formatDimension(_product.height);
+    final depth = formatDimension(_product.depth);
+    if (width != null) dims.add(width);
+    if (height != null) dims.add(height);
+    if (depth != null) dims.add(depth);
+    String result = dims.join('×');
+
+    final extras = <String>[];
+    final roll = formatDimension(_product.roll);
+    if (roll != null) extras.add('Рулон $roll');
+    final widthB = formatDimension(_product.widthB);
+    if (widthB != null) extras.add('Б $widthB');
+    final length = formatDimension(_product.length);
+    if (length != null) extras.add('L $length');
+    if (extras.isNotEmpty) {
+      final extraText = extras.join(', ');
+      result = result.isEmpty ? extraText : '$result ($extraText)';
+    }
+
+    result = result.trim();
+    return result.isEmpty ? null : result;
+  }
+
+  String? _composeFormProductType() {
+    if (_isOldForm) return null;
+    final manual = _formTypeCtl.text.trim();
+    if (manual.isNotEmpty) return manual;
+    final productType = _product.type.trim();
+    return productType.isEmpty ? null : productType;
   }
 
   Future<void> _processFormAssignment(OrderModel order,
@@ -2949,6 +3311,98 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           readOnly: true,
         ),
       ],
+    );
+  }
+
+  Widget _buildStagePreviewSection(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_stageTemplateId == null || _stageTemplateId!.isEmpty) {
+      return Text(
+        'Выберите очередь, чтобы просмотреть этапы производства',
+        style: theme.textTheme.bodySmall,
+      );
+    }
+
+    if (_stagePreviewLoading) {
+      return Row(
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'Загружаем этапы...',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      );
+    }
+
+    if (_stagePreviewError != null) {
+      return Text(
+        _stagePreviewError!,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.error,
+        ),
+      );
+    }
+
+    if (_stagePreviewStages.isEmpty) {
+      return Text(
+        'Для выбранной очереди не найдено этапов',
+        style: theme.textTheme.bodySmall,
+      );
+    }
+
+    final children = <Widget>[];
+    for (var i = 0; i < _stagePreviewStages.length; i++) {
+      final stage = _stagePreviewStages[i];
+      final title = _resolveStageName(stage);
+      final description = (stage['notes'] ??
+              stage['description'] ??
+              stage['comment'] ??
+              stage['memo'] ??
+              '')
+          .toString()
+          .trim();
+      children.add(Container(
+        margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.dividerColor),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${i + 1}.', style: theme.textTheme.bodyMedium),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.bodyMedium),
+                  if (description.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        description,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
     );
   }
 
