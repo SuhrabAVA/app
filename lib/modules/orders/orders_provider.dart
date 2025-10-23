@@ -8,15 +8,6 @@ import 'order_model.dart';
 import 'product_model.dart';
 import '../../utils/auth_helper.dart';
 
-// Write-off logging configuration.
-const String kHandlesWriteoffsTable = 'handles_writeoffs';
-const String kHandlesWriteoffOrderIdColumn = 'order_id';
-const String kHandlesWriteoffTypeIdColumn = 'handle_type_id';
-const String kHandlesWriteoffColorIdColumn = 'color_id';
-const String kHandlesWriteoffQuantityColumn = 'quantity_pairs';
-const String kHandlesWriteoffOccurredAtColumn = 'occurred_at';
-const String kHandlesWriteoffCommentColumn = 'comment';
-
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -120,6 +111,7 @@ class OrdersProvider with ChangeNotifier {
         if (oldRecord != null) {
           final previous = OrderModel.fromMap(oldRecord);
           await _handleActualQtyChange(previous: previous, updated: updated);
+          await _handleOrderStatusChange(previous: previous, updated: updated);
         }
 
         final index = _orders.indexWhere((o) => o.id == updated.id);
@@ -258,8 +250,6 @@ class OrdersProvider with ChangeNotifier {
       _orders.removeWhere((o) => o.id == tempLocalId);
       notifyListeners();
       debugPrint('❌ createOrder error: $e\n$st');
-
-      await _applyPaperWriteoffFromOrder(localOrder);
       return null;
     }
   }
@@ -508,6 +498,26 @@ class OrdersProvider with ChangeNotifier {
     );
   }
 
+  Future<void> _handleOrderStatusChange({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) async {
+    final bool wasCompleted = previous.statusEnum == OrderStatus.completed;
+    final bool isCompleted = updated.statusEnum == OrderStatus.completed;
+    if (wasCompleted || !isCompleted) {
+      return;
+    }
+
+    final double? actual = updated.actualQty;
+    final double? fallback = updated.shippedQty;
+    final double quantity = actual ?? fallback ?? 0;
+    if (quantity <= 0) {
+      return;
+    }
+
+    await _logPensCompletionWriteoff(order: updated, quantity: quantity);
+  }
+
   Future<void> _applyPensConsumption({
     required OrderModel order,
     required double targetQty,
@@ -585,47 +595,40 @@ class OrdersProvider with ChangeNotifier {
       if (itemId.isEmpty) {
         return;
       }
-      final String name = (handleRow['name'] ?? '').toString().trim();
-      final String color = (handleRow['color'] ?? '').toString().trim();
       final String customer = order.customer.trim();
       final String author = (AuthHelper.currentUserName ?? '').trim();
+      final String orderId = order.id.trim();
+
+      if (orderId.isEmpty) {
+        return;
+      }
+
+      try {
+        final existing = await _supabase
+            .from('warehouse_pens_writeoffs')
+            .select('id')
+            .eq('order_id', orderId)
+            .maybeSingle();
+        if (existing != null) {
+          return;
+        }
+      } catch (_) {
+        // Если RLS запрещает просмотр — продолжаем и пытаемся вставить.
+      }
 
       final payload = <String, dynamic>{
         'item_id': itemId,
         'qty': safeQty,
+        'order_id': orderId,
       };
-      if (name.isNotEmpty) {
-        payload['name'] = name;
-      }
-      if (color.isNotEmpty) {
-        payload['color'] = color;
-      }
       if (customer.isNotEmpty) {
         payload['reason'] = customer;
       }
       if (author.isNotEmpty) {
         payload['by_name'] = author;
-        payload['employee'] = author;
       }
 
       await _supabase.from('warehouse_pens_writeoffs').insert(payload);
-
-      final String orderId = order.id.trim();
-      final String? colorIdValue = (() {
-        final dynamic rawColorId = handleRow['color_id'];
-        if (rawColorId == null) return null;
-        final String text = rawColorId.toString().trim();
-        return text.isEmpty ? null : text;
-      })();
-
-      await logHandlesWriteoffOnOrderComplete(
-        client: _supabase,
-        orderId: orderId,
-        handleTypeId: itemId,
-        colorId: colorIdValue,
-        actualQuantityPairs: safeQty,
-        customerName: customer,
-      );
     } catch (e, st) {
       debugPrint('⚠️ pens completion writeoff log error: $e\n$st');
     }
@@ -874,32 +877,73 @@ class OrdersProvider with ChangeNotifier {
 
   // ===== STOCK (WAREHOUSE) INTEGRATION =====
 
-  /// Списание бумаги по данным заказа (если материал = бумага и указан tmcId).
+  /// Списание бумаги по данным заказа (если выбран материал со склада бумаги).
   Future<void> _applyPaperWriteoffFromOrder(OrderModel order) async {
-    try {
-      final pm = order.product.toMap();
-      final String? tmcId = (pm['tmcId'] ??
-          pm['tmc_id'] ??
-          pm['materialId'] ??
-          pm['material_id']) as String?;
-      final dynamic qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
-      final double qty =
-          (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
+    final Map<String, dynamic> pm = order.product.toMap();
+    final String? materialIdFromOrder = order.material?.id;
+    final String? tmcId = materialIdFromOrder ??
+        (pm['tmcId'] ?? pm['tmc_id'] ?? pm['materialId'] ?? pm['material_id'])
+            as String?;
 
-      if (tmcId == null || qty <= 0) return;
+    final double lengthValue = () {
+      final dynamic rawLength =
+          pm['length'] ?? order.product.length ?? pm['length_l'];
+      if (rawLength is num) {
+        return rawLength.toDouble();
+      }
+      return double.tryParse('$rawLength') ?? 0.0;
+    }();
 
-      // вызываем writeoff для типа paper по ID
-      await _supabase.rpc('writeoff', params: {
+    final dynamic qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
+    final double fallbackQty =
+        (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
+    final double targetQty = lengthValue > 0 ? lengthValue : fallbackQty;
+
+    if (tmcId == null || targetQty <= 0) {
+      return;
+    }
+
+    final String itemKey = 'paper:$tmcId';
+    final Map<String, dynamic> snapshot =
+        await _ensureConsumptionSnapshot(order.id, itemKey);
+    final double alreadyWritten = _toDouble(snapshot['quantity']);
+
+    final double delta = targetQty - alreadyWritten;
+    final String nowIso = DateTime.now().toIso8601String();
+
+    if (delta > 0) {
+      final String reason = order.customer.trim().isEmpty
+          ? 'Списание бумаги для заказа ${order.id}'
+          : order.customer.trim();
+      final String author = (AuthHelper.currentUserName ?? '').trim();
+
+      final Map<String, dynamic> params = {
         'type': 'paper',
         'item': tmcId,
-        'qty': qty,
-        'reason': 'Списание при создании заказа',
-        'by_name': 'OrdersProvider'
-      });
-    } catch (e) {
-      // если недостаточно остатков — пробрасываем, чтобы показать ошибку пользователю
-      rethrow;
+        'qty': delta,
+        'reason': reason,
+      };
+      if (author.isNotEmpty) {
+        params['by_name'] = author;
+      }
+
+      try {
+        await _supabase.rpc('writeoff', params: params);
+      } catch (error) {
+        // не обновляем snapshot при ошибке — пусть вызывающий обработает исключение
+        rethrow;
+      }
     }
+
+    await _supabase
+        .from('order_consumption_snapshots')
+        .update({'quantity': targetQty, 'updated_at': nowIso})
+        .eq('order_id', order.id)
+        .eq('item_key', itemKey);
+  }
+
+  Future<void> applyPaperWriteoff(OrderModel order) async {
+    await _applyPaperWriteoffFromOrder(order);
   }
 
   Future<void> applyStockOnFulfillment(OrderModel order) async {
@@ -1010,61 +1054,3 @@ class OrdersProvider with ChangeNotifier {
   }
 }
 
-Future<void> logHandlesWriteoffOnOrderComplete({
-  required SupabaseClient client,
-  required String orderId,
-  required String? handleTypeId,
-  String? colorId,
-  required double? actualQuantityPairs,
-  required String customerName,
-}) async {
-  final String trimmedOrderId = orderId.trim();
-  final String? trimmedHandleTypeId = handleTypeId?.trim();
-  final double quantity = (actualQuantityPairs ?? 0).toDouble();
-
-  if (trimmedOrderId.isEmpty) {
-    return;
-  }
-  if (trimmedHandleTypeId == null || trimmedHandleTypeId.isEmpty) {
-    return;
-  }
-  if (quantity <= 0) {
-    return;
-  }
-
-  final String? trimmedColorId =
-      (colorId == null || colorId.trim().isEmpty) ? null : colorId.trim();
-  final String? trimmedComment =
-      customerName.trim().isEmpty ? null : customerName.trim();
-
-  try {
-    final existing = await client
-        .from(kHandlesWriteoffsTable)
-        .select(kHandlesWriteoffOrderIdColumn)
-        .eq(kHandlesWriteoffOrderIdColumn, trimmedOrderId)
-        .maybeSingle();
-
-    if (existing != null) {
-      return;
-    }
-
-    final Map<String, dynamic> payload = {
-      kHandlesWriteoffOrderIdColumn: trimmedOrderId,
-      kHandlesWriteoffTypeIdColumn: trimmedHandleTypeId,
-      kHandlesWriteoffQuantityColumn: quantity,
-      kHandlesWriteoffOccurredAtColumn: DateTime.now().toIso8601String(),
-    };
-
-    if (trimmedColorId != null) {
-      payload[kHandlesWriteoffColorIdColumn] = trimmedColorId;
-    }
-    if (trimmedComment != null) {
-      payload[kHandlesWriteoffCommentColumn] = trimmedComment;
-    }
-
-    await client.from(kHandlesWriteoffsTable).insert(payload);
-  } catch (error, stackTrace) {
-    debugPrint(
-        '⚠️ logHandlesWriteoffOnOrderComplete error: $error\n$stackTrace');
-  }
-}
