@@ -423,6 +423,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   int _defaultFormNumber = 1;
   // Фото новой формы (при создании)
   Uint8List? _newFormImageBytes;
+  final Map<String, double> _paperWriteoffBaselineByItem = {};
   // Выбранный номер старой формы
   String? _selectedOldForm;
   // Фактическое количество (пока не вычисляется)
@@ -553,6 +554,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final warehouse = context.read<WarehouseProvider>();
+      if (warehouse.getTmcByType('pens').isEmpty) {
+        warehouse.fetchTmc();
+      }
+    });
+
+    final String? initialMaterialId = _selectedMaterial?.id;
+    if (initialMaterialId != null && initialMaterialId.isNotEmpty) {
+      _paperWriteoffBaselineByItem[initialMaterialId] =
+          (_product.length ?? 0).toDouble();
+    }
   }
 
   String _formatActualQuantity(double value) {
@@ -1288,6 +1302,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       grammage: tmc.grammage ?? '',
       weight: tmc.weight,
     );
+    if (!_paperWriteoffBaselineByItem.containsKey(tmc.id)) {
+      _paperWriteoffBaselineByItem[tmc.id] = 0.0;
+    }
     if (_product.length != null) {
       _lengthExceeded = _product.length! > tmc.quantity;
     }
@@ -1925,38 +1942,43 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     // === Конец обработки формы ===
 
-// Списание материалов/готовой продукции (бумага по длине L)
-    if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
-      // Перепроверим остаток по актуальным данным провайдера склада
+    // Списание материалов/готовой продукции (бумага по длине L)
+    final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
+    final double need = (_product.length ?? 0).toDouble();
+    if (paperTmc != null && need > 0) {
       final current = Provider.of<WarehouseProvider>(context, listen: false)
           .allTmc
-          .where((t) => t.id == _selectedMaterialTmc!.id)
+          .where((t) => t.id == paperTmc.id)
           .toList();
-      final availableQty = current.isNotEmpty
-          ? (current.first.quantity)
-          : _selectedMaterialTmc!.quantity;
-      final need = (_product.length ?? 0).toDouble();
-      // списываем дельту при редактировании
-      final prevLen = (widget.order?.product.length ?? 0).toDouble();
-      final delta = need - prevLen;
-      final toWriteOff =
-          (widget.order == null) ? need : (delta > 0 ? delta : 0.0);
-      if (need > availableQty) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text(
-                    'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
-          );
-        return;
+      final double availableQty =
+          current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
+      final String itemId = paperTmc.id;
+      final double prevLen = _paperWriteoffBaselineByItem[itemId] ??
+          ((widget.order?.material?.id == itemId)
+              ? (widget.order?.product.length ?? 0).toDouble()
+              : 0.0);
+      final double toWriteOff = need > prevLen ? (need - prevLen) : 0.0;
+
+      if (toWriteOff > 0) {
+        if (toWriteOff > availableQty) {
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text(
+                      'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
+            );
+          return;
+        }
+
+        await warehouse.registerShipment(
+          id: paperTmc.id,
+          type: 'paper',
+          qty: toWriteOff,
+          reason: _customerController.text.trim(),
+        );
       }
 
-      await warehouse.registerShipment(
-        id: _selectedMaterialTmc!.id,
-        type: 'paper',
-        qty: toWriteOff,
-        reason: _customerController.text.trim(),
-      );
+      _paperWriteoffBaselineByItem[itemId] = need;
     }
 
     // Повторная выборка позиций из динамической категории перед списанием - чтобы не зависеть от состояния UI.
