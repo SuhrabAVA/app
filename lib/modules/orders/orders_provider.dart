@@ -308,9 +308,30 @@ class OrdersProvider with ChangeNotifier {
     final index = _orders.indexWhere((o) => o.id == order.id);
     if (index == -1) return;
 
-    final double plannedQty = order.product.quantity.toDouble();
+    Map<String, dynamic>? latestRow;
+    try {
+      latestRow = await _supabase
+          .from('orders')
+          .select('actual_qty, handle')
+          .eq('id', order.id)
+          .maybeSingle();
+    } catch (e, st) {
+      debugPrint('⚠️ shipOrder: unable to fetch latest actual_qty: $e\n$st');
+    }
+
+    double? actualQtyOverride =
+        _toDoubleNullable(latestRow == null ? null : latestRow['actual_qty']);
+    final String handleOverride =
+        (latestRow?['handle'] ?? order.handle).toString();
+
+    final OrderModel orderData = order.copyWith(
+      handle: handleOverride,
+      actualQty: actualQtyOverride ?? order.actualQty,
+    );
+
+    final double plannedQty = orderData.product.quantity.toDouble();
     final double actualQty =
-        order.actualQty ?? order.product.quantity.toDouble();
+        orderData.actualQty ?? orderData.product.quantity.toDouble();
     final double safeActual = actualQty < 0 ? 0 : actualQty;
     final double writeoffQty =
         safeActual < plannedQty ? safeActual : plannedQty.toDouble();
@@ -319,19 +340,20 @@ class OrdersProvider with ChangeNotifier {
 
     try {
       await _processCategoryShipment(
-        order: order,
+        order: orderData,
         actualQty: safeActual,
         writeoffQty: writeoffQty,
         leftoverQty: leftoverQty,
       );
       await _applyPensConsumption(
-        order: order,
+        order: orderData,
         targetQty: safeActual,
+        silentOnError: true,
       );
-      final double? actualQtyForPens = order.actualQty;
+      final double? actualQtyForPens = orderData.actualQty;
       if (actualQtyForPens != null && actualQtyForPens > 0) {
         await _logPensCompletionWriteoff(
-          order: order,
+          order: orderData,
           quantity: actualQtyForPens,
         );
       }
@@ -342,7 +364,7 @@ class OrdersProvider with ChangeNotifier {
 
     final DateTime now = DateTime.now();
     final previous = _orders[index];
-    final updated = order.copyWith(
+    final updated = orderData.copyWith(
       status: OrderStatus.completed.name,
       shippedAt: now,
       shippedBy: AuthHelper.currentUserName ?? '',
@@ -492,11 +514,17 @@ class OrdersProvider with ChangeNotifier {
     try {
       final handleRow = await _findHandleRow(handle);
       if (handleRow == null) {
-        throw Exception('Ручки "$handle" не найдены на складе');
+        if (!silentOnError) {
+          throw Exception('Ручки "$handle" не найдены на складе');
+        }
+        return;
       }
       final String itemId = (handleRow['id'] ?? '').toString().trim();
       if (itemId.isEmpty) {
-        throw Exception('Ручки "$handle" не найдены на складе');
+        if (!silentOnError) {
+          throw Exception('Ручки "$handle" не найдены на складе');
+        }
+        return;
       }
 
       final String itemKey = 'pens:$itemId';
@@ -649,6 +677,14 @@ class OrdersProvider with ChangeNotifier {
       return 0;
     }
     return double.tryParse(value.toString()) ?? 0;
+  }
+
+  double? _toDoubleNullable(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    final String text = value.toString().trim();
+    if (text.isEmpty) return null;
+    return double.tryParse(text.replaceAll(',', '.'));
   }
 
   String _formatQtyValue(double value) {
