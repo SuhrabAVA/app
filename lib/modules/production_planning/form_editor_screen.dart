@@ -2740,8 +2740,40 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     initialValue: product.length?.toString() ?? '',
                     decoration: InputDecoration(
                       labelText: 'Длина L',
-                      border: const OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: _lengthExceeded
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: _lengthExceeded
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: _lengthExceeded
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      filled: _lengthExceeded,
+                      fillColor: _lengthExceeded
+                          ? Theme.of(context)
+                              .colorScheme
+                              .error
+                              .withOpacity(0.08)
+                          : null,
                       errorText: _lengthExceeded ? 'Недостаточно' : null,
+                    ),
+                    style: TextStyle(
+                      color: _lengthExceeded
+                          ? Theme.of(context).colorScheme.error
+                          : null,
                     ),
                     keyboardType: TextInputType.number,
                     onChanged: (val) {
