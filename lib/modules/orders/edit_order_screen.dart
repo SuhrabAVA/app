@@ -1963,25 +1963,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ((widget.order?.material?.id == itemId)
               ? (widget.order?.product.length ?? 0).toDouble()
               : 0.0);
-      final double toWriteOff = need > prevLen ? (need - prevLen) : 0.0;
+      final double toWriteOff = need - prevLen;
 
-      if (toWriteOff > 0) {
-        if (toWriteOff > availableQty) {
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text(
-                      'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
-            );
-          return;
+      if (toWriteOff > 0 && toWriteOff > availableQty) {
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
+          );
+        return;
+      }
+
+      try {
+        await provider.applyPaperWriteoff(createdOrUpdatedOrder);
+        if (toWriteOff > 0) {
+          await warehouse.fetchTmc();
         }
-
-        await warehouse.registerShipment(
-          id: paperTmc.id,
-          type: 'paper',
-          qty: toWriteOff,
-          reason: _customerController.text.trim(),
-        );
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Не удалось списать бумагу: ${error.toString()}'),
+            ),
+          );
+        }
+        return;
       }
 
       _paperWriteoffBaselineByItem[itemId] = need;
