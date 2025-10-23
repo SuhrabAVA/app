@@ -3,7 +3,7 @@ import 'package:postgrest/postgrest.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Константы для таблицы и колонок логирования списаний ручек.
-const String kHandlesWriteoffTable = 'handles_writeoffs';
+const String kHandlesWriteoffTable = 'warehouse_pens_writeoffs';
 const String kOrderIdColumn = 'order_id';
 const String kPenTypeIdColumn = 'pen_type_id';
 const String kColorIdColumn = 'color_id';
@@ -22,6 +22,7 @@ Future<void> logHandlesWriteoffOnOrderComplete({
   String? colorId,
   num? actualQuantityPairs,
   String? customerName,
+  DateTime? occurredAt,
   SupabaseClient? client,
 }) async {
   final qty = actualQuantityPairs ?? 0;
@@ -52,7 +53,8 @@ Future<void> logHandlesWriteoffOnOrderComplete({
       kPenTypeIdColumn: penTypeId,
       if (colorId != null && colorId.isNotEmpty) kColorIdColumn: colorId,
       kQuantityPairsColumn: qty,
-      kOccurredAtColumn: DateTime.now().toUtc().toIso8601String(),
+      kOccurredAtColumn:
+          (occurredAt ?? DateTime.now().toUtc()).toIso8601String(),
       kCommentColumn: customerName,
     };
 
@@ -78,5 +80,6 @@ Future<void> exampleLogWriteoffAfterOrderSaved() async {
     colorId: 'color-uuid',
     actualQuantityPairs: 12,
     customerName: 'ООО «Ручки и Ко»',
+    occurredAt: DateTime.now(),
   );
 }
