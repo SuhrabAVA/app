@@ -5,11 +5,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 /// Константы для таблицы и колонок логирования списаний ручек.
 const String kHandlesWriteoffTable = 'warehouse_pens_writeoffs';
 const String kOrderIdColumn = 'order_id';
-const String kPenTypeIdColumn = 'pen_type_id';
-const String kColorIdColumn = 'color_id';
-const String kQuantityPairsColumn = 'quantity_pairs';
-const String kOccurredAtColumn = 'occurred_at';
-const String kCommentColumn = 'comment';
+const String kPenTypeIdColumn = 'item_id';
+const String? kColorIdColumn = 'color_id';
+const String kQuantityPairsColumn = 'qty';
+const String? kOccurredAtColumn = 'created_at';
+const String kCommentColumn = 'reason';
 
 /// Логирует списание ручек при переводе заказа в статус `completed`.
 ///
@@ -51,10 +51,12 @@ Future<void> logHandlesWriteoffOnOrderComplete({
     final payload = <String, dynamic>{
       kOrderIdColumn: orderId,
       kPenTypeIdColumn: penTypeId,
-      if (colorId != null && colorId.isNotEmpty) kColorIdColumn: colorId,
+      if (kColorIdColumn != null && colorId != null && colorId.isNotEmpty)
+        kColorIdColumn!: colorId,
       kQuantityPairsColumn: qty,
-      kOccurredAtColumn:
-          (occurredAt ?? DateTime.now().toUtc()).toIso8601String(),
+      if (kOccurredAtColumn != null)
+        kOccurredAtColumn!:
+            (occurredAt ?? DateTime.now().toUtc()).toIso8601String(),
       kCommentColumn: customerName,
     };
 
