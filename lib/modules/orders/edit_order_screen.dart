@@ -1511,6 +1511,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   // Возвращает список бумажных TMC (пытаемся разными способами, без чувствительности к регистру)
   List<TmcModel> _paperItems() {
+    if (!mounted) {
+      return <TmcModel>[];
+    }
     final wp = Provider.of<WarehouseProvider>(context, listen: false);
     final Map<String, TmcModel> uniq = {};
     // 1) Попробуем штатный метод провайдера с разными ключами
@@ -1552,6 +1555,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   double? _currentAvailablePaperQty() {
+    if (!mounted) {
+      return null;
+    }
     final wp = Provider.of<WarehouseProvider>(context, listen: false);
     TmcModel? tmc = _selectedMaterialTmc ?? _resolvePaperByText();
     if (tmc == null) {

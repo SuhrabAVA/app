@@ -8,6 +8,15 @@ import 'order_model.dart';
 import 'product_model.dart';
 import '../../utils/auth_helper.dart';
 
+// Write-off logging configuration.
+const String kHandlesWriteoffsTable = 'handles_writeoffs';
+const String kHandlesWriteoffOrderIdColumn = 'order_id';
+const String kHandlesWriteoffTypeIdColumn = 'handle_type_id';
+const String kHandlesWriteoffColorIdColumn = 'color_id';
+const String kHandlesWriteoffQuantityColumn = 'quantity_pairs';
+const String kHandlesWriteoffOccurredAtColumn = 'occurred_at';
+const String kHandlesWriteoffCommentColumn = 'comment';
+
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -338,6 +347,8 @@ class OrdersProvider with ChangeNotifier {
     final double leftoverQty =
         safeActual > plannedQty ? (safeActual - plannedQty) : 0;
 
+    final double? actualQtyForPens = orderData.actualQty;
+
     try {
       await _processCategoryShipment(
         order: orderData,
@@ -350,13 +361,6 @@ class OrdersProvider with ChangeNotifier {
         targetQty: safeActual,
         silentOnError: true,
       );
-      final double? actualQtyForPens = orderData.actualQty;
-      if (actualQtyForPens != null && actualQtyForPens > 0) {
-        await _logPensCompletionWriteoff(
-          order: orderData,
-          quantity: actualQtyForPens,
-        );
-      }
     } catch (e, st) {
       debugPrint('❌ shipOrder stock error: $e\n$st');
       rethrow;
@@ -379,6 +383,12 @@ class OrdersProvider with ChangeNotifier {
           .from('orders')
           .update(updated.toMap()..remove('id'))
           .eq('id', order.id);
+      if (actualQtyForPens != null && actualQtyForPens > 0) {
+        await _logPensCompletionWriteoff(
+          order: orderData,
+          quantity: actualQtyForPens,
+        );
+      }
       await _logOrderEvent(order.id, 'Отгрузка', 'Заказ отгружен');
     } catch (e, st) {
       debugPrint('❌ shipOrder update error: $e\n$st');
@@ -599,6 +609,23 @@ class OrdersProvider with ChangeNotifier {
       }
 
       await _supabase.from('warehouse_pens_writeoffs').insert(payload);
+
+      final String orderId = order.id.trim();
+      final String? colorIdValue = (() {
+        final dynamic rawColorId = handleRow['color_id'];
+        if (rawColorId == null) return null;
+        final String text = rawColorId.toString().trim();
+        return text.isEmpty ? null : text;
+      })();
+
+      await logHandlesWriteoffOnOrderComplete(
+        client: _supabase,
+        orderId: orderId,
+        handleTypeId: itemId,
+        colorId: colorIdValue,
+        actualQuantityPairs: safeQty,
+        customerName: customer,
+      );
     } catch (e, st) {
       debugPrint('⚠️ pens completion writeoff log error: $e\n$st');
     }
@@ -980,5 +1007,64 @@ class OrdersProvider with ChangeNotifier {
 
     final next = (maxSeq + 1).toString();
     return '$datePrefix$next';
+  }
+}
+
+Future<void> logHandlesWriteoffOnOrderComplete({
+  required SupabaseClient client,
+  required String orderId,
+  required String? handleTypeId,
+  String? colorId,
+  required double? actualQuantityPairs,
+  required String customerName,
+}) async {
+  final String trimmedOrderId = orderId.trim();
+  final String? trimmedHandleTypeId = handleTypeId?.trim();
+  final double quantity = (actualQuantityPairs ?? 0).toDouble();
+
+  if (trimmedOrderId.isEmpty) {
+    return;
+  }
+  if (trimmedHandleTypeId == null || trimmedHandleTypeId.isEmpty) {
+    return;
+  }
+  if (quantity <= 0) {
+    return;
+  }
+
+  final String? trimmedColorId =
+      (colorId == null || colorId.trim().isEmpty) ? null : colorId.trim();
+  final String? trimmedComment =
+      customerName.trim().isEmpty ? null : customerName.trim();
+
+  try {
+    final existing = await client
+        .from(kHandlesWriteoffsTable)
+        .select(kHandlesWriteoffOrderIdColumn)
+        .eq(kHandlesWriteoffOrderIdColumn, trimmedOrderId)
+        .maybeSingle();
+
+    if (existing != null) {
+      return;
+    }
+
+    final Map<String, dynamic> payload = {
+      kHandlesWriteoffOrderIdColumn: trimmedOrderId,
+      kHandlesWriteoffTypeIdColumn: trimmedHandleTypeId,
+      kHandlesWriteoffQuantityColumn: quantity,
+      kHandlesWriteoffOccurredAtColumn: DateTime.now().toIso8601String(),
+    };
+
+    if (trimmedColorId != null) {
+      payload[kHandlesWriteoffColorIdColumn] = trimmedColorId;
+    }
+    if (trimmedComment != null) {
+      payload[kHandlesWriteoffCommentColumn] = trimmedComment;
+    }
+
+    await client.from(kHandlesWriteoffsTable).insert(payload);
+  } catch (error, stackTrace) {
+    debugPrint(
+        '⚠️ logHandlesWriteoffOnOrderComplete error: $error\n$stackTrace');
   }
 }
