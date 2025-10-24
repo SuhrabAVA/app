@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -1170,7 +1171,10 @@ class _TasksScreenState extends State<TasksScreen>
                     isDense: isTablet,
                     style:
                         TextStyle(fontSize: scaled(13), color: Colors.black87),
-                    itemHeight: scaled(44),
+                    itemHeight: math.max(
+                      scaled(44),
+                      kMinInteractiveDimension,
+                    ),
                     items: [
                       for (final w in workplaces)
                         DropdownMenuItem(
