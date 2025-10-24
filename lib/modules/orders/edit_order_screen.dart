@@ -2855,16 +2855,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               final d = double.tryParse(normalized);
               setState(() {
                 product.length = d;
-                if (_selectedMaterialTmc != null && d != null) {
+                final materialTmc =
+                    _selectedMaterialTmc ?? _resolvePaperByText();
+                if (materialTmc != null && d != null) {
                   _lengthExceeded = () {
                     final current = Provider.of<WarehouseProvider>(context,
                             listen: false)
                         .allTmc
-                        .where((t) => t.id == _selectedMaterialTmc!.id)
+                        .where((t) => t.id == materialTmc.id)
                         .toList();
                     final available = current.isNotEmpty
                         ? current.first.quantity
-                        : _selectedMaterialTmc!.quantity;
+                        : materialTmc.quantity;
                     return d > available;
                   }();
                 } else {

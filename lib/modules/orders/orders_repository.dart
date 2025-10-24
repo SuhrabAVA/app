@@ -1,4 +1,5 @@
 // lib/modules/orders/orders_repository.dart (v3.1, paints fallback + events)
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -116,6 +117,22 @@ class PaintItem {
       });
 }
 
+class PaintUsageUpdate {
+  final String paintRowId;
+  final String name;
+  final double grams;
+  final String? info;
+
+  const PaintUsageUpdate({
+    required this.paintRowId,
+    required this.name,
+    required this.grams,
+    this.info,
+  });
+
+  double get kilograms => grams / 1000.0;
+}
+
 class PdfAttachment {
   final Uint8List bytes;
   final String filename;
@@ -213,6 +230,104 @@ class OrdersRepository {
       return rows.cast<Map<String, dynamic>>();
     }
     return const [];
+  }
+
+  Future<void> applyPaintUsage(
+      {required String orderId,
+      required List<PaintUsageUpdate> usages}) async {
+    await ensureSignedIn();
+    if (usages.isEmpty) return;
+
+    for (final usage in usages) {
+      try {
+        await _sb.from('order_paints').update({
+          'qty_kg': usage.kilograms,
+        }).eq('id', usage.paintRowId);
+      } catch (e) {
+        rethrow;
+      }
+    }
+
+    try {
+      final row = await _sb
+          .from('orders')
+          .select('product')
+          .eq('id', orderId)
+          .maybeSingle();
+      if (row == null) {
+        return;
+      }
+      Map<String, dynamic> product;
+      final raw = row['product'];
+      if (raw is Map<String, dynamic>) {
+        product = Map<String, dynamic>.from(raw);
+      } else if (raw is Map) {
+        product = Map<String, dynamic>.from(raw as Map);
+      } else if (raw is String && raw.trim().isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            product = Map<String, dynamic>.from(decoded as Map);
+          } else {
+            product = <String, dynamic>{};
+          }
+        } catch (_) {
+          product = <String, dynamic>{};
+        }
+      } else {
+        product = <String, dynamic>{};
+      }
+
+      final currentParams = (product['parameters'] ?? '').toString();
+      final cleanRe =
+          RegExp(r'(?:^|;\s*)Краска:\s*.+?(?=(?:;\s*Краска:|$))');
+      var cleaned = currentParams.replaceAll(cleanRe, '').trim();
+      if (cleaned.endsWith(';')) {
+        cleaned = cleaned.substring(0, cleaned.length - 1).trim();
+      }
+
+      final buffer = <String>[];
+      for (final usage in usages) {
+        final info = usage.info?.trim() ?? '';
+        final kg = usage.kilograms;
+        if (kg <= 0) {
+          continue;
+        }
+        final formatted = kg.toStringAsFixed(2);
+        final entry = info.isNotEmpty
+            ? 'Краска: ${usage.name} $formatted кг ($info)'
+            : 'Краска: ${usage.name} $formatted кг';
+        buffer.add(entry);
+      }
+
+      String updated = cleaned;
+      if (buffer.isNotEmpty) {
+        final tail = buffer.join('; ');
+        updated = updated.isEmpty ? tail : '$updated; $tail';
+      }
+      product['parameters'] = updated.trim();
+
+      await _sb.from('orders').update({'product': product}).eq('id', orderId);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<String?> getOrderCustomer(String orderId) async {
+    await ensureSignedIn();
+    try {
+      final row = await _sb
+          .from('orders')
+          .select('customer')
+          .eq('id', orderId)
+          .maybeSingle();
+      if (row == null) return null;
+      final value = row['customer'];
+      if (value == null) return null;
+      return value.toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> logOrderEvent({
