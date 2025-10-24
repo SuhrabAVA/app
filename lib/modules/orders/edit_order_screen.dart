@@ -43,14 +43,21 @@ class EditOrderScreen extends StatefulWidget {
 class _PaintEntry {
   TmcModel? tmc;
   String? name;
-  double? qty;
+  double? qtyGrams;
   String memo;
   bool exceeded;
 
-  _PaintEntry({this.tmc, this.name, this.qty, this.memo = '', this.exceeded = false});
+  _PaintEntry(
+      {this.tmc,
+      this.name,
+      this.qtyGrams,
+      this.memo = '',
+      this.exceeded = false});
 
   String get displayName => tmc?.description ?? name ?? '';
   bool get hasName => displayName.trim().isNotEmpty;
+  double? get qtyKg => qtyGrams == null ? null : qtyGrams! / 1000;
+  set qtyKg(double? value) => qtyGrams = value == null ? null : value * 1000;
 }
 
 class _StageRuleOutcome {
@@ -935,7 +942,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     for (final paint in _paints) {
       final hasTmc = paint.tmc != null;
       final hasName = paint.displayName.trim().isNotEmpty;
-      final hasQty = paint.qty != null;
+      final hasQty = paint.qtyGrams != null;
       final hasMemo = paint.memo.trim().isNotEmpty;
       if (hasTmc || hasName || hasQty || hasMemo) {
         return true;
@@ -952,6 +959,41 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     } else if (filled) {
       _scheduleStagePreviewUpdate();
     }
+  }
+
+  String? _formatGramsForInput(double? grams) {
+    if (grams == null) return null;
+    if (grams == 0) return '0';
+    final fixed = grams.toStringAsFixed(grams % 1 == 0 ? 0 : 2);
+    return fixed
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  double _gramsToStockUnit(double grams, TmcModel tmc) {
+    final unit = tmc.unit.toLowerCase();
+    if (unit.contains('кг') || unit.contains('kg')) {
+      return grams / 1000;
+    }
+    if (unit.contains('г') || unit.contains('g')) {
+      return grams;
+    }
+    return grams;
+  }
+
+  String _formatGrams(double grams) {
+    final precision = grams % 1 == 0 ? 0 : 2;
+    final fixed = grams.toStringAsFixed(precision);
+    final trimmed = fixed
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+    return '$trimmed г';
+  }
+
+  double? _parseGrams(String value) {
+    final normalized = value.replaceAll(',', '.').trim();
+    if (normalized.isEmpty) return null;
+    return double.tryParse(normalized);
   }
 
   bool _hasAssignedForm() {
@@ -1322,8 +1364,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     final paintTmcList = warehouse.getTmcByType('Краска');
     final reg = RegExp(
-        r'Краска:\s*(.+?)\s+([0-9]+(?:[.,][0-9]+)?)\s*кг(?:\s*\(([^)]+)\))?',
-        multiLine: false);
+        r'Краска:\s*(.+?)\s+([0-9]+(?:[.,][0-9]+)?)\s*(кг|г)(?:\s*\(([^)]+)\))?',
+        multiLine: false,
+        caseSensitive: false);
     final matches = reg.allMatches(params).toList();
     if (matches.isEmpty) {
       _paintsRestored = true;
@@ -1333,9 +1376,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     for (final m in matches) {
       final name = (m.group(1) ?? '').trim();
       final qtyStr = (m.group(2) ?? '').replaceAll(',', '.');
-      final memo = (m.group(3) ?? '').trim();
+      final unit = (m.group(3) ?? '').toLowerCase();
+      final memo = (m.group(4) ?? '').trim();
       final qty = double.tryParse(qtyStr);
       if (name.isEmpty || qty == null) continue;
+      final grams =
+          (unit.contains('г')) ? qty : qty * 1000; // default to kg -> grams
       TmcModel? found;
       for (final t in paintTmcList) {
         if (t.description.trim() == name) {
@@ -1344,10 +1390,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
       if (found != null) {
-        restored.add(
-            _PaintEntry(tmc: found, name: found.description, qty: qty, memo: memo));
+        restored.add(_PaintEntry(
+            tmc: found,
+            name: found.description,
+            qtyGrams: grams,
+            memo: memo));
       } else {
-        restored.add(_PaintEntry(name: name, qty: qty, memo: memo));
+        restored.add(_PaintEntry(name: name, qtyGrams: grams, memo: memo));
       }
     }
     if (restored.isNotEmpty) {
@@ -1377,17 +1426,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final infos = <String>[];
     for (final row in _paints) {
       final name = (row.tmc?.description ?? row.name)?.trim();
-      final qty = row.qty ?? 0;
+      final qtyGrams = row.qtyGrams ?? 0;
       if (name == null || name.isEmpty) continue;
       rows.add({
         'order_id': orderId,
         'name': name,
         'info': row.memo.isNotEmpty ? row.memo : null,
-        'qty_kg': row.qty, // может быть null
+        'qty_kg': row.qtyKg, // может быть null
       });
-      if (qty > 0) {
+      if (qtyGrams > 0) {
         infos.add(
-            'Краска: $name ${qty.toStringAsFixed(2)} кг${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
+            'Краска: $name ${_formatGrams(qtyGrams)}${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
       }
     }
 
@@ -1425,15 +1474,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final restored = <_PaintEntry>[];
           for (final it in items) {
             final name = (it['name'] ?? '').toString().trim();
-            final qty = (it['qty_kg'] as num?)?.toDouble() ?? 0.0;
+            final qtyRaw = it['qty_kg'];
+            final qtyKg =
+                (qtyRaw is num) ? qtyRaw.toDouble() : double.tryParse('$qtyRaw');
+            final grams = qtyKg == null ? null : qtyKg * 1000;
             final memo = (it['info'] ?? '').toString();
             final tmc = warehouse.getPaintByName(name);
             if (tmc != null) {
-              restored
-                  .add(_PaintEntry(tmc: tmc, name: tmc.description, qty: qty, memo: memo));
+              restored.add(_PaintEntry(
+                  tmc: tmc,
+                  name: tmc.description,
+                  qtyGrams: grams,
+                  memo: memo));
             } else {
               // В редком случае, если номенклатуры уже нет - просто с текстом.
-              restored.add(_PaintEntry(name: name, qty: qty, memo: memo));
+              restored.add(
+                  _PaintEntry(name: name, qtyGrams: grams, memo: memo));
             }
           }
           setState(() {
@@ -1588,7 +1644,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   /// --- Helpers for idempotent write-offs ---
 
-  /// Build a map of previous paints {name -> qty_kg}
+  /// Build a map of previous paints {name -> qty_g}
   Future<Map<String, double>> _loadPreviousPaints(String orderId) async {
     try {
       final repo = OrdersRepository();
@@ -1597,9 +1653,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       for (final r in rows) {
         final name = (r['name'] ?? '').toString().trim();
         final qv = r['qty_kg'];
-        final q =
-            (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
-        if (name.isNotEmpty) prev[name.toLowerCase()] = q;
+        final qKg =
+            (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}');
+        if (name.isNotEmpty && qKg != null) {
+          prev[name.toLowerCase()] = qKg * 1000;
+        }
       }
       return prev;
     } catch (_) {
@@ -2071,11 +2129,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     for (final paint in _paints) {
       final name = paint.displayName.trim();
       if (name.isEmpty) continue;
-      final qty = paint.qty;
+      final qty = paint.qtyGrams;
       final memo = paint.memo.trim();
       final buffer = StringBuffer(name);
       if (qty != null && qty > 0) {
-        buffer.write(' ${_formatDecimal(qty)} кг');
+        buffer.write(' ${_formatGrams(qty)}');
       }
       if (memo.isNotEmpty) {
         buffer.write(' (${memo})');
@@ -3601,8 +3659,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       setState(() {
                         row.tmc = tmc;
                         row.name = tmc.description;
-                        if (row.qty != null) {
-                          row.exceeded = row.qty! > tmc.quantity;
+                        if (row.qtyGrams != null) {
+                          final need =
+                              _gramsToStockUnit(row.qtyGrams!, tmc);
+                          row.exceeded = need > tmc.quantity;
                         } else {
                           row.exceeded = false;
                         }
@@ -3650,26 +3710,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Кол-во (кг)
+                // Кол-во (г)
                 SizedBox(
                   width: 130,
                   child: TextFormField(
                     key: ValueKey('qty_\${i}'),
                     decoration: InputDecoration(
-                      labelText: 'Кол-во (кг)',
+                      labelText: 'Кол-во (г)',
                       border: const OutlineInputBorder(),
                       errorText: row.exceeded ? 'Недостаточно' : null,
                     ),
-                    initialValue:
-                        (row.qty == null) ? null : row.qty!.toString(),
+                    initialValue: _formatGramsForInput(row.qtyGrams),
                     keyboardType: TextInputType.number,
                     onChanged: (val) {
-                      final normalized = val.replaceAll(',', '.');
-                      final qty = double.tryParse(normalized);
+                      final qty = _parseGrams(val);
                       setState(() {
-                        row.qty = qty;
+                        row.qtyGrams = qty;
                         if (row.tmc != null && qty != null) {
-                          row.exceeded = qty > row.tmc!.quantity;
+                          final need = _gramsToStockUnit(qty, row.tmc!);
+                          row.exceeded = need > row.tmc!.quantity;
                         } else {
                           row.exceeded = false;
                         }

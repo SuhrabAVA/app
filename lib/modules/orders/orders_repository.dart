@@ -106,14 +106,14 @@ class OrderFormData {
 class PaintItem {
   final String name;
   final String? info;
-  final double? qtyKg;
-  const PaintItem({required this.name, this.info, this.qtyKg});
+  final double? qtyGrams;
+  const PaintItem({required this.name, this.info, this.qtyGrams});
 
   Map<String, dynamic> toRow(String orderId) => _cleanForInsert({
         'order_id': orderId,
         'name': name,
         'info': info,
-        'qty_kg': qtyKg,
+        'qty_kg': qtyGrams == null ? null : qtyGrams! / 1000,
       });
 }
 
@@ -161,7 +161,7 @@ class OrdersRepository {
     PdfAttachment? pdf,
     String? singlePaintName,
     String? singlePaintInfo,
-    double? singlePaintQtyKg,
+    double? singlePaintQtyGrams,
   }) async {
     await ensureSignedIn();
     final insertMap = data.toInsertMap();
@@ -177,7 +177,7 @@ class OrdersRepository {
       list.add(PaintItem(
           name: singlePaintName.trim(),
           info: singlePaintInfo,
-          qtyKg: singlePaintQtyKg));
+          qtyGrams: singlePaintQtyGrams));
     }
     if (list.isNotEmpty) {
       await addPaints(orderId, list);
@@ -289,14 +289,13 @@ class OrdersRepository {
       final buffer = <String>[];
       for (final usage in usages) {
         final info = usage.info?.trim() ?? '';
-        final kg = usage.kilograms;
-        if (kg <= 0) {
+        final grams = usage.grams;
+        if (grams <= 0) {
           continue;
         }
-        final formatted = kg.toStringAsFixed(2);
         final entry = info.isNotEmpty
-            ? 'Краска: ${usage.name} $formatted кг ($info)'
-            : 'Краска: ${usage.name} $formatted кг';
+            ? 'Краска: ${usage.name} ${_formatGrams(grams)} ($info)'
+            : 'Краска: ${usage.name} ${_formatGrams(grams)}';
         buffer.add(entry);
       }
 
@@ -357,6 +356,15 @@ class OrdersRepository {
         ));
     return path;
   }
+}
+
+String _formatGrams(double grams) {
+  final precision = grams % 1 == 0 ? 0 : 2;
+  final fixed = grams.toStringAsFixed(precision);
+  final trimmed = fixed
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+  return '$trimmed г';
 }
 
 Map<String, dynamic> _cleanForInsert(Map<String, dynamic> src) {
