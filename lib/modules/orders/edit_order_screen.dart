@@ -1,5 +1,6 @@
 // lib/modules/orders/edit_order_screen.dart
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -262,13 +263,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final qv = row['quantity'];
     final qty =
         (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
+    double? defaultQty;
+    if (_product.leftover != null && _product.leftover! > 0) {
+      defaultQty = math.max(0, math.min(_product.leftover!, qty));
+    } else if (qty > 0) {
+      defaultQty = qty;
+    }
     _stockExtraSearchDebounce?.cancel();
     setState(() {
       _selectedStockExtraRow = Map<String, dynamic>.from(row);
       _stockExtra = qty;
       _stockExtraResults = [];
       _loadingStockExtra = false;
+      _stockExtraSelectedQty = defaultQty;
+      _stockExtraQtyTouched = false;
+      _product.leftover =
+          defaultQty != null && defaultQty > 0 ? defaultQty : null;
     });
+    _updateStockExtraQtyController();
     _stockExtraSearchController.value = TextEditingValue(
       text: description,
       selection: TextSelection.collapsed(offset: description.length),
@@ -393,6 +405,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Готовая продукция (лишнее)
   TmcModel? _stockExtraItem;
   double? _stockExtra;
+  double? _stockExtraSelectedQty;
   final TextEditingController _stockExtraSearchController = TextEditingController();
   final FocusNode _stockExtraFocusNode = FocusNode();
   Timer? _stockExtraSearchDebounce;
@@ -401,6 +414,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Map<String, dynamic>? _selectedStockExtraRow;
   bool _writeOffStockExtra =
       false; // <-- добавлено: списывать ли лишнее при сохранении
+  bool _stockExtraQtyTouched = false;
+  final TextEditingController _stockExtraQtyController = TextEditingController();
 
   PlatformFile? _pickedPdf;
   bool _lengthExceeded = false;
@@ -557,6 +572,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         leftover: null,
       );
     }
+    _stockExtraSelectedQty =
+        (_product.leftover != null && _product.leftover! > 0)
+            ? _product.leftover
+            : null;
+    _stockExtraQtyTouched = _stockExtraSelectedQty != null;
+    _updateStockExtraQtyController();
     // ensure at least one paint row only for new orders (not editing)
     if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
     _loadCategoriesForProduct();
@@ -1203,6 +1224,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _stockExtraSearchDebounce?.cancel();
     _stockExtraFocusNode.dispose();
     _stockExtraSearchController.dispose();
+    _stockExtraQtyController.dispose();
     _managerDisplayController.dispose();
 
     _stageTemplateController.removeListener(_onStageTemplateTextChanged);
@@ -1213,6 +1235,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _matFormatCtl.dispose();
     _matGramCtl.dispose();
     super.dispose();
+  }
+
+  void _updateStockExtraQtyController() {
+    final double? value = _stockExtraSelectedQty;
+    final String text = (value != null && value > 0)
+        ? _formatDecimal(value, fractionDigits: 2)
+        : '';
+    _stockExtraQtyController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
 
   Future<void> _updateStockExtra({String? query}) async {
@@ -1226,7 +1259,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraResults = [];
           _selectedStockExtraRow = null;
           _loadingStockExtra = false;
+          _stockExtraSelectedQty = null;
+          _stockExtraQtyTouched = false;
+          _product.leftover = null;
         });
+        _updateStockExtraQtyController();
       }
       return;
     }
@@ -1251,7 +1288,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _stockExtraResults = [];
             _selectedStockExtraRow = null;
             _loadingStockExtra = false;
+            _stockExtraSelectedQty = null;
+            _stockExtraQtyTouched = false;
+            _product.leftover = null;
           });
+          _updateStockExtraQtyController();
         }
         return;
       }
@@ -1297,6 +1338,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         displayQty = results.isEmpty ? 0.0 : total;
       }
 
+      double? nextSelectedQty;
+      if (_stockExtraQtyTouched) {
+        final double? current = _stockExtraSelectedQty;
+        if (current != null) {
+          final double maxAvailable = displayQty > 0 ? displayQty : current;
+          nextSelectedQty = math.max(0, math.min(current, maxAvailable));
+        }
+      } else {
+        final double? templateLeftover = _product.leftover;
+        if (templateLeftover != null && templateLeftover > 0) {
+          final double maxAvailable = displayQty > 0 ? displayQty : templateLeftover;
+          nextSelectedQty = math.max(0, math.min(templateLeftover, maxAvailable));
+        } else if (displayQty > 0) {
+          nextSelectedQty = displayQty;
+        } else {
+          nextSelectedQty = null;
+        }
+      }
+
       if (mounted) {
         setState(() {
           _stockExtra = displayQty;
@@ -1305,7 +1365,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraResults =
               search.isEmpty ? <Map<String, dynamic>>[] : results;
           _loadingStockExtra = false;
+          _stockExtraSelectedQty = nextSelectedQty;
+          _product.leftover =
+              nextSelectedQty != null && nextSelectedQty > 0 ? nextSelectedQty : null;
         });
+        _updateStockExtraQtyController();
       }
     } catch (e) {
       if (mounted) {
@@ -1315,7 +1379,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraResults = [];
           _selectedStockExtraRow = null;
           _loadingStockExtra = false;
+          _stockExtraSelectedQty = null;
+          _stockExtraQtyTouched = false;
+          _product.leftover = null;
         });
+        _updateStockExtraQtyController();
       }
     }
   }
@@ -2471,9 +2539,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     _product.type = val ?? '';
                     _selectedStockExtraRow = null;
                     _stockExtraResults = [];
+                    _stockExtra = null;
+                    _stockExtraSelectedQty = null;
+                    _stockExtraQtyTouched = false;
+                    _product.leftover = null;
                   });
                   _stockExtraSearchDebounce?.cancel();
                   _stockExtraSearchController.clear();
+                  _updateStockExtraQtyController();
                   _updateStockExtra();
                 },
               );
@@ -2555,6 +2628,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   /// Дополнительные параметры продукта: материал, складские остатки и вложения
   Widget _buildProductMaterialAndExtras(ProductModel product) {
     final paperQty = _currentAvailablePaperQty();
+    final double availableExtra = _stockExtra ?? 0;
+    final bool extraSliderEnabled = availableExtra > 0;
+    final double sliderValue = extraSliderEnabled
+        ? math.max(0, math.min(_stockExtraSelectedQty ?? 0, availableExtra))
+        : math.max(0, _stockExtraSelectedQty ?? 0);
+    final double sliderMax = extraSliderEnabled
+        ? availableExtra
+        : (sliderValue > 0 ? sliderValue : 1);
+    final int? sliderDivisions = extraSliderEnabled
+        ? math
+            .max(1, math.min(200, (availableExtra * 10).round()))
+            .toInt()
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2872,6 +2958,60 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
                     : 'Доступно: —',
                 style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _stockExtraQtyController,
+                decoration: const InputDecoration(
+                  labelText: 'Количество для списания',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (value) {
+                  final normalized = value.replaceAll(',', '.');
+                  final parsed = double.tryParse(normalized);
+                  setState(() {
+                    _stockExtraQtyTouched = true;
+                    _stockExtraSelectedQty =
+                        parsed != null && parsed >= 0 ? parsed : null;
+                    _product.leftover =
+                        _stockExtraSelectedQty != null &&
+                                _stockExtraSelectedQty! > 0
+                            ? _stockExtraSelectedQty
+                            : null;
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+              Slider(
+                value: math.max(0, math.min(sliderValue, sliderMax)),
+                min: 0,
+                max: sliderMax,
+                divisions: sliderDivisions,
+                label: _stockExtraSelectedQty != null &&
+                        (_stockExtraSelectedQty ?? 0) > 0
+                    ? _formatDecimal(
+                        math.max(0, math.min(sliderValue, sliderMax)),
+                      )
+                    : '0',
+                onChanged: extraSliderEnabled
+                    ? (val) {
+                        setState(() {
+                          _stockExtraQtyTouched = true;
+                          _stockExtraSelectedQty = val;
+                          _product.leftover =
+                              val > 0 ? val : null;
+                          final text = _formatDecimal(val);
+                          _stockExtraQtyController.value =
+                              TextEditingValue(
+                            text: text,
+                            selection: TextSelection.collapsed(
+                                offset: text.length),
+                          );
+                        });
+                      }
+                    : null,
               ),
               const SizedBox(height: 4),
               _buildStockExtraResults(),

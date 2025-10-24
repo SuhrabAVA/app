@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../tasks/task_provider.dart';
@@ -17,6 +19,8 @@ enum SortOption {
   quantityAsc,
   quantityDesc,
 }
+
+enum ShipmentQuantityMode { tirage, custom, actual }
 
 /// Главный экран модуля оформления заказа. Показывает список заказов с
 /// возможностью фильтрации по статусам, поиска и создания нового заказа.
@@ -368,55 +372,221 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final double plannedQty = order.product.quantity.toDouble();
     final double actualQty = order.actualQty ?? plannedQty;
     final double safeActual = actualQty < 0 ? 0 : actualQty;
-    final double writeoffQty =
-        safeActual < plannedQty ? safeActual : plannedQty.toDouble();
-    final double leftoverQty =
-        safeActual > plannedQty ? (safeActual - plannedQty) : 0;
+    double? warehouseExtraQty;
+    String? warehouseExtraSize;
+    try {
+      final snapshot =
+          await context.read<OrdersProvider>().loadCategoryItemSnapshot(order);
+      if (snapshot != null) {
+        final dynamic qv = snapshot['quantity'];
+        if (qv is num) {
+          warehouseExtraQty = qv.toDouble();
+        } else if (qv is String) {
+          final normalized = qv.replaceAll(',', '.');
+          final parsed = double.tryParse(normalized);
+          if (parsed != null) {
+            warehouseExtraQty = parsed;
+          }
+        }
+        final String sizeRaw = (snapshot['size'] ?? '').toString().trim();
+        if (sizeRaw.isNotEmpty) {
+          warehouseExtraSize = sizeRaw;
+        }
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ shipment leftover snapshot error: $e\n$st');
+    }
 
-    final bool? confirmed = await showDialog<bool>(
+    double customQty = plannedQty;
+    ShipmentQuantityMode mode = ShipmentQuantityMode.tirage;
+    final TextEditingController customController =
+        TextEditingController(text: _formatQuantity(customQty));
+    bool updatingCustomText = false;
+
+    double sliderMax = math.max(plannedQty, safeActual);
+    if (warehouseExtraQty != null) {
+      sliderMax = math.max(sliderMax, warehouseExtraQty);
+    }
+    final bool sliderEnabled = sliderMax > 0;
+    if (!sliderEnabled) {
+      sliderMax = 1;
+    }
+
+    final double? selectedWriteoff = await showDialog<double>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Подтвердить отгрузку?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Заказчик: ${order.customer}'),
-              const SizedBox(height: 8),
-              Text('Тираж: ${_formatQuantity(plannedQty)}'),
-              Text('Факт: ${_formatQuantity(safeActual)}'),
-              const SizedBox(height: 8),
-              Text('К списанию: ${_formatQuantity(writeoffQty)}'),
-              Text('Остаток: ${_formatQuantity(leftoverQty)}'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Отмена'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final double effectiveCustom = sliderEnabled
+                ? math.max(0, math.min(customQty, sliderMax))
+                : math.max(0, customQty);
+            double currentWriteoff;
+            switch (mode) {
+              case ShipmentQuantityMode.tirage:
+                currentWriteoff = plannedQty;
+                break;
+              case ShipmentQuantityMode.actual:
+                currentWriteoff = safeActual;
+                break;
+              case ShipmentQuantityMode.custom:
+                currentWriteoff = effectiveCustom;
+                break;
+            }
+            if (currentWriteoff < 0) currentWriteoff = 0;
+            final double leftoverQty =
+                safeActual > currentWriteoff ? (safeActual - currentWriteoff) : 0;
+
+            return AlertDialog(
+              title: const Text('Подтвердить отгрузку?'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Заказчик: ${order.customer}'),
+                    const SizedBox(height: 8),
+                    Text('Тираж: ${_formatQuantity(plannedQty)}'),
+                    Text('Факт: ${_formatQuantity(safeActual)}'),
+                    if (order.product.leftover != null &&
+                        order.product.leftover! > 0)
+                      Text(
+                        'Запланировано как лишнее: '
+                        '${_formatQuantity(order.product.leftover!)}',
+                      ),
+                    if (warehouseExtraQty != null)
+                      Text(
+                        'Сейчас на складе: '
+                        '${_formatQuantity(warehouseExtraQty!)}',
+                      ),
+                    if (warehouseExtraSize != null)
+                      Text('Размер: $warehouseExtraSize'),
+                    const SizedBox(height: 12),
+                    RadioListTile<ShipmentQuantityMode>(
+                      title: Text(
+                          'Списать тираж (${_formatQuantity(plannedQty)})'),
+                      value: ShipmentQuantityMode.tirage,
+                      groupValue: mode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          mode = value;
+                        });
+                      },
+                    ),
+                    RadioListTile<ShipmentQuantityMode>(
+                      title: Text(
+                          'Списать фактическое (${_formatQuantity(safeActual)})'),
+                      value: ShipmentQuantityMode.actual,
+                      groupValue: mode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          mode = value;
+                        });
+                      },
+                    ),
+                    RadioListTile<ShipmentQuantityMode>(
+                      title: const Text('Указать количество'),
+                      value: ShipmentQuantityMode.custom,
+                      groupValue: mode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          mode = value;
+                        });
+                      },
+                    ),
+                    if (mode == ShipmentQuantityMode.custom) ...[
+                      TextField(
+                        controller: customController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Количество к списанию',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (value) {
+                          if (updatingCustomText) return;
+                          final normalized = value.replaceAll(',', '.');
+                          final parsed = double.tryParse(normalized);
+                          setDialogState(() {
+                            customQty =
+                                parsed != null && parsed >= 0 ? parsed : 0;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Slider(
+                        value: sliderEnabled ? effectiveCustom : 0,
+                        min: 0,
+                        max: sliderEnabled ? sliderMax : 1,
+                        divisions: sliderEnabled
+                            ? math
+                                .max(
+                                    1,
+                                    math.min(200,
+                                        (sliderMax * 10).round()))
+                                .toInt()
+                            : null,
+                        label: _formatQuantity(
+                            sliderEnabled ? effectiveCustom : 0),
+                        onChanged: sliderEnabled
+                            ? (val) {
+                                setDialogState(() {
+                                  customQty = val;
+                                  updatingCustomText = true;
+                                  final text = _formatQuantity(val);
+                                  customController.value = TextEditingValue(
+                                    text: text,
+                                    selection: TextSelection.collapsed(
+                                        offset: text.length),
+                                  );
+                                  updatingCustomText = false;
+                                });
+                              }
+                            : null,
+                      ),
+                    ],
+                    const Divider(),
+                    Text('К списанию: ${_formatQuantity(currentWriteoff)}'),
+                    Text('Остаток после отгрузки: ${_formatQuantity(leftoverQty)}'),
+                  ],
+                ),
               ),
-              child: const Text('Отгрузить'),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: const Text('Отмена'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, currentWriteoff),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Отгрузить'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
 
-    if (confirmed != true) return;
+    customController.dispose();
+
+    if (selectedWriteoff == null) {
+      return;
+    }
 
     setState(() => _shippingInProgress.add(order.id));
     try {
-      await context.read<OrdersProvider>().shipOrder(order);
+      await context
+          .read<OrdersProvider>()
+          .shipOrder(order, writeoffOverride: selectedWriteoff);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Заказ отправлен в архив')), 
+        const SnackBar(content: Text('Заказ отправлен в архив')),
       );
     } catch (e) {
       if (!mounted) return;

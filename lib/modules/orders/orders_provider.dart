@@ -301,7 +301,7 @@ class OrdersProvider with ChangeNotifier {
     }
   }
 
-  Future<void> shipOrder(OrderModel order) async {
+  Future<void> shipOrder(OrderModel order, {double? writeoffOverride}) async {
     await _ensureAuthed();
 
     final index = _orders.indexWhere((o) => o.id == order.id);
@@ -332,12 +332,21 @@ class OrdersProvider with ChangeNotifier {
     final double actualQty =
         orderData.actualQty ?? orderData.product.quantity.toDouble();
     final double safeActual = actualQty < 0 ? 0 : actualQty;
-    final double writeoffQty =
-        safeActual < plannedQty ? safeActual : plannedQty.toDouble();
+
+    double writeoffQty = writeoffOverride ??
+        (safeActual < plannedQty ? safeActual : plannedQty.toDouble());
+    if (writeoffQty.isNaN || writeoffQty.isInfinite) {
+      writeoffQty = 0;
+    }
+    if (writeoffQty < 0) {
+      writeoffQty = 0;
+    }
+
     final double leftoverQty =
-        safeActual > plannedQty ? (safeActual - plannedQty) : 0;
+        safeActual > writeoffQty ? (safeActual - writeoffQty) : 0;
 
     final double? actualQtyForPens = orderData.actualQty;
+    final String? sizeLabel = _formatProductSize(orderData.product);
 
     try {
       await _processCategoryShipment(
@@ -345,6 +354,7 @@ class OrdersProvider with ChangeNotifier {
         actualQty: safeActual,
         writeoffQty: writeoffQty,
         leftoverQty: leftoverQty,
+        sizeLabel: sizeLabel,
       );
       await _applyPensConsumption(
         order: orderData,
@@ -393,6 +403,7 @@ class OrdersProvider with ChangeNotifier {
     required double actualQty,
     required double writeoffQty,
     required double leftoverQty,
+    String? sizeLabel,
   }) async {
     final productName = order.product.type.trim();
     final customerName = order.customer.trim();
@@ -442,6 +453,7 @@ class OrdersProvider with ChangeNotifier {
             'category_id': categoryId,
             'description': customerName,
             'quantity': initialQty,
+            if (sizeLabel != null && sizeLabel.isNotEmpty) 'size': sizeLabel,
           })
           .select('id, quantity, table_key')
           .single();
@@ -450,30 +462,121 @@ class OrdersProvider with ChangeNotifier {
       final double currentQty =
           (item['quantity'] is num) ? (item['quantity'] as num).toDouble() : 0.0;
       if (initialQty > currentQty) {
+        final Map<String, dynamic> updatePayload = {
+          'quantity': initialQty,
+        };
+        if (sizeLabel != null && sizeLabel.isNotEmpty) {
+          updatePayload['size'] = sizeLabel;
+        }
         await _supabase
             .from('warehouse_category_items')
-            .update({'quantity': initialQty})
+            .update(updatePayload)
             .match({'id': item['id']});
         item['quantity'] = initialQty;
+        if (sizeLabel != null && sizeLabel.isNotEmpty) {
+          item['size'] = sizeLabel;
+        }
       }
     }
 
     final String itemId = item['id'].toString();
 
     if (writeoffQty > 0) {
-      await _supabase.from('warehouse_category_writeoffs').insert({
+      final Map<String, dynamic> writeoffPayload = {
         'item_id': itemId,
         'qty': writeoffQty,
         'reason': customerName,
         'by_name': AuthHelper.currentUserName ?? '',
-      });
+      };
+      if (sizeLabel != null && sizeLabel.isNotEmpty) {
+        writeoffPayload['size'] = sizeLabel;
+      }
+      await _supabase
+          .from('warehouse_category_writeoffs')
+          .insert(writeoffPayload);
     }
 
     final double nextQty = leftoverQty > 0 ? leftoverQty : 0;
+    final Map<String, dynamic> nextPayload = {
+      'quantity': nextQty,
+    };
+    if (sizeLabel != null && sizeLabel.isNotEmpty) {
+      nextPayload['size'] = sizeLabel;
+    }
     await _supabase
         .from('warehouse_category_items')
-        .update({'quantity': nextQty})
+        .update(nextPayload)
         .match({'id': itemId});
+    if (sizeLabel != null && sizeLabel.isNotEmpty) {
+      item['size'] = sizeLabel;
+    }
+  }
+
+  String? _formatProductSize(ProductModel product) {
+    final List<String> parts = <String>[];
+
+    String formatDouble(double value) {
+      final String fixed = value.toStringAsFixed(2);
+      if (!fixed.contains('.')) return fixed;
+      final String trimmed = fixed
+          .replaceAll(RegExp(r'0+$'), '')
+          .replaceAll(RegExp(r'[.]$'), '');
+      return trimmed.isEmpty ? '0' : trimmed;
+    }
+
+    void tryAdd(double value) {
+      if (value > 0) {
+        parts.add(formatDouble(value));
+      }
+    }
+
+    tryAdd(product.width);
+    tryAdd(product.height);
+    tryAdd(product.depth);
+
+    if (parts.isEmpty) {
+      return null;
+    }
+
+    return parts.join('*');
+  }
+
+  Future<Map<String, dynamic>?> loadCategoryItemSnapshot(
+      OrderModel order) async {
+    await _ensureAuthed();
+
+    final String productName = order.product.type.trim();
+    final String customerName = order.customer.trim();
+
+    if (productName.isEmpty || customerName.isEmpty) {
+      return null;
+    }
+
+    final String sanitizedProduct = productName.replaceAll("'", "''");
+    final dynamic category = await _supabase
+        .from('warehouse_categories')
+        .select('id, title, code')
+        .or('title.eq.' + sanitizedProduct + ',code.eq.' + sanitizedProduct)
+        .maybeSingle();
+
+    if (category == null || category['id'] == null) {
+      return null;
+    }
+
+    final rows = await _supabase
+        .from('warehouse_category_items')
+        .select('id, description, quantity, size, comment')
+        .eq('category_id', category['id'])
+        .eq('description', customerName);
+
+    if (rows is List && rows.isNotEmpty) {
+      final raw = rows.first;
+      if (raw is Map) {
+        return Map<String, dynamic>.from(raw as Map);
+      }
+    }
+
+    return null;
   }
 
   Future<void> _handleActualQtyChange({
