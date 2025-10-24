@@ -243,13 +243,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final trimmed = value.trim();
     _stockExtraSearchDebounce?.cancel();
     setState(() {
-      if (trimmed.isEmpty) {
-        _selectedStockExtraRow = null;
-        _stockExtraResults = [];
-      } else {
-        _selectedStockExtraRow = null;
+      _selectedStockExtraRow = null;
+      _stockExtraResults = [];
+      _stockExtra = null;
+      _stockExtraItem = null;
+      _stockExtraSelectedQty = null;
+      _stockExtraQtyTouched = false;
+      _product.leftover = null;
+      if (_writeOffStockExtra) {
+        _writeOffStockExtra = false;
       }
     });
+    _updateStockExtraQtyController();
     if (trimmed.isEmpty) {
       _updateStockExtra(query: '');
     } else {
@@ -279,6 +284,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _stockExtraQtyTouched = false;
       _product.leftover =
           defaultQty != null && defaultQty > 0 ? defaultQty : null;
+      if (_writeOffStockExtra && (_stockExtraSelectedQty ?? 0) <= 0) {
+        _writeOffStockExtra = false;
+      }
     });
     _updateStockExtraQtyController();
     _stockExtraSearchController.value = TextEditingValue(
@@ -319,6 +327,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           itemBuilder: (context, index) {
             final row = _stockExtraResults[index];
             final description = (row['description'] ?? '').toString().trim();
+            final sizeLabel = (row['size'] ?? '').toString().trim();
             final qv = row['quantity'];
             final qty = (qv is num)
                 ? qv.toDouble()
@@ -326,9 +335,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final selected = _selectedStockExtraRow != null &&
                 (_selectedStockExtraRow!['id']?.toString() ==
                     row['id']?.toString());
+            final subtitleParts = <String>[];
+            subtitleParts.add('Количество: ${qty.toStringAsFixed(2)}');
+            if (sizeLabel.isNotEmpty) {
+              subtitleParts.add('Размер: $sizeLabel');
+            }
             return ListTile(
               title: Text(description.isEmpty ? 'Без названия' : description),
-              subtitle: Text('Количество: ${qty.toStringAsFixed(2)}'),
+              subtitle: Text(subtitleParts.join('\n')),
               selected: selected,
               trailing: selected ? const Icon(Icons.check) : null,
               onTap: () => _selectStockExtraRow(row),
@@ -1262,6 +1276,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraSelectedQty = null;
           _stockExtraQtyTouched = false;
           _product.leftover = null;
+          _writeOffStockExtra = false;
         });
         _updateStockExtraQtyController();
       }
@@ -1299,20 +1314,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
       var builder = _sb
           .from('warehouse_category_items')
-          .select('id, description, quantity, table_key')
+          .select('id, description, quantity, table_key, size')
           .eq('category_id', cat['id']);
       if (search.isNotEmpty) {
-        builder = builder.ilike('description', '%$search%');
+        final sanitized = search.replaceAll("'", "''");
+        builder = builder.or(
+            'description.ilike.%$sanitized%,size.ilike.%$sanitized%');
       }
       final rows = await builder.order('description').limit(100);
-      double total = 0.0;
       final List<Map<String, dynamic>> results = [];
       for (final r in (rows as List)) {
         final map = Map<String, dynamic>.from(r as Map);
         final qv = map['quantity'];
         final q =
             (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
-        total += q;
         results.add(map);
       }
 
@@ -1329,28 +1344,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
 
-      double displayQty;
+      double? displayQty;
       if (selectedRow != null) {
         final qv = selectedRow['quantity'];
         displayQty =
             (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
       } else {
-        displayQty = results.isEmpty ? 0.0 : total;
+        displayQty = null;
       }
 
       double? nextSelectedQty;
       if (_stockExtraQtyTouched) {
         final double? current = _stockExtraSelectedQty;
         if (current != null) {
-          final double maxAvailable = displayQty > 0 ? displayQty : current;
+          final double maxAvailable =
+              displayQty != null && displayQty > 0 ? displayQty : current;
           nextSelectedQty = math.max(0, math.min(current, maxAvailable));
         }
       } else {
         final double? templateLeftover = _product.leftover;
         if (templateLeftover != null && templateLeftover > 0) {
-          final double maxAvailable = displayQty > 0 ? displayQty : templateLeftover;
+          final double maxAvailable = displayQty != null && displayQty > 0
+              ? displayQty
+              : templateLeftover;
           nextSelectedQty = math.max(0, math.min(templateLeftover, maxAvailable));
-        } else if (displayQty > 0) {
+        } else if (displayQty != null && displayQty > 0) {
           nextSelectedQty = displayQty;
         } else {
           nextSelectedQty = null;
@@ -1368,6 +1386,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraSelectedQty = nextSelectedQty;
           _product.leftover =
               nextSelectedQty != null && nextSelectedQty > 0 ? nextSelectedQty : null;
+          if (_writeOffStockExtra && (_stockExtraSelectedQty ?? 0) <= 0) {
+            _writeOffStockExtra = false;
+          }
         });
         _updateStockExtraQtyController();
       }
@@ -1382,6 +1403,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraSelectedQty = null;
           _stockExtraQtyTouched = false;
           _product.leftover = null;
+          _writeOffStockExtra = false;
         });
         _updateStockExtraQtyController();
       }
@@ -2127,7 +2149,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       try {
         final String typeTitle = _product.type.trim();
         final selectedExtra = _selectedStockExtraRow;
-        if (selectedExtra != null && typeTitle.isNotEmpty) {
+        final String? sizeLabel = _productSizeLabel();
+        final double selectedQty =
+            (_stockExtraSelectedQty != null && _stockExtraSelectedQty! > 0)
+                ? _stockExtraSelectedQty!
+                : 0;
+        if (selectedExtra != null &&
+            typeTitle.isNotEmpty &&
+            selectedQty > 0) {
           final cat = await _sb
               .from('warehouse_categories')
               .select('id, title, code')
@@ -2147,16 +2176,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 final double q = (qv is num)
                     ? qv.toDouble()
                     : double.tryParse('${qv ?? ''}') ?? 0.0;
-                if (q > 0) {
-                  await _sb.from('warehouse_category_writeoffs').insert({
+                final double qtyToWriteOff =
+                    math.max(0, math.min(selectedQty, q));
+                if (qtyToWriteOff > 0) {
+                  final writeoffPayload = {
                     'item_id': itemId,
-                    'qty': q,
+                    'qty': qtyToWriteOff,
                     'reason': _customerController.text.trim(),
                     'by_name': AuthHelper.currentUserName ?? '',
-                  });
+                  };
+                  if (sizeLabel != null && sizeLabel.isNotEmpty) {
+                    writeoffPayload['size'] = sizeLabel;
+                  }
+                  await _sb
+                      .from('warehouse_category_writeoffs')
+                      .insert(writeoffPayload);
                   await _sb
                       .from('warehouse_category_items')
-                      .update({'quantity': 0})
+                      .update({
+                        'quantity': math.max(0, q - qtyToWriteOff),
+                        if (sizeLabel != null && sizeLabel.isNotEmpty)
+                          'size': sizeLabel,
+                      })
                       .match({'id': itemId});
                 }
               }
@@ -2183,6 +2224,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return formatted
         .replaceFirst(RegExp(r'0+$'), '')
         .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  String? _productSizeLabel() {
+    String format(double value) {
+      final String fixed = value.toStringAsFixed(2);
+      final String trimmed = fixed
+          .replaceAll(RegExp(r'0+$'), '')
+          .replaceAll(RegExp(r'[.]$'), '');
+      return trimmed.isEmpty ? '0' : trimmed;
+    }
+
+    final List<String> parts = <String>[];
+    void tryAdd(double value) {
+      if (value > 0) {
+        parts.add(format(value));
+      }
+    }
+
+    tryAdd(_product.width);
+    tryAdd(_product.height);
+    tryAdd(_product.depth);
+
+    if (parts.isEmpty) {
+      return null;
+    }
+
+    return parts.join('*');
   }
 
   String? _composeFormColors() {
@@ -2628,19 +2696,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   /// Дополнительные параметры продукта: материал, складские остатки и вложения
   Widget _buildProductMaterialAndExtras(ProductModel product) {
     final paperQty = _currentAvailablePaperQty();
-    final double availableExtra = _stockExtra ?? 0;
-    final bool extraSliderEnabled = availableExtra > 0;
-    final double sliderValue = extraSliderEnabled
-        ? math.max(0, math.min(_stockExtraSelectedQty ?? 0, availableExtra))
-        : math.max(0, _stockExtraSelectedQty ?? 0);
-    final double sliderMax = extraSliderEnabled
-        ? availableExtra
-        : (sliderValue > 0 ? sliderValue : 1);
-    final int? sliderDivisions = extraSliderEnabled
-        ? math
-            .max(1, math.min(200, (availableExtra * 10).round()))
-            .toInt()
-        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2962,56 +3017,48 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               const SizedBox(height: 8),
               TextField(
                 controller: _stockExtraQtyController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Количество для списания',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  helperText: _selectedStockExtraRow != null
+                      ? null
+                      : 'Сначала выберите позицию из списка',
                 ),
+                enabled: _selectedStockExtraRow != null,
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 onChanged: (value) {
                   final normalized = value.replaceAll(',', '.');
                   final parsed = double.tryParse(normalized);
+                  double? nextValue =
+                      parsed != null && parsed >= 0 ? parsed : null;
+                  if (nextValue != null && _stockExtra != null) {
+                    final double available = _stockExtra!;
+                    if (available >= 0 && nextValue > available) {
+                      nextValue = available;
+                      final text = _formatDecimal(available);
+                      _stockExtraQtyController.value = TextEditingValue(
+                        text: text,
+                        selection:
+                            TextSelection.collapsed(offset: text.length),
+                      );
+                    }
+                  }
                   setState(() {
                     _stockExtraQtyTouched = true;
-                    _stockExtraSelectedQty =
-                        parsed != null && parsed >= 0 ? parsed : null;
+                    _stockExtraSelectedQty = nextValue;
                     _product.leftover =
                         _stockExtraSelectedQty != null &&
                                 _stockExtraSelectedQty! > 0
                             ? _stockExtraSelectedQty
                             : null;
+                    if (_writeOffStockExtra &&
+                        (_stockExtraSelectedQty == null ||
+                            _stockExtraSelectedQty! <= 0)) {
+                      _writeOffStockExtra = false;
+                    }
                   });
                 },
-              ),
-              const SizedBox(height: 8),
-              Slider(
-                value: math.max(0, math.min(sliderValue, sliderMax)),
-                min: 0,
-                max: sliderMax,
-                divisions: sliderDivisions,
-                label: _stockExtraSelectedQty != null &&
-                        (_stockExtraSelectedQty ?? 0) > 0
-                    ? _formatDecimal(
-                        math.max(0, math.min(sliderValue, sliderMax)),
-                      )
-                    : '0',
-                onChanged: extraSliderEnabled
-                    ? (val) {
-                        setState(() {
-                          _stockExtraQtyTouched = true;
-                          _stockExtraSelectedQty = val;
-                          _product.leftover =
-                              val > 0 ? val : null;
-                          final text = _formatDecimal(val);
-                          _stockExtraQtyController.value =
-                              TextEditingValue(
-                            text: text,
-                            selection: TextSelection.collapsed(
-                                offset: text.length),
-                          );
-                        });
-                      }
-                    : null,
               ),
               const SizedBox(height: 4),
               _buildStockExtraResults(),
@@ -3022,7 +3069,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Списать лишнее при сохранении'),
             value: _writeOffStockExtra,
-            onChanged: (v) => setState(() => _writeOffStockExtra = v),
+            onChanged: (_selectedStockExtraRow != null &&
+                    (_stockExtraSelectedQty ?? 0) > 0)
+                ? (v) => setState(() => _writeOffStockExtra = v)
+                : null,
           ),
         ),
         const SizedBox(height: 12),
