@@ -47,6 +47,15 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
   String _fmtNum(num? v) =>
       v == null ? '—' : (v % 1 == 0 ? v.toInt().toString() : v.toString());
 
+  String _formatGrams(double grams) {
+    final precision = grams % 1 == 0 ? 0 : 2;
+    final fixed = grams.toStringAsFixed(precision);
+    final trimmed = fixed
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+    return '$trimmed г';
+  }
+
   @override
   Widget build(BuildContext context) {
     final o = widget.order;
@@ -104,9 +113,19 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
                       final name = (e['name'] ?? '').toString();
                       final qty = e['qty_kg'];
                       final memo = (e['info'] ?? '').toString();
-                      final v = (qty == null)
+                      double? grams;
+                      if (qty is num) {
+                        grams = qty.toDouble() * 1000;
+                      } else if (qty is String && qty.trim().isNotEmpty) {
+                        final parsed =
+                            double.tryParse(qty.replaceAll(',', '.'));
+                        if (parsed != null) {
+                          grams = parsed * 1000;
+                        }
+                      }
+                      final v = (grams == null)
                           ? (memo.isEmpty ? '—' : memo)
-                          : '${(qty is num) ? (qty as num).toStringAsFixed(2) : qty} кг${memo.isNotEmpty ? ' ($memo)' : ''}';
+                          : '${_formatGrams(grams)}${memo.isNotEmpty ? ' ($memo)' : ''}';
                       return _kv(name, v);
                     }).toList()),
             _section('Файлы', [
