@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -58,8 +59,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _bootstrapping = true;
-  String?
-      _bootstrapError; // для отображения подсказки, если RLS блокирует записи
 
   @override
   void initState() {
@@ -94,14 +93,16 @@ class _LoginScreenState extends State<LoginScreen> {
           try {
             await pr.ensureManagerPosition();
           } catch (e) {
-            _bootstrapError ??=
-                'Нет прав на запись в positions (ensureManagerPosition).';
+            debugPrint(
+              'Нет прав на запись в positions (ensureManagerPosition): $e',
+            );
           }
           try {
             await pr.ensureWarehouseHeadPosition();
           } catch (e) {
-            _bootstrapError ??=
-                'Нет прав на запись в positions (ensureWarehouseHeadPosition).';
+            debugPrint(
+              'Нет прав на запись в positions (ensureWarehouseHeadPosition): $e',
+            );
           }
         }
 
@@ -109,7 +110,7 @@ class _LoginScreenState extends State<LoginScreen> {
         try {
           await pr.fetchEmployees();
         } catch (e) {
-          _bootstrapError ??= 'Нет прав на чтение сотрудников. Проверьте RLS.';
+          debugPrint('Нет прав на чтение сотрудников. Проверьте RLS: $e');
         }
 
         if (mounted) {
@@ -161,33 +162,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(fontSize: 14, color: Colors.grey),
                   ),
                   const SizedBox(height: 16),
-                  if (_bootstrapError != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: Colors.orange.withOpacity(0.1),
-                        border: Border.all(color: Colors.orange.shade300),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.info_outline, color: Colors.orange),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              // Подсказка: это подсвечивает RLS-проблему, но не ломает UI
-                              'Подсказка: $_bootstrapError\n'
-                              'Если это dev-сервер — разрешите запись через RLS-политику (SQL ниже), '
-                              'или авторизуйтесь в Supabase перед вставкой.',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
                   TextField(
                     controller: _searchController,
                     decoration: const InputDecoration(
