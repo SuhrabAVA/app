@@ -204,18 +204,45 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
-    return Scaffold(
+    final media = MediaQuery.of(context);
+    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
+    final double toolbarHeight = isCompactTablet ? 44 : (isTablet ? 52 : kToolbarHeight);
+    final double actionIconSize = isCompactTablet ? 20 : (isTablet ? 22 : 24);
+    final double tabLabelSize = isCompactTablet ? 11 : (isTablet ? 13 : 14);
+    final EdgeInsetsGeometry tabPadding = isTablet
+        ? const EdgeInsets.symmetric(horizontal: 10, vertical: 4)
+        : const EdgeInsets.symmetric(horizontal: 16, vertical: 6);
+
+    final theme = Theme.of(context);
+    final TextStyle? tabLabelStyle = theme.textTheme.labelLarge?.copyWith(
+      fontSize: tabLabelSize,
+      fontWeight: FontWeight.w600,
+    );
+    final TextStyle? tabUnselectedStyle = theme.textTheme.labelMedium?.copyWith(
+      fontSize: tabLabelSize,
+      fontWeight: FontWeight.w500,
+    );
+
+    final scaffold = Scaffold(
       appBar: AppBar(
+        toolbarHeight: toolbarHeight,
+        titleTextStyle: theme.textTheme.titleMedium?.copyWith(
+          fontSize: isTablet ? tabLabelSize + 2 : null,
+          fontWeight: FontWeight.w600,
+        ),
         title: const Text('Рабочее пространство'),
         actions: [
           // Кнопка добавления сотрудника
           IconButton(
+            iconSize: actionIconSize,
             icon: const Icon(Icons.add),
             tooltip: 'Добавить сотрудника',
             onPressed: _addEmployeeTab,
           ),
           // Кнопка выхода из рабочего места сотрудника
           IconButton(
+            iconSize: actionIconSize,
             icon: const Icon(Icons.logout),
             tooltip: 'Выйти',
             onPressed: () async {
@@ -257,6 +284,9 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
         bottom: TabBar(
           controller: _employeeTabController,
           isScrollable: true,
+          labelPadding: isTablet ? tabPadding : null,
+          labelStyle: tabLabelStyle,
+          unselectedLabelStyle: tabUnselectedStyle,
           tabs: [
             for (final id in _employeeIds)
               Tab(
@@ -285,6 +315,23 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
             _EmployeeWorkspaceTab(employeeId: id),
         ],
       ),
+    );
+
+    if (!isTablet) {
+      return scaffold;
+    }
+
+    return Theme(
+      data: theme.copyWith(
+        tabBarTheme: theme.tabBarTheme.copyWith(
+          labelPadding: tabPadding,
+          labelStyle: tabLabelStyle,
+          unselectedLabelStyle: tabUnselectedStyle,
+        ),
+        iconTheme: theme.iconTheme.copyWith(size: actionIconSize),
+        appBarTheme: theme.appBarTheme.copyWith(toolbarHeight: toolbarHeight),
+      ),
+      child: scaffold,
     );
   }
 }
@@ -321,23 +368,38 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
 
     final media = MediaQuery.of(context);
     final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
-    final double scale = isTablet ? 0.9 : 1.0;
-    final double targetTextScale = (media.textScaleFactor * scale).clamp(0.8, media.textScaleFactor) as double;
+    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
+    final double targetTextScale = (media.textScaleFactor * (isCompactTablet ? 0.7 : (isTablet ? 0.9 : 1.0)))
+        .clamp(0.7, media.textScaleFactor) as double;
     final mediaData = media.copyWith(textScaleFactor: targetTextScale);
     final theme = Theme.of(context);
     final TextStyle? baseTabLabel = theme.tabBarTheme.labelStyle ?? theme.textTheme.labelLarge;
     final TextStyle? baseTabUnselected = theme.tabBarTheme.unselectedLabelStyle ?? theme.textTheme.labelMedium;
     final ThemeData compactTheme = theme.copyWith(
-      visualDensity: isTablet ? const VisualDensity(horizontal: -1, vertical: -1) : theme.visualDensity,
+      visualDensity: isCompactTablet
+          ? const VisualDensity(horizontal: -2, vertical: -2)
+          : (isTablet
+              ? const VisualDensity(horizontal: -1, vertical: -1)
+              : theme.visualDensity),
       tabBarTheme: theme.tabBarTheme.copyWith(
-        labelPadding: isTablet ? const EdgeInsets.symmetric(horizontal: 12) : theme.tabBarTheme.labelPadding,
-        labelStyle: baseTabLabel?.copyWith(fontSize: isTablet ? 13 : baseTabLabel?.fontSize),
-        unselectedLabelStyle: baseTabUnselected?.copyWith(fontSize: isTablet ? 13 : baseTabUnselected?.fontSize),
+        labelPadding: isTablet
+            ? const EdgeInsets.symmetric(horizontal: 8)
+            : theme.tabBarTheme.labelPadding,
+        labelStyle: baseTabLabel?.copyWith(
+          fontSize: isCompactTablet ? 11 : (isTablet ? 13 : baseTabLabel?.fontSize),
+        ),
+        unselectedLabelStyle: baseTabUnselected?.copyWith(
+          fontSize: isCompactTablet ? 11 : (isTablet ? 13 : baseTabUnselected?.fontSize),
+        ),
       ),
-      iconTheme: theme.iconTheme.copyWith(size: isTablet ? 20 : theme.iconTheme.size),
-      appBarTheme: theme.appBarTheme.copyWith(toolbarHeight: isTablet ? 48 : theme.appBarTheme.toolbarHeight),
+      iconTheme: theme.iconTheme.copyWith(
+        size: isCompactTablet ? 18 : (isTablet ? 20 : theme.iconTheme.size),
+      ),
+      appBarTheme: theme.appBarTheme.copyWith(
+        toolbarHeight: isCompactTablet ? 42 : (isTablet ? 48 : theme.appBarTheme.toolbarHeight),
+      ),
     );
-    final double tabBarHeight = isTablet ? 46 : 50;
+    final double tabBarHeight = isCompactTablet ? 40 : (isTablet ? 46 : 50);
 
     return MediaQuery(
       data: mediaData,

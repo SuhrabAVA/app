@@ -1062,8 +1062,17 @@ class _TasksScreenState extends State<TasksScreen>
     final media = MediaQuery.of(context);
     final bool isTablet =
         media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
-    final double scale = isTablet ? 0.85 : 1.0;
-    final double textScaleFactor = isTablet ? 0.95 : 1.0;
+    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
+    final double scale = isCompactTablet
+        ? 0.5
+        : (isTablet
+            ? 0.85
+            : 1.0);
+    final double textScaleFactor = isCompactTablet
+        ? 0.75
+        : (isTablet
+            ? 0.95
+            : 1.0);
     double scaled(double value) => value * scale;
     final double outerPadding = scaled(16);
     final double columnGap = scaled(16);
