@@ -102,18 +102,18 @@ class WarehouseDashboard extends StatelessWidget {
                           type: 'Бумага', title: 'Бумага')),
                   _card(
                       context,
-                      '✏️\nКанцелярия',
-                      const TypeTableTabsScreen(
-                          type: 'Канцелярия', title: 'Канцелярия')),
-                  _card(
-                      context,
                       '🎨\nКраски',
                       const TypeTableTabsScreen(
                           type: 'Краска', title: 'Краски', enablePhoto: true)),
+                  _card(context, '📦\nКатегории', const CategoriesHubScreen()),
                   _card(context, '🧾\nФорма', const FormsScreen()),
+                  _card(
+                      context,
+                      '✏️\nКанцелярия',
+                      const TypeTableTabsScreen(
+                          type: 'Канцелярия', title: 'Канцелярия')),
                   _card(context, '🖊️\nРучки',
                       const TypeTableTabsScreen(type: 'Ручки', title: 'Ручки')),
-                  _card(context, '📦\nКатегории', const CategoriesHubScreen()),
                   _card(context, '🏷️\nПоставщики', const SuppliersScreen()),
                 ],
               ),
