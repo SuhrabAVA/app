@@ -24,7 +24,7 @@ class SupplierProvider with ChangeNotifier {
     final res = await _sb
         .from('suppliers')
         .select()
-        .order('created_at', ascending: true);
+        .order('name', ascending: true);
     if (res is List) {
       _suppliers = res.map((row) {
         final m = Map<String, dynamic>.from(row as Map);

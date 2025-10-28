@@ -169,8 +169,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   List<_LogRow> _inventories = [];
   List<_LogRow> _arrivals = [];
 
-  String _sortField = 'date';
-  bool _sortDesc = true;
+  String _sortField = 'name';
+  bool _sortDesc = false;
   String _query = '';
 
   final TextEditingController _searchController = TextEditingController();
@@ -923,6 +923,23 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       case 'quantity':
         itemComparator = (a, b) => cmpNum(a.quantity, b.quantity);
         break;
+      case 'name':
+        itemComparator = (a, b) {
+          final byDescription = a.description
+              .toLowerCase()
+              .compareTo(b.description.toLowerCase());
+          if (byDescription != 0) return byDescription;
+          final byFormat = (a.format ?? '')
+              .toLowerCase()
+              .compareTo((b.format ?? '').toLowerCase());
+          if (byFormat != 0) return byFormat;
+          final byGrammage = (a.grammage ?? '')
+              .toLowerCase()
+              .compareTo((b.grammage ?? '').toLowerCase());
+          if (byGrammage != 0) return byGrammage;
+          return a.id.compareTo(b.id);
+        };
+        break;
       case 'date':
       default:
         itemComparator = (a, b) => cmpDate(a.date, b.date);
@@ -934,19 +951,27 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       case 'quantity':
         logComparator = (a, b) => cmpNum(a.quantity, b.quantity);
         break;
+      case 'name':
+        logComparator = (a, b) => cmpDate(a.dateIso, b.dateIso);
+        break;
       case 'date':
       default:
         logComparator = (a, b) => cmpDate(a.dateIso, b.dateIso);
         break;
     }
 
+    final bool itemsDesc = _sortDesc && _sortField != 'name';
+    final bool logsDesc = _sortField == 'name' ? true : _sortDesc;
+
     setState(() {
       _items.sort(itemComparator);
+      if (itemsDesc) {
+        _items = _items.reversed.toList();
+      }
       _writeoffs.sort(logComparator);
       _inventories.sort(logComparator);
       _arrivals.sort(logComparator);
-      if (_sortDesc) {
-        _items = _items.reversed.toList();
+      if (logsDesc) {
         _writeoffs = _writeoffs.reversed.toList();
         _inventories = _inventories.reversed.toList();
         _arrivals = _arrivals.reversed.toList();
@@ -1049,10 +1074,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
-              setState(() => _sortField = v);
+              setState(() {
+                _sortField = v;
+                _sortDesc = v == 'name' ? false : true;
+              });
               _resort();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'name', child: Text('По алфавиту (список)')),
               PopupMenuItem(value: 'date', child: Text('По дате/времени')),
               PopupMenuItem(value: 'quantity', child: Text('По количеству')),
             ],
