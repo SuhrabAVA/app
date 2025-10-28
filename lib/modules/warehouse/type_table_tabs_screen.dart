@@ -171,8 +171,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   List<_LogRow> _inventories = [];
   List<_LogRow> _arrivals = [];
 
-  String _sortField = 'description';
-  bool _sortDesc = false;
+  String _sortField = 'date';
+  bool _sortDesc = true;
   String _query = '';
 
   final TextEditingController _searchController = TextEditingController();
@@ -931,10 +931,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       case 'quantity':
         itemComparator = (a, b) => cmpNum(a.quantity, b.quantity);
         break;
-      case 'description':
-        itemComparator =
-            (a, b) => a.description.toLowerCase().compareTo(b.description.toLowerCase());
-        break;
       case 'date':
       default:
         itemComparator = (a, b) => cmpDate(a.date, b.date);
@@ -945,10 +941,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     switch (_sortField) {
       case 'quantity':
         logComparator = (a, b) => cmpNum(a.quantity, b.quantity);
-        break;
-      case 'description':
-        logComparator = (a, b) =>
-            a.description.toLowerCase().compareTo(b.description.toLowerCase());
         break;
       case 'date':
       default:
@@ -1087,14 +1079,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
-              setState(() {
-                _sortField = v;
-                _sortDesc = v != 'description';
-              });
+              setState(() => _sortField = v);
               _resort();
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(value: 'description', child: Text('По названию')),
               PopupMenuItem(value: 'date', child: Text('По дате/времени')),
               PopupMenuItem(value: 'quantity', child: Text('По количеству')),
             ],
