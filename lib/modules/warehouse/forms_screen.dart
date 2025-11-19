@@ -9,6 +9,13 @@ import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
 import '../../utils/media_viewer.dart';
 
+enum FormsSort {
+  numberDesc,
+  numberAsc,
+  seriesAsc,
+  seriesDesc,
+}
+
 class FormsScreen extends StatefulWidget {
   const FormsScreen({Key? key}) : super(key: key);
 
@@ -20,6 +27,7 @@ class _FormsScreenState extends State<FormsScreen> {
   // Чтобы не ловить LateInitializationError
   late Future<List<Map<String, dynamic>>> _future;
   final TextEditingController _searchCtl = TextEditingController();
+  FormsSort _sort = FormsSort.numberDesc;
 
   @override
   void initState() {
@@ -461,15 +469,47 @@ class _FormsScreenState extends State<FormsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: TextField(
-              controller: _searchCtl,
-              decoration: const InputDecoration(
-                hintText: 'Поиск формы (название или номер)',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) =>
-                  _reload(search: v.trim().isEmpty ? null : v.trim()),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _searchCtl,
+                  decoration: const InputDecoration(
+                    hintText: 'Поиск формы (название или номер)',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (v) =>
+                      _reload(search: v.trim().isEmpty ? null : v.trim()),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<FormsSort>(
+                  value: _sort,
+                  decoration: const InputDecoration(
+                    labelText: 'Сортировка',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                        value: FormsSort.numberDesc,
+                        child: Text('Нумерация: с конца')),
+                    DropdownMenuItem(
+                        value: FormsSort.numberAsc,
+                        child: Text('Нумерация: с начала')),
+                    DropdownMenuItem(
+                        value: FormsSort.seriesAsc,
+                        child: Text('Алфавит: А → Я')),
+                    DropdownMenuItem(
+                        value: FormsSort.seriesDesc,
+                        child: Text('Алфавит: Я → А')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _sort = value;
+                    });
+                  },
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -489,16 +529,48 @@ class _FormsScreenState extends State<FormsScreen> {
                   return const Center(child: Text('Формы не найдены'));
                 }
 
-                // сортируем по серии, затем по номеру
-                data.sort((a, b) {
+                int compareSeries(Map<String, dynamic> a, Map<String, dynamic> b) {
                   final sa = (a['series'] ?? '').toString();
                   final sb = (b['series'] ?? '').toString();
+                  return sa.compareTo(sb);
+                }
+
+                int compareNumber(Map<String, dynamic> a, Map<String, dynamic> b) {
                   final na = (a['number'] as num?)?.toInt() ?? 0;
                   final nb = (b['number'] as num?)?.toInt() ?? 0;
-                  final sc = sa.compareTo(sb);
-                  if (sc != 0) return sc;
                   return na.compareTo(nb);
-                });
+                }
+
+                switch (_sort) {
+                  case FormsSort.numberDesc:
+                    data.sort((a, b) {
+                      final seriesCmp = compareSeries(a, b);
+                      if (seriesCmp != 0) return seriesCmp;
+                      return compareNumber(b, a);
+                    });
+                    break;
+                  case FormsSort.numberAsc:
+                    data.sort((a, b) {
+                      final seriesCmp = compareSeries(a, b);
+                      if (seriesCmp != 0) return seriesCmp;
+                      return compareNumber(a, b);
+                    });
+                    break;
+                  case FormsSort.seriesAsc:
+                    data.sort((a, b) {
+                      final seriesCmp = compareSeries(a, b);
+                      if (seriesCmp != 0) return seriesCmp;
+                      return compareNumber(a, b);
+                    });
+                    break;
+                  case FormsSort.seriesDesc:
+                    data.sort((a, b) {
+                      final seriesCmp = compareSeries(b, a);
+                      if (seriesCmp != 0) return seriesCmp;
+                      return compareNumber(b, a);
+                    });
+                    break;
+                }
 
                 return ListView.separated(
                   itemCount: data.length,
