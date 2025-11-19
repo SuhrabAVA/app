@@ -1604,7 +1604,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     final format = (item.format ?? '').trim();
     if (format.isNotEmpty) parts.add(format);
     final grammage = (item.grammage ?? '').trim();
-    if (grammage.isNotEmpty) parts.add('$grammage г/м²');
+    if (grammage.isNotEmpty) parts.add('$grammage ');
     return parts.join(' • ');
   }
 
@@ -1704,8 +1704,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                           grammage = double.tryParse(v.replaceAll(',', '.')),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: 'Грамаж (г/м²)'),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
                     ),
                   ],
                   if (method == 'diameter') ...[
@@ -1738,8 +1737,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                           grammage = double.tryParse(v.replaceAll(',', '.')),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: 'Грамаж (г/м²)'),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
