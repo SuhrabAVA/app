@@ -543,20 +543,16 @@ class _FormsScreenState extends State<FormsScreen> {
 
                 switch (_sort) {
                   case FormsSort.numberDesc:
-                    data.sort((a, b) {
-                      final seriesCmp = compareSeries(a, b);
-                      if (seriesCmp != 0) return seriesCmp;
-                      return compareNumber(b, a);
-                    });
+                    // Нумерация с конца: глобальная сортировка по номеру от большего к
+                    // меньшему.
+                    data.sort((a, b) => compareNumber(b, a));
                     break;
                   case FormsSort.numberAsc:
-                    data.sort((a, b) {
-                      final seriesCmp = compareSeries(a, b);
-                      if (seriesCmp != 0) return seriesCmp;
-                      return compareNumber(a, b);
-                    });
+                    // Нумерация с начала: глобальная сортировка по номеру от 1 вверх.
+                    data.sort(compareNumber);
                     break;
                   case FormsSort.seriesAsc:
+                    // Алфавит: А → Я, при совпадении названия — по номеру.
                     data.sort((a, b) {
                       final seriesCmp = compareSeries(a, b);
                       if (seriesCmp != 0) return seriesCmp;
@@ -564,6 +560,7 @@ class _FormsScreenState extends State<FormsScreen> {
                     });
                     break;
                   case FormsSort.seriesDesc:
+                    // Алфавит: Я → А, при совпадении названия — по номеру.
                     data.sort((a, b) {
                       final seriesCmp = compareSeries(b, a);
                       if (seriesCmp != 0) return seriesCmp;
