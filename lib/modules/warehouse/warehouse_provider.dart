@@ -9,6 +9,7 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import '../../services/app_auth.dart';
 import '../../utils/kostanay_time.dart';
+import 'warehouse_logs_repository.dart';
 
 class WarehouseProvider with ChangeNotifier {
   // ====== PENS DEDICATED TABLE RESOLUTION ======
@@ -59,6 +60,12 @@ class WarehouseProvider with ChangeNotifier {
 
   final List<TmcModel> _allTmc = [];
   List<TmcModel> get allTmc => List.unmodifiable(_allTmc);
+
+  final Map<String, WarehouseLogsBundle> _logBundles = {};
+  WarehouseLogsBundle? logsBundle(String type) {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    return _logBundles[normalized];
+  }
 
   final Map<String, List<Map<String, dynamic>>> _writeoffsByItem = {};
   final Map<String, List<Map<String, dynamic>>> _inventoriesByItem = {};
@@ -124,9 +131,25 @@ class WarehouseProvider with ChangeNotifier {
     try {
       await _ensureAuthed();
       _listen();
-      await fetchTmc();
+      await Future.wait([
+        fetchTmc(),
+        _preloadLogs(),
+      ]);
     } catch (e) {
       debugPrint('❌ init warehouse: $e');
+    }
+  }
+
+  Future<void> _preloadLogs() async {
+    try {
+      final bundles = await WarehouseLogsRepository.fetchAllBundles();
+      _logBundles
+        ..clear()
+        ..addAll(bundles);
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('⚠️ preload warehouse logs failed: $e');
+      debugPrintStack(stackTrace: st);
     }
   }
 

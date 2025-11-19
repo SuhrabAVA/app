@@ -1,4 +1,5 @@
 // lib/modules/warehouse/type_table_tabs_screen.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -15,6 +16,7 @@ import 'add_entry_dialog.dart';
 import '../../utils/kostanay_time.dart';
 import 'deleted_records_repository.dart';
 import 'deleted_records_screen.dart';
+import 'warehouse_logs_repository.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -402,15 +404,26 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
     try {
-      await provider.fetchTmc();
+      if (provider.allTmc.isEmpty) {
+        await provider.fetchTmc();
+      } else {
+        unawaited(provider.fetchTmc());
+      }
     } catch (_) {}
 
     final items = provider.getTmcByType(widget.type);
     final typeKey = _normalizeType(widget.type);
+    final bundle = provider.logsBundle(typeKey);
 
-    final writeoffs = await _fetchWriteoffs(typeKey);
-    final inventories = await _fetchInventories(typeKey);
-    final arrivals = await _fetchArrivals(typeKey);
+    final writeoffs = bundle != null
+        ? _mapBundleLogs(bundle.writeoffs)
+        : await _fetchWriteoffs(typeKey);
+    final inventories = bundle != null
+        ? _mapBundleLogs(bundle.inventories)
+        : await _fetchInventories(typeKey);
+    final arrivals = bundle != null
+        ? _mapBundleLogs(bundle.arrivals)
+        : await _fetchArrivals(typeKey);
 
     if (!mounted) return;
     setState(() {
@@ -421,6 +434,22 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     });
     _notifyThresholds();
     _resort();
+  }
+
+  List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
+    return entries
+        .map((entry) => _LogRow(
+              id: entry.id,
+              description: entry.description,
+              quantity: entry.quantity.toDouble(),
+              unit: entry.unit,
+              dateIso: entry.timestampIso,
+              note: entry.note,
+              format: entry.format,
+              grammage: entry.grammage,
+              byName: entry.byName,
+            ))
+        .toList();
   }
 
   void _setupRealtime() {
