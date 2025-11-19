@@ -1567,6 +1567,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
+  String _paperDetails(TmcModel item) {
+    final parts = <String>[];
+    final format = (item.format ?? '').trim();
+    if (format.isNotEmpty) parts.add(format);
+    final grammage = (item.grammage ?? '').trim();
+    if (grammage.isNotEmpty) parts.add('$grammage г/м²');
+    return parts.join(' • ');
+  }
+
   Future<void> _increasePaper(TmcModel item) async {
     String method = 'meters';
     final metersC = TextEditingController();
@@ -1593,7 +1602,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: Text('Пополнить бумагу: ${item.description}'),
+          title: Text(
+              'Пополнить бумагу: ${item.description}${_paperDetails(item).isNotEmpty ? ' (${_paperDetails(item)})' : ''}'),
           content: Form(
             key: formKey,
             child: SingleChildScrollView(
@@ -1751,10 +1761,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   Future<void> _writeOff(TmcModel item) async {
     final qtyC = TextEditingController();
     final commentC = TextEditingController();
+    final isPaper = _normalizeType(widget.type) == 'paper';
+    final paperDetails = isPaper ? _paperDetails(item) : '';
+    final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
     final result = await showDialog<double?>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Списать: ${item.description}'),
+        title: Text('Списать: ${item.description}$titleSuffix'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1838,10 +1851,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   Future<void> _inventory(TmcModel item) async {
     final qtyC = TextEditingController(text: item.quantity.toStringAsFixed(2));
     final noteC = TextEditingController();
+    final isPaper = _normalizeType(widget.type) == 'paper';
+    final paperDetails = isPaper ? _paperDetails(item) : '';
+    final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text('Инвентаризация: ${item.description}'),
+        title: Text('Инвентаризация: ${item.description}$titleSuffix'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
