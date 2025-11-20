@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -369,37 +371,43 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
     final media = MediaQuery.of(context);
     final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
     final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
-    final double targetTextScale = (media.textScaleFactor * (isCompactTablet ? 0.7 : (isTablet ? 0.9 : 1.0)))
-        .clamp(0.7, media.textScaleFactor) as double;
+    final double targetTextScale = math.max(
+      media.textScaleFactor,
+      isCompactTablet
+          ? 1.12
+          : (isTablet
+              ? 1.08
+              : 1.0),
+    );
     final mediaData = media.copyWith(textScaleFactor: targetTextScale);
     final theme = Theme.of(context);
     final TextStyle? baseTabLabel = theme.tabBarTheme.labelStyle ?? theme.textTheme.labelLarge;
     final TextStyle? baseTabUnselected = theme.tabBarTheme.unselectedLabelStyle ?? theme.textTheme.labelMedium;
     final ThemeData compactTheme = theme.copyWith(
       visualDensity: isCompactTablet
-          ? const VisualDensity(horizontal: -2, vertical: -2)
+          ? const VisualDensity(horizontal: 0.5, vertical: 0.5)
           : (isTablet
-              ? const VisualDensity(horizontal: -1, vertical: -1)
+              ? const VisualDensity(horizontal: 0.25, vertical: 0.25)
               : theme.visualDensity),
       tabBarTheme: theme.tabBarTheme.copyWith(
         labelPadding: isTablet
             ? const EdgeInsets.symmetric(horizontal: 8)
             : theme.tabBarTheme.labelPadding,
         labelStyle: baseTabLabel?.copyWith(
-          fontSize: isCompactTablet ? 11 : (isTablet ? 13 : baseTabLabel?.fontSize),
+          fontSize: isCompactTablet ? 13 : (isTablet ? 14 : baseTabLabel?.fontSize),
         ),
         unselectedLabelStyle: baseTabUnselected?.copyWith(
-          fontSize: isCompactTablet ? 11 : (isTablet ? 13 : baseTabUnselected?.fontSize),
+          fontSize: isCompactTablet ? 13 : (isTablet ? 14 : baseTabUnselected?.fontSize),
         ),
       ),
       iconTheme: theme.iconTheme.copyWith(
-        size: isCompactTablet ? 18 : (isTablet ? 20 : theme.iconTheme.size),
+        size: isCompactTablet ? 22 : (isTablet ? 24 : theme.iconTheme.size),
       ),
       appBarTheme: theme.appBarTheme.copyWith(
-        toolbarHeight: isCompactTablet ? 42 : (isTablet ? 48 : theme.appBarTheme.toolbarHeight),
+        toolbarHeight: isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight),
       ),
     );
-    final double tabBarHeight = isCompactTablet ? 40 : (isTablet ? 46 : 50);
+    final double tabBarHeight = isCompactTablet ? 50 : (isTablet ? 54 : 56);
 
     return MediaQuery(
       data: mediaData,
