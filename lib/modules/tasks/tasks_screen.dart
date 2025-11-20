@@ -1082,6 +1082,8 @@ class _TasksScreenState extends State<TasksScreen>
               : 1.15),
     );
 
+    final double scale = layoutScale;
+
     double scaled(double value) => value * layoutScale;
     final double outerPadding = scaled(16);
     final double columnGap = scaled(16);
