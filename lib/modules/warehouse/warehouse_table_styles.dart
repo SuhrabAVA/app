@@ -10,3 +10,20 @@ final MaterialStateProperty<Color?> warehouseRowHoverColor =
   }
   return null;
 });
+
+/// Helper to build [DataRow]s that automatically share the same hover styling
+/// everywhere in the warehouse module. This keeps padding, typography and
+/// action icons untouched while giving consistent pointer feedback for Web and
+/// Desktop.
+DataRow warehouseHoverableRow({
+  required List<DataCell> cells,
+  ValueChanged<bool?>? onSelectChanged,
+  bool selected = false,
+}) {
+  return DataRow(
+    color: warehouseRowHoverColor,
+    onSelectChanged: onSelectChanged,
+    selected: selected,
+    cells: cells,
+  );
+}
