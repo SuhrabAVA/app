@@ -10,3 +10,23 @@ final MaterialStateProperty<Color?> warehouseRowHoverColor =
   }
   return null;
 });
+
+/// A reusable helper for building hoverable [DataRow]s in warehouse tables.
+///
+/// Keeps spacing, typography and action icons intact while enabling the same
+/// hover feedback across all tables (web & desktop). Simply pass the list of
+/// [cells] you already use in your `DataTable`.
+DataRow warehouseHoverableDataRow({
+  required List<DataCell> cells,
+  Key? key,
+  bool selected = false,
+  ValueChanged<bool?>? onSelectChanged,
+}) {
+  return DataRow(
+    key: key,
+    color: warehouseRowHoverColor,
+    selected: selected,
+    onSelectChanged: onSelectChanged,
+    cells: cells,
+  );
+}
