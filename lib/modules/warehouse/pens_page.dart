@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../warehouse_provider.dart';
 import '../tmc_model.dart';
 import 'deleted_records_modal.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран модуля «Ручки».
 class PensPage extends StatefulWidget {
@@ -153,7 +154,7 @@ class _PensTable extends StatelessWidget {
       qty = '${e.quantity}';
     }
 
-    return DataRow(cells: [
+    return DataRow(color: warehouseRowHoverColor, cells: [
       DataCell(Text('$index')),
       DataCell(Text(e.description)),
       DataCell(Text(qty)),

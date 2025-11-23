@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
 import 'tmc_model.dart';
 import 'add_entry_dialog.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран, отображающий сводную таблицу всех текущих запасов на складе.
 ///
@@ -220,7 +221,7 @@ class _StocksScreenState extends State<StocksScreen> {
                                 (index) {
                                   final item = filtered[index];
                                   final characteristics = item.supplier ?? '';
-                                  return DataRow(cells: [
+                                  return DataRow(color: warehouseRowHoverColor, cells: [
                                     DataCell(Text('${index + 1}')),
                                     DataCell(Text(item.description)),
                                     DataCell(Text(characteristics.isEmpty

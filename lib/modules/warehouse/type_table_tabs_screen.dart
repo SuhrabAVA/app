@@ -17,6 +17,7 @@ import '../../utils/kostanay_time.dart';
 import 'deleted_records_repository.dart';
 import 'deleted_records_screen.dart';
 import 'warehouse_logs_repository.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -1254,7 +1255,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                           : (v is int
                               ? '$v'
                               : (v as double).toStringAsFixed(frac));
-                      return DataRow(cells: [
+                      return DataRow(color: warehouseRowHoverColor, cells: [
                         DataCell(Text('${i + 1}')),
                         DataCell(Text(item.description)),
                         DataCell(Text(fmtNum(item.quantity, frac: 2))),
@@ -1380,7 +1381,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
                     ];
-                    return DataRow(cells: cells);
+                    return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
                 ),
               ),
@@ -1429,7 +1430,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
                     ];
-                    return DataRow(cells: cells);
+                    return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
                 ),
               ),
@@ -1478,7 +1479,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
                     ];
-                    return DataRow(cells: cells);
+                    return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
                 ),
               ),

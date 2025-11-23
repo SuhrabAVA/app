@@ -8,6 +8,7 @@ import 'tmc_history_screen.dart';
 import '../../utils/media_viewer.dart';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'warehouse_table_styles.dart';
 
 /// Экран для отображения записей типа "Краска".
 ///
@@ -251,7 +252,9 @@ class _PaintTableState extends State<PaintTable> {
                                           .contains(query);
                                 }).toList();
                                 final item = filtered[rowIndex];
-                                return DataRow(cells: [
+                                return DataRow(
+                                    color: warehouseRowHoverColor,
+                                    cells: [
                                   DataCell(Text('${rowIndex + 1}')),
                                   Builder(builder: (context) {
                                     Uint8List? decodedBytes;

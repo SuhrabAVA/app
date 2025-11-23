@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'supplier_provider.dart';
 import 'supplier_model.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран для отображения списка поставщиков и управления ими.
 ///
@@ -93,21 +94,23 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
                                 suppliers.length,
                                 (index) {
                                   final s = suppliers[index];
-                                  return DataRow(cells: [
-                                    DataCell(Text('${index + 1}')),
-                                    DataCell(Text(s.name)),
-                                    DataCell(Text(s.bin)),
-                                    DataCell(Text(s.contact)),
-                                    DataCell(Text(s.phone)),
-                                    DataCell(Row(
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.edit, size: 20),
-                                          onPressed: () => _openAddDialog(s),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete, size: 20),
-                                          onPressed: () async {
+                                  return DataRow(
+                                    color: warehouseRowHoverColor,
+                                    cells: [
+                                      DataCell(Text('${index + 1}')),
+                                      DataCell(Text(s.name)),
+                                      DataCell(Text(s.bin)),
+                                      DataCell(Text(s.contact)),
+                                      DataCell(Text(s.phone)),
+                                      DataCell(Row(
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.edit, size: 20),
+                                            onPressed: () => _openAddDialog(s),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.delete, size: 20),
+                                            onPressed: () async {
                                             final confirm = await showDialog<bool>(
                                               context: context,
                                               builder: (ctx) => AlertDialog(

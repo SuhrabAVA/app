@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/add_entry_dialog.dart';
+import 'warehouse_table_styles.dart';
 import 'tmc_history_screen.dart';
 import 'deleted_records_modal.dart';
 
@@ -103,6 +104,7 @@ class _StationeryTableState extends State<StationeryTable> {
                         (rowIndex) {
                           final item = items[rowIndex];
                           return DataRow(
+                            color: warehouseRowHoverColor,
                             cells: [
                               DataCell(Text('${rowIndex + 1}')),
                               DataCell(Text(item.description)),
