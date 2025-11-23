@@ -6,6 +6,7 @@ import '../personnel/personnel_provider.dart';
 import '../personnel/employee_model.dart';
 import '../orders/orders_provider.dart';
 import '../orders/order_model.dart';
+import '../warehouse/warehouse_table_styles.dart';
 
 import 'analytics_provider.dart';
 import 'analytics_record.dart';
@@ -140,14 +141,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             DataColumn(label: Text('Время')),
           ],
           rows: logs.map((r) {
-            return DataRow(cells: [
-              DataCell(Text(_employeeNames(personnel, r.userId))),
-              DataCell(Text(_orderName(orders, r.orderId))),
-              DataCell(Text(_stageName(personnel, r.stageId))),
-              DataCell(Text(_localizeAction(r.action))),
-              DataCell(Text(r.details)),
-              DataCell(Text(_fmtTs(r.timestamp))),
-            ]);
+            return DataRow(
+              color: warehouseRowHoverColor,
+              cells: [
+                DataCell(Text(_employeeNames(personnel, r.userId))),
+                DataCell(Text(_orderName(orders, r.orderId))),
+                DataCell(Text(_stageName(personnel, r.stageId))),
+                DataCell(Text(_localizeAction(r.action))),
+                DataCell(Text(r.details)),
+                DataCell(Text(_fmtTs(r.timestamp))),
+              ],
+            );
           }).toList(),
         ),
       ),
