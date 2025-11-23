@@ -207,8 +207,7 @@ class _PaperTableState extends State<PaperTable> {
       if (currentName != item.description) {
         currentName = item.description;
         rows.add(
-          DataRow(
-            color: warehouseRowHoverColor,
+          warehouseHoverableRow(
             cells: const [
               DataCell(Text('')),
               DataCell(Text('')), // заполним ниже
@@ -222,8 +221,7 @@ class _PaperTableState extends State<PaperTable> {
           ),
         );
         // заменить второй столбец на заголовок (жирный)
-        rows[rows.length - 1] = DataRow(
-          color: warehouseRowHoverColor,
+        rows[rows.length - 1] = warehouseHoverableRow(
           cells: [
             const DataCell(Text('')),
             DataCell(Text(currentName!,
@@ -240,8 +238,7 @@ class _PaperTableState extends State<PaperTable> {
 
       counter++;
       rows.add(
-        DataRow(
-          color: warehouseRowHoverColor,
+        warehouseHoverableRow(
           cells: [
             DataCell(Text('$counter')), // №
             DataCell(Text(item.description)), // Наименование
