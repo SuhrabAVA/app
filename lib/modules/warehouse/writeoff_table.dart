@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/add_entry_dialog.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран для отображения списаний.
 /// На данный момент списания сохраняются в список ТМЦ как отдельный тип 'Списание'.
@@ -71,7 +72,7 @@ class _WriteOffTableState extends State<WriteOffTable> {
                           _items.length,
                           (index) {
                             final item = _items[index];
-                            return DataRow(cells: [
+                            return DataRow(color: warehouseRowHoverColor, cells: [
                               DataCell(Text('${index + 1}')),
                               DataCell(Text(item.description)),
                               DataCell(Text(item.quantity.toString())),

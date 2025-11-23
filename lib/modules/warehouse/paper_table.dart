@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'tmc_model.dart';
 import 'warehouse_provider.dart';
+import 'warehouse_table_styles.dart';
 
 class PaperTable extends StatefulWidget {
   const PaperTable({super.key});
@@ -207,6 +208,7 @@ class _PaperTableState extends State<PaperTable> {
         currentName = item.description;
         rows.add(
           DataRow(
+            color: warehouseRowHoverColor,
             cells: const [
               DataCell(Text('')),
               DataCell(Text('')), // заполним ниже
@@ -221,6 +223,7 @@ class _PaperTableState extends State<PaperTable> {
         );
         // заменить второй столбец на заголовок (жирный)
         rows[rows.length - 1] = DataRow(
+          color: warehouseRowHoverColor,
           cells: [
             const DataCell(Text('')),
             DataCell(Text(currentName!,
@@ -238,6 +241,7 @@ class _PaperTableState extends State<PaperTable> {
       counter++;
       rows.add(
         DataRow(
+          color: warehouseRowHoverColor,
           cells: [
             DataCell(Text('$counter')), // №
             DataCell(Text(item.description)), // Наименование
