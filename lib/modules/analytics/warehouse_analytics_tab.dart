@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../utils/kostanay_time.dart';
+import '../warehouse/warehouse_table_styles.dart';
 import '../warehouse/warehouse_logs_repository.dart';
 
 class WarehouseAnalyticsTab extends StatefulWidget {
@@ -307,16 +308,20 @@ class _WarehouseAnalyticsTabState extends State<WarehouseAnalyticsTab> {
                   ],
                   rows: List<DataRow>.generate(rows.length, (int index) {
                     final _WarehouseSummaryRow row = rows[index];
-                    return DataRow(cells: [
-                      DataCell(Text('${index + 1}')),
-                      if (_selectedType == 'all')
-                        DataCell(Text(WarehouseLogsRepository.typeLabel(row.typeKey))),
-                      DataCell(Text(row.description)),
-                      DataCell(Text(row.unit)),
-                      DataCell(Text(_fmtNum(row.arrivalTotal))),
-                      DataCell(Text(_fmtNum(row.writeoffTotal))),
-                      DataCell(Text(_fmtNum(row.balance))),
-                    ]);
+                    return DataRow(
+                      color: warehouseRowHoverColor,
+                      cells: [
+                        DataCell(Text('${index + 1}')),
+                        if (_selectedType == 'all')
+                          DataCell(
+                              Text(WarehouseLogsRepository.typeLabel(row.typeKey))),
+                        DataCell(Text(row.description)),
+                        DataCell(Text(row.unit)),
+                        DataCell(Text(_fmtNum(row.arrivalTotal))),
+                        DataCell(Text(_fmtNum(row.writeoffTotal))),
+                        DataCell(Text(_fmtNum(row.balance))),
+                      ],
+                    );
                   }),
                 ),
               ),
@@ -377,33 +382,38 @@ class _WarehouseAnalyticsTabState extends State<WarehouseAnalyticsTab> {
                         const DataColumn(label: Text('Комментарий')),
                       const DataColumn(label: Text('Сотрудник')),
                     ],
-                    rows: List<DataRow>.generate(entries.length, (int index) {
-                      final WarehouseLogEntry entry = entries[index];
-                      final List<DataCell> cells = <DataCell>[
-                        DataCell(Text('${index + 1}')),
-                        if (showType)
+                      rows: List<DataRow>.generate(entries.length, (int index) {
+                        final WarehouseLogEntry entry = entries[index];
+                        final List<DataCell> cells = <DataCell>[
+                          DataCell(Text('${index + 1}')),
+                          if (showType)
+                            DataCell(
+                              Text(WarehouseLogsRepository.typeLabel(entry.typeKey)),
+                            ),
+                          DataCell(Text(entry.description)),
+                          DataCell(Text(_fmtNum(entry.quantity))),
+                          DataCell(Text(entry.unit)),
+                          if (showFormat)
+                            DataCell(Text(entry.format ?? '')),
+                          if (showGram)
+                            DataCell(Text(entry.grammage ?? '')),
                           DataCell(
-                            Text(WarehouseLogsRepository.typeLabel(entry.typeKey)),
+                            Text(
+                              formatKostanayTimestamp(entry.timestampIso),
+                            ),
                           ),
-                        DataCell(Text(entry.description)),
-                        DataCell(Text(_fmtNum(entry.quantity))),
-                        DataCell(Text(entry.unit)),
-                        if (showFormat)
-                          DataCell(Text(entry.format ?? '')),
-                        if (showGram)
-                          DataCell(Text(entry.grammage ?? '')),
-                        DataCell(Text(
-                          formatKostanayTimestamp(entry.timestampIso),
-                        )),
-                        if (showNote)
-                          DataCell(Text(entry.note ?? '')),
-                        DataCell(Text(entry.byName ?? '')),
-                      ];
-                      return DataRow(cells: cells);
-                    }),
+                          if (showNote)
+                            DataCell(Text(entry.note ?? '')),
+                          DataCell(Text(entry.byName ?? '')),
+                        ];
+                        return DataRow(
+                          color: warehouseRowHoverColor,
+                          cells: cells,
+                        );
+                      }),
+                    ),
                   ),
                 ),
-              ),
       ),
     );
   }

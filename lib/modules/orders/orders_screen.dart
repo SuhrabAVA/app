@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_model.dart';
+import '../warehouse/warehouse_table_styles.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'edit_order_screen.dart';
@@ -141,6 +142,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             return DataRow(
                               color: MaterialStateProperty.resolveWith<Color?>(
                                   (states) {
+                                final hoverColor =
+                                    warehouseRowHoverColor.resolve(states);
+                                if (hoverColor != null) return hoverColor;
                                 // Если заказ неполон, подсвечиваем строку серым
                                 return missing ? Colors.grey.shade200 : null;
                               }),
