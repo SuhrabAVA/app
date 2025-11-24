@@ -2207,6 +2207,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     // TODO: сюда можно добавить проверку порогов и показ SnackBar/диалога.
     // Метод оставлен пустым намеренно, чтобы убрать ошибку "не определён".
   }
+
+  void _undoLog(_LogRow row) {
+    // Заглушка для будущей логики отмены действий в логе.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Отмена действия пока не доступна')),
+    );
+  }
 }
 
 class _LogRow {
@@ -2215,6 +2222,8 @@ class _LogRow {
   final double quantity;
   final String unit;
   final String dateIso;
+
+  final bool canUndo;
 
   final String? note;
   final String? format;
@@ -2227,6 +2236,7 @@ class _LogRow {
     required this.quantity,
     required this.unit,
     required this.dateIso,
+    this.canUndo = false,
     this.note,
     this.format,
     this.grammage,
@@ -2240,13 +2250,7 @@ class _LogRow {
       quantity: quantity,
       unit: unit,
       dateIso: dateIso,
-      action: action,
-      timestamp: timestamp,
-      itemId: itemId,
-      previousQuantity: previousQuantity,
-      sourceTable: sourceTable,
       canUndo: canUndo ?? this.canUndo,
-      isAutoWriteoff: isAutoWriteoff,
       note: note,
       format: format,
       grammage: grammage,
