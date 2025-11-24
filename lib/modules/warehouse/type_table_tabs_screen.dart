@@ -1389,6 +1389,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                             )
                           : const SizedBox.shrink()),
                     ];
+
+                    while (cells.length < columns.length) {
+                      cells.add(const DataCell(Text('')));
+                    }
+
+                    if (cells.length > columns.length) {
+                      cells.removeRange(columns.length, cells.length);
+                    }
+
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
                 ),
@@ -1438,6 +1447,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
                     ];
+
+                    while (cells.length < columns.length) {
+                      cells.add(const DataCell(Text('')));
+                    }
+
+                    if (cells.length > columns.length) {
+                      cells.removeRange(columns.length, cells.length);
+                    }
+
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
                 ),
@@ -1487,6 +1505,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
                     ];
+
+                    while (cells.length < columns.length) {
+                      cells.add(const DataCell(Text('')));
+                    }
+
+                    if (cells.length > columns.length) {
+                      cells.removeRange(columns.length, cells.length);
+                    }
+
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
                 ),
