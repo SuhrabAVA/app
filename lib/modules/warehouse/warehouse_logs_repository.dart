@@ -19,13 +19,11 @@ class WarehouseLogEntry {
     required this.unit,
     required this.timestampIso,
     this.itemId,
-    this.previousQuantity,
     this.format,
     this.grammage,
     this.note,
     this.byName,
     this.sourceTable,
-    this.isAutoWriteoff = false,
   }) : timestamp = _tryParseDate(timestampIso);
 
   final String id;
@@ -37,13 +35,12 @@ class WarehouseLogEntry {
   final String timestampIso;
   final DateTime? timestamp;
   final String? itemId;
-  final double? previousQuantity;
+
   final String? format;
   final String? grammage;
   final String? note;
   final String? byName;
   final String? sourceTable;
-  final bool isAutoWriteoff;
 
   static DateTime? _tryParseDate(String iso) {
     if (iso.isEmpty) return null;
@@ -100,7 +97,8 @@ class WarehouseLogsRepository {
     'pens': 'Ручки',
   };
 
-  static const Map<String, Map<String, String>> _woMap = <String, Map<String, String>>{
+  static const Map<String, Map<String, String>> _woMap =
+      <String, Map<String, String>>{
     'paint': {
       'table': 'paints_writeoffs',
       'fk': 'paint_id',
@@ -133,7 +131,8 @@ class WarehouseLogsRepository {
     },
   };
 
-  static const Map<String, Map<String, String>> _invMap = <String, Map<String, String>>{
+  static const Map<String, Map<String, String>> _invMap =
+      <String, Map<String, String>>{
     'paint': {
       'table': 'paints_inventories',
       'fk': 'paint_id',
@@ -166,7 +165,8 @@ class WarehouseLogsRepository {
     },
   };
 
-  static const Map<String, Map<String, String>> _arrMap = <String, Map<String, String>>{
+  static const Map<String, Map<String, String>> _arrMap =
+      <String, Map<String, String>>{
     'paint': {
       'table': 'paints_arrivals',
       'fk': 'paint_id',
@@ -201,7 +201,8 @@ class WarehouseLogsRepository {
 
   /// Загрузить логи по всем поддерживаемым типам.
   static Future<Map<String, WarehouseLogsBundle>> fetchAllBundles() async {
-    final Map<String, WarehouseLogsBundle> result = <String, WarehouseLogsBundle>{};
+    final Map<String, WarehouseLogsBundle> result =
+        <String, WarehouseLogsBundle>{};
     for (final String type in supportedTypes) {
       final bundle = await fetchBundle(type);
       result[bundle.typeKey] = bundle;
@@ -215,7 +216,8 @@ class WarehouseLogsRepository {
     final String typeKey = normalizeType(rawType);
     final List<WarehouseLogEntry> arrivals = await _fetchArrivals(typeKey);
     final List<WarehouseLogEntry> writeoffs = await _fetchWriteoffs(typeKey);
-    final List<WarehouseLogEntry> inventories = await _fetchInventories(typeKey);
+    final List<WarehouseLogEntry> inventories =
+        await _fetchInventories(typeKey);
 
     return WarehouseLogsBundle(
       typeKey: typeKey,
@@ -246,15 +248,20 @@ class WarehouseLogsRepository {
     bool ascending = true,
   }) async {
     for (final String table in tables) {
-      final List<String?> attemptedOrders = <String?>[orderBy, if (orderBy != null) ...{
-        'created_at',
-        'createdAt',
-        'createdat',
-        'date',
-        'timestamp',
-      }, null];
+      final List<String?> attemptedOrders = <String?>[
+        orderBy,
+        if (orderBy != null) ...{
+          'created_at',
+          'createdAt',
+          'createdat',
+          'date',
+          'timestamp',
+        },
+        null
+      ];
       final Set<String?> seen = <String?>{};
-      for (final String? order in attemptedOrders.where((String? c) => seen.add(c))) {
+      for (final String? order
+          in attemptedOrders.where((String? c) => seen.add(c))) {
         try {
           final PostgrestFilterBuilder<dynamic> query =
               _client.from(table).select(selectFields);
@@ -264,15 +271,15 @@ class WarehouseLogsRepository {
           return (data as List).cast<Map<String, dynamic>>();
         } on PostgrestException catch (error) {
           final String code = (error.code?.toString() ?? '').toLowerCase();
-          final String message = (error.message?.toString() ?? '').toLowerCase();
-          final String details = (error.details?.toString() ?? '').toLowerCase();
+          final String message =
+              (error.message?.toString() ?? '').toLowerCase();
+          final String details =
+              (error.details?.toString() ?? '').toLowerCase();
           final String? orderLower = order?.toLowerCase();
           final bool columnMissing = orderLower != null &&
               (code == '42703' ||
-                  message.contains(orderLower) &&
-                      message.contains('column') ||
-                  details.contains(orderLower) &&
-                      details.contains('column'));
+                  message.contains(orderLower) && message.contains('column') ||
+                  details.contains(orderLower) && details.contains('column'));
           if (columnMissing) {
             continue;
           }
@@ -510,7 +517,8 @@ class WarehouseLogsRepository {
         .toString();
     final String? format = baseRow?['format']?.toString();
     final String? grammage = baseRow?['grammage']?.toString();
-    final String timestampIso = (raw['created_at'] ?? raw['date'] ?? raw['timestamp'] ?? '').toString();
+    final String timestampIso =
+        (raw['created_at'] ?? raw['date'] ?? raw['timestamp'] ?? '').toString();
     final String? note = _pickStr(raw, <String?>[
       _woMap[typeKey]?['note'],
       _arrMap[typeKey]?['note'],
@@ -529,17 +537,6 @@ class WarehouseLogsRepository {
       'operator',
       'who',
     ]);
-    final double? previousQty = _pickNumDynamic(raw, <String?>[
-      'previous_qty',
-      'prev_qty',
-      'qty_before',
-      'quantity_before',
-      'before_qty',
-      'stock_before',
-      'was_qty',
-    ])?.toDouble();
-    final bool isAutoWriteoff =
-        action == WarehouseLogAction.writeoff && _isAutoWriteoff(raw);
 
     return WarehouseLogEntry(
       id: (raw['id'] ?? '').toString(),
@@ -549,36 +546,13 @@ class WarehouseLogsRepository {
       description: description,
       quantity: qty.toDouble(),
       unit: unit,
-      previousQuantity: previousQty,
       format: format,
       grammage: grammage,
       note: note,
       byName: by,
       timestampIso: timestampIso,
       sourceTable: raw['table_name']?.toString(),
-      isAutoWriteoff: isAutoWriteoff,
     );
-  }
-
-  static bool _isAutoWriteoff(Map<String, dynamic> raw) {
-    bool _boolVal(Object? v) {
-      if (v == null) return false;
-      if (v is bool) return v;
-      final String text = v.toString().toLowerCase().trim();
-      return text == 'true' || text == '1' || text == 'yes';
-    }
-
-    final Object? source = raw['source'] ?? raw['origin'];
-    final String sourceText = (source ?? '').toString().toLowerCase();
-
-    return _boolVal(raw['is_auto']) ||
-        _boolVal(raw['auto']) ||
-        _boolVal(raw['auto_writeoff']) ||
-        raw['order_id'] != null ||
-        raw['order'] != null ||
-        raw['order_item_id'] != null ||
-        sourceText.contains('order') ||
-        sourceText.contains('заказ');
   }
 
   static Future<List<WarehouseLogEntry>> _fetchWriteoffs(String typeKey) async {
@@ -592,9 +566,10 @@ class WarehouseLogsRepository {
         orderBy: 'created_at',
         ascending: false,
       );
-      if (part.isNotEmpty) rawLogs.addAll(part.map((Map<String, dynamic> row) {
-        return <String, dynamic>{...row, 'table_name': table};
-      }));
+      if (part.isNotEmpty)
+        rawLogs.addAll(part.map((Map<String, dynamic> row) {
+          return <String, dynamic>{...row, 'table_name': table};
+        }));
     }
     if (rawLogs.isEmpty) return <WarehouseLogEntry>[];
 
@@ -621,7 +596,8 @@ class WarehouseLogsRepository {
       ids: ids,
       selectFields: _baseSelectFieldsForLogs(typeKey),
     );
-    final Map<String, Map<String, dynamic>> baseMap = <String, Map<String, dynamic>>{
+    final Map<String, Map<String, dynamic>> baseMap =
+        <String, Map<String, dynamic>>{
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
@@ -648,7 +624,8 @@ class WarehouseLogsRepository {
     }).toList();
   }
 
-  static Future<List<WarehouseLogEntry>> _fetchInventories(String typeKey) async {
+  static Future<List<WarehouseLogEntry>> _fetchInventories(
+      String typeKey) async {
     final List<String> tables = _inventoryTables(typeKey);
     final List<Map<String, dynamic>> rawLogs = <Map<String, dynamic>>[];
 
@@ -659,9 +636,10 @@ class WarehouseLogsRepository {
         orderBy: 'created_at',
         ascending: false,
       );
-      if (part.isNotEmpty) rawLogs.addAll(part.map((Map<String, dynamic> row) {
-        return <String, dynamic>{...row, 'table_name': table};
-      }));
+      if (part.isNotEmpty)
+        rawLogs.addAll(part.map((Map<String, dynamic> row) {
+          return <String, dynamic>{...row, 'table_name': table};
+        }));
     }
     if (rawLogs.isEmpty) return <WarehouseLogEntry>[];
 
@@ -688,7 +666,8 @@ class WarehouseLogsRepository {
       ids: ids,
       selectFields: _baseSelectFieldsForLogs(typeKey),
     );
-    final Map<String, Map<String, dynamic>> baseMap = <String, Map<String, dynamic>>{
+    final Map<String, Map<String, dynamic>> baseMap =
+        <String, Map<String, dynamic>>{
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
@@ -726,9 +705,10 @@ class WarehouseLogsRepository {
         orderBy: 'created_at',
         ascending: false,
       );
-      if (part.isNotEmpty) rawLogs.addAll(part.map((Map<String, dynamic> row) {
-        return <String, dynamic>{...row, 'table_name': table};
-      }));
+      if (part.isNotEmpty)
+        rawLogs.addAll(part.map((Map<String, dynamic> row) {
+          return <String, dynamic>{...row, 'table_name': table};
+        }));
     }
     if (rawLogs.isEmpty) return <WarehouseLogEntry>[];
 
@@ -755,7 +735,8 @@ class WarehouseLogsRepository {
       ids: ids,
       selectFields: _baseSelectFieldsForLogs(typeKey),
     );
-    final Map<String, Map<String, dynamic>> baseMap = <String, Map<String, dynamic>>{
+    final Map<String, Map<String, dynamic>> baseMap =
+        <String, Map<String, dynamic>>{
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
