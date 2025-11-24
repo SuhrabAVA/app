@@ -24,7 +24,7 @@ class TmcModel {
   /// Время последнего обновления записи (ISO 8601). Используется для отображения даты/времени в UI.
   final String? updatedAt;
 
-  TmcModel({
+  const TmcModel({
     required this.id,
     required this.date,
     this.supplier,
