@@ -2293,8 +2293,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
+  double _reverseLogAction(double qty, _LogRow row) {
+    switch (row.action) {
+      case WarehouseLogAction.arrival:
+        return qty - row.quantity;
+      case WarehouseLogAction.writeoff:
+        return qty + row.quantity;
+      case WarehouseLogAction.inventory:
+        return row.previousQuantity ?? qty;
+    }
+  }
+
   double? _quantityBeforeLog(_LogRow target) {
     if (target.itemId == null) return null;
+
     final List<_LogRow> history = <_LogRow>[
       ..._writeoffs,
       ..._arrivals,
@@ -2302,14 +2314,29 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     ]
         .where((row) => row.itemId == target.itemId)
         .toList()
-      ..sort(_compareLogsByDate);
+      ..sort((a, b) => _compareLogsByDate(a, b, newestFirst: true));
 
-    double qty = 0;
+    final TmcModel? item = _items.firstWhere(
+      (candidate) => candidate.id == target.itemId,
+      orElse: () => const TmcModel(
+        id: '',
+        description: '',
+        type: '',
+        quantity: 0,
+        unit: '',
+      ),
+    );
+
+    double qty = item?.quantity ?? 0;
+
     for (final _LogRow row in history) {
-      if (row.id == target.id) break;
-      qty = _applyLogAction(qty, row);
+      if (row.id == target.id) {
+        return _reverseLogAction(qty, row);
+      }
+      qty = _reverseLogAction(qty, row);
     }
-    return qty;
+
+    return null;
   }
 
   Future<void> _undoLog(_LogRow row) async {
