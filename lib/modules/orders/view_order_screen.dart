@@ -81,9 +81,9 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
             _section('Продукт', [
               _kv('Вид изделия', p.type),
               _kv('Тираж', p.quantity.toString()),
+              _kv('Длина', _fmtNum(p.depth)),
               _kv('Ширина', _fmtNum(p.width)),
               _kv('Высота', _fmtNum(p.height)),
-              _kv('Глубина', _fmtNum(p.depth)),
               _kv('Ширина b', _fmtNum(p.widthB)),
               _kv('Длина L (м)', _fmtNum(p.length)),
               _kv('Параметры', p.parameters.isEmpty ? '—' : p.parameters),

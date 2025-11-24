@@ -2646,6 +2646,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         const SizedBox(height: 12),
         _buildFieldGrid([
           TextFormField(
+            initialValue: product.depth > 0 ? product.depth.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Длина (мм)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.depth = double.tryParse(normalized) ?? 0;
+              });
+            },
+          ),
+          TextFormField(
             initialValue: product.width > 0 ? product.width.toString() : '',
             decoration: const InputDecoration(
               labelText: 'Ширина (мм)',
@@ -2671,20 +2685,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               final normalized = val.replaceAll(',', '.');
               setState(() {
                 product.height = double.tryParse(normalized) ?? 0;
-              });
-            },
-          ),
-          TextFormField(
-            initialValue: product.depth > 0 ? product.depth.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Глубина (мм)',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.depth = double.tryParse(normalized) ?? 0;
               });
             },
           ),
