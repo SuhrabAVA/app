@@ -2316,15 +2316,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         .toList()
       ..sort((a, b) => _compareLogsByDate(a, b, newestFirst: true));
 
-    final TmcModel? item = _items.firstWhere(
-      (candidate) => candidate.id == target.itemId,
-      orElse: () => const TmcModel(
-        id: '',
-        description: '',
-        type: '',
-        quantity: 0,
-        unit: '',
-      ),
+      final TmcModel? item = _items.firstWhere(
+        (candidate) => candidate.id == target.itemId,
+        orElse: () => const TmcModel(
+          id: '',
+          date: '',
+          description: '',
+          type: '',
+          quantity: 0,
+          unit: '',
+        ),
     );
 
     double qty = item?.quantity ?? 0;
