@@ -19,11 +19,13 @@ class WarehouseLogEntry {
     required this.unit,
     required this.timestampIso,
     this.itemId,
+    this.previousQuantity,
     this.format,
     this.grammage,
     this.note,
     this.byName,
     this.sourceTable,
+    this.isAutoWriteoff = false,
   }) : timestamp = _tryParseDate(timestampIso);
 
   final String id;
@@ -35,11 +37,13 @@ class WarehouseLogEntry {
   final String timestampIso;
   final DateTime? timestamp;
   final String? itemId;
+  final double? previousQuantity;
   final String? format;
   final String? grammage;
   final String? note;
   final String? byName;
   final String? sourceTable;
+  final bool isAutoWriteoff;
 
   static DateTime? _tryParseDate(String iso) {
     if (iso.isEmpty) return null;
@@ -525,6 +529,17 @@ class WarehouseLogsRepository {
       'operator',
       'who',
     ]);
+    final double? previousQty = _pickNumDynamic(raw, <String?>[
+      'previous_qty',
+      'prev_qty',
+      'qty_before',
+      'quantity_before',
+      'before_qty',
+      'stock_before',
+      'was_qty',
+    ])?.toDouble();
+    final bool isAutoWriteoff =
+        action == WarehouseLogAction.writeoff && _isAutoWriteoff(raw);
 
     return WarehouseLogEntry(
       id: (raw['id'] ?? '').toString(),
@@ -534,13 +549,36 @@ class WarehouseLogsRepository {
       description: description,
       quantity: qty.toDouble(),
       unit: unit,
+      previousQuantity: previousQty,
       format: format,
       grammage: grammage,
       note: note,
       byName: by,
       timestampIso: timestampIso,
       sourceTable: raw['table_name']?.toString(),
+      isAutoWriteoff: isAutoWriteoff,
     );
+  }
+
+  static bool _isAutoWriteoff(Map<String, dynamic> raw) {
+    bool _boolVal(Object? v) {
+      if (v == null) return false;
+      if (v is bool) return v;
+      final String text = v.toString().toLowerCase().trim();
+      return text == 'true' || text == '1' || text == 'yes';
+    }
+
+    final Object? source = raw['source'] ?? raw['origin'];
+    final String sourceText = (source ?? '').toString().toLowerCase();
+
+    return _boolVal(raw['is_auto']) ||
+        _boolVal(raw['auto']) ||
+        _boolVal(raw['auto_writeoff']) ||
+        raw['order_id'] != null ||
+        raw['order'] != null ||
+        raw['order_item_id'] != null ||
+        sourceText.contains('order') ||
+        sourceText.contains('заказ');
   }
 
   static Future<List<WarehouseLogEntry>> _fetchWriteoffs(String typeKey) async {

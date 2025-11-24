@@ -435,6 +435,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     });
     _notifyThresholds();
     _resort();
+    _updateUndoAvailability();
   }
 
   List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
@@ -445,12 +446,74 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               quantity: entry.quantity.toDouble(),
               unit: entry.unit,
               dateIso: entry.timestampIso,
+              timestamp: entry.timestamp,
+              itemId: entry.itemId,
+              action: entry.action,
+              previousQuantity: entry.previousQuantity,
+              sourceTable: entry.sourceTable,
+              isAutoWriteoff: entry.isAutoWriteoff,
               note: entry.note,
               format: entry.format,
               grammage: entry.grammage,
               byName: entry.byName,
             ))
         .toList();
+  }
+
+  DateTime? _parseLogDate(String iso, {DateTime? fallback}) {
+    try {
+      return DateTime.parse(iso);
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  int _compareLogsByDate(_LogRow a, _LogRow b, {bool newestFirst = false}) {
+    final DateTime? aDate = a.timestamp ?? _parseLogDate(a.dateIso);
+    final DateTime? bDate = b.timestamp ?? _parseLogDate(b.dateIso);
+    int base;
+    if (aDate != null && bDate != null) {
+      base = aDate.compareTo(bDate);
+    } else {
+      base = a.id.compareTo(b.id);
+    }
+    return newestFirst ? -base : base;
+  }
+
+  void _updateUndoAvailability() {
+    if (!mounted) return;
+    final Map<String, List<_LogRow>> perItem = <String, List<_LogRow>>{};
+
+    void collect(List<_LogRow> src) {
+      for (final _LogRow row in src) {
+        final String? id = row.itemId;
+        if (id == null) continue;
+        perItem.putIfAbsent(id, () => <_LogRow>[]).add(row);
+      }
+    }
+
+    collect(_writeoffs);
+    collect(_arrivals);
+    collect(_inventories);
+
+    bool canUndo(_LogRow row) {
+      if (row.itemId == null) return false;
+      final List<_LogRow>? history = perItem[row.itemId!];
+      if (history == null || history.isEmpty) return false;
+      history.sort((a, b) => _compareLogsByDate(a, b, newestFirst: true));
+      if (history.first.id != row.id) return false;
+      if (row.action == WarehouseLogAction.writeoff && row.isAutoWriteoff) {
+        return false;
+      }
+      return true;
+    }
+
+    setState(() {
+      _writeoffs = _writeoffs.map((r) => r.copyWith(canUndo: canUndo(r))).toList();
+      _arrivals = _arrivals.map((r) => r.copyWith(canUndo: canUndo(r))).toList();
+      _inventories =
+          _inventories.map((r) => r.copyWith(canUndo: canUndo(r))).toList();
+    });
   }
 
   void _setupRealtime() {
@@ -1356,6 +1419,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действие')),
     ];
 
     return Padding(
@@ -1380,6 +1444,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(r.canUndo
+                          ? TextButton.icon(
+                              onPressed: () => _undoLog(r),
+                              icon: const Icon(Icons.undo),
+                              label: const Text('Отмена'),
+                            )
+                          : const SizedBox.shrink()),
                     ];
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
@@ -1405,6 +1476,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действие')),
     ];
 
     return Padding(
@@ -1429,6 +1501,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(r.canUndo
+                          ? TextButton.icon(
+                              onPressed: () => _undoLog(r),
+                              icon: const Icon(Icons.undo),
+                              label: const Text('Отмена'),
+                            )
+                          : const SizedBox.shrink()),
                     ];
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
@@ -1454,6 +1533,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Заметка')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действие')),
     ];
 
     return Padding(
@@ -1478,6 +1558,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(r.canUndo
+                          ? TextButton.icon(
+                              onPressed: () => _undoLog(r),
+                              icon: const Icon(Icons.undo),
+                              label: const Text('Отмена'),
+                            )
+                          : const SizedBox.shrink()),
                     ];
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
@@ -2167,6 +2254,107 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
+  Future<void> _removeLogRow(_LogRow row) async {
+    final String typeKey = _normalizeType(widget.type);
+    String? table = row.sourceTable;
+    if (table == null || table.trim().isEmpty) {
+      switch (row.action) {
+        case WarehouseLogAction.arrival:
+          table = _arrMap[typeKey]?['table'];
+          break;
+        case WarehouseLogAction.writeoff:
+          table = _woMap[typeKey]?['table'];
+          break;
+        case WarehouseLogAction.inventory:
+          table = _invMap[typeKey]?['table'];
+          break;
+      }
+    }
+    if (table == null) return;
+
+    try {
+      await Supabase.instance.client.from(table).delete().eq('id', row.id);
+    } catch (e) {
+      debugPrint('Не удалось удалить лог из $table: $e');
+    }
+  }
+
+  double _applyLogAction(double qty, _LogRow row) {
+    switch (row.action) {
+      case WarehouseLogAction.arrival:
+        return qty + row.quantity;
+      case WarehouseLogAction.writeoff:
+        return qty - row.quantity;
+      case WarehouseLogAction.inventory:
+        return row.quantity;
+    }
+  }
+
+  double? _quantityBeforeLog(_LogRow target) {
+    if (target.itemId == null) return null;
+    final List<_LogRow> history = <_LogRow>[
+      ..._writeoffs,
+      ..._arrivals,
+      ..._inventories,
+    ]
+        .where((row) => row.itemId == target.itemId)
+        .toList()
+      ..sort(_compareLogsByDate);
+
+    double qty = 0;
+    for (final _LogRow row in history) {
+      if (row.id == target.id) break;
+      qty = _applyLogAction(qty, row);
+    }
+    return qty;
+  }
+
+  Future<void> _undoLog(_LogRow row) async {
+    if (!row.canUndo || row.itemId == null) return;
+    final WarehouseProvider provider =
+        Provider.of<WarehouseProvider>(context, listen: false);
+    TmcModel? item;
+    for (final TmcModel candidate in _items) {
+      if (candidate.id == row.itemId) {
+        item = candidate;
+        break;
+      }
+    }
+    final double currentQty = item?.quantity ?? 0;
+    double? targetQty;
+
+    switch (row.action) {
+      case WarehouseLogAction.writeoff:
+        targetQty = currentQty + row.quantity;
+        break;
+      case WarehouseLogAction.arrival:
+        targetQty = currentQty - row.quantity;
+        break;
+      case WarehouseLogAction.inventory:
+        targetQty = row.previousQuantity ?? _quantityBeforeLog(row);
+        break;
+    }
+
+    if (targetQty == null) return;
+
+    try {
+      if (row.action == WarehouseLogAction.arrival && targetQty <= 0) {
+        await provider.deleteTmc(row.itemId!, type: widget.type);
+      } else {
+        await provider.updateTmcQuantity(
+          id: row.itemId!,
+          type: widget.type,
+          newQuantity: targetQty,
+        );
+      }
+      await _removeLogRow(row);
+    } catch (e) {
+      debugPrint('Ошибка отмены операции: $e');
+    }
+
+    await _loadAll();
+  }
+
   /// Уведомления о низком остатке (пока без логики порогов – заглушка, чтобы не падала сборка).
   void _notifyThresholds() {
     // TODO: сюда можно добавить проверку порогов и показ SnackBar/диалога.
@@ -2180,6 +2368,13 @@ class _LogRow {
   final double quantity;
   final String unit;
   final String dateIso;
+  final DateTime? timestamp;
+  final String? itemId;
+  final WarehouseLogAction action;
+  final double? previousQuantity;
+  final String? sourceTable;
+  final bool canUndo;
+  final bool isAutoWriteoff;
   final String? note;
   final String? format;
   final String? grammage;
@@ -2191,9 +2386,37 @@ class _LogRow {
     required this.quantity,
     required this.unit,
     required this.dateIso,
+    required this.action,
+    this.timestamp,
+    this.itemId,
+    this.previousQuantity,
+    this.sourceTable,
+    this.canUndo = false,
+    this.isAutoWriteoff = false,
     this.note,
     this.format,
     this.grammage,
     this.byName,
   });
+
+  _LogRow copyWith({bool? canUndo}) {
+    return _LogRow(
+      id: id,
+      description: description,
+      quantity: quantity,
+      unit: unit,
+      dateIso: dateIso,
+      action: action,
+      timestamp: timestamp,
+      itemId: itemId,
+      previousQuantity: previousQuantity,
+      sourceTable: sourceTable,
+      canUndo: canUndo ?? this.canUndo,
+      isAutoWriteoff: isAutoWriteoff,
+      note: note,
+      format: format,
+      grammage: grammage,
+      byName: byName,
+    );
+  }
 }
