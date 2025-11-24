@@ -766,7 +766,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
     final baseMap = {for (final r in baseRows) r['id']: r};
 
-    return logs.map((e) {
+    return logs.map<_LogRow>((e) {
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
@@ -810,6 +810,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         quantity: qty.toDouble(),
         unit: unit,
         dateIso: dateIso,
+        action: WarehouseLogAction.writeoff,
         note: note,
         format: fmt,
         grammage: gram,
@@ -859,7 +860,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
     final baseMap = {for (final r in baseRows) r['id']: r};
 
-    return logs.map((e) {
+    return logs.map<_LogRow>((e) {
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
@@ -903,6 +904,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         quantity: qty.toDouble(),
         unit: unit,
         dateIso: dateIso,
+        action: WarehouseLogAction.inventory,
         note: note,
         format: fmt,
         grammage: gram,
@@ -949,7 +951,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
     final baseMap = {for (final r in baseRows) r['id']: r};
 
-    return logs.map((e) {
+    return logs.map<_LogRow>((e) {
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
@@ -993,6 +995,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         quantity: qty.toDouble(),
         unit: unit,
         dateIso: dateIso,
+        action: WarehouseLogAction.arrival,
         note: note,
         format: fmt,
         grammage: gram,
