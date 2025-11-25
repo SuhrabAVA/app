@@ -22,7 +22,17 @@ import '../../services/storage_service.dart';
 
 class TasksScreen extends StatefulWidget {
   final String employeeId;
-  const TasksScreen({super.key, required this.employeeId});
+  final bool showListOnly;
+  final bool hideListPanel;
+  final bool compactList;
+
+  const TasksScreen({
+    super.key,
+    required this.employeeId,
+    this.showListOnly = false,
+    this.hideListPanel = false,
+    this.compactList = false,
+  });
 
   @override
   State<TasksScreen> createState() => _TasksScreenState();
@@ -432,6 +442,20 @@ class _QuantityInput {
   const _QuantityInput({required this.quantity, required this.displayText});
 }
 
+class _TaskSelectionState extends ChangeNotifier {
+  String? workplaceId;
+  TaskModel? task;
+  TaskStatus status;
+
+  _TaskSelectionState({
+    this.workplaceId,
+    this.task,
+    this.status = TaskStatus.waiting,
+  });
+}
+
+final Map<String, _TaskSelectionState> _selectionCache = {};
+
 class _TasksScreenState extends State<TasksScreen>
     with AutomaticKeepAliveClientMixin<TasksScreen> {
   @override
@@ -440,8 +464,19 @@ class _TasksScreenState extends State<TasksScreen>
   bool get takenByAnother => false;
 
   final TextEditingController _chatController = TextEditingController();
-  String? _selectedWorkplaceId;
-  TaskModel? _selectedTask;
+  late final _TaskSelectionState _selection;
+  String? get _selectedWorkplaceId => _selection.workplaceId;
+  set _selectedWorkplaceId(String? value) {
+    if (_selection.workplaceId == value) return;
+    _selection.workplaceId = value;
+    _selection.notifyListeners();
+  }
+  TaskModel? get _selectedTask => _selection.task;
+  set _selectedTask(TaskModel? value) {
+    if (identical(_selection.task, value)) return;
+    _selection.task = value;
+    _selection.notifyListeners();
+  }
   bool _detailsExpanded = true;
   final Map<String, String?> _formImageCache = {};
   final Map<String, Future<String?>> _formImagePending = {};
@@ -454,7 +489,31 @@ class _TasksScreenState extends State<TasksScreen>
     TaskStatus.paused: 'На паузе',
     TaskStatus.completed: 'Завершенные',
   };
-  TaskStatus _selectedStatus = TaskStatus.waiting;
+  TaskStatus get _selectedStatus => _selection.status;
+  set _selectedStatus(TaskStatus value) {
+    if (_selection.status == value) return;
+    _selection.status = value;
+    _selection.notifyListeners();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _selection =
+        _selectionCache.putIfAbsent(widget.employeeId, () => _TaskSelectionState());
+    _selection.addListener(_onSelectionChanged);
+  }
+
+  void _onSelectionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _selection.removeListener(_onSelectionChanged);
+    _chatController.dispose();
+    super.dispose();
+  }
 
   /// Aggregated setup duration across all tasks belonging to the same order and
   /// stage. This sums up all overlapping periods between 'setup_start' and
@@ -787,11 +846,15 @@ class _TasksScreenState extends State<TasksScreen>
     final double compactTightness = isCompactTablet ? 0.9 : 1.0;
     final double outerPadding = scaled(16 * compactTightness);
     final double columnGap = scaled(isCompactTablet ? 12 : 16);
-    final double cardPadding = scaled(isCompactTablet ? 10 : 12);
+    final double cardPadding = scaled(widget.compactList
+        ? 8
+        : (isCompactTablet
+            ? 10
+            : 12));
     final double cardRadius = scaled(12);
-    final double sectionSpacing = scaled(isCompactTablet ? 10 : 12);
+    final double sectionSpacing = scaled(widget.compactList ? 8 : (isCompactTablet ? 10 : 12));
     final double smallSpacing = scaled(4);
-    final double largeSpacing = scaled(isCompactTablet ? 18 : 24);
+    final double largeSpacing = scaled(widget.compactList ? 12 : (isCompactTablet ? 18 : 24));
     final double chipSpacing = scaled(isCompactTablet ? 6 : 8);
 
     final EmployeeModel employee = personnel.employees.firstWhere(
@@ -812,9 +875,10 @@ class _TasksScreenState extends State<TasksScreen>
         .toList();
 
     if (_selectedWorkplaceId == null && workplaces.isNotEmpty) {
-      _selectedWorkplaceId = savedWid ?? _selectedWorkplaceId;
-      _selectedWorkplaceId = _selectedWorkplaceId ?? workplaces.first.id;
+      _selection.workplaceId = savedWid ?? _selectedWorkplaceId;
+      _selection.workplaceId = _selectedWorkplaceId ?? workplaces.first.id;
       _persistWorkplace(_selectedWorkplaceId);
+      _selection.notifyListeners();
     }
 
     OrderModel? findOrder(String id) {
@@ -884,7 +948,7 @@ class _TasksScreenState extends State<TasksScreen>
           Text(
             'Список заданий',
             style: TextStyle(
-              fontSize: scaled(18),
+              fontSize: scaled(widget.compactList ? 16 : 18),
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -958,7 +1022,7 @@ class _TasksScreenState extends State<TasksScreen>
                     order: findOrder(task.orderId),
                     selected: _selectedTask?.id == task.id,
                     scale: scale,
-                    compact: isCompactTablet,
+                    compact: isCompactTablet || widget.compactList,
                     onTap: () {
                       _persistTask(task.id);
                       setState(() {
@@ -1059,6 +1123,9 @@ class _TasksScreenState extends State<TasksScreen>
       body: LayoutBuilder(
         builder: (context, constraints) {
           final bool isNarrow = constraints.maxWidth < 1000;
+          final bool showList = !widget.hideListPanel;
+          final bool showDetails = !widget.showListOnly;
+
           final Widget leftPanel = Container(
             padding: EdgeInsets.all(cardPadding),
             decoration: BoxDecoration(
@@ -1076,36 +1143,57 @@ class _TasksScreenState extends State<TasksScreen>
 
           final Widget rightPanel = buildRightPanel(scrollable: !isNarrow);
 
-          if (!isNarrow) {
-            return Padding(
+          if (widget.showListOnly && showList) {
+            return SingleChildScrollView(
               padding: EdgeInsets.all(outerPadding),
-              child: Row(
+              child: leftPanel,
+            );
+          }
+
+          if (showList && showDetails) {
+            if (!isNarrow) {
+              return Padding(
+                padding: EdgeInsets.all(outerPadding),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: leftPanel,
+                    ),
+                    SizedBox(width: columnGap),
+                    Expanded(
+                      flex: 5,
+                      child: rightPanel,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return SingleChildScrollView(
+              padding: EdgeInsets.all(outerPadding),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: 2,
-                    child: leftPanel,
-                  ),
-                  SizedBox(width: columnGap),
-                  Expanded(
-                    flex: 5,
-                    child: rightPanel,
-                  ),
+                  leftPanel,
+                  SizedBox(height: scaled(16)),
+                  rightPanel,
                 ],
               ),
             );
           }
 
+          if (showList) {
+            return SingleChildScrollView(
+              padding: EdgeInsets.all(outerPadding),
+              child: leftPanel,
+            );
+          }
+
           return SingleChildScrollView(
             padding: EdgeInsets.all(outerPadding),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                leftPanel,
-                SizedBox(height: scaled(16)),
-                rightPanel,
-              ],
-            ),
+            child: rightPanel,
           );
         },
       ),

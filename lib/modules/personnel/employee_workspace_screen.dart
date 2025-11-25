@@ -414,7 +414,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
       child: Theme(
         data: compactTheme,
         child: DefaultTabController(
-          length: 2,
+          length: 3,
           child: Scaffold(
             appBar: PreferredSize(
               preferredSize: Size.fromHeight(tabBarHeight),
@@ -422,7 +422,8 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                 color: Colors.white,
                 child: const TabBar(
                   tabs: [
-                    Tab(text: 'Задания'),
+                    Tab(text: 'Список заданий'),
+                    Tab(text: 'Задание'),
                     Tab(text: 'Чат'),
                   ],
                 ),
@@ -430,7 +431,15 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
             ),
             body: TabBarView(
               children: [
-                TasksScreen(employeeId: employeeId),
+                TasksScreen(
+                  employeeId: employeeId,
+                  showListOnly: true,
+                  compactList: true,
+                ),
+                TasksScreen(
+                  employeeId: employeeId,
+                  hideListPanel: true,
+                ),
                 ChatTab(
                   currentUserId: employeeId,
                   currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
