@@ -973,8 +973,8 @@ class _TasksScreenState extends State<TasksScreen>
                 isDense: true,
                 style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
                 itemHeight: math.max(
-                  scaled(36),
-                  kMinInteractiveDimension - 6,
+                  scaled(48),
+                  kMinInteractiveDimension,
                 ),
                 items: [
                   for (final w in workplaces)
