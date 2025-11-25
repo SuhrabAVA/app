@@ -1524,11 +1524,11 @@ class WarehouseProvider with ChangeNotifier {
   Future<double> _fetchCurrentQuantity(String typeKey, String itemId) async {
     final baseTable = _tableByType(typeKey);
     try {
-      var query = _sb.from(baseTable).select('quantity').eq('id', itemId).limit(1);
+      var query = _sb.from(baseTable).select('quantity').eq('id', itemId);
       if (typeKey == 'stationery') {
         query = query.eq('table_key', _stationeryKey);
       }
-      final row = await query.maybeSingle();
+      final row = await query.limit(1).maybeSingle();
       final value = row?['quantity'];
       return value is num ? value.toDouble() : 0;
     } catch (_) {
