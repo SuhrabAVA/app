@@ -127,6 +127,7 @@ class PersonnelProvider extends ChangeNotifier {
             'positionIds': r['position_ids'] ?? const [],
             'has_machine': r['has_machine'],
             'max_concurrent_workers': r['max_concurrent_workers'],
+            'unit': r['unit'],
           }, r['id'])));
     _safeNotify();
   }
@@ -229,6 +230,7 @@ class PersonnelProvider extends ChangeNotifier {
     bool hasMachine = false,
     int maxConcurrentWorkers = 1,
     List<String> positionIds = const [],
+    String? unit,
   }) async {
     final id = _genId();
     await _db.insertWorkplace(
@@ -238,6 +240,7 @@ class PersonnelProvider extends ChangeNotifier {
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
       positionIds: positionIds,
+      unit: unit,
     );
     await _loadWorkplacesFromSql();
   }
@@ -249,6 +252,7 @@ class PersonnelProvider extends ChangeNotifier {
     bool? hasMachine,
     int? maxConcurrentWorkers,
     List<String>? positionIds,
+    String? unit,
   }) async {
     await _db.updateWorkplace(
       id: id,
@@ -257,6 +261,7 @@ class PersonnelProvider extends ChangeNotifier {
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
       positionIds: positionIds,
+      unit: unit,
     );
     await _loadWorkplacesFromSql();
   }
@@ -308,6 +313,14 @@ class PersonnelProvider extends ChangeNotifier {
       return _positions.firstWhere((p) => p.id == id).name;
     } catch (_) {
       return id;
+    }
+  }
+
+  WorkplaceModel? workplaceById(String id) {
+    try {
+      return _workplaces.firstWhere((w) => w.id == id);
+    } catch (_) {
+      return null;
     }
   }
 
