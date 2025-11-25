@@ -1145,94 +1145,102 @@ class _TasksScreenState extends State<TasksScreen>
       );
     }
 
+    final PreferredSizeWidget? appBar = widget.showListOnly
+        ? null
+        : AppBar(
+            title: const SizedBox.shrink(),
+            toolbarHeight: scaled(44),
+            titleSpacing: 0,
+            automaticallyImplyLeading: false,
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            elevation: 0.5,
+          );
+
     final scaffold = Scaffold(
       key: PageStorageKey('TasksScreen-${widget.employeeId}'),
       backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        title: const SizedBox.shrink(),
-        toolbarHeight: scaled(44),
-        titleSpacing: 0,
-        automaticallyImplyLeading: false,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0.5,
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final bool isNarrow = constraints.maxWidth < 1000;
-          final bool showList = !widget.hideListPanel;
-          final bool showDetails = !widget.showListOnly;
+      appBar: appBar,
+      body: SafeArea(
+        top: appBar == null,
+        bottom: false,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final bool isNarrow = constraints.maxWidth < 1000;
+            final bool showList = !widget.hideListPanel;
+            final bool showDetails = !widget.showListOnly;
 
-          final Widget leftPanel = Container(
-            padding: EdgeInsets.all(cardPadding),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(cardRadius),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.shade300,
-                  blurRadius: 6,
-                )
-              ],
-            ),
-            child: buildLeftPanel(scrollable: true),
-          );
-
-          final Widget rightPanel = buildRightPanel(scrollable: !isNarrow);
-
-          if (widget.showListOnly && showList) {
-            return SingleChildScrollView(
-              padding: EdgeInsets.all(outerPadding),
-              child: leftPanel,
+            final Widget leftPanel = Container(
+              padding: EdgeInsets.all(cardPadding),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(cardRadius),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.shade300,
+                    blurRadius: 6,
+                  )
+                ],
+              ),
+              child: buildLeftPanel(scrollable: true),
             );
-          }
 
-          if (showList && showDetails) {
-            if (!isNarrow) {
-              return Padding(
+            final Widget rightPanel = buildRightPanel(scrollable: !isNarrow);
+
+            if (widget.showListOnly && showList) {
+              return SingleChildScrollView(
                 padding: EdgeInsets.all(outerPadding),
-                child: Row(
+                child: leftPanel,
+              );
+            }
+
+            if (showList && showDetails) {
+              if (!isNarrow) {
+                return Padding(
+                  padding: EdgeInsets.all(outerPadding),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: leftPanel,
+                      ),
+                      SizedBox(width: columnGap),
+                      Expanded(
+                        flex: 5,
+                        child: rightPanel,
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return SingleChildScrollView(
+                padding: EdgeInsets.all(outerPadding),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      flex: 2,
-                      child: leftPanel,
-                    ),
-                    SizedBox(width: columnGap),
-                    Expanded(
-                      flex: 5,
-                      child: rightPanel,
-                    ),
+                    leftPanel,
+                    SizedBox(height: scaled(16)),
+                    rightPanel,
                   ],
                 ),
               );
             }
 
+            if (showList) {
+              return SingleChildScrollView(
+                padding: EdgeInsets.all(outerPadding),
+                child: leftPanel,
+              );
+            }
+
             return SingleChildScrollView(
               padding: EdgeInsets.all(outerPadding),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  leftPanel,
-                  SizedBox(height: scaled(16)),
-                  rightPanel,
-                ],
-              ),
+              child: rightPanel,
             );
-          }
-
-          if (showList) {
-            return SingleChildScrollView(
-              padding: EdgeInsets.all(outerPadding),
-              child: leftPanel,
-            );
-          }
-
-          return SingleChildScrollView(
-            padding: EdgeInsets.all(outerPadding),
-            child: rightPanel,
-          );
-        },
+          },
+        ),
       ),
     );
 
