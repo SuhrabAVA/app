@@ -1794,12 +1794,13 @@ class _TasksScreenState extends State<TasksScreen>
                       {List<String>? jointGroup, String? userId}) {
                     final tp = context.read<TaskProvider>();
                     final activeCount = _activeExecutorsCountForStage(tp, task);
+                    final personnel = context.read<PersonnelProvider>();
                     final stage =
-                        context.read<PersonnelProvider>().workplaces.firstWhere(
-                              (w) => w.id == task.stageId,
-                              orElse: () => WorkplaceModel(
-                                  id: '', name: '', positionIds: const []),
-                            );
+                        personnel.workplaces.firstWhere(
+                          (w) => w.id == task.stageId,
+                          orElse: () => WorkplaceModel(
+                              id: '', name: '', positionIds: const []),
+                        );
                     final rawCap = (stage as dynamic).maxConcurrentWorkers;
                     final effCap = (rawCap is num ? rawCap.toInt() : 1);
                     final canStartCapacity =
