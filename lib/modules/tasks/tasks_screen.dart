@@ -759,22 +759,26 @@ class _TasksScreenState extends State<TasksScreen>
         media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
     final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
 
-    // Делайте интерфейс более читаемым: чуть увеличиваем базовый масштаб
-    // вместо сильного уменьшения на планшетах.
+    // Для компактных экранов 1280x800 уменьшаем масштаб, чтобы панели
+    // «Список заданий», «Рабочее место», «Управление заданием» и
+    // «Детали производственного задания» помещались без горизонтальной
+    // прокрутки. Более крупные экраны по-прежнему получают лёгкое
+    // увеличение.
     final double layoutScale = isCompactTablet
-        ? 1.0 // компактные планшеты — без даунскейла
+        ? 0.92 // компактные планшеты — чуть меньше базового масштаба
         : (isTablet
-            ? 1.05 // обычные планшеты — легкое увеличение
-            : 1.1); // десктопы/веб — заметное увеличение
+            ? 1.0 // обычные планшеты — без увеличения
+            : 1.08); // десктопы/веб — умеренное увеличение
 
-    // Поддерживаем крупный текст даже если системный textScaleFactor маленький.
+    // Поддерживаем читаемость текста, но без лишнего укрупнения на
+    // маленьких планшетах.
     final double textScaleFactor = math.max(
       media.textScaleFactor,
       isCompactTablet
-          ? 1.08
+          ? 1.0
           : (isTablet
-              ? 1.1
-              : 1.15),
+              ? 1.05
+              : 1.12),
     );
 
     final double scale = layoutScale;
@@ -1962,14 +1966,15 @@ class _TasksScreenState extends State<TasksScreen>
                     // Кнопка "Начать" доступна для своей строки, если
                     // пользователь может стартовать, и он либо ещё не
                     // запускал этап (idle), либо находится на паузе/в проблеме
-                    // (разрешаем возобновление). Для чужих строк кнопка
-                    // недоступна. Это предотвращает повторные старты и
-                    // обнуление таймера.
+                    // (разрешаем возобновление), либо уже завершил личную
+                    // смену статуса, но этап ещё не закрыт общей кнопкой
+                    // "Завершить" снизу.
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         (stateRowUser == UserRunState.idle ||
                             stateRowUser == UserRunState.paused ||
-                            stateRowUser == UserRunState.problem);
+                            stateRowUser == UserRunState.problem ||
+                            stateRowUser == UserRunState.finished);
                     final bool canPauseRow = isMyRow &&
                         canPause &&
                         stateRowUser == UserRunState.active;
