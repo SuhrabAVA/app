@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../services/doc_db.dart';
 import '../../services/personnel_db.dart';
 import 'personnel_constants.dart';
 import 'position_model.dart';
@@ -12,13 +13,15 @@ import 'workplace_model.dart';
 import 'terminal_model.dart';
 
 class PersonnelProvider extends ChangeNotifier {
-  PersonnelProvider({PersonnelDB? db, bool bootstrap = true})
-      : _db = db ?? PersonnelDB() {
+  PersonnelProvider({PersonnelDB? db, DocDB? docDb, bool bootstrap = true})
+      : _db = db ?? PersonnelDB(),
+        _docDb = docDb {
     if (bootstrap) _bootstrap();
   }
 
   final _uuid = const Uuid();
   final PersonnelDB _db;
+  final DocDB? _docDb;
 
   final List<EmployeeModel> _employees = <EmployeeModel>[];
   final List<PositionModel> _positions = <PositionModel>[];
@@ -233,16 +236,33 @@ class PersonnelProvider extends ChangeNotifier {
     String? unit,
   }) async {
     final id = _genId();
-    await _db.insertWorkplace(
-      id: id,
-      name: name.trim(),
-      description: description,
-      hasMachine: hasMachine,
-      maxConcurrentWorkers: maxConcurrentWorkers,
-      positionIds: positionIds,
-      unit: unit,
-    );
-    await _loadWorkplacesFromSql();
+    // В тестах можем использовать DocDB как заглушку, чтобы не дергать Supabase.
+    if (_docDb != null) {
+      final workplace = WorkplaceModel(
+        id: id,
+        name: name.trim(),
+        description: description,
+        hasMachine: hasMachine,
+        maxConcurrentWorkers: maxConcurrentWorkers,
+        positionIds: positionIds,
+        unit: unit,
+      );
+
+      await _docDb!.insert('workplaces', workplace.toMap(), explicitId: id);
+      _workplaces.add(workplace);
+      _safeNotify();
+    } else {
+      await _db.insertWorkplace(
+        id: id,
+        name: name.trim(),
+        description: description,
+        hasMachine: hasMachine,
+        maxConcurrentWorkers: maxConcurrentWorkers,
+        positionIds: positionIds,
+        unit: unit,
+      );
+      await _loadWorkplacesFromSql();
+    }
   }
 
   Future<void> updateWorkplace({
