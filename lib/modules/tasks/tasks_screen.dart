@@ -759,13 +759,13 @@ class _TasksScreenState extends State<TasksScreen>
         media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
     final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
 
-    // Для компактных экранов 1280x800 уменьшаем масштаб, чтобы панели
-    // «Список заданий», «Рабочее место», «Управление заданием» и
-    // «Детали производственного задания» помещались без горизонтальной
-    // прокрутки. Более крупные экраны по-прежнему получают лёгкое
-    // увеличение.
+    // Для компактных экранов 1280x800 дополнительно уменьшаем масштаб,
+    // чтобы панели «Список заданий», «Рабочее место», «Управление
+    // заданием» и «Детали производственного задания» помещались без
+    // горизонтальной прокрутки. Более крупные экраны по-прежнему
+    // получают лёгкое увеличение.
     final double layoutScale = isCompactTablet
-        ? 0.92 // компактные планшеты — чуть меньше базового масштаба
+        ? 0.88 // компактные планшеты — ещё аккуратнее базового масштаба
         : (isTablet
             ? 1.0 // обычные планшеты — без увеличения
             : 1.08); // десктопы/веб — умеренное увеличение
@@ -784,14 +784,15 @@ class _TasksScreenState extends State<TasksScreen>
     final double scale = layoutScale;
 
     double scaled(double value) => value * layoutScale;
-    final double outerPadding = scaled(16);
-    final double columnGap = scaled(16);
-    final double cardPadding = scaled(12);
+    final double compactTightness = isCompactTablet ? 0.9 : 1.0;
+    final double outerPadding = scaled(16 * compactTightness);
+    final double columnGap = scaled(isCompactTablet ? 12 : 16);
+    final double cardPadding = scaled(isCompactTablet ? 10 : 12);
     final double cardRadius = scaled(12);
-    final double sectionSpacing = scaled(12);
+    final double sectionSpacing = scaled(isCompactTablet ? 10 : 12);
     final double smallSpacing = scaled(4);
-    final double largeSpacing = scaled(24);
-    final double chipSpacing = scaled(8);
+    final double largeSpacing = scaled(isCompactTablet ? 18 : 24);
+    final double chipSpacing = scaled(isCompactTablet ? 6 : 8);
 
     final EmployeeModel employee = personnel.employees.firstWhere(
       (e) => e.id == widget.employeeId,
@@ -992,6 +993,7 @@ class _TasksScreenState extends State<TasksScreen>
                                           selected:
                                               _selectedTask?.id == task.id,
                                           scale: scale,
+                                          compact: isCompactTablet,
                                           onTap: () {
                                             _persistTask(task.id);
                                             setState(() {
