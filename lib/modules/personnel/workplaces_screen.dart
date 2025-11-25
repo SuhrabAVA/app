@@ -44,7 +44,8 @@ class WorkplacesScreen extends StatelessWidget {
                         .join(', ');
                     final roles =
                         names.isEmpty ? w.positionIds.join(', ') : names;
-                    return "Должности: $roles\nСтанок: ${w.hasMachine ? 'да' : 'нет'}, макс.: ${w.maxConcurrentWorkers}";
+                    final unit = (w.unit ?? '').isNotEmpty ? w.unit : '—';
+                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}, макс.: ${w.maxConcurrentWorkers}";
                   }(),
                 ),
                 trailing: Row(
@@ -76,6 +77,7 @@ class WorkplacesScreen extends StatelessWidget {
 
     final nameC = TextEditingController();
     final maxWorkersC = TextEditingController(text: '1');
+    final unitC = TextEditingController();
     bool hasMachine = false;
 
     // Локально храним выбранные id должностей
@@ -109,6 +111,14 @@ class WorkplacesScreen extends StatelessWidget {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: unitC,
+                      decoration: const InputDecoration(
+                        labelText: 'Единица измерения',
+                        hintText: 'шт., кг, м² и т.д.',
+                      ),
                     ),
                     CheckboxListTile(
                       title: const Text('Настройка станка есть'),
@@ -187,14 +197,15 @@ class WorkplacesScreen extends StatelessWidget {
 
     if (ok == true && nameC.text.trim().isNotEmpty) {
       final int? maxWorkers = int.tryParse(maxWorkersC.text.trim());
-      try {
-        await context.read<PersonnelProvider>().addWorkplace(
-              name: nameC.text.trim(),
-              positionIds: selectedPositions.toList(),
-              hasMachine: hasMachine,
-              maxConcurrentWorkers: maxWorkers ?? 1,
-            );
-      } catch (e) {
+              try {
+                await context.read<PersonnelProvider>().addWorkplace(
+                  name: nameC.text.trim(),
+                  positionIds: selectedPositions.toList(),
+                  hasMachine: hasMachine,
+                  maxConcurrentWorkers: maxWorkers ?? 1,
+                  unit: unitC.text.trim(),
+                );
+              } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Ошибка сохранения: $e')),
@@ -257,6 +268,8 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   final TextEditingController _desc = TextEditingController();
   late final TextEditingController _maxWorkers = TextEditingController(
       text: widget.workplace.maxConcurrentWorkers.toString());
+  late final TextEditingController _unit =
+      TextEditingController(text: widget.workplace.unit ?? '');
   bool _hasMachine = false;
   late Set<String> _selectedPositions;
 
@@ -278,6 +291,7 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
           hasMachine: _hasMachine,
           maxConcurrentWorkers: mw,
           positionIds: _selectedPositions.toList(),
+          unit: _unit.text.trim(),
         );
     if (mounted) Navigator.pop(context);
   }
@@ -310,6 +324,14 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
               controller: _maxWorkers,
               decoration: const InputDecoration(labelText: 'Макс. сотрудников'),
               keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _unit,
+              decoration: const InputDecoration(
+                labelText: 'Единица измерения',
+                hintText: 'шт., кг, м² и т.д.',
+              ),
             ),
             CheckboxListTile(
               title: const Text('Настройка станка есть'),

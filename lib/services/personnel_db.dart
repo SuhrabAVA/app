@@ -133,6 +133,7 @@ class PersonnelDB {
     bool hasMachine = false,
     int maxConcurrentWorkers = 1,
     List<String> positionIds = const [],
+    String? unit,
   }) async {
     await s.from('workplaces').insert({
       'id': id,
@@ -142,6 +143,7 @@ class PersonnelDB {
           : description.trim(),
       'has_machine': hasMachine,
       'max_concurrent_workers': maxConcurrentWorkers,
+      'unit': unit?.trim().isEmpty == true ? null : unit?.trim(),
     });
     if (positionIds.isNotEmpty) {
       final rows = positionIds
@@ -160,6 +162,7 @@ class PersonnelDB {
     bool? hasMachine,
     int? maxConcurrentWorkers,
     List<String>? positionIds,
+    String? unit,
   }) async {
     final patch = <String, dynamic>{};
     if (name != null) patch['name'] = name;
@@ -169,6 +172,10 @@ class PersonnelDB {
     if (hasMachine != null) patch['has_machine'] = hasMachine;
     if (maxConcurrentWorkers != null)
       patch['max_concurrent_workers'] = maxConcurrentWorkers;
+    if (unit != null) {
+      final trimmed = unit.trim();
+      patch['unit'] = trimmed.isEmpty ? null : trimmed;
+    }
     if (patch.isNotEmpty) {
       await s.from('workplaces').update(patch).eq('id', id);
     }

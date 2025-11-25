@@ -5,6 +5,7 @@ class WorkplaceModel {
   final List<String> positionIds;
   final bool hasMachine;
   final int maxConcurrentWorkers;
+  final String? unit;
 
   WorkplaceModel({
     required this.id,
@@ -13,6 +14,7 @@ class WorkplaceModel {
     required this.positionIds,
     this.hasMachine = false,
     this.maxConcurrentWorkers = 1,
+    this.unit,
   });
 
   /// Преобразование модели рабочего места в [Map] для сохранения в базе данных.
@@ -25,6 +27,7 @@ class WorkplaceModel {
         'positionIds': positionIds,
         'has_machine': hasMachine,
         'max_concurrent_workers': maxConcurrentWorkers,
+        'unit': unit,
       };
 
   /// Создание модели из [Map], полученного из базы данных. Использует snake_case
@@ -40,5 +43,6 @@ class WorkplaceModel {
         maxConcurrentWorkers: (map['max_concurrent_workers'] as int?) ??
             (map['maxConcurrentWorkers'] as int?) ??
             1,
+        unit: map['unit'] as String?,
       );
 }

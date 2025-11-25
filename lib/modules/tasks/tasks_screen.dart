@@ -8,7 +8,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../orders/order_model.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
-import '../orders/orders_repository.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
@@ -19,8 +18,6 @@ import 'task_model.dart';
 import 'task_provider.dart';
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
-import '../warehouse/warehouse_provider.dart';
-import '../warehouse/tmc_model.dart';
 // Additional helpers for time formatting and aggregated timers
 
 class TasksScreen extends StatefulWidget {
@@ -217,6 +214,13 @@ String _workplaceName(PersonnelProvider personnel, String stageId) {
   return stageId;
 }
 
+String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
+  final wp = personnel.workplaceById(stageId);
+  final text = wp?.unit?.trim();
+  if (text != null && text.isNotEmpty) return text;
+  return null;
+}
+
 bool _isFlexoStageId(PersonnelProvider personnel, String stageId) {
   final probes = <String>{stageId, _workplaceName(personnel, stageId)};
   for (final probe in probes) {
@@ -399,40 +403,11 @@ class _StageComment {
   });
 }
 
-class _FlexoPaintMeta {
-  final String rowId;
-  final String name;
-  final String? info;
-  final double previousGrams;
-  final TmcModel? tmc;
+class _QuantityInput {
+  final int quantity;
+  final String displayText;
 
-  const _FlexoPaintMeta({
-    required this.rowId,
-    required this.name,
-    this.info,
-    this.previousGrams = 0,
-    this.tmc,
-  });
-}
-
-class _FlexoPaintUsageEntry {
-  final _FlexoPaintMeta meta;
-  final double grams;
-
-  const _FlexoPaintUsageEntry({required this.meta, required this.grams});
-
-  String get rowId => meta.rowId;
-  String get name => meta.name;
-  String? get info => meta.info;
-  double get previousGrams => meta.previousGrams;
-  TmcModel? get tmc => meta.tmc;
-}
-
-class _PaintShipmentRecord {
-  final String itemId;
-  final double qty;
-
-  const _PaintShipmentRecord({required this.itemId, required this.qty});
+  const _QuantityInput({required this.quantity, required this.displayText});
 }
 
 class _TasksScreenState extends State<TasksScreen>
@@ -448,7 +423,6 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, String?> _formImageCache = {};
   final Map<String, Future<String?>> _formImagePending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
-  final OrdersRepository _ordersRepository = OrdersRepository();
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
   static const Map<TaskStatus, String> _statusLabels = {
@@ -562,317 +536,6 @@ class _TasksScreenState extends State<TasksScreen>
     } catch (_) {
       return null;
     }
-  }
-
-  double _readPaintGrams(Map<String, dynamic> row) {
-    double? parse(dynamic raw) {
-      if (raw == null) return null;
-      if (raw is num) return raw.toDouble();
-      if (raw is String) {
-        final normalized = raw.replaceAll(',', '.').trim();
-        if (normalized.isEmpty) return null;
-        final parsed = double.tryParse(normalized);
-        if (parsed != null) return parsed;
-      }
-      return null;
-    }
-
-    const gramKeys = ['qty_g', 'qtyG', 'quantity_g', 'quantityG'];
-    for (final key in gramKeys) {
-      final value = parse(row[key]);
-      if (value != null) return value;
-    }
-
-    const kgKeys = ['qty_kg', 'qtyKg', 'quantity_kg', 'quantityKg'];
-    for (final key in kgKeys) {
-      final value = parse(row[key]);
-      if (value != null) return value * 1000.0;
-    }
-
-    const genericKeys = ['qty', 'quantity'];
-    for (final key in genericKeys) {
-      final value = parse(row[key]);
-      if (value != null) return value;
-    }
-    return 0;
-  }
-
-  String _formatGrams(double grams) {
-    if (grams <= 0) return '';
-    if ((grams - grams.round()).abs() < 0.0001) {
-      return grams.round().toString();
-    }
-    return grams.toStringAsFixed(2);
-  }
-
-  double _convertGramsToUnit(double grams, String? unit) {
-    if (grams <= 0) return 0;
-    final normalized = unit?.toLowerCase().trim() ?? '';
-    if (normalized.contains('кг') || normalized == 'kg') {
-      return grams / 1000.0;
-    }
-    if (normalized.contains('тонн')) {
-      return grams / 1000000.0;
-    }
-    return grams;
-  }
-
-  List<_FlexoPaintMeta> _prepareFlexoPaintMetas(
-      List<Map<String, dynamic>> rows, WarehouseProvider warehouse) {
-    final metas = <_FlexoPaintMeta>[];
-    for (final row in rows) {
-      final rawId = row['id'] ?? row['paint_id'] ?? row['order_paint_id'];
-      final nameRaw =
-          (row['name'] ?? row['paint_name'] ?? row['title'] ?? '').toString();
-      final name = nameRaw.trim();
-      if (rawId == null || name.isEmpty) {
-        continue;
-      }
-      final infoRaw = (row['info'] ?? '').toString().trim();
-      final grams = _readPaintGrams(row);
-      final tmc = warehouse.getPaintByName(name);
-      metas.add(_FlexoPaintMeta(
-        rowId: rawId.toString(),
-        name: name,
-        info: infoRaw.isEmpty ? null : infoRaw,
-        previousGrams: grams,
-        tmc: tmc,
-      ));
-    }
-    return metas;
-  }
-
-  Future<List<_FlexoPaintUsageEntry>?> _askPaintUsageDialog(
-      List<_FlexoPaintMeta> metas) async {
-    final controllers = <String, TextEditingController>{
-      for (final meta in metas)
-        meta.rowId: TextEditingController(text: _formatGrams(meta.previousGrams))
-    };
-    Map<String, String?> fieldErrors = {};
-    try {
-      final result = await showDialog<List<_FlexoPaintUsageEntry>>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setState) => AlertDialog(
-            title: const Text('Фактический расход краски'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                      'Укажите фактический расход для каждой краски (в граммах).'),
-                  const SizedBox(height: 12),
-                  for (final meta in metas)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(meta.name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600)),
-                          if ((meta.info ?? '').isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text(
-                                meta.info!,
-                                style: const TextStyle(
-                                    color: Colors.black54, fontSize: 12),
-                              ),
-                            ),
-                          TextField(
-                            controller: controllers[meta.rowId],
-                            keyboardType:
-                                const TextInputType.numberWithOptions(decimal: true),
-                            decoration: InputDecoration(
-                              labelText: 'Расход, г',
-                              suffixText: meta.tmc?.unit,
-                              errorText: fieldErrors[meta.rowId],
-                            ),
-                          ),
-                          if (meta.tmc == null)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 4),
-                              child: Text(
-                                'Позиция не найдена на складе',
-                                style: TextStyle(
-                                    color: Colors.redAccent, fontSize: 12),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(null),
-                child: const Text('Отмена'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final nextErrors = <String, String?>{};
-                  final collected = <_FlexoPaintUsageEntry>[];
-                  for (final meta in metas) {
-                    final controller = controllers[meta.rowId]!;
-                    final text = controller.text.trim();
-                    if (text.isEmpty) {
-                      nextErrors[meta.rowId] = 'Укажите расход';
-                      continue;
-                    }
-                    final normalized = text.replaceAll(',', '.');
-                    final value = double.tryParse(normalized);
-                    if (value == null || value < 0) {
-                      nextErrors[meta.rowId] = 'Некорректное значение';
-                      continue;
-                    }
-                    collected
-                        .add(_FlexoPaintUsageEntry(meta: meta, grams: value));
-                  }
-                  if (nextErrors.isNotEmpty) {
-                    setState(() {
-                      fieldErrors = nextErrors;
-                    });
-                    return;
-                  }
-                  Navigator.of(ctx).pop(collected);
-                },
-                child: const Text('Сохранить'),
-              ),
-            ],
-          ),
-        ),
-      );
-      return result;
-    } finally {
-      for (final controller in controllers.values) {
-        controller.dispose();
-      }
-    }
-  }
-
-  Future<bool> _applyFlexoPaintUsage(TaskModel task,
-      List<_FlexoPaintUsageEntry> entries, WarehouseProvider warehouse) async {
-    if (entries.isEmpty) {
-      return true;
-    }
-
-    final shipments = <_PaintShipmentRecord>[];
-    final order = _orderById(task.orderId);
-    final customerName = order?.customer ??
-        (await _ordersRepository.getOrderCustomer(task.orderId)) ??
-        '';
-    final writeoffReason =
-        customerName.isNotEmpty ? customerName : 'Заказ ${task.orderId}';
-    try {
-      for (final entry in entries) {
-        final grams = entry.grams;
-        final meta = entry.meta;
-        final tmc = meta.tmc ?? warehouse.getPaintByName(meta.name);
-        if (tmc == null) {
-          throw Exception('paint_not_found:${meta.name}');
-        }
-        final qtyForUnit = _convertGramsToUnit(grams, tmc.unit);
-        if (qtyForUnit > 0) {
-          await warehouse.registerShipment(
-            id: tmc.id,
-            type: 'paint',
-            qty: qtyForUnit,
-            reason: writeoffReason,
-          );
-          shipments
-              .add(_PaintShipmentRecord(itemId: tmc.id, qty: qtyForUnit));
-        }
-      }
-
-      final updates = entries
-          .map((e) => PaintUsageUpdate(
-                paintRowId: e.rowId,
-                name: e.name,
-                grams: e.grams,
-                info: e.info,
-              ))
-          .toList();
-      await _ordersRepository.applyPaintUsage(
-          orderId: task.orderId, usages: updates);
-      try {
-        await context.read<OrdersProvider>().refresh();
-      } catch (_) {}
-      return true;
-    } catch (error) {
-      for (final shipment in shipments.reversed) {
-        try {
-          await warehouse.registerReturn(
-              id: shipment.itemId, type: 'paint', qty: shipment.qty);
-        } catch (_) {}
-      }
-      if (!mounted) return false;
-      final text = error.toString();
-      String message;
-      if (text.contains('paint_not_found')) {
-        final name = text.split(':').last;
-        message = name.isNotEmpty
-            ? 'Краска $name не найдена на складе. Обновите остатки.'
-            : 'Краска не найдена на складе. Обновите остатки.';
-      } else if (text.contains('Недостаточно')) {
-        message = text;
-      } else {
-        message = 'Не удалось обработать расход краски: $error';
-      }
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
-      return false;
-    }
-  }
-
-  Future<bool?> _handleFlexoPaintUsage(TaskModel task) async {
-    final personnel = context.read<PersonnelProvider>();
-    if (!_isFlexoStageId(personnel, task.stageId)) {
-      return true;
-    }
-
-    List<Map<String, dynamic>> paints;
-    try {
-      paints = await _ordersRepository.getPaints(task.orderId);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось загрузить краски: $error')),
-        );
-      }
-      return false;
-    }
-
-    if (paints.isEmpty) {
-      return true;
-    }
-
-    final warehouse = context.read<WarehouseProvider>();
-    if (warehouse.allTmc.isEmpty) {
-      try {
-        await warehouse.fetchTmc();
-      } catch (_) {}
-    }
-
-    final metas = _prepareFlexoPaintMetas(paints, warehouse);
-    if (metas.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content:
-                Text('Для заказа не найдены позиции красок на складе.')));
-      }
-      return false;
-    }
-
-    final entries = await _askPaintUsageDialog(metas);
-    if (entries == null) {
-      return null;
-    }
-
-    final success = await _applyFlexoPaintUsage(task, entries, warehouse);
-    return success;
   }
 
   String _formatQuantityDisplay(String raw) {
@@ -2322,27 +1985,31 @@ class _TasksScreenState extends State<TasksScreen>
                     }
 
                     Future<void> onFinish() async {
-                      final qty = await _askQuantity(context);
-                      if (qty == null) return;
+                      final unitLabel = _workplaceUnit(personnel, task.stageId);
+                      final qtyInput =
+                          await _askQuantity(context, unit: unitLabel);
+                      if (qtyInput == null) return;
+                      final qty = qtyInput.quantity;
+                      final qtyText = qtyInput.displayText;
                       final taskProvider = context.read<TaskProvider>();
                       if (jointGroup != null) {
                         // JOINT: split quantity and COMPLETE immediately
                         final per =
                             (qty / (jointGroup.isEmpty ? 1 : jointGroup.length))
                                 .floor();
-                        final paintResult = await _handleFlexoPaintUsage(task);
-                        if (paintResult == null) return;
-                        if (!paintResult) return;
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_team_total',
-                            text: qty.toString(),
+                            text: qtyText,
                             userIdOverride: widget.employeeId);
                         for (final id in jointGroup) {
+                          final shareText = (unitLabel ?? '').isNotEmpty
+                              ? '$per ${unitLabel!}'
+                              : per.toString();
                           await taskProvider.addComment(
                               taskId: task.id,
                               type: 'quantity_share',
-                              text: per.toString(),
+                              text: shareText,
                               userId: id);
                         }
                         await taskProvider.addCommentAutoUser(
@@ -2373,7 +2040,7 @@ class _TasksScreenState extends State<TasksScreen>
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_done',
-                            text: qty.toString(),
+                            text: qtyText,
                             userIdOverride: widget.employeeId);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
@@ -2408,9 +2075,6 @@ class _TasksScreenState extends State<TasksScreen>
                           }
                         }
                         if (allDone) {
-                          final paintResult = await _handleFlexoPaintUsage(task);
-                          if (paintResult == null) return;
-                          if (!paintResult) return;
                           final _secs = _elapsed(latestTask).inSeconds;
                           await taskProvider.updateStatus(
                               task.id, TaskStatus.completed,
@@ -3705,8 +3369,9 @@ String _statusText(TaskStatus status) {
   }
 }
 
-Future<int?> _askQuantity(BuildContext context) async {
+Future<_QuantityInput?> _askQuantity(BuildContext context, {String? unit}) async {
   final controller = TextEditingController();
+  final unitLabel = (unit ?? '').trim();
   final v = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -3715,9 +3380,11 @@ Future<int?> _askQuantity(BuildContext context) async {
         controller: controller,
         autofocus: true,
         keyboardType: TextInputType.number,
-        decoration: const InputDecoration(
-          hintText: 'Введите количество экземпляров',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          hintText: unitLabel.isNotEmpty
+              ? 'Введите количество в ${unitLabel}'
+              : 'Введите количество экземпляров',
+          border: const OutlineInputBorder(),
         ),
       ),
       actions: [
@@ -3731,7 +3398,9 @@ Future<int?> _askQuantity(BuildContext context) async {
   );
   if (v == null || v.isEmpty) return null;
   final n = int.tryParse(v);
-  return n;
+  if (n == null) return null;
+  final display = unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
+  return _QuantityInput(quantity: n, displayText: display);
 }
 
 Duration _setupElapsed(TaskModel task, String userId) {
