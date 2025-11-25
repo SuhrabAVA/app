@@ -397,11 +397,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
     try {
-      if (provider.allTmc.isEmpty) {
-        await provider.fetchTmc();
-      } else {
-        unawaited(provider.fetchTmc());
-      }
+      await provider.fetchTmc();
     } catch (_) {}
 
     final items = provider.getTmcByType(widget.type);
