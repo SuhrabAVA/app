@@ -2524,6 +2524,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final hasAssignedForm = _hasAssignedForm();
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
+    final paintsAvailable = _hasAnyPaints();
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -2594,6 +2595,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               showFormEditor: showFormEditor,
               isEditing: isEditing,
               hasAssignedForm: hasAssignedForm,
+              paintsAvailable: paintsAvailable,
             ),
             const SizedBox(height: 12),
             _buildProductMaterialAndExtras(_product),
@@ -3763,10 +3765,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool showFormEditor,
     required bool isEditing,
     required bool hasAssignedForm,
+    required bool paintsAvailable,
   }) {
     final content = <Widget>[];
+    final controls = <Widget>[];
     if (showFormSummary) {
-      content.addAll([
+      controls.addAll([
         _buildFormSummary(context),
         const SizedBox(height: 8),
         Align(
@@ -3780,11 +3784,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ]);
     }
     if (showFormEditor) {
-      if (content.isNotEmpty) {
-        content.add(const SizedBox(height: 12));
+      if (controls.isNotEmpty) {
+        controls.add(const SizedBox(height: 12));
       }
       if (isEditing && hasAssignedForm) {
-        content.addAll([
+        controls.addAll([
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
@@ -3796,14 +3800,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           const SizedBox(height: 4),
         ]);
       }
-      content.addAll(_buildFormEditorControls());
+      controls.addAll(_buildFormEditorControls());
     }
 
-    if (content.isNotEmpty) {
-      content.add(const SizedBox(height: 12));
+    if (controls.isNotEmpty) {
+      controls.add(const SizedBox(height: 12));
     }
 
-    content.add(
+    controls.add(
       InputDecorator(
         decoration: const InputDecoration(
           labelText: 'Номер формы',
@@ -3813,10 +3817,48 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
     );
 
+    if (!paintsAvailable) {
+      content.addAll([
+        _buildFormDisabledNotice(context),
+        const SizedBox(height: 8),
+      ]);
+    }
+
+    if (controls.isNotEmpty) {
+      content.add(
+        paintsAvailable
+            ? Column(children: controls)
+            : AbsorbPointer(
+                absorbing: true,
+                child: Opacity(
+                  opacity: 0.6,
+                  child: Column(children: controls),
+                ),
+              ),
+      );
+    }
+
     return _buildSectionCard(
       context: context,
       title: 'Форма',
       children: content,
+    );
+  }
+
+  Widget _buildFormDisabledNotice(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.dividerColor),
+      ),
+      child: const Text(
+        'Добавьте хотя бы одну краску, чтобы выбрать форму.',
+        style: TextStyle(fontWeight: FontWeight.w600),
+      ),
     );
   }
 
