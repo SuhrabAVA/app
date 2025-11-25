@@ -67,6 +67,11 @@ class WarehouseProvider with ChangeNotifier {
     return _logBundles[normalized];
   }
 
+  void _invalidateLogsForType(String type) {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    _logBundles.remove(normalized);
+  }
+
   final Map<String, List<Map<String, dynamic>>> _writeoffsByItem = {};
   final Map<String, List<Map<String, dynamic>>> _inventoriesByItem = {};
   List<Map<String, dynamic>> writeoffs(String itemId) =>
@@ -897,6 +902,9 @@ class WarehouseProvider with ChangeNotifier {
     }
     list.insert(0, writeoffEntry);
 
+    _invalidateLogsForType(itemType);
+    notifyListeners();
+
     await fetchTmc();
   }
 
@@ -1244,6 +1252,9 @@ class WarehouseProvider with ChangeNotifier {
     if (penExtras.isNotEmpty) invEntry.addAll(penExtras);
     list.insert(0, invEntry);
 
+    _invalidateLogsForType(itemType);
+    notifyListeners();
+
     await fetchTmc();
   }
 
@@ -1439,13 +1450,22 @@ class WarehouseProvider with ChangeNotifier {
             final payload = Map<String, dynamic>.from(basePayload)
               ..['table_key'] = key;
             inserted = await _tryInsertWarehouseLog(table, payload);
-            if (inserted) return;
+            if (inserted) {
+              _invalidateLogsForType(typeKey);
+              return;
+            }
           }
           if (!inserted) {
-            if (await _tryInsertWarehouseLog(table, basePayload)) return;
+            if (await _tryInsertWarehouseLog(table, basePayload)) {
+              _invalidateLogsForType(typeKey);
+              return;
+            }
           }
         } else {
-          if (await _tryInsertWarehouseLog(table, basePayload)) return;
+          if (await _tryInsertWarehouseLog(table, basePayload)) {
+            _invalidateLogsForType(typeKey);
+            return;
+          }
         }
       }
     }
