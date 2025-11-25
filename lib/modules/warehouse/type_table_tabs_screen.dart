@@ -439,6 +439,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               format: entry.format,
               grammage: entry.grammage,
               byName: entry.byName,
+              itemId: entry.itemId,
+              sourceTable: entry.sourceTable,
+              action: entry.action,
+              canUndo: (entry.itemId ?? '').isNotEmpty,
             ))
         .toList();
   }
@@ -742,6 +746,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         format: fmt,
         grammage: gram,
         byName: by,
+        itemId: baseId,
+        action: WarehouseLogAction.writeoff,
+        canUndo: (baseId ?? '').isNotEmpty,
       );
     }).toList();
   }
@@ -835,6 +842,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         format: fmt,
         grammage: gram,
         byName: by,
+        itemId: baseId,
+        action: WarehouseLogAction.inventory,
+        canUndo: (baseId ?? '').isNotEmpty,
       );
     }).toList();
   }
@@ -925,6 +935,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         format: fmt,
         grammage: gram,
         byName: by,
+        itemId: baseId,
+        action: WarehouseLogAction.arrival,
+        canUndo: (baseId ?? '').isNotEmpty,
       );
     }).toList();
   }
@@ -2199,11 +2212,80 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     // Метод оставлен пустым намеренно, чтобы убрать ошибку "не определён".
   }
 
-  void _undoLog(_LogRow row) {
-    // Заглушка для будущей логики отмены действий в логе.
+  void _showSnack(String message, {bool error = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Отмена действия пока не доступна')),
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Colors.red.shade700 : null,
+      ),
     );
+  }
+
+  void _setUndoEnabled(String logId, bool enabled) {
+    if (!mounted) return;
+    setState(() {
+      _writeoffs = _writeoffs
+          .map((e) => e.id == logId ? e.copyWith(canUndo: enabled) : e)
+          .toList();
+      _arrivals = _arrivals
+          .map((e) => e.id == logId ? e.copyWith(canUndo: enabled) : e)
+          .toList();
+      _inventories = _inventories
+          .map((e) => e.id == logId ? e.copyWith(canUndo: enabled) : e)
+          .toList();
+    });
+  }
+
+  Future<void> _undoLog(_LogRow row) async {
+    if ((row.itemId ?? '').isEmpty) {
+      _showSnack('Невозможно определить позицию для отмены', error: true);
+      return;
+    }
+
+    _setUndoEnabled(row.id, false);
+    final provider = context.read<WarehouseProvider>();
+
+    try {
+      switch (row.action) {
+        case WarehouseLogAction.writeoff:
+          await provider.cancelWriteoff(
+            logId: row.id,
+            itemId: row.itemId!,
+            qty: row.quantity,
+            typeHint: widget.type,
+            sourceTable: row.sourceTable,
+          );
+          _showSnack('Списание отменено');
+          break;
+        case WarehouseLogAction.arrival:
+          await provider.cancelArrival(
+            logId: row.id,
+            itemId: row.itemId!,
+            qty: row.quantity,
+            typeHint: widget.type,
+            sourceTable: row.sourceTable,
+          );
+          _showSnack('Приход отменён');
+          break;
+        case WarehouseLogAction.inventory:
+          await provider.cancelInventory(
+            logId: row.id,
+            itemId: row.itemId!,
+            qty: row.quantity,
+            typeHint: widget.type,
+            sourceTable: row.sourceTable,
+          );
+          _showSnack('Инвентаризация отменена');
+          break;
+        default:
+          _showSnack('Тип действия не поддерживается', error: true);
+      }
+      await _loadAll();
+    } catch (e) {
+      _setUndoEnabled(row.id, true);
+      _showSnack(e.toString().replaceFirst('Exception: ', ''), error: true);
+    }
   }
 }
 
@@ -2214,6 +2296,9 @@ class _LogRow {
   final String unit;
   final String dateIso;
 
+  final String? itemId;
+  final String? sourceTable;
+  final WarehouseLogAction? action;
   final bool canUndo;
 
   final String? note;
@@ -2227,6 +2312,9 @@ class _LogRow {
     required this.quantity,
     required this.unit,
     required this.dateIso,
+    this.itemId,
+    this.sourceTable,
+    this.action,
     this.canUndo = false,
     this.note,
     this.format,
@@ -2241,6 +2329,9 @@ class _LogRow {
       quantity: quantity,
       unit: unit,
       dateIso: dateIso,
+      itemId: itemId,
+      sourceTable: sourceTable,
+      action: action,
       canUndo: canUndo ?? this.canUndo,
       note: note,
       format: format,
