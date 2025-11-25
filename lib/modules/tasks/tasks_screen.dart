@@ -420,6 +420,7 @@ class _TasksScreenState extends State<TasksScreen>
   final TextEditingController _chatController = TextEditingController();
   String? _selectedWorkplaceId;
   TaskModel? _selectedTask;
+  bool _detailsExpanded = true;
   final Map<String, String?> _formImageCache = {};
   final Map<String, Future<String?>> _formImagePending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
@@ -615,6 +616,7 @@ class _TasksScreenState extends State<TasksScreen>
       TaskModel task, TaskProvider provider, String userId) async {
     final alreadyAssigned = task.assignees.contains(userId);
     ExecutionMode? stageMode = _stageExecutionMode(task);
+    final bool isOwner = task.assignees.isNotEmpty && task.assignees.first == userId;
 
     if (stageMode == ExecutionMode.solo &&
         !alreadyAssigned &&
@@ -626,11 +628,19 @@ class _TasksScreenState extends State<TasksScreen>
       return;
     }
 
+    if (stageMode == ExecutionMode.joint && task.assignees.isNotEmpty && !isOwner) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Добавлять помощников может только основной исполнитель.')));
+      }
+      return;
+    }
+
     if (stageMode == null) {
       final mode = await _askExecMode(context,
-          initial: ExecutionMode.solo,
+          initial: ExecutionMode.separate,
           allowSolo: task.assignees.isEmpty,
-          allowJoint: true,
+          allowJoint: isOwner,
           allowSeparate: true);
       if (mode == null) return;
       stageMode = mode;
@@ -1430,7 +1440,6 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Column(
@@ -1445,64 +1454,101 @@ class _TasksScreenState extends State<TasksScreen>
                     ),
                     SizedBox(height: smallSpacing),
                     const Text('Детали производственного задания'),
-                    SizedBox(height: mediumSpacing),
-                    if (generalSection.isNotEmpty)
-                      section('Основное', generalSection),
-                    if (productSection.isNotEmpty)
-                      section('Продукт', productSection),
-                    if (materialSection.isNotEmpty)
-                      section('Материал', materialSection),
-                    if (equipmentSection.isNotEmpty)
-                      section('Комплектация', equipmentSection),
-                    if (formSection.isNotEmpty) formSectionWidget(),
-                    if (hasPdf)
-                      section('Файлы', [
-                        Row(
-                          children: [
-                            const Icon(Icons.picture_as_pdf_outlined,
-                                size: 16, color: Colors.redAccent),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                'PDF: ${order.pdfUrl!}',
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: scaled(13)),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () async {
-                                final url = await getSignedUrl(order.pdfUrl!);
-                                if (!context.mounted) return;
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => PdfViewScreen(
-                                        url: url, title: 'PDF заказа'),
-                                  ),
-                                );
-                              },
-                              child: const Text('Открыть'),
-                            ),
-                          ],
-                        ),
-                      ]),
                   ],
                 ),
               ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(height: scaled(36)),
-                    const Text('Этап производства',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    Text(stage.name, style: TextStyle(fontSize: scaled(14))),
-                  ],
-                ),
+              IconButton(
+                onPressed: () => setState(() {
+                  _detailsExpanded = !_detailsExpanded;
+                }),
+                icon: Icon(
+                    _detailsExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: Colors.black87),
+                tooltip:
+                    _detailsExpanded ? 'Свернуть детали' : 'Развернуть детали',
               ),
             ],
           ),
-          SizedBox(height: mediumSpacing),
-          _buildStageList(order, scale),
+          AnimatedCrossFade(
+            firstChild: const SizedBox.shrink(),
+            secondChild: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(height: mediumSpacing),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (generalSection.isNotEmpty)
+                            section('Основное', generalSection),
+                          if (productSection.isNotEmpty)
+                            section('Продукт', productSection),
+                          if (materialSection.isNotEmpty)
+                            section('Материал', materialSection),
+                          if (equipmentSection.isNotEmpty)
+                            section('Комплектация', equipmentSection),
+                          if (formSection.isNotEmpty) formSectionWidget(),
+                          if (hasPdf)
+                            section('Файлы', [
+                              Row(
+                                children: [
+                                  const Icon(Icons.picture_as_pdf_outlined,
+                                      size: 16, color: Colors.redAccent),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'PDF: ${order.pdfUrl!}',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(fontSize: scaled(13)),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      final url = await getSignedUrl(order.pdfUrl!);
+                                      if (!context.mounted) return;
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => PdfViewScreen(
+                                              url: url, title: 'PDF заказа'),
+                                        ),
+                                      );
+                                    },
+                                    child: const Text('Открыть'),
+                                  ),
+                                ],
+                              ),
+                            ]),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(height: scaled(36)),
+                          const Text('Этап производства',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(stage.name,
+                              style: TextStyle(fontSize: scaled(14))),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: mediumSpacing),
+                _buildStageList(order, scale),
+              ],
+            ),
+            crossFadeState: _detailsExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 200),
+          ),
         ],
       ),
     );
@@ -1601,6 +1647,52 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
+  bool _allPerformersFinished(TaskModel task) {
+    if (task.assignees.isEmpty) return false;
+    final mode = _stageExecutionMode(task);
+    if (mode == ExecutionMode.joint) {
+      final ownerId = task.assignees.first;
+      return _userRunState(task, ownerId) == UserRunState.finished;
+    }
+
+    final performers = task.assignees.where((id) {
+      final execMode = _execModeForUser(task, id);
+      return execMode == ExecutionMode.separate || execMode == ExecutionMode.solo;
+    }).toList();
+    if (performers.isEmpty) return false;
+
+    return performers
+        .every((uid) => _userRunState(task, uid) == UserRunState.finished);
+  }
+
+  bool _canFinalizeTask(TaskModel task) {
+    if (task.status == TaskStatus.completed) return false;
+    if (_anyUserActive(task)) return false;
+    if (!_allPerformersFinished(task)) return false;
+    return true;
+  }
+
+  Future<void> _finalizeTask(TaskModel task) async {
+    final tp = context.read<TaskProvider>();
+    final latest = tp.tasks.firstWhere(
+      (t) => t.id == task.id,
+      orElse: () => task,
+    );
+    final secs = _elapsed(latest).inSeconds;
+    await tp.updateStatus(task.id, TaskStatus.completed,
+        spentSeconds: secs, startedAt: null);
+
+    if (!mounted) return;
+    final note = await _askFinishNote();
+    if (note != null && note.isNotEmpty) {
+      await tp.addCommentAutoUser(
+          taskId: task.id,
+          type: 'finish_note',
+          text: note,
+          userIdOverride: widget.employeeId);
+    }
+  }
+
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
       TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
@@ -1671,6 +1763,7 @@ class _TasksScreenState extends State<TasksScreen>
         !shiftPaused;
     final bool canProblem =
         task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
+    final bool canFinalizeTask = _canFinalizeTask(task);
     final Widget panel = Container(
       padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
@@ -1994,7 +2087,7 @@ class _TasksScreenState extends State<TasksScreen>
                       final qtyText = qtyInput.displayText;
                       final taskProvider = context.read<TaskProvider>();
                       if (jointGroup != null) {
-                        // JOINT: split quantity and COMPLETE immediately
+                        // JOINT: split quantity between team without мгновенного завершения
                         final per =
                             (qty / (jointGroup.isEmpty ? 1 : jointGroup.length))
                                 .floor();
@@ -2018,24 +2111,6 @@ class _TasksScreenState extends State<TasksScreen>
                             type: 'user_done',
                             text: 'done',
                             userIdOverride: widget.employeeId);
-                        final latestTask = taskProvider.tasks.firstWhere(
-                          (t) => t.id == task.id,
-                          orElse: () => task,
-                        );
-                        final _secs = _elapsed(latestTask).inSeconds;
-                        await taskProvider.updateStatus(
-                            task.id, TaskStatus.completed,
-                            spentSeconds: _secs, startedAt: null);
-                        if (!mounted) return;
-                        final note = await _askFinishNote();
-                        if (note != null && note.isNotEmpty) {
-                          await taskProvider.addCommentAutoUser(
-                              taskId: task.id,
-                              type: 'finish_note',
-                              text: note,
-                              userIdOverride: widget.employeeId);
-                        }
-                        return;
                       } else {
                         // SEPARATE: write personal qty, require ALL separate-mode assignees to finish
                         await taskProvider.addCommentAutoUser(
@@ -2076,19 +2151,7 @@ class _TasksScreenState extends State<TasksScreen>
                           }
                         }
                         if (allDone) {
-                          final _secs = _elapsed(latestTask).inSeconds;
-                          await taskProvider.updateStatus(
-                              task.id, TaskStatus.completed,
-                              spentSeconds: _secs, startedAt: null);
-                          if (!mounted) return;
-                          final note = await _askFinishNote();
-                          if (note != null && note.isNotEmpty) {
-                            await taskProvider.addCommentAutoUser(
-                                taskId: task.id,
-                                type: 'finish_note',
-                                text: note,
-                                userIdOverride: widget.employeeId);
-                          }
+                          // ждём финального подтверждения кнопкой внизу панели
                         } else {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -2097,6 +2160,16 @@ class _TasksScreenState extends State<TasksScreen>
                                         'Ожидаем завершения остальных исполнителей (отдельный режим)…')));
                           }
                         }
+                      }
+
+                      final latestTask = taskProvider.tasks.firstWhere(
+                        (t) => t.id == task.id,
+                        orElse: () => task,
+                      );
+                      if (!_anyUserActive(latestTask)) {
+                        final _secs = _elapsed(latestTask).inSeconds;
+                        await taskProvider.updateStatus(task.id, TaskStatus.paused,
+                            spentSeconds: _secs, startedAt: null);
                       }
                     }
 
@@ -2318,7 +2391,10 @@ class _TasksScreenState extends State<TasksScreen>
                 },
               ),
               _AssignedEmployeesRow(
-                  task: task, scale: scale, compact: isTablet),
+                  task: task,
+                  scale: scale,
+                  compact: isTablet,
+                  currentUserId: widget.employeeId),
               SizedBox(height: scaled(8)),
               Text('Комментарии к этапу',
                   style: TextStyle(
@@ -2479,6 +2555,17 @@ class _TasksScreenState extends State<TasksScreen>
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade600,
+                  ),
+                  onPressed: canFinalizeTask ? () => _finalizeTask(task) : null,
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Завершить'),
+                ),
+              ),
             ],
           ),
         ],
@@ -3146,13 +3233,21 @@ class _AssignedEmployeesRow extends StatelessWidget {
   final TaskModel task;
   final double scale;
   final bool compact;
+  final String currentUserId;
   const _AssignedEmployeesRow(
-      {required this.task, required this.scale, this.compact = false});
+      {required this.task,
+      required this.scale,
+      this.compact = false,
+      required this.currentUserId});
 
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.read<TaskProvider>();
+    final stageMode = _stageExecutionMode(task);
+    final bool isOwner =
+        task.assignees.isNotEmpty && task.assignees.first == currentUserId;
+    final bool canAddHelper = isOwner && stageMode != ExecutionMode.solo;
 
     double scaled(double value) => value * scale;
     final double spacing = scaled(compact ? 6 : 8);
@@ -3174,17 +3269,35 @@ class _AssignedEmployeesRow extends StatelessWidget {
       return '${emp.firstName} ${emp.lastName}'.trim();
     }).toList();
 
-    Future<void> _addAssignee() async {
+    Future<void> _addHelper() async {
+      if (!isOwner) return;
+
+      if (stageMode == ExecutionMode.solo) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Нельзя добавить помощника в одиночном режиме.')));
+        return;
+      }
+
+      if (stageMode != null && stageMode != ExecutionMode.joint) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Помощники доступны только в совместном режиме.')));
+        return;
+      }
+
       final available = personnel.employees
           .where((e) => !task.assignees.contains(e.id))
           .toList();
-      if (available.isEmpty) return;
+      if (available.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Нет свободных сотрудников для помощи.')));
+        return;
+      }
 
       String? selectedId;
       await showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Назначить сотрудника'),
+          title: const Text('Добавить помощника'),
           content: DropdownButtonFormField<String>(
             items: [
               for (final e in available)
@@ -3202,76 +3315,34 @@ class _AssignedEmployeesRow extends StatelessWidget {
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Назначить'),
+              child: const Text('Добавить'),
             ),
           ],
         ),
       );
 
       if (selectedId != null) {
-        // Capacity check for manual assignment
-        final personnelProv = context.read<PersonnelProvider>();
-        final stage = personnelProv.workplaces.firstWhere(
+        final stage = personnel.workplaces.firstWhere(
           (w) => w.id == task.stageId,
           orElse: () => WorkplaceModel(id: '', name: '', positionIds: const []),
         );
         final dynamic rawCap = (stage as dynamic).maxConcurrentWorkers;
         final int cap = (rawCap is num ? rawCap.toInt() : 1);
         final int effCap = cap <= 0 ? 1 : cap;
-        // active is sum of assignees across all related tasks (including this one)
-        final tp = context.read<TaskProvider>();
-        final int active = tp.tasks
-            .where((t) =>
-                t.orderId == task.orderId &&
-                t.stageId == task.stageId &&
-                t.status == TaskStatus.inProgress)
-            .fold<int>(
-                0,
-                (sum, t) =>
-                    sum + (t.assignees.isEmpty ? 1 : t.assignees.length));
+        final int active = _activeExecutorsCountForStage(taskProvider, task);
         if (active + 1 > effCap) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Нет свободных мест на рабочем месте')),
+            const SnackBar(content: Text('Нет свободных мест на рабочем месте')),
           );
-          return;
-        }
-        ExecutionMode? stageMode = _stageExecutionMode(task);
-        if (stageMode == ExecutionMode.solo && task.assignees.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text(
-                  'Этап выполняется одним сотрудником. Добавить ещё исполнителя нельзя.')));
           return;
         }
 
-        ExecutionMode? selectedMode = stageMode;
-        if (task.assignees.isEmpty) {
-          final mode = await _askExecMode(context,
-              initial: ExecutionMode.solo,
-              allowSolo: true,
-              allowJoint: true,
-              allowSeparate: true);
-          if (mode == null) return;
-          selectedMode = mode;
+        if (stageMode != ExecutionMode.joint) {
           await taskProvider.addComment(
             taskId: task.id,
             type: 'exec_mode_stage',
-            text: _executionModeCode(mode),
-            userId: selectedId!,
-          );
-        } else if (selectedMode == null) {
-          final mode = await _askExecMode(context,
-              initial: ExecutionMode.separate,
-              allowSolo: false,
-              allowJoint: true,
-              allowSeparate: true);
-          if (mode == null) return;
-          selectedMode = mode;
-          await taskProvider.addComment(
-            taskId: task.id,
-            type: 'exec_mode_stage',
-            text: _executionModeCode(mode),
-            userId: selectedId!,
+            text: _executionModeCode(ExecutionMode.joint),
+            userId: currentUserId,
           );
         }
 
@@ -3279,15 +3350,21 @@ class _AssignedEmployeesRow extends StatelessWidget {
           ..add(selectedId!);
         await taskProvider.updateAssignees(task.id, newAssignees);
 
-        if (selectedMode != null &&
-            _needsExecModeRecord(task, selectedId!, selectedMode)) {
+        if (_needsExecModeRecord(task, selectedId!, ExecutionMode.joint)) {
           await taskProvider.addComment(
             taskId: task.id,
             type: 'exec_mode',
-            text: _executionModeCode(selectedMode),
+            text: _executionModeCode(ExecutionMode.joint),
             userId: selectedId!,
           );
         }
+
+        await taskProvider.addCommentAutoUser(
+          taskId: task.id,
+          type: 'joined',
+          text: 'Присоединился(лась) к этапу',
+          userIdOverride: selectedId!,
+        );
       }
     }
 
@@ -3334,7 +3411,18 @@ class _AssignedEmployeesRow extends StatelessWidget {
                 ),
             ],
           ),
-        )
+        ),
+        if (canAddHelper)
+          Padding(
+            padding: EdgeInsets.only(left: scaled(6)),
+            child: IconButton(
+              visualDensity:
+                  const VisualDensity(horizontal: -2, vertical: -2),
+              icon: const Icon(Icons.add_circle_outline),
+              tooltip: 'Добавить помощника',
+              onPressed: _addHelper,
+            ),
+          ),
       ],
     );
   }
