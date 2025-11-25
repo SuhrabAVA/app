@@ -422,6 +422,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
     return entries
         .map((entry) => _LogRow(
+              itemId: entry.itemId,
               id: entry.id,
               description: entry.description,
               quantity: entry.quantity.toDouble(),
@@ -431,6 +432,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               format: entry.format,
               grammage: entry.grammage,
               byName: entry.byName,
+              sourceTable: entry.sourceTable,
             ))
         .toList();
   }
@@ -1316,6 +1318,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действия')),
     ];
 
     return Padding(
@@ -1340,6 +1343,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(IconButton(
+                        icon: const Icon(Icons.undo),
+                        tooltip: 'Отменить списание',
+                        onPressed:
+                            r.itemId == null ? null : () => _cancelWriteoff(r),
+                      )),
                     ];
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
@@ -1365,6 +1374,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действия')),
     ];
 
     return Padding(
@@ -1389,6 +1399,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(IconButton(
+                        icon: const Icon(Icons.undo),
+                        tooltip: 'Отменить приход',
+                        onPressed:
+                            r.itemId == null ? null : () => _cancelArrival(r),
+                      )),
                     ];
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
@@ -1414,6 +1430,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Заметка')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действия')),
     ];
 
     return Padding(
@@ -1438,6 +1455,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(IconButton(
+                        icon: const Icon(Icons.undo),
+                        tooltip: 'Отменить инвентаризацию',
+                        onPressed:
+                            r.itemId == null ? null : () => _cancelInventory(r),
+                      )),
                     ];
                     return DataRow(color: warehouseRowHoverColor, cells: cells);
                   }),
@@ -2076,9 +2099,88 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     // TODO: сюда можно добавить проверку порогов и показ SnackBar/диалога.
     // Метод оставлен пустым намеренно, чтобы убрать ошибку "не определён".
   }
+
+  void _showSnack(String message, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Colors.red.shade700 : null,
+      ),
+    );
+  }
+
+  Future<void> _cancelWriteoff(_LogRow row) async {
+    if (row.itemId == null || row.itemId!.isEmpty) {
+      _showSnack('Невозможно определить позицию для отмены', error: true);
+      return;
+    }
+    final provider = context.read<WarehouseProvider>();
+    try {
+      await provider.cancelWriteoff(
+        logId: row.id,
+        itemId: row.itemId!,
+        qty: row.quantity,
+        typeHint: widget.type,
+        sourceTable: row.sourceTable,
+      );
+      if (!mounted) return;
+      await _loadAll();
+      if (!mounted) return;
+      _showSnack('Списание отменено');
+    } catch (e) {
+      _showSnack(e.toString().replaceFirst('Exception: ', ''), error: true);
+    }
+  }
+
+  Future<void> _cancelArrival(_LogRow row) async {
+    if (row.itemId == null || row.itemId!.isEmpty) {
+      _showSnack('Невозможно определить позицию для отмены', error: true);
+      return;
+    }
+    final provider = context.read<WarehouseProvider>();
+    try {
+      await provider.cancelArrival(
+        logId: row.id,
+        itemId: row.itemId!,
+        qty: row.quantity,
+        typeHint: widget.type,
+        sourceTable: row.sourceTable,
+      );
+      if (!mounted) return;
+      await _loadAll();
+      if (!mounted) return;
+      _showSnack('Приход отменён');
+    } catch (e) {
+      _showSnack(e.toString().replaceFirst('Exception: ', ''), error: true);
+    }
+  }
+
+  Future<void> _cancelInventory(_LogRow row) async {
+    if (row.itemId == null || row.itemId!.isEmpty) {
+      _showSnack('Невозможно определить позицию для отмены', error: true);
+      return;
+    }
+    final provider = context.read<WarehouseProvider>();
+    try {
+      await provider.cancelInventory(
+        logId: row.id,
+        itemId: row.itemId!,
+        qty: row.quantity,
+        typeHint: widget.type,
+        sourceTable: row.sourceTable,
+      );
+      if (!mounted) return;
+      await _loadAll();
+      if (!mounted) return;
+      _showSnack('Инвентаризация отменена');
+    } catch (e) {
+      _showSnack(e.toString().replaceFirst('Exception: ', ''), error: true);
+    }
+  }
 }
 
 class _LogRow {
+  final String? itemId;
   final String id;
   final String description;
   final double quantity;
@@ -2088,8 +2190,10 @@ class _LogRow {
   final String? format;
   final String? grammage;
   final String? byName;
+  final String? sourceTable;
 
   const _LogRow({
+    this.itemId,
     required this.id,
     required this.description,
     required this.quantity,
@@ -2099,5 +2203,6 @@ class _LogRow {
     this.format,
     this.grammage,
     this.byName,
+    this.sourceTable,
   });
 }

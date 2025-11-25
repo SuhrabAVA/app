@@ -108,6 +108,22 @@ class WarehouseProvider with ChangeNotifier {
     'pens': {'table': 'warehouse_pens_arrivals', 'fk': 'item_id', 'qty': 'qty'},
   };
 
+  static const Map<String, Map<String, String>> _woMap = {
+    'paint': {'table': 'paints_writeoffs', 'fk': 'paint_id', 'qty': 'qty'},
+    'material': {
+      'table': 'materials_writeoffs',
+      'fk': 'material_id',
+      'qty': 'qty'
+    },
+    'paper': {'table': 'papers_writeoffs', 'fk': 'paper_id', 'qty': 'qty'},
+    'stationery': {
+      'table': 'warehouse_stationery_writeoffs',
+      'fk': 'item_id',
+      'qty': 'qty'
+    },
+    'pens': {'table': 'warehouse_pens_writeoffs', 'fk': 'item_id', 'qty': 'qty'},
+  };
+
   static const Map<String, Map<String, String>> _invMap = {
     'paint': {
       'table': 'paints_inventories',
@@ -1293,6 +1309,24 @@ class WarehouseProvider with ChangeNotifier {
     return base.where((e) => seen.add(e)).toList();
   }
 
+  List<String> _writeoffTables(String typeKey) {
+    final hint = _woMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
+      if (typeKey == 'pens') 'warehouse_pens_writeoffs',
+      if (typeKey == 'pens' &&
+          _resolvedPensTable != null &&
+          _resolvedPensTable != 'warehouse_pens')
+        '${_resolvedPensTable}_writeoffs',
+      if (typeKey == 'paper') 'papers_writeoffs',
+      if (typeKey == 'paint') 'paints_writeoffs',
+      if (typeKey == 'material') 'materials_writeoffs',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
   List<String> _inventoryTables(String typeKey) {
     final hint = _invMap[typeKey]?['table'];
     final base = <String>[
@@ -1485,6 +1519,144 @@ class WarehouseProvider with ChangeNotifier {
         }
       }
     }
+  }
+
+  Future<double> _fetchCurrentQuantity(String typeKey, String itemId) async {
+    final baseTable = _tableByType(typeKey);
+    try {
+      var query = _sb.from(baseTable).select('quantity').eq('id', itemId).limit(1);
+      if (typeKey == 'stationery') {
+        query = query.eq('table_key', _stationeryKey);
+      }
+      final row = await query.maybeSingle();
+      final value = row?['quantity'];
+      return value is num ? value.toDouble() : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<bool> _deleteLogFromTables(
+    List<String> tables,
+    String logId, {
+    bool useStationeryKey = false,
+  }) async {
+    for (final table in tables) {
+      try {
+        var query = _sb.from(table).delete().eq('id', logId);
+        if (useStationeryKey && _tableRequiresStationeryKey(table)) {
+          query = query.eq('table_key', _stationeryKey);
+        }
+        final response = await query.select();
+        if (_hasAffectedRows(response)) {
+          return true;
+        }
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  Future<void> cancelWriteoff({
+    required String logId,
+    required String itemId,
+    required double qty,
+    required String typeHint,
+    String? sourceTable,
+  }) async {
+    await _ensureAuthed();
+    final typeKey = _normalizeType(typeHint) ?? typeHint;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+
+    final currentQty = await _fetchCurrentQuantity(typeKey, itemId);
+    final baseTable = _tableByType(typeKey);
+    var updateQuery =
+        _sb.from(baseTable).update({'quantity': currentQty + qty}).eq('id', itemId);
+    if (typeKey == 'stationery') {
+      updateQuery = updateQuery.eq('table_key', _stationeryKey);
+    }
+    await updateQuery;
+
+    final tables = <String>[
+      if (sourceTable != null) sourceTable,
+      ..._writeoffTables(typeKey),
+    ];
+    final deleted =
+        await _deleteLogFromTables(tables, logId, useStationeryKey: true);
+    if (!deleted) {
+      throw Exception('Не удалось удалить запись списания');
+    }
+
+    _invalidateLogsForType(typeKey);
+    await fetchTmc();
+  }
+
+  Future<void> cancelArrival({
+    required String logId,
+    required String itemId,
+    required double qty,
+    required String typeHint,
+    String? sourceTable,
+  }) async {
+    await _ensureAuthed();
+    final typeKey = _normalizeType(typeHint) ?? typeHint;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+
+    final currentQty = await _fetchCurrentQuantity(typeKey, itemId);
+    if (qty > currentQty + 1e-9) {
+      throw Exception('Недостаточно материала для отмены приходов');
+    }
+
+    final baseTable = _tableByType(typeKey);
+    var updateQuery =
+        _sb.from(baseTable).update({'quantity': currentQty - qty}).eq('id', itemId);
+    if (typeKey == 'stationery') {
+      updateQuery = updateQuery.eq('table_key', _stationeryKey);
+    }
+    await updateQuery;
+
+    final tables = <String>[
+      if (sourceTable != null) sourceTable,
+      ..._arrivalTables(typeKey),
+    ];
+    final deleted =
+        await _deleteLogFromTables(tables, logId, useStationeryKey: true);
+    if (!deleted) {
+      throw Exception('Не удалось удалить запись прихода');
+    }
+
+    _invalidateLogsForType(typeKey);
+    await fetchTmc();
+  }
+
+  Future<void> cancelInventory({
+    required String logId,
+    required String itemId,
+    required double qty,
+    required String typeHint,
+    String? sourceTable,
+  }) async {
+    await _ensureAuthed();
+    final typeKey = _normalizeType(typeHint) ?? typeHint;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+
+    final tables = <String>[
+      if (sourceTable != null) sourceTable,
+      ..._inventoryTables(typeKey),
+    ];
+    final deleted =
+        await _deleteLogFromTables(tables, logId, useStationeryKey: true);
+    if (!deleted) {
+      throw Exception('Не удалось удалить запись инвентаризации');
+    }
+
+    _invalidateLogsForType(typeKey);
+    await fetchTmc();
   }
 
   // ===================== HELPERS =====================
