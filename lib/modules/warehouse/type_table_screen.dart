@@ -402,17 +402,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
     final items = provider.getTmcByType(widget.type);
     final typeKey = _normalizeType(widget.type);
-    final bundle = provider.logsBundle(typeKey);
+    final bundle = await provider.fetchLogsBundle(typeKey, forceRefresh: true);
 
-    final writeoffs = bundle != null
-        ? _mapBundleLogs(bundle.writeoffs)
-        : await _fetchWriteoffs(typeKey);
-    final inventories = bundle != null
-        ? _mapBundleLogs(bundle.inventories)
-        : await _fetchInventories(typeKey);
-    final arrivals = bundle != null
-        ? _mapBundleLogs(bundle.arrivals)
-        : await _fetchArrivals(typeKey);
+    final writeoffs = _mapBundleLogs(bundle.writeoffs);
+    final inventories = _mapBundleLogs(bundle.inventories);
+    final arrivals = _mapBundleLogs(bundle.arrivals);
 
     if (!mounted) return;
     setState(() {
