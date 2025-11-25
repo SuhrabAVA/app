@@ -462,9 +462,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final bases = _baseTables(typeKey);
       final woTables = _writeoffTables(typeKey);
       final invTables = _inventoryTables(typeKey);
+      final arrTables = _arrivalTables(typeKey);
 
       final ch = s.channel('wh_${DateTime.now().millisecondsSinceEpoch}');
-      for (final t in [...bases, ...woTables, ...invTables]) {
+      for (final t in [...bases, ...woTables, ...invTables, ...arrTables]) {
         ch.onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
