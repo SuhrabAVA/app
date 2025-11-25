@@ -1069,10 +1069,13 @@ class _TasksScreenState extends State<TasksScreen>
 
       return LayoutBuilder(
         builder: (context, constraints) {
+          final double minHeight =
+              constraints.hasBoundedHeight ? constraints.maxHeight : 0;
+
           return SingleChildScrollView(
             padding: EdgeInsets.zero,
             child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              constraints: BoxConstraints(minHeight: minHeight),
               child: content,
             ),
           );
