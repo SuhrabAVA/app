@@ -155,6 +155,28 @@ UserRunState _userRunState(TaskModel task, String userId) {
   }
 }
 
+List<TaskModel> _relatedTasks(TaskProvider provider, TaskModel pivot) {
+  return provider.tasks
+      .where((t) => t.orderId == pivot.orderId && t.stageId == pivot.stageId)
+      .toList();
+}
+
+int _activeExecutorsCountForStage(TaskProvider provider, TaskModel pivot) {
+  final related = _relatedTasks(provider, pivot);
+  int count = 0;
+  for (final t in related) {
+    if (t.status == TaskStatus.inProgress) {
+      final a = t.assignees.isEmpty
+          ? (t.status == TaskStatus.inProgress ? 1 : 0)
+          : t.assignees
+              .where((uid) => _userRunState(t, uid) == UserRunState.active)
+              .length;
+      count += a;
+    }
+  }
+  return count;
+}
+
 Duration _userElapsed(TaskModel task, String userId) {
   final events = task.comments
       .where((c) =>
@@ -2986,12 +3008,6 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  List<TaskModel> _relatedTasks(TaskProvider provider, TaskModel pivot) {
-    return provider.tasks
-        .where((t) => t.orderId == pivot.orderId && t.stageId == pivot.stageId)
-        .toList();
-  }
-
   List<_StageComment> _collectOrderComments(
       TaskProvider provider, TaskModel pivot) {
     final cache =
@@ -3113,21 +3129,6 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  int _activeExecutorsCountForStage(TaskProvider provider, TaskModel pivot) {
-    final related = _relatedTasks(provider, pivot);
-    int count = 0;
-    for (final t in related) {
-      if (t.status == TaskStatus.inProgress) {
-        final a = t.assignees.isEmpty
-            ? (t.status == TaskStatus.inProgress ? 1 : 0)
-            : t.assignees
-                .where((uid) => _userRunState(t, uid) == UserRunState.active)
-                .length;
-        count += a;
-      }
-    }
-    return count;
-  }
 }
 
 class _TaskCard extends StatelessWidget {
