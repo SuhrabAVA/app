@@ -435,6 +435,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _lengthExceeded = false;
   // Краски (мультисекция)
   final List<_PaintEntry> _paints = <_PaintEntry>[];
+  String _paintInfo = '';
+  final TextEditingController _paintInfoController = TextEditingController();
   bool _paintsRestored = false;
   bool _fetchedOrderForm = false;
   // Форма: использование старой формы или создание новой
@@ -593,7 +595,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _stockExtraQtyTouched = _stockExtraSelectedQty != null;
     _updateStockExtraQtyController();
     // ensure at least one paint row only for new orders (not editing)
-    if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
+    if (_paints.isEmpty && widget.order == null)
+      _paints.add(_PaintEntry(memo: _paintInfo));
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -978,8 +981,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final hasTmc = paint.tmc != null;
       final hasName = paint.displayName.trim().isNotEmpty;
       final hasQty = paint.qtyGrams != null;
-      final hasMemo = paint.memo.trim().isNotEmpty;
-      if (hasTmc || hasName || hasQty || hasMemo) {
+      if (hasTmc || hasName || hasQty) {
         return true;
       }
     }
@@ -994,6 +996,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     } else if (filled) {
       _scheduleStagePreviewUpdate();
     }
+  }
+
+  String _deriveSharedPaintInfo(List<_PaintEntry> paints) {
+    for (final paint in paints) {
+      final memo = paint.memo.trim();
+      if (memo.isNotEmpty) {
+        return memo;
+      }
+    }
+    return '';
   }
 
   String? _formatGramsForInput(double? grams) {
@@ -1231,6 +1243,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   void dispose() {
     _customerController.dispose();
     _commentsController.dispose();
+    _paintInfoController.dispose();
 
     _formSearchDebounce?.cancel();
     _formSearchFocusNode.dispose();
@@ -1490,10 +1503,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     }
     if (restored.isNotEmpty) {
+      final sharedInfo = _deriveSharedPaintInfo(restored);
       setState(() {
         _paints
           ..clear()
           ..addAll(restored);
+        _paintInfo = sharedInfo;
+        for (final paint in _paints) {
+          paint.memo = sharedInfo;
+        }
+        _paintInfoController.value = TextEditingValue(
+          text: sharedInfo,
+          selection: TextSelection.collapsed(offset: sharedInfo.length),
+        );
         _paintsRestored = true;
       });
       _handlePaintsChanged();
@@ -1514,6 +1536,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // 2) Строим список строк и записей для order_paints
     final rows = <Map<String, dynamic>>[];
     final infos = <String>[];
+    final sharedInfo = _paintInfo.trim();
     for (final row in _paints) {
       final name = (row.tmc?.description ?? row.name)?.trim();
       final qtyGrams = row.qtyGrams ?? 0;
@@ -1521,12 +1544,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       rows.add({
         'order_id': orderId,
         'name': name,
-        'info': row.memo.isNotEmpty ? row.memo : null,
+        'info': sharedInfo.isNotEmpty ? sharedInfo : null,
         'qty_kg': row.qtyKg, // может быть null
       });
       if (qtyGrams > 0) {
         infos.add(
-            'Краска: $name ${_formatGrams(qtyGrams)}${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
+            'Краска: $name ${_formatGrams(qtyGrams)}${sharedInfo.isNotEmpty ? ' ($sharedInfo)' : ''}');
       }
     }
 
@@ -1582,10 +1605,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   _PaintEntry(name: name, qtyGrams: grams, memo: memo));
             }
           }
+          final sharedInfo = _deriveSharedPaintInfo(restored);
           setState(() {
             _paints
               ..clear()
               ..addAll(restored.isNotEmpty ? restored : _paints);
+            _paintInfo = sharedInfo;
+            for (final paint in _paints) {
+              paint.memo = sharedInfo;
+            }
+            _paintInfoController.value = TextEditingValue(
+              text: sharedInfo,
+              selection: TextSelection.collapsed(offset: sharedInfo.length),
+            );
             _paintsRestored = true;
           });
           _handlePaintsChanged();
@@ -3793,6 +3825,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       context: context,
       title: 'Краски',
       children: [
+        TextFormField(
+          controller: _paintInfoController,
+          decoration: const InputDecoration(
+            labelText: 'Информация для красок',
+            hintText: 'Комментарий применяется ко всем краскам',
+            border: OutlineInputBorder(),
+          ),
+          minLines: 1,
+          maxLines: 3,
+          onChanged: (value) {
+            final normalized = value.trim();
+            setState(() {
+              _paintInfo = normalized;
+              for (final paint in _paints) {
+                paint.memo = normalized;
+              }
+            });
+          },
+        ),
+        const SizedBox(height: 12),
         ...List.generate(_paints.length, (i) {
           final row = _paints[i];
           return Padding(
@@ -3885,20 +3937,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     },
                   ),
                 ),
-                const SizedBox(width: 8),
-                // Мелкая ячейка для пометок (напр. "1*2 4*0")
-                SizedBox(
-                  width: 100,
-                  child: TextFormField(
-                    key: ValueKey('memo_\${i}'),
-                    initialValue: row.memo,
-                    decoration: const InputDecoration(
-                      labelText: 'Инфо',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (v) => setState(() => row.memo = v.trim()),
-                  ),
-                ),
                 const SizedBox(width: 12),
                 // Кол-во (г)
                 SizedBox(
@@ -3945,7 +3983,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             onPressed: () {
-              setState(() => _paints.add(_PaintEntry()));
+              setState(() => _paints.add(_PaintEntry(memo: _paintInfo)));
               _handlePaintsChanged();
             },
             icon: const Icon(Icons.add),
