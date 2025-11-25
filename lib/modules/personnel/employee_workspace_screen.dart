@@ -407,7 +407,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
         toolbarHeight: isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight),
       ),
     );
-    final double tabBarHeight = isCompactTablet ? 42 : (isTablet ? 46 : 48);
+    final double tabBarHeight = isCompactTablet ? 34 : (isTablet ? 36 : 38);
 
     return MediaQuery(
       data: mediaData,
@@ -423,15 +423,16 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: TabBar(
                   indicatorSize: TabBarIndicatorSize.label,
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                  indicatorPadding: EdgeInsets.zero,
                   labelStyle: Theme.of(context)
                       .textTheme
                       .labelLarge
-                      ?.copyWith(fontSize: isCompactTablet ? 12 : 13, fontWeight: FontWeight.w600),
+                      ?.copyWith(fontSize: isCompactTablet ? 11 : 12, fontWeight: FontWeight.w600),
                   unselectedLabelStyle: Theme.of(context)
                       .textTheme
                       .labelMedium
-                      ?.copyWith(fontSize: isCompactTablet ? 11 : 12, fontWeight: FontWeight.w500),
+                      ?.copyWith(fontSize: isCompactTablet ? 10 : 11, fontWeight: FontWeight.w500),
                   tabs: const [
                     Tab(text: 'Список заданий'),
                     Tab(text: 'Задание'),
