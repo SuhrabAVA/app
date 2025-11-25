@@ -112,7 +112,7 @@ class WarehouseLogsRepository {
       'note': 'note'
     },
     'paper': {
-      'table': 'paper_writeoffs',
+      'table': 'papers_writeoffs',
       'fk': 'paper_id',
       'qty': 'qty',
       'note': 'note'
