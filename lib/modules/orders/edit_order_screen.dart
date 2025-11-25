@@ -47,13 +47,15 @@ class _PaintEntry {
   double? qtyGrams;
   String memo;
   bool exceeded;
+  bool nameNotFound;
 
   _PaintEntry(
       {this.tmc,
       this.name,
       this.qtyGrams,
       this.memo = '',
-      this.exceeded = false});
+      this.exceeded = false,
+      this.nameNotFound = false});
 
   String get displayName => tmc?.description ?? name ?? '';
   bool get hasName => displayName.trim().isNotEmpty;
@@ -998,6 +1000,44 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
+  void _validatePaintNames() {
+    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+    final paints = warehouse.getTmcByType('Краска');
+    setState(() {
+      for (final row in _paints) {
+        final input = row.displayName.trim();
+        if (input.isEmpty) {
+          row.nameNotFound = false;
+          row.tmc = null;
+          row.exceeded = false;
+          continue;
+        }
+
+        TmcModel? match;
+        for (final paint in paints) {
+          if (paint.description.trim().toLowerCase() == input.toLowerCase()) {
+            match = paint;
+            break;
+          }
+        }
+        row.tmc = match;
+        row.nameNotFound = match == null;
+        if (match != null && row.qtyGrams != null) {
+          row.exceeded = _gramsToStockUnit(row.qtyGrams!, match) > match.quantity;
+        } else if (match == null) {
+          row.exceeded = false;
+        }
+      }
+    });
+  }
+
+  bool _hasInvalidPaintNames() {
+    for (final paint in _paints) {
+      if (paint.nameNotFound) return true;
+    }
+    return false;
+  }
+
   String _deriveSharedPaintInfo(List<_PaintEntry> paints) {
     for (final paint in paints) {
       final memo = paint.memo.trim();
@@ -1519,6 +1559,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _paintsRestored = true;
       });
       _handlePaintsChanged();
+      _validatePaintNames();
     } else {
       _paintsRestored = true;
     }
@@ -1621,6 +1662,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _paintsRestored = true;
           });
           _handlePaintsChanged();
+          _validatePaintNames();
           return;
         }
       }
@@ -1822,6 +1864,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Недостаточно материала на складе')),
+        );
+      return;
+    }
+    _validatePaintNames();
+    if (_hasInvalidPaintNames()) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Данной краски нет на складе. Уточните название.')),
         );
       return;
     }
@@ -2578,41 +2629,46 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
       body: Form(
         key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _buildOrderInfoSection(context),
-            const SizedBox(height: 12),
-            _buildProductBasics(_product),
-            const SizedBox(height: 12),
-            _buildHandlesSection(context),
-            const SizedBox(height: 12),
-            _buildPaintsSection(),
-            const SizedBox(height: 12),
-            _buildFormSection(
-              context: context,
-              showFormSummary: showFormSummary,
-              showFormEditor: showFormEditor,
-              isEditing: isEditing,
-              hasAssignedForm: hasAssignedForm,
-              paintsAvailable: paintsAvailable,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _buildOrderInfoSection(context),
+                const SizedBox(height: 12),
+                _buildProductBasics(_product),
+                const SizedBox(height: 12),
+                _buildHandlesSection(context),
+                const SizedBox(height: 12),
+                _buildPaintsSection(),
+                const SizedBox(height: 12),
+                _buildFormSection(
+                  context: context,
+                  showFormSummary: showFormSummary,
+                  showFormEditor: showFormEditor,
+                  isEditing: isEditing,
+                  hasAssignedForm: hasAssignedForm,
+                  paintsAvailable: paintsAvailable,
+                ),
+                const SizedBox(height: 12),
+                _buildProductMaterialAndExtras(_product),
+                const SizedBox(height: 12),
+                _buildProductionSection(context),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _commentsController,
+                  decoration: const InputDecoration(
+                    labelText: 'Комментарии к заказу',
+                    border: OutlineInputBorder(),
+                  ),
+                  minLines: 2,
+                  maxLines: 5,
+                ),
+                const SizedBox(height: 12),
+              ],
             ),
-            const SizedBox(height: 12),
-            _buildProductMaterialAndExtras(_product),
-            const SizedBox(height: 12),
-            _buildProductionSection(context),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _commentsController,
-              decoration: const InputDecoration(
-                labelText: 'Комментарии к заказу',
-                border: OutlineInputBorder(),
-              ),
-              minLines: 2,
-              maxLines: 5,
-            ),
-            const SizedBox(height: 12),
-          ],
+          ),
         ),
       ),
     );
@@ -2682,7 +2738,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           TextFormField(
             initialValue: product.depth > 0 ? product.depth.toString() : '',
             decoration: const InputDecoration(
-              labelText: 'Длина (мм)',
+              labelText: 'Длина (см)',
               border: OutlineInputBorder(),
             ),
             keyboardType: TextInputType.number,
@@ -2696,7 +2752,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           TextFormField(
             initialValue: product.width > 0 ? product.width.toString() : '',
             decoration: const InputDecoration(
-              labelText: 'Ширина (мм)',
+              labelText: 'Ширина (см)',
               border: OutlineInputBorder(),
             ),
             keyboardType: TextInputType.number,
@@ -2711,7 +2767,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           TextFormField(
             initialValue: product.height > 0 ? product.height.toString() : '',
             decoration: const InputDecoration(
-              labelText: 'Высота (мм)',
+              labelText: 'Глубина (см)',
               border: OutlineInputBorder(),
             ),
             keyboardType: TextInputType.number,
@@ -3920,9 +3976,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       return TextFormField(
                         controller: controller,
                         focusNode: focusNode,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Краска (необязательно)',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          errorText: row.nameNotFound
+                              ? 'Такой краски нет на складе'
+                              : null,
                         ),
                         onChanged: (value) {
                           final trimmed = value.trim();
@@ -3935,6 +3994,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                               row.exceeded = false;
                             }
                           });
+                          _validatePaintNames();
                           _handlePaintsChanged();
                         },
                       );
@@ -3943,6 +4003,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       setState(() {
                         row.tmc = tmc;
                         row.name = tmc.description;
+                        row.nameNotFound = false;
                         if (row.qtyGrams != null) {
                           final need =
                               _gramsToStockUnit(row.qtyGrams!, tmc);
