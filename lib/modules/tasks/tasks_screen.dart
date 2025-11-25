@@ -942,35 +942,93 @@ class _TasksScreenState extends State<TasksScreen>
         currentTask != null ? findOrder(currentTask.orderId) : null;
 
     Widget buildLeftPanel({required bool scrollable}) {
+      final String workplaceLabel = _selectedWorkplaceId == null
+          ? ''
+          : 'Задания для рабочего места: '
+              '${workplaces.firstWhere(
+                (w) => w.id == _selectedWorkplaceId,
+                orElse: () => WorkplaceModel(
+                  id: '',
+                  name: '',
+                  positionIds: const [],
+                ),
+              ).name}';
+
+      Widget buildWorkplaceSelector() {
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: scaled(isCompactTablet ? 220 : 260)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Рабочее место',
+                style: TextStyle(
+                  fontSize: scaled(12),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              SizedBox(height: scaled(4)),
+              DropdownButton<String>(
+                value: _selectedWorkplaceId,
+                isDense: true,
+                style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
+                itemHeight: math.max(
+                  scaled(36),
+                  kMinInteractiveDimension - 6,
+                ),
+                items: [
+                  for (final w in workplaces)
+                    DropdownMenuItem(
+                      value: w.id,
+                      child: Text(w.name, style: TextStyle(fontSize: scaled(12.5))),
+                    ),
+                ],
+                onChanged: (val) {
+                  setState(() {
+                    _selectedWorkplaceId = val;
+                    _persistWorkplace(val);
+                    _selectedTask = null;
+                  });
+                },
+              ),
+            ],
+          ),
+        );
+      }
+
       Widget content = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Список заданий',
-            style: TextStyle(
-              fontSize: scaled(widget.compactList ? 16 : 18),
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Список заданий',
+                      style: TextStyle(
+                        fontSize: scaled(widget.compactList ? 14 : 15),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: smallSpacing * 0.5),
+                    Text(
+                      workplaceLabel,
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        fontSize: scaled(12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: scaled(12)),
+              buildWorkplaceSelector(),
+            ],
           ),
-          SizedBox(height: smallSpacing),
-          Text(
-            _selectedWorkplaceId == null
-                ? ''
-                : 'Задания для рабочего места: '
-                    '${workplaces.firstWhere(
-                          (w) => w.id == _selectedWorkplaceId,
-                          orElse: () => WorkplaceModel(
-                            id: '',
-                            name: '',
-                            positionIds: const [],
-                          ),
-                        ).name}',
-            style: TextStyle(
-              color: Colors.grey,
-              fontSize: scaled(13),
-            ),
-          ),
-          SizedBox(height: sectionSpacing),
+          SizedBox(height: sectionSpacing * 0.6),
           Wrap(
             spacing: chipSpacing,
             runSpacing: chipSpacing,
@@ -979,15 +1037,16 @@ class _TasksScreenState extends State<TasksScreen>
                 ChoiceChip(
                   label: Text(
                     entry.value,
-                    style: TextStyle(fontSize: scaled(13)),
+                    style: TextStyle(fontSize: scaled(10.5), fontWeight: FontWeight.w600),
                   ),
                   selected: _selectedStatus == entry.key,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity:
-                      isTablet ? const VisualDensity(horizontal: -1, vertical: -1) : VisualDensity.standard,
+                  visualDensity: isTablet
+                      ? const VisualDensity(horizontal: -2, vertical: -2)
+                      : const VisualDensity(horizontal: -1, vertical: -1),
                   labelPadding: EdgeInsets.symmetric(
-                    horizontal: scaled(8),
-                    vertical: scaled(4),
+                    horizontal: scaled(5),
+                    vertical: scaled(2.5),
                   ),
                   onSelected: (selected) {
                     if (!selected) return;
@@ -1029,39 +1088,11 @@ class _TasksScreenState extends State<TasksScreen>
                         _selectedTask = task;
                         _selectedStatus = _sectionForTask(task);
                       });
+                      DefaultTabController.of(context)?.animateTo(1);
                     },
                   ),
               ],
             ),
-          SizedBox(height: largeSpacing),
-          Text(
-            'Рабочее место:',
-            style: TextStyle(fontSize: scaled(14)),
-          ),
-          SizedBox(height: scaled(8)),
-          DropdownButton<String>(
-            value: _selectedWorkplaceId,
-            isDense: isTablet,
-            style: TextStyle(fontSize: scaled(13), color: Colors.black87),
-            itemHeight: math.max(
-              scaled(44),
-              kMinInteractiveDimension,
-            ),
-            items: [
-              for (final w in workplaces)
-                DropdownMenuItem(
-                  value: w.id,
-                  child: Text(w.name, style: TextStyle(fontSize: scaled(13))),
-                ),
-            ],
-            onChanged: (val) {
-              setState(() {
-                _selectedWorkplaceId = val;
-                _persistWorkplace(val);
-                _selectedTask = null;
-              });
-            },
-          ),
         ],
       );
 
@@ -1118,7 +1149,10 @@ class _TasksScreenState extends State<TasksScreen>
       key: PageStorageKey('TasksScreen-${widget.employeeId}'),
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text('Производственный терминал'),
+        title: const SizedBox.shrink(),
+        toolbarHeight: scaled(44),
+        titleSpacing: 0,
+        automaticallyImplyLeading: false,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
