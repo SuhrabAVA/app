@@ -877,6 +877,176 @@ class _TasksScreenState extends State<TasksScreen>
     final selectedOrder =
         currentTask != null ? findOrder(currentTask.orderId) : null;
 
+    Widget buildLeftPanel({required bool scrollable}) {
+      Widget content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Список заданий',
+            style: TextStyle(
+              fontSize: scaled(18),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: smallSpacing),
+          Text(
+            _selectedWorkplaceId == null
+                ? ''
+                : 'Задания для рабочего места: '
+                    '${workplaces.firstWhere(
+                          (w) => w.id == _selectedWorkplaceId,
+                          orElse: () => WorkplaceModel(
+                            id: '',
+                            name: '',
+                            positionIds: const [],
+                          ),
+                        ).name}',
+            style: TextStyle(
+              color: Colors.grey,
+              fontSize: scaled(13),
+            ),
+          ),
+          SizedBox(height: sectionSpacing),
+          Wrap(
+            spacing: chipSpacing,
+            runSpacing: chipSpacing,
+            children: [
+              for (final entry in _statusLabels.entries)
+                ChoiceChip(
+                  label: Text(
+                    entry.value,
+                    style: TextStyle(fontSize: scaled(13)),
+                  ),
+                  selected: _selectedStatus == entry.key,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity:
+                      isTablet ? const VisualDensity(horizontal: -1, vertical: -1) : VisualDensity.standard,
+                  labelPadding: EdgeInsets.symmetric(
+                    horizontal: scaled(8),
+                    vertical: scaled(4),
+                  ),
+                  onSelected: (selected) {
+                    if (!selected) return;
+                    setState(() {
+                      _selectedStatus = entry.key;
+                      if (_selectedTask != null &&
+                          _sectionForTask(_selectedTask!) != _selectedStatus) {
+                        _selectedTask = null;
+                        _persistTask(null);
+                      }
+                    });
+                  },
+                ),
+            ],
+          ),
+          SizedBox(height: sectionSpacing),
+          if (sectionedTasks.isEmpty)
+            const Center(
+              child: Text(
+                'Нет заданий в этой категории',
+                textAlign: TextAlign.center,
+              ),
+            )
+          else
+            ListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                for (final task in sectionedTasks)
+                  _TaskCard(
+                    task: task,
+                    order: findOrder(task.orderId),
+                    selected: _selectedTask?.id == task.id,
+                    scale: scale,
+                    compact: isCompactTablet,
+                    onTap: () {
+                      _persistTask(task.id);
+                      setState(() {
+                        _selectedTask = task;
+                        _selectedStatus = _sectionForTask(task);
+                      });
+                    },
+                  ),
+              ],
+            ),
+          SizedBox(height: largeSpacing),
+          Text(
+            'Рабочее место:',
+            style: TextStyle(fontSize: scaled(14)),
+          ),
+          SizedBox(height: scaled(8)),
+          DropdownButton<String>(
+            value: _selectedWorkplaceId,
+            isDense: isTablet,
+            style: TextStyle(fontSize: scaled(13), color: Colors.black87),
+            itemHeight: math.max(
+              scaled(44),
+              kMinInteractiveDimension,
+            ),
+            items: [
+              for (final w in workplaces)
+                DropdownMenuItem(
+                  value: w.id,
+                  child: Text(w.name, style: TextStyle(fontSize: scaled(13))),
+                ),
+            ],
+            onChanged: (val) {
+              setState(() {
+                _selectedWorkplaceId = val;
+                _persistWorkplace(val);
+                _selectedTask = null;
+              });
+            },
+          ),
+        ],
+      );
+
+      if (!scrollable) return content;
+
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: EdgeInsets.zero,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: content,
+            ),
+          );
+        },
+      );
+    }
+
+    Widget buildRightPanel({required bool scrollable}) {
+      final Widget content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
+            _buildDetailsPanel(
+              selectedOrder,
+              selectedWorkplace,
+              templateProvider.templates,
+              scale,
+            ),
+          if (currentTask != null && selectedWorkplace != null)
+            SizedBox(height: scaled(16)),
+          if (currentTask != null && selectedWorkplace != null)
+            _buildControlPanel(
+              currentTask,
+              selectedWorkplace,
+              taskProvider,
+              scale,
+              isTablet,
+            ),
+        ],
+      );
+
+      if (!scrollable) return content;
+
+      return SingleChildScrollView(
+        child: content,
+      );
+    }
+
     final scaffold = Scaffold(
       key: PageStorageKey('TasksScreen-${widget.employeeId}'),
       backgroundColor: Colors.grey[100],
@@ -886,198 +1056,58 @@ class _TasksScreenState extends State<TasksScreen>
         foregroundColor: Colors.black,
         elevation: 0.5,
       ),
-      body: Padding(
-        padding: EdgeInsets.all(outerPadding),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ===== Левая колонка: список задач + выбор рабочего места
-            Expanded(
-              flex: 2,
-              child: Column(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final bool isNarrow = constraints.maxWidth < 1000;
+          final Widget leftPanel = Container(
+            padding: EdgeInsets.all(cardPadding),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(cardRadius),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.shade300,
+                  blurRadius: 6,
+                )
+              ],
+            ),
+            child: buildLeftPanel(scrollable: true),
+          );
+
+          final Widget rightPanel = buildRightPanel(scrollable: !isNarrow);
+
+          if (!isNarrow) {
+            return Padding(
+              padding: EdgeInsets.all(outerPadding),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Container(
-                      padding: EdgeInsets.all(cardPadding),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(cardRadius),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.shade300,
-                            blurRadius: 6,
-                          )
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Список заданий',
-                            style: TextStyle(
-                              fontSize: scaled(18),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(height: smallSpacing),
-                          Text(
-                            _selectedWorkplaceId == null
-                                ? ''
-                                : 'Задания для рабочего места: '
-                                    '${workplaces.firstWhere(
-                                          (w) => w.id == _selectedWorkplaceId,
-                                          orElse: () => WorkplaceModel(
-                                            id: '',
-                                            name: '',
-                                            positionIds: const [],
-                                          ),
-                                        ).name}',
-                            style: TextStyle(
-                              color: Colors.grey,
-                              fontSize: scaled(13),
-                            ),
-                          ),
-                          SizedBox(height: sectionSpacing),
-                          Wrap(
-                            spacing: chipSpacing,
-                            runSpacing: chipSpacing,
-                            children: [
-                              for (final entry in _statusLabels.entries)
-                                ChoiceChip(
-                                  label: Text(
-                                    entry.value,
-                                    style: TextStyle(fontSize: scaled(13)),
-                                  ),
-                                  selected: _selectedStatus == entry.key,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: isTablet
-                                      ? const VisualDensity(
-                                          horizontal: -1, vertical: -1)
-                                      : VisualDensity.standard,
-                                  labelPadding: EdgeInsets.symmetric(
-                                    horizontal: scaled(8),
-                                    vertical: scaled(4),
-                                  ),
-                                  onSelected: (selected) {
-                                    if (!selected) return;
-                                    setState(() {
-                                      _selectedStatus = entry.key;
-                                      if (_selectedTask != null &&
-                                          _sectionForTask(_selectedTask!) !=
-                                              _selectedStatus) {
-                                        _selectedTask = null;
-                                        _persistTask(null);
-                                      }
-                                    });
-                                  },
-                                ),
-                            ],
-                          ),
-                          SizedBox(height: sectionSpacing),
-                          Expanded(
-                            child: sectionedTasks.isEmpty
-                                ? const Center(
-                                    child: Text(
-                                      'Нет заданий в этой категории',
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  )
-                                : ListView(
-                                    children: [
-                                      for (final task in sectionedTasks)
-                                        _TaskCard(
-                                          task: task,
-                                          order: findOrder(task.orderId),
-                                          selected:
-                                              _selectedTask?.id == task.id,
-                                          scale: scale,
-                                          compact: isCompactTablet,
-                                          onTap: () {
-                                            _persistTask(task.id);
-                                            setState(() {
-                                              _selectedTask = task;
-                                              _selectedStatus =
-                                                  _sectionForTask(task);
-                                            });
-                                          },
-                                        ),
-                                    ],
-                                  ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    flex: 2,
+                    child: leftPanel,
                   ),
-                  SizedBox(height: largeSpacing),
-                  Text(
-                    'Рабочее место:',
-                    style: TextStyle(fontSize: scaled(14)),
-                  ),
-                  SizedBox(height: scaled(8)),
-                  DropdownButton<String>(
-                    value: _selectedWorkplaceId,
-                    isDense: isTablet,
-                    style:
-                        TextStyle(fontSize: scaled(13), color: Colors.black87),
-                    itemHeight: math.max(
-                      scaled(44),
-                      kMinInteractiveDimension,
-                    ),
-                    items: [
-                      for (final w in workplaces)
-                        DropdownMenuItem(
-                          value: w.id,
-                          child: Text(w.name,
-                              style: TextStyle(fontSize: scaled(13))),
-                        ),
-                    ],
-                    onChanged: (val) {
-                      setState(() {
-                        _selectedWorkplaceId = val;
-                        _persistWorkplace(val);
-                        _selectedTask = null;
-                      });
-                    },
+                  SizedBox(width: columnGap),
+                  Expanded(
+                    flex: 5,
+                    child: rightPanel,
                   ),
                 ],
               ),
-            ),
-            SizedBox(width: columnGap),
+            );
+          }
 
-            // ===== Правая колонка: детали + панель управления
-            Expanded(
-              flex: 5,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (currentTask != null &&
-                        selectedWorkplace != null &&
-                        selectedOrder != null)
-                      _buildDetailsPanel(
-                        selectedOrder,
-                        selectedWorkplace,
-                        templateProvider.templates,
-                        scale,
-                      ),
-                    if (currentTask != null && selectedWorkplace != null)
-                      SizedBox(height: scaled(16)),
-                    if (currentTask != null && selectedWorkplace != null)
-                      _buildControlPanel(
-                        currentTask,
-                        selectedWorkplace,
-                        taskProvider,
-                        scale,
-                        isTablet,
-                      ),
-                  ],
-                ),
-              ),
+          return SingleChildScrollView(
+            padding: EdgeInsets.all(outerPadding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                leftPanel,
+                SizedBox(height: scaled(16)),
+                rightPanel,
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
 
@@ -1665,7 +1695,15 @@ class _TasksScreenState extends State<TasksScreen>
                       color: completed ? Colors.green : Colors.orange,
                     ),
                     SizedBox(width: horizontalGap),
-                    Text(stage.name, style: stageTextStyle),
+                    Expanded(
+                      child: Text(
+                        stage.name,
+                        style: stageTextStyle,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                        softWrap: true,
+                      ),
+                    ),
                   ],
                 ),
               );
