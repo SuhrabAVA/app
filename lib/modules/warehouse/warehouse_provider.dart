@@ -67,6 +67,19 @@ class WarehouseProvider with ChangeNotifier {
     return _logBundles[normalized];
   }
 
+  Future<WarehouseLogsBundle> fetchLogsBundle(String type,
+      {bool forceRefresh = false}) async {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    if (!forceRefresh && _logBundles.containsKey(normalized)) {
+      return _logBundles[normalized]!;
+    }
+
+    final fresh = await WarehouseLogsRepository.fetchBundle(normalized);
+    _logBundles[normalized] = fresh;
+    notifyListeners();
+    return fresh;
+  }
+
   void _invalidateLogsForType(String type) {
     final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
     _logBundles.remove(normalized);
@@ -635,6 +648,7 @@ class WarehouseProvider with ChangeNotifier {
       '_note': note,
       '_by_name': (AuthHelper.currentUserName ?? '')
     });
+    _invalidateLogsForType('paper');
     await fetchTmc();
   }
 
@@ -763,6 +777,7 @@ class WarehouseProvider with ChangeNotifier {
         'reason': reason,
         'by_name': byName,
       });
+      _invalidateLogsForType(resolvedType);
       await fetchTmc();
     } catch (e) {
       debugPrint('❌ registerShipment (fallback writeOff): $e');
@@ -786,6 +801,7 @@ class WarehouseProvider with ChangeNotifier {
           await _sb.from(table).select('quantity').eq('id', id).single();
       final current = (row['quantity'] as num).toDouble();
       await _sb.from(table).update({'quantity': current + qty}).eq('id', id);
+      _invalidateLogsForType(resolvedType);
       await fetchTmc();
     } catch (e) {
       debugPrint('❌ registerReturn: $e');
