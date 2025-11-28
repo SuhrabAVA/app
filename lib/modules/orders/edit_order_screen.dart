@@ -572,6 +572,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         parameters: p.parameters,
         roll: p.roll,
         widthB: p.widthB,
+        blQuantity: p.blQuantity,
         length: p.length,
         leftover: p.leftover,
       );
@@ -586,6 +587,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         parameters: '',
         roll: null,
         widthB: null,
+        blQuantity: null,
         length: null,
         leftover: null,
       );
@@ -2394,6 +2396,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (roll != null) extras.add('Рулон $roll');
     final widthB = formatDimension(_product.widthB);
     if (widthB != null) extras.add('Б $widthB');
+    final blQty = _formatDecimal(_product.blQuantity);
+    if (blQty != null) extras.add('Кол-во $blQty');
     final length = formatDimension(_product.length);
     if (length != null) extras.add('L $length');
     if (extras.isNotEmpty) {
@@ -3177,6 +3181,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             onChanged: (val) {
               final normalized = val.replaceAll(',', '.');
               product.widthB = double.tryParse(normalized);
+              _scheduleStagePreviewUpdate();
+            },
+          ),
+          TextFormField(
+            initialValue: product.blQuantity?.toString() ?? '',
+            decoration: const InputDecoration(
+              labelText: 'Количество',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              product.blQuantity = double.tryParse(normalized);
               _scheduleStagePreviewUpdate();
             },
           ),

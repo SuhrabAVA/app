@@ -152,6 +152,10 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                     Icons.swap_horiz)),
             const SizedBox(width: 12),
             Expanded(
+                child: _tile('Количество',
+                    p.blQuantity?.toStringAsFixed(2) ?? '—', Icons.numbers)),
+            const SizedBox(width: 12),
+            Expanded(
                 child: _tile('Длина L', p.length?.toStringAsFixed(2) ?? '—',
                     Icons.swap_vert)),
           ]),

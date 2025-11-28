@@ -9,6 +9,7 @@ class ProductModel {
   String parameters; // параметры продукта (строка)
   double? roll;
   double? widthB;
+  double? blQuantity;
   double? length;
   double? leftover;
 
@@ -22,6 +23,7 @@ class ProductModel {
     this.parameters = '',
     this.roll,
     this.widthB,
+    this.blQuantity,
     this.length,
     this.leftover,
   });
@@ -37,6 +39,7 @@ class ProductModel {
         'parameters': parameters,
         if (roll != null) 'roll': roll,
         if (widthB != null) 'widthB': widthB,
+        if (blQuantity != null) 'blQuantity': blQuantity,
         if (length != null) 'length': length,
         if (leftover != null) 'leftover': leftover,
       };
@@ -52,6 +55,7 @@ class ProductModel {
         parameters: map['parameters'] as String? ?? '',
         roll: (map['roll'] as num?)?.toDouble(),
         widthB: (map['widthB'] as num?)?.toDouble(),
+        blQuantity: (map['blQuantity'] as num?)?.toDouble(),
         length: (map['length'] as num?)?.toDouble(),
         leftover: (map['leftover'] as num?)?.toDouble(),
       );
