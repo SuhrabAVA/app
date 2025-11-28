@@ -58,6 +58,7 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
         parameters: p.parameters,
         roll: null,
         widthB: null,
+        blQuantity: null,
         length: null,
         leftover: p.leftover,
       ),

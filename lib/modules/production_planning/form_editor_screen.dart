@@ -345,6 +345,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         parameters: p.parameters,
         roll: p.roll,
         widthB: p.widthB,
+        blQuantity: p.blQuantity,
         length: p.length,
         leftover: p.leftover,
       );
@@ -359,6 +360,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         parameters: '',
         roll: null,
         widthB: null,
+        blQuantity: null,
         length: null,
         leftover: null,
       );
@@ -2785,6 +2787,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     onChanged: (val) {
                       final normalized = val.replaceAll(',', '.');
                       product.widthB = double.tryParse(normalized);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: product.blQuantity?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Количество',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) {
+                      final normalized = val.replaceAll(',', '.');
+                      product.blQuantity = double.tryParse(normalized);
                     },
                   ),
                 ),
