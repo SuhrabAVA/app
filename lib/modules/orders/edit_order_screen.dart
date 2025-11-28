@@ -2181,6 +2181,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     // === Конец обработки формы ===
 
+    if (!mounted) return;
+
     // Списание материалов/готовой продукции (бумага по длине L)
     final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
     final double need = (_product.length ?? 0).toDouble();
