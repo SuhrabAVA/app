@@ -9,7 +9,7 @@ class ProductModel {
   String parameters; // параметры продукта (строка)
   double? roll;
   double? widthB;
-  double? blQuantity;
+  String? blQuantity;
   double? length;
   double? leftover;
 
@@ -39,7 +39,7 @@ class ProductModel {
         'parameters': parameters,
         if (roll != null) 'roll': roll,
         if (widthB != null) 'widthB': widthB,
-        if (blQuantity != null) 'blQuantity': blQuantity,
+        if (blQuantity != null && blQuantity!.isNotEmpty) 'blQuantity': blQuantity,
         if (length != null) 'length': length,
         if (leftover != null) 'leftover': leftover,
       };
@@ -55,7 +55,7 @@ class ProductModel {
         parameters: map['parameters'] as String? ?? '',
         roll: (map['roll'] as num?)?.toDouble(),
         widthB: (map['widthB'] as num?)?.toDouble(),
-        blQuantity: (map['blQuantity'] as num?)?.toDouble(),
+        blQuantity: map['blQuantity']?.toString(),
         length: (map['length'] as num?)?.toDouble(),
         leftover: (map['leftover'] as num?)?.toDouble(),
       );

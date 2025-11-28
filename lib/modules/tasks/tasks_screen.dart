@@ -1447,9 +1447,8 @@ class _TasksScreenState extends State<TasksScreen>
       productSection.add(infoLine(
           'Ширина B', formatOptionalDouble(product.widthB, unit: 'мм')));
     }
-    if (product.blQuantity != null) {
-      productSection.add(
-          infoLine('Количество', formatOptionalDouble(product.blQuantity)));
+    if (product.blQuantity != null && product.blQuantity!.isNotEmpty) {
+      productSection.add(infoLine('Количество', product.blQuantity!));
     }
     if (product.length != null) {
       productSection.add(
