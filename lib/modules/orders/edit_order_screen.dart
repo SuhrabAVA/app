@@ -2396,7 +2396,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (roll != null) extras.add('Рулон $roll');
     final widthB = formatDimension(_product.widthB);
     if (widthB != null) extras.add('Б $widthB');
-    final blQty = _formatDecimal(_product.blQuantity);
+    final blQty = _product.blQuantity != null
+        ? _formatDecimal(_product.blQuantity!)
+        : null;
     if (blQty != null) extras.add('Кол-во $blQty');
     final length = formatDimension(_product.length);
     if (length != null) extras.add('L $length');
