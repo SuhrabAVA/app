@@ -308,6 +308,29 @@ create table if not exists public.orders (
   updated_at timestamptz
 );
 alter table public.orders enable row level security;
+-- Дополнительные колонки для совместимости с приложением
+do $$
+begin
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'orders'
+      and column_name = 'bl_quantity'
+  ) then
+    alter table public.orders add column bl_quantity text;
+  elsif exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'orders'
+      and column_name = 'bl_quantity'
+      and data_type <> 'text'
+  ) then
+    alter table public.orders
+      alter column bl_quantity type text using bl_quantity::text;
+  end if;
+end $$;
 do $$
 begin
   if not exists (
