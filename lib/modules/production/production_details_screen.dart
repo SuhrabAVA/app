@@ -153,7 +153,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
             const SizedBox(width: 12),
             Expanded(
                 child: _tile('Количество',
-                    p.blQuantity?.toStringAsFixed(2) ?? '—', Icons.numbers)),
+                    p.blQuantity ?? '—', Icons.numbers)),
             const SizedBox(width: 12),
             Expanded(
                 child: _tile('Длина L', p.length?.toStringAsFixed(2) ?? '—',

@@ -2798,10 +2798,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       labelText: 'Количество',
                       border: OutlineInputBorder(),
                     ),
-                    keyboardType: TextInputType.number,
+                    keyboardType: TextInputType.text,
                     onChanged: (val) {
-                      final normalized = val.replaceAll(',', '.');
-                      product.blQuantity = double.tryParse(normalized);
+                      final trimmed = val.trim();
+                      product.blQuantity = trimmed.isEmpty ? null : trimmed;
                     },
                   ),
                 ),

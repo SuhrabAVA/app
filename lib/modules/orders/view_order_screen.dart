@@ -85,7 +85,7 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
               _kv('Ширина', _fmtNum(p.width)),
               _kv('Высота', _fmtNum(p.height)),
               _kv('Ширина b', _fmtNum(p.widthB)),
-              _kv('Количество', _fmtNum(p.blQuantity)),
+              _kv('Количество', p.blQuantity ?? '—'),
               _kv('Длина L (м)', _fmtNum(p.length)),
               _kv('Параметры', p.parameters.isEmpty ? '—' : p.parameters),
             ]),

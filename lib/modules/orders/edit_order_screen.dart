@@ -2398,10 +2398,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (roll != null) extras.add('Рулон $roll');
     final widthB = formatDimension(_product.widthB);
     if (widthB != null) extras.add('Б $widthB');
-    final blQty = _product.blQuantity != null
-        ? _formatDecimal(_product.blQuantity!)
-        : null;
-    if (blQty != null) extras.add('Кол-во $blQty');
+    final blQty = _product.blQuantity;
+    if (blQty != null && blQty.isNotEmpty) extras.add('Кол-во $blQty');
     final length = formatDimension(_product.length);
     if (length != null) extras.add('L $length');
     if (extras.isNotEmpty) {
@@ -3194,10 +3192,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               labelText: 'Количество',
               border: OutlineInputBorder(),
             ),
-            keyboardType: TextInputType.number,
+            keyboardType: TextInputType.text,
             onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              product.blQuantity = double.tryParse(normalized);
+              final trimmed = val.trim();
+              product.blQuantity = trimmed.isEmpty ? null : trimmed;
               _scheduleStagePreviewUpdate();
             },
           ),
