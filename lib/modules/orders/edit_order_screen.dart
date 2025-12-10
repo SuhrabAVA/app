@@ -814,23 +814,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return double.tryParse(match.group(0)!);
     }
 
-    bool formatMatchesWidth() {
+    double? formatWidth() {
       final candidates = <String?>[
         _selectedMaterial?.format,
         _matSelectedFormat,
         _selectedMaterialTmc?.format,
       ];
-      double? fmtWidth;
       for (final candidate in candidates) {
-        fmtWidth = _parseLeadingNumber(candidate);
-        if (fmtWidth != null) break;
+        final fmtWidth = _parseLeadingNumber(candidate);
+        if (fmtWidth != null) return fmtWidth;
       }
+      return null;
+    }
 
-      final double? productWidth = (_product.widthB ?? _product.width).toDouble();
+    double? productWidth() {
+      return (_product.widthB ?? _product.width).toDouble();
+    }
+
+    bool formatMatchesWidth() {
+      final fmtWidth = formatWidth();
+      final prodWidth = productWidth();
       return fmtWidth != null &&
-          productWidth != null &&
-          productWidth > 0 &&
-          (fmtWidth - productWidth).abs() <= 0.001;
+          prodWidth != null &&
+          prodWidth > 0 &&
+          (fmtWidth - prodWidth).abs() <= 0.001;
     }
 
     bool paintsFilled = _hasAnyPaints();
@@ -881,6 +888,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     }
 
+    final fmtWidth = formatWidth();
+    final prodWidth = productWidth();
+    final formatIsWider = fmtWidth != null &&
+        prodWidth != null &&
+        prodWidth > 0 &&
+        (prodWidth + 0.001) < fmtWidth;
+
     if (formatMatchesWidth()) {
       removedBobbinStage = removeBobbinStage();
       if (removedBobbinStage != null) {
@@ -893,7 +907,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 removedBobbinStage['id'])
             ?.toString();
       }
-    } else {
+    } else if (!formatIsWider) {
       final hasBobbin = findStageIndex((m) {
             final sid = (m['stageId'] as String?) ??
                 (m['stageid'] as String?) ??
