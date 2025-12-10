@@ -1426,6 +1426,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действие')),
     ];
 
     return Padding(
@@ -1450,6 +1451,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       DataCell(Text(_fmtDate(r.dateIso))),
                       DataCell(Text(r.note ?? '')),
                       DataCell(Text(r.byName ?? '')),
+                      DataCell(r.canUndo
+                          ? TextButton.icon(
+                              onPressed: () => _undoLog(r),
+                              icon: const Icon(Icons.undo),
+                              label: const Text('Отмена'),
+                            )
+                          : const SizedBox.shrink()),
                     ];
 
                     while (cells.length < columns.length) {
