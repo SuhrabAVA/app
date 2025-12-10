@@ -1,5 +1,6 @@
 // lib/modules/orders/edit_order_screen.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -280,7 +281,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     setState(() {
       _selectedStockExtraRow = Map<String, dynamic>.from(row);
       _stockExtra = qty;
-      _stockExtraResults = [];
+      _stockExtraResults = _stockExtraResults;
       _loadingStockExtra = false;
       _stockExtraSelectedQty = defaultQty;
       _stockExtraQtyTouched = false;
@@ -471,6 +472,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // ===== Категории склада для поля "Наименование изделия" =====
   List<String> _categoryTitles = [];
   bool _catsLoading = false;
+  bool _stockExtraAutoloaded = false;
 
   Future<void> _loadCategoriesForProduct() async {
     setState(() => _catsLoading = true);
@@ -602,13 +604,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_paints.isEmpty && widget.order == null)
       _paints.add(_PaintEntry(memo: _paintInfo));
     _loadCategoriesForProduct();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updateStockExtra());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final warehouse = context.read<WarehouseProvider>();
-      if (warehouse.getTmcByType('pens').isEmpty) {
-        warehouse.fetchTmc();
-      }
+      warehouse.fetchTmc();
+      _ensureStockExtrasLoaded();
     });
 
     final String? initialMaterialId = _selectedMaterial?.id;
@@ -1331,7 +1331,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Future<void> _updateStockExtra({String? query}) async {
+  Future<void> _updateStockExtra({String? query, bool includeAllResults = false}) async {
     final typeTitle = _product.type.trim();
     final search = query ?? _stockExtraSearchController.text.trim();
     if (typeTitle.isEmpty) {
@@ -1339,7 +1339,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         setState(() {
           _stockExtra = null;
           _stockExtraItem = null;
-          _stockExtraResults = [];
+          _stockExtraResults = includeAllResults ? _stockExtraResults : [];
           _selectedStockExtraRow = null;
           _loadingStockExtra = false;
           _stockExtraSelectedQty = null;
@@ -1369,7 +1369,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           setState(() {
             _stockExtra = null;
             _stockExtraItem = null;
-            _stockExtraResults = [];
+            _stockExtraResults = includeAllResults ? _stockExtraResults : [];
             _selectedStockExtraRow = null;
             _loadingStockExtra = false;
             _stockExtraSelectedQty = null;
@@ -1450,7 +1450,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _stockExtraItem = null;
           _selectedStockExtraRow = selectedRow;
           _stockExtraResults =
-              search.isEmpty ? <Map<String, dynamic>>[] : results;
+              (includeAllResults || search.isNotEmpty) ? results : <Map<String, dynamic>>[];
           _loadingStockExtra = false;
           _stockExtraSelectedQty = nextSelectedQty;
           _product.leftover =
@@ -1466,7 +1466,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         setState(() {
           _stockExtra = null;
           _stockExtraItem = null;
-          _stockExtraResults = [];
+          _stockExtraResults = includeAllResults ? _stockExtraResults : [];
           _selectedStockExtraRow = null;
           _loadingStockExtra = false;
           _stockExtraSelectedQty = null;
@@ -1511,6 +1511,65 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     setState(() {});
     _scheduleStagePreviewUpdate();
+  }
+
+  double _stockQtyToGrams(TmcModel tmc) {
+    final unit = tmc.unit.toLowerCase();
+    if (unit.contains('кг') || unit.contains('kg')) {
+      return tmc.quantity * 1000;
+    }
+    if (unit.contains('г') || unit.contains('g')) {
+      return tmc.quantity;
+    }
+    return tmc.quantity;
+  }
+
+  void _applyPaperSelection(TmcModel paper) {
+    final name = paper.description.trim();
+    final format = (paper.format ?? '').trim();
+    final grammage = (paper.grammage ?? '').trim();
+    setState(() {
+      _matNameCtl
+        ..text = name
+        ..selection = TextSelection.collapsed(offset: name.length);
+      _matFormatCtl
+        ..text = format
+        ..selection = TextSelection.collapsed(offset: format.length);
+      _matGramCtl
+        ..text = grammage
+        ..selection = TextSelection.collapsed(offset: grammage.length);
+      _matSelectedName = name.isEmpty ? null : name;
+      _matSelectedFormat = format.isEmpty ? null : format;
+      _matSelectedGrammage = grammage.isEmpty ? null : grammage;
+      _matNameError = null;
+      _matFormatError = null;
+      _matGramError = null;
+    });
+    _selectMaterial(paper);
+  }
+
+  void _addPaintFromTmc(TmcModel paint) {
+    final qtyGrams = _stockQtyToGrams(paint);
+    setState(() {
+      _paints.add(
+        _PaintEntry(
+          tmc: paint,
+          name: paint.description,
+          qtyGrams: qtyGrams > 0 ? qtyGrams : null,
+          memo: _paintInfo,
+          exceeded: false,
+          nameNotFound: false,
+        ),
+      );
+    });
+    _validatePaintNames();
+    _handlePaintsChanged();
+  }
+
+  void _ensureStockExtrasLoaded() {
+    if (_stockExtraAutoloaded) return;
+    _stockExtraAutoloaded = true;
+    _updateStockExtra(includeAllResults: true);
   }
 
   void _restorePaintsFromParams(WarehouseProvider warehouse) {
@@ -2649,46 +2708,78 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
       body: Form(
         key: _formKey,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 900),
-            child: ListView(
-              padding: const EdgeInsets.all(16),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final formChildren = [
+              _buildOrderInfoSection(context),
+              const SizedBox(height: 12),
+              _buildProductBasics(_product),
+              const SizedBox(height: 12),
+              _buildHandlesSection(context),
+              const SizedBox(height: 12),
+              _buildPaintsSection(),
+              const SizedBox(height: 12),
+              _buildFormSection(
+                context: context,
+                showFormSummary: showFormSummary,
+                showFormEditor: showFormEditor,
+                isEditing: isEditing,
+                hasAssignedForm: hasAssignedForm,
+                paintsAvailable: paintsAvailable,
+              ),
+              const SizedBox(height: 12),
+              _buildProductMaterialAndExtras(_product),
+              const SizedBox(height: 12),
+              _buildProductionSection(context),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _commentsController,
+                decoration: const InputDecoration(
+                  labelText: 'Комментарии к заказу',
+                  border: OutlineInputBorder(),
+                ),
+                minLines: 2,
+                maxLines: 5,
+              ),
+              const SizedBox(height: 12),
+            ];
+
+            final formList = Align(
+              alignment: Alignment.topLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: formChildren,
+                ),
+              ),
+            );
+
+            if (constraints.maxWidth < 1200) {
+              return formList;
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildOrderInfoSection(context),
-                const SizedBox(height: 12),
-                _buildProductBasics(_product),
-                const SizedBox(height: 12),
-                _buildHandlesSection(context),
-                const SizedBox(height: 12),
-                _buildPaintsSection(),
-                const SizedBox(height: 12),
-                _buildFormSection(
-                  context: context,
-                  showFormSummary: showFormSummary,
-                  showFormEditor: showFormEditor,
-                  isEditing: isEditing,
-                  hasAssignedForm: hasAssignedForm,
-                  paintsAvailable: paintsAvailable,
-                ),
-                const SizedBox(height: 12),
-                _buildProductMaterialAndExtras(_product),
-                const SizedBox(height: 12),
-                _buildProductionSection(context),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _commentsController,
-                  decoration: const InputDecoration(
-                    labelText: 'Комментарии к заказу',
-                    border: OutlineInputBorder(),
+                Expanded(
+                  flex: 3,
+                  child: SizedBox(
+                    height: constraints.maxHeight,
+                    child: formList,
                   ),
-                  minLines: 2,
-                  maxLines: 5,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(width: 16),
+                Expanded(
+                  flex: 2,
+                  child: SizedBox(
+                    height: constraints.maxHeight,
+                    child: _buildWarehousePreviewPanel(),
+                  ),
+                ),
               ],
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -2716,20 +2807,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   setState(() {
                     _product.type = val ?? '';
                     _selectedStockExtraRow = null;
-                    _stockExtraResults = [];
-                    _stockExtra = null;
-                    _stockExtraSelectedQty = null;
-                    _stockExtraQtyTouched = false;
-                    _product.leftover = null;
-                  });
-                  _stockExtraSearchDebounce?.cancel();
-                  _stockExtraSearchController.clear();
-                  _updateStockExtraQtyController();
-                  _updateStockExtra();
-                },
-              );
-            },
-          ),
+                  _stockExtraResults = [];
+                  _stockExtra = null;
+                  _stockExtraSelectedQty = null;
+                  _stockExtraQtyTouched = false;
+                  _product.leftover = null;
+                });
+                _stockExtraSearchDebounce?.cancel();
+                _stockExtraSearchController.clear();
+                _updateStockExtraQtyController();
+                _updateStockExtra(includeAllResults: true);
+              },
+            );
+          },
+        ),
           TextFormField(
             initialValue: product.quantity > 0 ? product.quantity.toString() : '',
             decoration: const InputDecoration(
@@ -3614,6 +3705,158 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildWarehousePreviewPanel() {
+    _ensureStockExtrasLoaded();
+    return Consumer<WarehouseProvider>(
+      builder: (context, warehouse, _) {
+        final papers = _paperItems()
+          ..sort((a, b) => a.description.toLowerCase().compareTo(
+                b.description.toLowerCase(),
+              ));
+        final paints = warehouse
+            .getTmcByType('Краска')
+            .toList(growable: true)
+          ..sort((a, b) => a.description.toLowerCase().compareTo(
+                b.description.toLowerCase(),
+              ));
+        final categoryItems = _stockExtraResults;
+
+        return Card(
+          margin: const EdgeInsets.only(right: 16, top: 16, bottom: 16),
+          child: DefaultTabController(
+            length: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const TabBar(
+                  tabs: [
+                    Tab(text: 'Бумага'),
+                    Tab(text: 'Краски'),
+                    Tab(text: 'Категории'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _buildPaperWarehouseView(papers),
+                      _buildPaintWarehouseView(paints),
+                      _buildCategoryWarehouseView(categoryItems),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPaperWarehouseView(List<TmcModel> papers) {
+    if (papers.isEmpty) {
+      return const Center(child: Text('На складе нет бумаги'));
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemBuilder: (context, index) {
+        final paper = papers[index];
+        final subtitle = [
+          if ((paper.format ?? '').isNotEmpty) 'Формат: ${paper.format}',
+          if ((paper.grammage ?? '').isNotEmpty) 'Грамаж: ${paper.grammage}',
+          'Метраж: ${paper.quantity.toStringAsFixed(2)}',
+        ].join('\n');
+        return ListTile(
+          title: Text(paper.description.isEmpty ? 'Без названия' : paper.description),
+          subtitle: Text(subtitle),
+          onTap: () => _applyPaperSelection(paper),
+        );
+      },
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemCount: papers.length,
+    );
+  }
+
+  Widget _buildPaintWarehouseView(List<TmcModel> paints) {
+    if (paints.isEmpty) {
+      return const Center(child: Text('На складе нет красок'));
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemBuilder: (context, index) {
+        final paint = paints[index];
+        ImageProvider? preview;
+        if ((paint.imageBase64 ?? '').isNotEmpty) {
+          try {
+            preview = MemoryImage(base64Decode(paint.imageBase64!));
+          } catch (_) {}
+        }
+        if (preview == null && (paint.imageUrl ?? '').isNotEmpty) {
+          preview = NetworkImage(paint.imageUrl!);
+        }
+        final qty = _stockQtyToGrams(paint);
+        final subtitle = [
+          'Цвет: ${paint.note ?? '—'}',
+          'Количество: ${qty.toStringAsFixed(2)} г',
+        ].join('\n');
+        return ListTile(
+          leading: preview != null
+              ? CircleAvatar(backgroundImage: preview)
+              : const CircleAvatar(child: Icon(Icons.color_lens)),
+          title: Text(paint.description.isEmpty ? 'Без названия' : paint.description),
+          subtitle: Text(subtitle),
+          onTap: () => _addPaintFromTmc(paint),
+        );
+      },
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemCount: paints.length,
+    );
+  }
+
+  Widget _buildCategoryWarehouseView(List<Map<String, dynamic>> rows) {
+    if (_loadingStockExtra) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (rows.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Нет записей по текущей категории продукта.'),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              onPressed: () => _updateStockExtra(includeAllResults: true),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Обновить склад'),
+            ),
+          ],
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemBuilder: (context, index) {
+        final row = rows[index];
+        final description = (row['description'] ?? '').toString().trim();
+        final sizeLabel = (row['size'] ?? '').toString().trim();
+        final qv = row['quantity'];
+        final qty = (qv is num) ? qv.toDouble() : double.tryParse('$qv') ?? 0.0;
+        final subtitleParts = <String>[];
+        subtitleParts.add('Количество: ${qty.toStringAsFixed(2)}');
+        if (sizeLabel.isNotEmpty) {
+          subtitleParts.add('Размер: $sizeLabel');
+        }
+        return ListTile(
+          title: Text(description.isEmpty ? 'Без названия' : description),
+          subtitle: Text(subtitleParts.join('\n')),
+          onTap: () => _selectStockExtraRow(row),
+        );
+      },
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemCount: rows.length,
     );
   }
 
