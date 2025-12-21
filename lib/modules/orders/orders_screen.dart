@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_model.dart';
 import '../warehouse/warehouse_table_styles.dart';
+import '../personnel/personnel_provider.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
 import 'edit_order_screen.dart';
@@ -107,8 +108,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             _buildStatusTabs(),
             const SizedBox(height: 12),
             Expanded(
-              child: Consumer2<OrdersProvider, TaskProvider>(
-                builder: (context, ordersProvider, taskProvider, child) {
+              child: Consumer3<OrdersProvider, TaskProvider,
+                  PersonnelProvider>(
+                builder:
+                    (context, ordersProvider, taskProvider, personnel, child) {
                   final orders = _filteredOrders(ordersProvider.orders);
                   final allTasks = taskProvider.tasks;
                   if (orders.isEmpty) {
@@ -119,6 +122,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     return SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: DataTable(
+                        showCheckboxColumn: false,
                         columns: const [
                           DataColumn(label: Text('№')),
                           DataColumn(label: Text('Заказчик')),
@@ -139,7 +143,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final statusInfo = _computeStatus(o, allTasks);
                             final statusLabel = statusInfo.label;
                             final missing = _isIncomplete(o);
+                            final stageName =
+                                _currentStageName(o, allTasks, personnel);
                             return DataRow(
+                              onSelectChanged: (_) => _openViewOrder(o),
                               color: MaterialStateProperty.resolveWith<Color?>(
                                   (states) {
                                 final hoverColor =
@@ -156,15 +163,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 DataCell(Text(_formatDate(o.dueDate))),
                                 DataCell(Text(product.type)),
                                 DataCell(Text(totalQty.toString())),
-                                DataCell(Text(statusLabel)),
+                                DataCell(
+                                  statusLabel == 'В работе' && stageName != null
+                                      ? Tooltip(
+                                          message:
+                                              'Текущий этап: $stageName',
+                                          child: Text(statusLabel),
+                                        )
+                                      : Text(statusLabel),
+                                ),
                                 DataCell(Row(
                                   children: [
-                                    IconButton(
-                                      icon: const Icon(
-                                          Icons.remove_red_eye_outlined),
-                                      tooltip: 'Просмотр',
-                                      onPressed: () => _openViewOrder(o),
-                                    ),
                                     IconButton(
                                       icon: const Icon(Icons.history),
                                       tooltip: 'Время',
@@ -197,10 +206,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     }
                     return SingleChildScrollView(
                       child: Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
+                        spacing: 10,
+                        runSpacing: 10,
                         children: orders
-                            .map((o) => _buildOrderCard(o, allTasks))
+                            .map((o) =>
+                                _buildOrderCard(o, allTasks, personnel))
                             .toList(),
                       ),
                     );
@@ -878,10 +888,27 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
-  /// Контейнер для информации о статусе заказа.
+  String? _currentStageName(OrderModel order, List<TaskModel> allTasks,
+      PersonnelProvider personnel) {
+    final activeTasks = allTasks
+        .where((t) =>
+            t.orderId == order.id && t.status == TaskStatus.inProgress)
+        .toList()
+      ..sort((a, b) => (a.startedAt ?? 0).compareTo(b.startedAt ?? 0));
+    if (activeTasks.isEmpty) return null;
+    final stageId = activeTasks.first.stageId;
+    if (stageId.isEmpty) return null;
+    try {
+      final wp =
+          personnel.workplaces.firstWhere((w) => w.id == stageId);
+      if (wp.name.trim().isNotEmpty) return wp.name.trim();
+    } catch (_) {}
+    return stageId;
+  }
 
   /// Строит карточку заказа для отображения в списке.
-  Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks) {
+  Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks,
+      PersonnelProvider personnel) {
     // Определяем цвет и текст для статуса с учётом задач
     final statusInfo = _computeStatus(order, allTasks);
     final Color statusColor = statusInfo.color;
@@ -891,192 +918,190 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final missing = _isIncomplete(order);
     final bool isCompleted = statusLabel == 'Завершено';
     final bool isShipping = _shippingInProgress.contains(order.id);
+    final String? stageName =
+        _currentStageName(order, allTasks, personnel);
     return SizedBox(
-      width: 320,
+      width: 256,
       child: Card(
         color: missing ? Colors.grey.shade100 : null,
         elevation: 1,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Первая строка: заказчик и статус
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      order.customer,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 14),
-                      overflow: TextOverflow.ellipsis,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _openViewOrder(order),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Первая строка: заказчик и статус
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        order.customer,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
+                    statusLabel == 'В работе' && stageName != null
+                        ? Tooltip(
+                            message: 'Текущий этап: $stageName',
+                            child: _StatusBadge(
+                                color: statusColor, label: statusLabel),
+                          )
+                        : _StatusBadge(
+                            color: statusColor, label: statusLabel),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                // Вторая строка: номер заказа
+                Text('Номер: ${orderDisplayId(order)}',
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                const SizedBox(height: 2),
+                // Даты
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Дата заказа: ${_formatDate(order.orderDate)}',
+                          style: const TextStyle(fontSize: 10)),
                     ),
-                    child: Text(
-                      statusLabel,
-                      style: TextStyle(color: statusColor, fontSize: 12),
+                    Expanded(
+                      child: Text('Срок: ${_formatDate(order.dueDate)}',
+                          style: const TextStyle(fontSize: 10)),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              // Вторая строка: номер заказа
-              Text('Номер: ${orderDisplayId(order)}',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
-              const SizedBox(height: 4),
-              // Даты
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('Дата заказа: ${_formatDate(order.orderDate)}',
-                        style: const TextStyle(fontSize: 11)),
-                  ),
-                  Expanded(
-                    child: Text('Срок: ${_formatDate(order.dueDate)}',
-                        style: const TextStyle(fontSize: 11)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // Информация о продукте
-              Text('Изделие: ${product.type}',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text('Тираж: $totalQty шт.',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 6),
-              // Статусы договора и оплаты
-              Row(
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                          order.contractSigned
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                          size: 16,
-                          color:
-                              order.contractSigned ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(
-                          order.contractSigned
-                              ? 'Договор подписан'
-                              : 'Договор не подписан',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: order.contractSigned
-                                  ? Colors.green
-                                  : Colors.red)),
-                    ],
-                  ),
-                  const SizedBox(width: 8),
-                  Row(
-                    children: [
-                      Icon(
-                          order.paymentDone
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                          size: 16,
-                          color: order.paymentDone ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(order.paymentDone ? 'Оплачено' : 'Не оплачено',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: order.paymentDone
-                                  ? Colors.green
-                                  : Colors.red)),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Кнопки действий
-              Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 4,
-                runSpacing: 4,
-                children: [
-                  TextButton(
-                    onPressed: () => _openViewOrder(order),
-                    child: const Text('Просмотр'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton(
-                    onPressed: () => _showOrderTimeline(order),
-                    child: const Text('Время'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => EditOrderScreen(order: order)),
-                      );
-                    },
-                    child: const Text('Редактировать'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  ],
+                ),
+                const SizedBox(height: 3),
+                // Информация о продукте
+                Text('Изделие: ${product.type}',
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 1),
+                Text('Тираж: $totalQty шт.',
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 3),
+                // Статусы договора и оплаты
+                Row(
+                  children: [
+                    Row(
                       children: [
+                        Icon(
+                            order.contractSigned
+                                ? Icons.check_circle_outline
+                                : Icons.error_outline,
+                            size: 16,
+                            color:
+                                order.contractSigned ? Colors.green : Colors.red),
+                        const SizedBox(width: 4),
                         Text(
-                          'Менеджер: ${order.manager.isEmpty ? '—' : order.manager}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        if (isCompleted)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4.0),
-                            child: Text(
-                              'Факт: ${order.actualQty != null ? _formatQuantity(order.actualQty!) : '—'} шт.',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
+                            order.contractSigned
+                                ? 'Договор подписан'
+                                : 'Договор не подписан',
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: order.contractSigned
+                                    ? Colors.green
+                                    : Colors.red)),
                       ],
                     ),
-                  ),
-                  if (isCompleted && !order.isShipped)
-                    ElevatedButton(
-                      onPressed: isShipping ? null : () => _confirmShipment(order),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: isShipping
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : const Text('Отгрузить'),
+                    const SizedBox(width: 8),
+                    Row(
+                      children: [
+                        Icon(
+                            order.paymentDone
+                                ? Icons.check_circle_outline
+                                : Icons.error_outline,
+                            size: 16,
+                            color: order.paymentDone ? Colors.green : Colors.red),
+                        const SizedBox(width: 4),
+                        Text(order.paymentDone ? 'Оплачено' : 'Не оплачено',
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: order.paymentDone
+                                    ? Colors.green
+                                    : Colors.red)),
+                      ],
                     ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                // Кнопки действий
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: () => _showOrderTimeline(order),
+                      icon: const Icon(Icons.schedule),
+                      tooltip: 'Время',
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => EditOrderScreen(order: order)),
+                        );
+                      },
+                      icon: const Icon(Icons.edit_outlined),
+                      tooltip: 'Редактировать',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Менеджер: ${order.manager.isEmpty ? '—' : order.manager}',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          if (isCompleted)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4.0),
+                              child: Text(
+                                'Факт: ${order.actualQty != null ? _formatQuantity(order.actualQty!) : '—'} шт.',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (isCompleted && !order.isShipped)
+                      ElevatedButton(
+                        onPressed:
+                            isShipping ? null : () => _confirmShipment(order),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: isShipping
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : const Text('Отгрузить'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1094,4 +1119,26 @@ class _OrderStatusInfo {
   final Color color;
   final String label;
   const _OrderStatusInfo(this.color, this.label);
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 12),
+      ),
+    );
+  }
 }
