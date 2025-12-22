@@ -73,7 +73,14 @@ class _StageRuleOutcome {
       {required this.stages, this.shouldCompleteBobbin = false, this.bobbinId});
 }
 
-class _EditOrderScreenState extends State<EditOrderScreen> {
+class _OrderSection {
+  final String title;
+  final Widget content;
+  const _OrderSection({required this.title, required this.content});
+}
+
+class _EditOrderScreenState extends State<EditOrderScreen>
+    with SingleTickerProviderStateMixin {
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -309,6 +316,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _stockExtraFocusNode.unfocus();
   }
 
+  void _resetFormScroll() {
+    if (_formScrollController.hasClients) {
+      _formScrollController.jumpTo(0);
+    }
+  }
+
   Widget _buildStockExtraResults() {
     if (_stockExtraResults.isEmpty) {
       if (_loadingStockExtra ||
@@ -382,6 +395,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final _formKey = GlobalKey<FormState>();
   final _uuid = const Uuid();
   final SupabaseClient _sb = Supabase.instance.client;
+  static const List<String> _sectionTitles = [
+    'Заказ',
+    'Изделие',
+    'Фурнитура',
+    'Краски',
+    'Форма',
+    'Материалы',
+    'Производство',
+    'Комментарии',
+  ];
+  late final TabController _tabController;
 
   // Персонал: выбранный менеджер из списка сотрудников с ролью «Менеджер»
   String? _selectedManager;
@@ -506,7 +530,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   @override
   void initState() {
-// Доп. попытка загрузить номер формы после первой отрисовки
+    super.initState();
+    _tabController = TabController(length: _sectionTitles.length, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) {
+        _resetFormScroll();
+      }
+    });
+    // Доп. попытка загрузить номер формы после первой отрисовки
     bool _defensiveFormLoadScheduled = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_defensiveFormLoadScheduled && widget.order != null) {
@@ -518,8 +549,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _stageTemplateController.text = '';
     _stageTemplateController.addListener(_onStageTemplateTextChanged);
     _lastPreviewPaintsFilled = _hasAnyPaints();
-
-    super.initState();
 
     // order передан при редактировании, initialOrder - при создании на основе шаблона
     final template = widget.order ?? widget.initialOrder;
@@ -1306,6 +1335,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     _customerController.dispose();
     _commentsController.dispose();
     _paintInfoController.dispose();
@@ -2677,23 +2707,48 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
-    final formSections = [
-      _buildOrderInfoSection(context),
-      _buildProductBasics(_product),
-      _buildHandlesSection(context),
-      _buildPaintsSection(),
-      _buildFormSection(
-        context: context,
-        showFormSummary: showFormSummary,
-        showFormEditor: showFormEditor,
-        isEditing: isEditing,
-        hasAssignedForm: hasAssignedForm,
-        paintsAvailable: paintsAvailable,
+    final sections = <_OrderSection>[
+      _OrderSection(
+        title: _sectionTitles[0],
+        content: _buildOrderInfoSection(context),
       ),
-      _buildProductMaterialAndExtras(_product),
-      _buildProductionSection(context),
-      _buildCommentsSection(context),
+      _OrderSection(
+        title: _sectionTitles[1],
+        content: _buildProductBasics(_product),
+      ),
+      _OrderSection(
+        title: _sectionTitles[2],
+        content: _buildHandlesSection(context),
+      ),
+      _OrderSection(
+        title: _sectionTitles[3],
+        content: _buildPaintsSection(),
+      ),
+      _OrderSection(
+        title: _sectionTitles[4],
+        content: _buildFormSection(
+          context: context,
+          showFormSummary: showFormSummary,
+          showFormEditor: showFormEditor,
+          isEditing: isEditing,
+          hasAssignedForm: hasAssignedForm,
+          paintsAvailable: paintsAvailable,
+        ),
+      ),
+      _OrderSection(
+        title: _sectionTitles[5],
+        content: _buildProductMaterialAndExtras(_product),
+      ),
+      _OrderSection(
+        title: _sectionTitles[6],
+        content: _buildProductionSection(context),
+      ),
+      _OrderSection(
+        title: _sectionTitles[7],
+        content: _buildCommentsSection(context),
+      ),
     ];
+    assert(sections.length == _tabController.length);
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -2749,41 +2804,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         key: _formKey,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final formList = LayoutBuilder(
-              builder: (context, innerConstraints) {
-                final maxWrapWidth = math.min(innerConstraints.maxWidth, 1500.0);
-                final useTwoColumns = maxWrapWidth >= 1024;
-                final sectionWidth = useTwoColumns
-                    ? (maxWrapWidth - 16) / 2
-                    : maxWrapWidth;
-                return Scrollbar(
-                  controller: _formScrollController,
-                  thumbVisibility: true,
-                  child: SingleChildScrollView(
-                    controller: _formScrollController,
-                    padding: const EdgeInsets.all(16),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: maxWrapWidth),
-                        child: Wrap(
-                          spacing: 16,
-                          runSpacing: 16,
-                          children: formSections
-                              .map(
-                                (section) => SizedBox(
-                                  width: useTwoColumns
-                                      ? sectionWidth
-                                      : maxWrapWidth,
-                                  child: section,
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ),
+            final formList = SizedBox(
+              height: constraints.maxHeight,
+              child: Column(
+                children: [
+                  Material(
+                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    child: TabBar(
+                      controller: _tabController,
+                      isScrollable: true,
+                      labelPadding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      tabs: sections.map((s) => Tab(text: s.title)).toList(),
                     ),
                   ),
-                );
-              },
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: sections
+                          .map(
+                            (section) => LayoutBuilder(
+                              builder: (context, innerConstraints) {
+                                final maxWrapWidth =
+                                    math.min(innerConstraints.maxWidth, 1500.0);
+                                return Scrollbar(
+                                  controller: _formScrollController,
+                                  thumbVisibility: true,
+                                  child: SingleChildScrollView(
+                                    controller: _formScrollController,
+                                    padding: const EdgeInsets.all(16),
+                                    child: Center(
+                                      child: ConstrainedBox(
+                                        constraints:
+                                            BoxConstraints(maxWidth: maxWrapWidth),
+                                        child: section.content,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ],
+              ),
             );
 
             if (constraints.maxWidth < 1200) {
