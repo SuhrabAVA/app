@@ -3900,7 +3900,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return _matchesWarehouseQuery(_paintSearch, [
         paint.description,
         paint.note ?? '',
-        paint.color ?? '',
         qty,
       ]);
     }).toList();
