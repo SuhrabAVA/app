@@ -99,6 +99,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final TextEditingController _formTypeCtl = TextEditingController();
   final TextEditingController _formColorsCtl = TextEditingController();
   final TextEditingController _formNumberCtl = TextEditingController();
+  final ScrollController _formScrollController = ScrollController();
+  final TextEditingController _paperSearchController = TextEditingController();
+  final TextEditingController _paintSearchController = TextEditingController();
+  final TextEditingController _categorySearchController = TextEditingController();
+  final ScrollController _paperListController = ScrollController();
+  final ScrollController _paintListController = ScrollController();
+  final ScrollController _categoryListController = ScrollController();
+  String _paperSearch = '';
+  String _paintSearch = '';
+  String _categorySearch = '';
   Uint8List? _formImageBytes;
 
   Future<void> _loadOrderFormDisplay() async {
@@ -831,15 +841,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return (_product.widthB ?? _product.width).toDouble();
     }
 
-    bool formatMatchesWidth() {
-      final fmtWidth = formatWidth();
-      final prodWidth = productWidth();
-      return fmtWidth != null &&
-          prodWidth != null &&
-          prodWidth > 0 &&
-          (fmtWidth - prodWidth).abs() <= 0.001;
-    }
-
     bool paintsFilled = _hasAnyPaints();
 
     if (paintsFilled) {
@@ -890,24 +891,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     final fmtWidth = formatWidth();
     final prodWidth = productWidth();
-    final formatIsWider = fmtWidth != null &&
-        prodWidth != null &&
-        prodWidth > 0 &&
-        (prodWidth + 0.001) < fmtWidth;
+    const double epsilon = 0.001;
 
-    if (formatMatchesWidth()) {
+    void removeBobbinStageIfPresent() {
       removedBobbinStage = removeBobbinStage();
       if (removedBobbinStage != null) {
         shouldCompleteBobbin = true;
-        bobbinId = (removedBobbinStage['stageId'] ??
-                removedBobbinStage['stage_id'] ??
-                removedBobbinStage['stageid'] ??
-                removedBobbinStage['workplaceId'] ??
-                removedBobbinStage['workplace_id'] ??
-                removedBobbinStage['id'])
+        bobbinId = (removedBobbinStage!['stageId'] ??
+                removedBobbinStage!['stage_id'] ??
+                removedBobbinStage!['stageid'] ??
+                removedBobbinStage!['workplaceId'] ??
+                removedBobbinStage!['workplace_id'] ??
+                removedBobbinStage!['id'])
             ?.toString();
       }
-    } else if (!formatIsWider) {
+    }
+
+    void addBobbinStageIfMissing() {
       final hasBobbin = findStageIndex((m) {
             final sid = (m['stageId'] as String?) ??
                 (m['stageid'] as String?) ??
@@ -923,24 +923,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 title.contains('bobbin');
           }) >=
           0;
-      if (!hasBobbin) {
-        final resolvedId = (bobbinId != null && bobbinId!.isNotEmpty)
-            ? bobbinId
-            : (removedBobbinStage != null
-                ? (removedBobbinStage['stageId'] as String?)
-                : null);
-        final resolvedTitle = (bobbinTitle?.trim().isNotEmpty ?? false)
-            ? bobbinTitle
-            : 'Бабинорезка';
-        final fallbackId = resolvedId ?? 'w_bobbiner';
-        stageMaps.insert(0, {
-          'stageId': fallbackId,
-          'workplaceId': fallbackId,
-          'stageName': resolvedTitle,
-          'workplaceName': resolvedTitle,
-          'order': 0,
-        });
-        bobbinId = fallbackId;
+      if (hasBobbin) return;
+      final resolvedId = (bobbinId != null && bobbinId!.isNotEmpty)
+          ? bobbinId
+          : (removedBobbinStage != null
+              ? (removedBobbinStage!['stageId'] as String?)
+              : null);
+      final resolvedTitle = (bobbinTitle?.trim().isNotEmpty ?? false)
+          ? bobbinTitle
+          : 'Бабинорезка';
+      final fallbackId = resolvedId ?? 'w_bobbiner';
+      stageMaps.insert(0, {
+        'stageId': fallbackId,
+        'workplaceId': fallbackId,
+        'stageName': resolvedTitle,
+        'workplaceName': resolvedTitle,
+        'order': 0,
+      });
+      bobbinId = fallbackId;
+    }
+
+    if (fmtWidth != null && prodWidth != null && prodWidth > 0) {
+      final productIsNarrower = (prodWidth + epsilon) < fmtWidth;
+      final formatIsNarrower = (fmtWidth + epsilon) < prodWidth;
+      if (productIsNarrower) {
+        addBobbinStageIfMissing();
+      } else if (formatIsNarrower || (fmtWidth - prodWidth).abs() <= epsilon) {
+        removeBobbinStageIfPresent();
       }
     }
 
@@ -1300,6 +1309,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _customerController.dispose();
     _commentsController.dispose();
     _paintInfoController.dispose();
+    _formScrollController.dispose();
+    _paperSearchController.dispose();
+    _paintSearchController.dispose();
+    _categorySearchController.dispose();
+    _paperListController.dispose();
+    _paintListController.dispose();
+    _categoryListController.dispose();
 
     _formSearchDebounce?.cancel();
     _formSearchFocusNode.dispose();
@@ -1879,6 +1895,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (t.id == tmc!.id) return t.quantity;
     }
     return tmc.quantity;
+  }
+
+  bool _matchesWarehouseQuery(String query, Iterable<String> fields) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    return fields.any((field) => field.toLowerCase().contains(normalized));
   }
 
   /// --- Helpers for idempotent write-offs ---
@@ -2655,6 +2677,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
+    final formSections = [
+      _buildOrderInfoSection(context),
+      _buildProductBasics(_product),
+      _buildHandlesSection(context),
+      _buildPaintsSection(),
+      _buildFormSection(
+        context: context,
+        showFormSummary: showFormSummary,
+        showFormEditor: showFormEditor,
+        isEditing: isEditing,
+        hasAssignedForm: hasAssignedForm,
+        paintsAvailable: paintsAvailable,
+      ),
+      _buildProductMaterialAndExtras(_product),
+      _buildProductionSection(context),
+      _buildCommentsSection(context),
+    ];
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -2710,49 +2749,41 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         key: _formKey,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final formChildren = [
-              _buildOrderInfoSection(context),
-              const SizedBox(height: 12),
-              _buildProductBasics(_product),
-              const SizedBox(height: 12),
-              _buildHandlesSection(context),
-              const SizedBox(height: 12),
-              _buildPaintsSection(),
-              const SizedBox(height: 12),
-              _buildFormSection(
-                context: context,
-                showFormSummary: showFormSummary,
-                showFormEditor: showFormEditor,
-                isEditing: isEditing,
-                hasAssignedForm: hasAssignedForm,
-                paintsAvailable: paintsAvailable,
-              ),
-              const SizedBox(height: 12),
-              _buildProductMaterialAndExtras(_product),
-              const SizedBox(height: 12),
-              _buildProductionSection(context),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _commentsController,
-                decoration: const InputDecoration(
-                  labelText: 'Комментарии к заказу',
-                  border: OutlineInputBorder(),
-                ),
-                minLines: 2,
-                maxLines: 5,
-              ),
-              const SizedBox(height: 12),
-            ];
-
-            final formList = Align(
-              alignment: Alignment.topLeft,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 900),
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: formChildren,
-                ),
-              ),
+            final formList = LayoutBuilder(
+              builder: (context, innerConstraints) {
+                final maxWrapWidth = math.min(innerConstraints.maxWidth, 1500.0);
+                final useTwoColumns = maxWrapWidth >= 1024;
+                final sectionWidth = useTwoColumns
+                    ? (maxWrapWidth - 16) / 2
+                    : maxWrapWidth;
+                return Scrollbar(
+                  controller: _formScrollController,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: _formScrollController,
+                    padding: const EdgeInsets.all(16),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxWrapWidth),
+                        child: Wrap(
+                          spacing: 16,
+                          runSpacing: 16,
+                          children: formSections
+                              .map(
+                                (section) => SizedBox(
+                                  width: useTwoColumns
+                                      ? sectionWidth
+                                      : maxWrapWidth,
+                                  child: section,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             );
 
             if (constraints.maxWidth < 1200) {
@@ -3369,10 +3400,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required String title,
     required List<Widget> children,
   }) {
-    final _ = title;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
     );
   }
 
@@ -3759,23 +3810,84 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (papers.isEmpty) {
       return const Center(child: Text('На складе нет бумаги'));
     }
-    return ListView.separated(
-      padding: const EdgeInsets.all(12),
-      itemBuilder: (context, index) {
-        final paper = papers[index];
-        final subtitle = [
-          if ((paper.format ?? '').isNotEmpty) 'Формат: ${paper.format}',
-          if ((paper.grammage ?? '').isNotEmpty) 'Грамаж: ${paper.grammage}',
-          'Метраж: ${paper.quantity.toStringAsFixed(2)}',
-        ].join('\n');
-        return ListTile(
-          title: Text(paper.description.isEmpty ? 'Без названия' : paper.description),
-          subtitle: Text(subtitle),
-          onTap: () => _applyPaperSelection(paper),
-        );
-      },
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemCount: papers.length,
+    final filtered = papers.where((paper) {
+      return _matchesWarehouseQuery(_paperSearch, [
+        paper.description,
+        paper.format ?? '',
+        paper.grammage ?? '',
+        paper.note ?? '',
+        paper.quantity.toStringAsFixed(2),
+      ]);
+    }).toList();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: TextField(
+            controller: _paperSearchController,
+            decoration: InputDecoration(
+              labelText: 'Поиск бумаги',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _paperSearch.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        setState(() {
+                          _paperSearch = '';
+                          _paperSearchController.clear();
+                        });
+                      },
+                    ),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (value) => setState(() => _paperSearch = value),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: filtered.isEmpty
+              ? const Center(child: Text('Нет бумаги по текущему запросу'))
+              : Scrollbar(
+                  controller: _paperListController,
+                  thumbVisibility: true,
+                  child: ListView.separated(
+                    controller: _paperListController,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    itemBuilder: (context, index) {
+                      final paper = filtered[index];
+                      final subtitle = [
+                        if ((paper.format ?? '').isNotEmpty)
+                          'Формат: ${paper.format}',
+                        if ((paper.grammage ?? '').isNotEmpty)
+                          'Грамаж: ${paper.grammage}',
+                        'Метраж: ${paper.quantity.toStringAsFixed(2)}',
+                      ].where((part) => part.trim().isNotEmpty).join(' • ');
+                      return ListTile(
+                        dense: true,
+                        title: Text(
+                          paper.description.isEmpty
+                              ? 'Без названия'
+                              : paper.description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => _applyPaperSelection(paper),
+                      );
+                    },
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemCount: filtered.length,
+                  ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -3783,35 +3895,94 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (paints.isEmpty) {
       return const Center(child: Text('На складе нет красок'));
     }
-    return ListView.separated(
-      padding: const EdgeInsets.all(12),
-      itemBuilder: (context, index) {
-        final paint = paints[index];
-        ImageProvider? preview;
-        if ((paint.imageBase64 ?? '').isNotEmpty) {
-          try {
-            preview = MemoryImage(base64Decode(paint.imageBase64!));
-          } catch (_) {}
-        }
-        if (preview == null && (paint.imageUrl ?? '').isNotEmpty) {
-          preview = NetworkImage(paint.imageUrl!);
-        }
-        final qty = _stockQtyToGrams(paint);
-        final subtitle = [
-          'Цвет: ${paint.note ?? '—'}',
-          'Количество: ${qty.toStringAsFixed(2)} г',
-        ].join('\n');
-        return ListTile(
-          leading: preview != null
-              ? CircleAvatar(backgroundImage: preview)
-              : const CircleAvatar(child: Icon(Icons.color_lens)),
-          title: Text(paint.description.isEmpty ? 'Без названия' : paint.description),
-          subtitle: Text(subtitle),
-          onTap: () => _addPaintFromTmc(paint),
-        );
-      },
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemCount: paints.length,
+    final filtered = paints.where((paint) {
+      final qty = _stockQtyToGrams(paint).toStringAsFixed(2);
+      return _matchesWarehouseQuery(_paintSearch, [
+        paint.description,
+        paint.note ?? '',
+        paint.color ?? '',
+        qty,
+      ]);
+    }).toList();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: TextField(
+            controller: _paintSearchController,
+            decoration: InputDecoration(
+              labelText: 'Поиск красок',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _paintSearch.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        setState(() {
+                          _paintSearch = '';
+                          _paintSearchController.clear();
+                        });
+                      },
+                    ),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (value) => setState(() => _paintSearch = value),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: filtered.isEmpty
+              ? const Center(child: Text('Нет красок по текущему запросу'))
+              : Scrollbar(
+                  controller: _paintListController,
+                  thumbVisibility: true,
+                  child: ListView.separated(
+                    controller: _paintListController,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    itemBuilder: (context, index) {
+                      final paint = filtered[index];
+                      ImageProvider? preview;
+                      if ((paint.imageBase64 ?? '').isNotEmpty) {
+                        try {
+                          preview = MemoryImage(base64Decode(paint.imageBase64!));
+                        } catch (_) {}
+                      }
+                      if (preview == null && (paint.imageUrl ?? '').isNotEmpty) {
+                        preview = NetworkImage(paint.imageUrl!);
+                      }
+                      final qty = _stockQtyToGrams(paint);
+                      final subtitle = [
+                        'Цвет: ${paint.note ?? '—'}',
+                        'Количество: ${qty.toStringAsFixed(2)} г',
+                      ].join(' • ');
+                      return ListTile(
+                        dense: true,
+                        leading: preview != null
+                            ? CircleAvatar(backgroundImage: preview)
+                            : const CircleAvatar(child: Icon(Icons.color_lens)),
+                        title: Text(
+                          paint.description.isEmpty
+                              ? 'Без названия'
+                              : paint.description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => _addPaintFromTmc(paint),
+                      );
+                    },
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemCount: filtered.length,
+                  ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -3819,44 +3990,117 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_loadingStockExtra) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (rows.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Нет записей по текущей категории продукта.'),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: () => _updateStockExtra(includeAllResults: true),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Обновить склад'),
-            ),
-          ],
-        ),
-      );
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.all(12),
-      itemBuilder: (context, index) {
-        final row = rows[index];
-        final description = (row['description'] ?? '').toString().trim();
-        final sizeLabel = (row['size'] ?? '').toString().trim();
-        final qv = row['quantity'];
-        final qty = (qv is num) ? qv.toDouble() : double.tryParse('$qv') ?? 0.0;
-        final subtitleParts = <String>[];
-        subtitleParts.add('Количество: ${qty.toStringAsFixed(2)}');
-        if (sizeLabel.isNotEmpty) {
-          subtitleParts.add('Размер: $sizeLabel');
-        }
-        return ListTile(
-          title: Text(description.isEmpty ? 'Без названия' : description),
-          subtitle: Text(subtitleParts.join('\n')),
-          onTap: () => _selectStockExtraRow(row),
+    final filtered = rows.where((row) {
+      final description = (row['description'] ?? '').toString();
+      final sizeLabel = (row['size'] ?? '').toString();
+      final qtyValue = row['quantity'];
+      final qty = (qtyValue is num)
+          ? qtyValue.toDouble()
+          : double.tryParse('$qtyValue') ??
+              0.0;
+      return _matchesWarehouseQuery(_categorySearch, [
+        description,
+        sizeLabel,
+        qty.toStringAsFixed(2),
+        (row['code'] ?? '').toString(),
+      ]);
+    }).toList();
+
+    Widget buildEmptyState() {
+      if (rows.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Нет записей по текущей категории продукта.'),
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: () => _updateStockExtra(includeAllResults: true),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Обновить склад'),
+              ),
+            ],
+          ),
         );
-      },
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemCount: rows.length,
+      }
+      return const Center(child: Text('Нет результатов по текущему запросу'));
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: TextField(
+            controller: _categorySearchController,
+            decoration: InputDecoration(
+              labelText: 'Поиск по категориям',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _categorySearch.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        setState(() {
+                          _categorySearch = '';
+                          _categorySearchController.clear();
+                        });
+                      },
+                    ),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (value) => setState(() => _categorySearch = value),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: filtered.isEmpty
+              ? buildEmptyState()
+              : Scrollbar(
+                  controller: _categoryListController,
+                  thumbVisibility: true,
+                  child: ListView.separated(
+                    controller: _categoryListController,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    itemBuilder: (context, index) {
+                      final row = filtered[index];
+                      final description =
+                          (row['description'] ?? '').toString().trim();
+                      final sizeLabel = (row['size'] ?? '').toString().trim();
+                      final qv = row['quantity'];
+                      final qty = (qv is num)
+                          ? qv.toDouble()
+                          : double.tryParse('$qv') ?? 0.0;
+                      final subtitleParts = <String>[];
+                      subtitleParts.add('Количество: ${qty.toStringAsFixed(2)}');
+                      if (sizeLabel.isNotEmpty) {
+                        subtitleParts.add('Размер: $sizeLabel');
+                      }
+                      return ListTile(
+                        dense: true,
+                        title: Text(
+                          description.isEmpty
+                              ? 'Без названия'
+                              : description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          subtitleParts.join(' • '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => _selectStockExtraRow(row),
+                      );
+                    },
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemCount: filtered.length,
+                  ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -3994,6 +4238,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             border: OutlineInputBorder(),
           ),
           readOnly: true,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCommentsSection(BuildContext context) {
+    return _buildSectionCard(
+      context: context,
+      title: 'Комментарии',
+      children: [
+        TextFormField(
+          controller: _commentsController,
+          decoration: const InputDecoration(
+            labelText: 'Комментарии к заказу',
+            border: OutlineInputBorder(),
+          ),
+          minLines: 2,
+          maxLines: 5,
         ),
       ],
     );
