@@ -1185,7 +1185,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return false;
         }
 
-        bool _formatMatchesWidth() {
+        double? _extractFormatWidth() {
           double? fmtW;
           if (_matSelectedFormat != null &&
               _matSelectedFormat!.trim().isNotEmpty) {
@@ -1195,19 +1195,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               fmtW = double.tryParse(match.group(1)!.replaceAll(',', '.'));
             }
           }
+          return fmtW;
+        }
+
+        double? _productWidthValue() {
           final dynamic widthValue = _product.widthB ?? _product.width;
-          double? widthB;
           if (widthValue is num) {
-            widthB = widthValue.toDouble();
-          } else if (widthValue is String) {
-            widthB = double.tryParse(widthValue.replaceAll(',', '.'));
+            return widthValue.toDouble();
           }
-          return fmtW != null && widthB != null && widthB > 0 &&
-              (fmtW - widthB).abs() <= 0.001;
+          if (widthValue is String) {
+            return double.tryParse(widthValue.replaceAll(',', '.'));
+          }
+          return null;
         }
 
         // paints present?
-        final bool __formatMatchesWidth = _formatMatchesWidth();
+        const double __epsilon = 0.001;
+        final double? __formatWidth = _extractFormatWidth();
+        final double? __productWidth = _productWidthValue();
+        final bool __hasWidths =
+            __formatWidth != null && __productWidth != null && __productWidth > 0;
+        final bool __shouldAddBobbin = __hasWidths &&
+            (__productWidth! + __epsilon) < __formatWidth!;
+        final bool __shouldRemoveBobbin = __hasWidths &&
+            ((__formatWidth! + __epsilon) < __productWidth! ||
+                (__formatWidth - __productWidth).abs() <= __epsilon);
 
         bool __paintsFilled = _paints.any((p) {
           final hasTmc = p.tmc != null;
@@ -1262,14 +1274,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
         }
 
-        if (__formatMatchesWidth && _removeBobbinStage()) {
+        if (__shouldRemoveBobbin && _removeBobbinStage()) {
           __shouldCompleteBobbin = true;
-        } else if (!__formatMatchesWidth) {
+        } else if (__shouldAddBobbin) {
           final hasBobbin = _findBobbinIndex() >= 0;
           if (!hasBobbin && (__bobbinId != null && __bobbinId!.isNotEmpty)) {
-            final resolvedBobbinTitle = (__bobbinTitle?.trim().isNotEmpty ?? false)
-                ? __bobbinTitle!.trim()
-                : 'Бабинорезка';
+            final resolvedBobbinTitle =
+                (__bobbinTitle?.trim().isNotEmpty ?? false)
+                    ? __bobbinTitle!.trim()
+                    : 'Бабинорезка';
             stageMaps.insert(0, {
               'stageId': __bobbinId,
               'workplaceId': __bobbinId,
@@ -1277,10 +1290,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               'workplaceName': resolvedBobbinTitle,
               'order': 0,
             });
-          } else if (!hasBobbin && (__bobbinId == null || __bobbinId!.isEmpty)) {
-            final resolvedBobbinTitle = (__bobbinTitle?.trim().isNotEmpty ?? false)
-                ? __bobbinTitle!.trim()
-                : 'Бабинорезка';
+          } else if (!hasBobbin &&
+              (__bobbinId == null || __bobbinId!.isEmpty)) {
+            final resolvedBobbinTitle =
+                (__bobbinTitle?.trim().isNotEmpty ?? false)
+                    ? __bobbinTitle!.trim()
+                    : 'Бабинорезка';
             stageMaps.insert(0, {
               'stageId': 'w_bobbiner',
               'workplaceId': 'w_bobbiner',
