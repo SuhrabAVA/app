@@ -8,6 +8,7 @@ import '../warehouse/warehouse_table_styles.dart';
 import '../personnel/personnel_provider.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
+import 'product_model.dart';
 import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
