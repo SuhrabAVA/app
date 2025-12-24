@@ -414,6 +414,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _trimming = false;
   double _makeready = 0;
   double _val = 0;
+  bool _compactMode = false;
   String? _stageTemplateId;
   final TextEditingController _stageTemplateController =
       TextEditingController();
@@ -2747,16 +2748,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
-    final formSections = [
-      _buildSingleSheetLayout(
-        context,
-        isEditing: isEditing,
-        showFormSummary: showFormSummary,
-        showFormEditor: showFormEditor,
-        hasAssignedForm: hasAssignedForm,
-        paintsAvailable: paintsAvailable,
-      ),
-    ];
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -2812,6 +2803,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         key: _formKey,
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final compactLayout = constraints.maxWidth >= 1200;
+            final formSection = _buildSingleSheetLayout(
+              context,
+              isEditing: isEditing,
+              showFormSummary: showFormSummary,
+              showFormEditor: showFormEditor,
+              hasAssignedForm: hasAssignedForm,
+              paintsAvailable: paintsAvailable,
+              compact: compactLayout,
+            );
+            final scrollSection = compactLayout
+                ? _buildSingleSheetLayout(
+                    context,
+                    isEditing: isEditing,
+                    showFormSummary: showFormSummary,
+                    showFormEditor: showFormEditor,
+                    hasAssignedForm: hasAssignedForm,
+                    paintsAvailable: paintsAvailable,
+                  )
+                : formSection;
             final formList = LayoutBuilder(
               builder: (context, innerConstraints) {
                 final maxWrapWidth =
@@ -2831,7 +2842,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         child: Wrap(
                           spacing: 16,
                           runSpacing: 16,
-                          children: formSections
+                          children: [scrollSection]
                               .map(
                                 (section) => SizedBox(
                                   width: useTwoColumns
@@ -2860,7 +2871,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   flex: 3,
                   child: SizedBox(
                     height: constraints.maxHeight,
-                    child: formList,
+                    child: Theme(
+                      data: _compactTheme(context),
+                      child: formSection,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -3401,6 +3415,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  ThemeData _compactTheme(BuildContext context) {
+    final base = Theme.of(context);
+    return base.copyWith(
+      textTheme: base.textTheme.apply(fontSizeFactor: 0.95, heightFactor: 1.0),
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      ),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
   Widget _buildSingleSheetLayout(
     BuildContext context, {
     required bool isEditing,
@@ -3408,47 +3435,70 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool showFormEditor,
     required bool hasAssignedForm,
     required bool paintsAvailable,
+    bool compact = false,
   }) {
-    final sections = [
-      _buildOrderInfoSection(context),
-      _buildProductBasics(_product),
-      _buildHandlesSection(context),
-      _buildPaintsSection(),
-      _buildFormSection(
-        context: context,
-        showFormSummary: showFormSummary,
-        showFormEditor: showFormEditor,
-        isEditing: isEditing,
-        hasAssignedForm: hasAssignedForm,
-        paintsAvailable: paintsAvailable,
-      ),
-      _buildProductMaterialAndExtras(_product),
-      _buildCommentsSection(context),
-      _buildProductionSection(context),
-    ];
-
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (int i = 0; i < sections.length; i++) ...[
-              if (i > 0) const Divider(height: 24),
-              sections[i],
-            ],
-          ],
+    final previousCompact = _compactMode;
+    _compactMode = compact;
+    Widget buildContent() {
+      final sections = [
+        _buildOrderInfoSection(context),
+        _buildProductBasics(_product),
+        _buildHandlesSection(context),
+        _buildPaintsSection(),
+        _buildFormSection(
+          context: context,
+          showFormSummary: showFormSummary,
+          showFormEditor: showFormEditor,
+          isEditing: isEditing,
+          hasAssignedForm: hasAssignedForm,
+          paintsAvailable: paintsAvailable,
         ),
-      ),
-    );
+        _buildProductMaterialAndExtras(_product),
+        _buildCommentsSection(context),
+        _buildProductionSection(context),
+      ];
+
+      final content = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (int i = 0; i < sections.length; i++) ...[
+            if (i > 0)
+              SizedBox(height: compact ? 8 : 16),
+            sections[i],
+          ],
+        ],
+      );
+
+      if (compact) {
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: content,
+        );
+      }
+
+      return Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: content,
+        ),
+      );
+    }
+
+    try {
+      return buildContent();
+    } finally {
+      _compactMode = previousCompact;
+    }
   }
 
   Widget _buildSectionCard({
     required BuildContext context,
     required String title,
     required List<Widget> children,
+    bool dense = false,
   }) {
+    final useDense = dense || _compactMode;
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -3458,20 +3508,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             Flexible(
               child: Text(
                 title,
-                style: Theme.of(context).textTheme.titleMedium,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontSize: useDense ? 14 : null,
+                    height: useDense ? 1.0 : null),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: useDense ? 8 : 12),
         ...children,
       ],
     );
 
     if (_useSingleSheetLayout) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: EdgeInsets.symmetric(vertical: useDense ? 4 : 6),
         child: content,
       );
     }
@@ -3492,27 +3544,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     double runSpacing = 12,
     double minItemWidth = 260,
     int maxColumns = 2,
+    bool dense = false,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final useDense = dense || _compactMode;
+        final itemHeight = useDense ? 44.0 : null;
+        final effectiveSpacing = useDense ? 8.0 : spacing;
+        final effectiveRunSpacing = useDense ? 8.0 : runSpacing;
         final maxWidth = constraints.maxWidth;
         int columns = maxWidth >= breakpoint ? maxColumns : 1;
         columns = columns.clamp(1, maxColumns);
         double width = columns == 1
             ? maxWidth
-            : (maxWidth - spacing * (columns - 1)) / columns;
+            : (maxWidth - effectiveSpacing * (columns - 1)) / columns;
         while (columns > 1 && width < minItemWidth) {
           columns -= 1;
           width = columns == 1
               ? maxWidth
-              : (maxWidth - spacing * (columns - 1)) / columns;
+              : (maxWidth - effectiveSpacing * (columns - 1)) / columns;
         }
         return Wrap(
-          spacing: spacing,
-          runSpacing: runSpacing,
+          spacing: effectiveSpacing,
+          runSpacing: effectiveRunSpacing,
           children: fields
               .map((child) => SizedBox(
                     width: columns == 1 ? maxWidth : width,
+                    height: itemHeight,
                     child: child,
                   ))
               .toList(),
