@@ -415,17 +415,55 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   // Клиент и комментарии
   late TextEditingController _customerController;
   late TextEditingController _commentsController;
+  late TextEditingController _sizeController;
   DateTime? _orderDate;
   DateTime? _dueDate;
   bool _contractSigned = false;
   bool _paymentDone = false;
   late ProductModel _product;
   List<String> _selectedParams = [];
+  bool _trimmingEnabled = false;
   // Ручки (из склада)
   String? _selectedHandleId;
   String _selectedHandleDescription = '-';
   // Картон: либо «нет», либо «есть»
   String _selectedCardboard = 'нет';
+  String _formatDimensions({double? width, double? height, double? depth}) {
+    String normalize(double? value) {
+      if (value == null || value <= 0) return '';
+      var text = value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 2);
+      while (text.contains('.') && text.endsWith('0')) {
+        text = text.substring(0, text.length - 1);
+      }
+      if (text.endsWith('.')) text = text.substring(0, text.length - 1);
+      return text;
+    }
+
+    final parts = [
+      normalize(depth),
+      normalize(width),
+      normalize(height),
+    ].where((part) => part.isNotEmpty).toList();
+
+    return parts.join(' ');
+  }
+
+  void _updateDimensionsFromInput(String value) {
+    final matches = RegExp(r'([0-9]+(?:[.,][0-9]+)?)')
+        .allMatches(value)
+        .map((m) => m.group(1))
+        .whereType<String>()
+        .map((s) => double.tryParse(s.replaceAll(',', '.')))
+        .whereType<double>()
+        .toList();
+
+    setState(() {
+      _product.depth = matches.isNotEmpty ? matches[0] : 0;
+      _product.width = matches.length > 1 ? matches[1] : 0;
+      _product.height = matches.length > 2 ? matches[2] : 0;
+    });
+    _scheduleStagePreviewUpdate();
+  }
   double _makeready = 0;
   double _val = 0;
   String? _stageTemplateId;
@@ -566,11 +604,23 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     _updateManagerDisplayController();
     _customerController = TextEditingController(text: template?.customer ?? '');
     _commentsController = TextEditingController(text: template?.comments ?? '');
+    _sizeController = TextEditingController(
+      text: _formatDimensions(
+        width: template?.product.width,
+        height: template?.product.height,
+        depth: template?.product.depth,
+      ),
+    );
+    _sizeController.addListener(() {
+      _updateDimensionsFromInput(_sizeController.text);
+    });
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
     _contractSigned = template?.contractSigned ?? false;
     _paymentDone = template?.paymentDone ?? false;
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
+    _trimmingEnabled = _selectedParams
+        .any((p) => p.toLowerCase().trim() == 'подрезка');
     final initialHandle = template?.handle?.trim();
     if (initialHandle != null && initialHandle.isNotEmpty && initialHandle != '-') {
       _selectedHandleDescription = initialHandle;
@@ -1338,6 +1388,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     _tabController.dispose();
     _customerController.dispose();
     _commentsController.dispose();
+    _sizeController.dispose();
     _paintInfoController.dispose();
     _formScrollController.dispose();
     _paperSearchController.dispose();
@@ -2011,6 +2062,10 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     final penName =
         _selectedHandleDescription == '-' ? '' : _selectedHandleDescription;
     _upsertPensInParameters(penName);
+    _selectedParams.removeWhere((p) => p.toLowerCase().trim() == 'подрезка');
+    if (_trimmingEnabled) {
+      _selectedParams.add('Подрезка');
+    }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     late OrderModel createdOrUpdatedOrder;
@@ -2943,51 +2998,24 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           ),
         ], breakpoint: 680, minItemWidth: 220),
         const SizedBox(height: 12),
-        _buildFieldGrid([
-          TextFormField(
-            initialValue: product.depth > 0 ? product.depth.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Длина (см)',
-              border: OutlineInputBorder(),
+        _buildFieldGrid(
+          [
+            TextFormField(
+              controller: _sizeController,
+              decoration: const InputDecoration(
+                labelText: 'Размеры (Д × Ш × В)',
+                hintText: '23 34 45 или 23*34*45',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (val) => _updateDimensionsFromInput(val),
             ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.depth = double.tryParse(normalized) ?? 0;
-              });
-            },
-          ),
-          TextFormField(
-            initialValue: product.width > 0 ? product.width.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Ширина (см)',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.width = double.tryParse(normalized) ?? 0;
-              });
-              _scheduleStagePreviewUpdate();
-            },
-          ),
-          TextFormField(
-            initialValue: product.height > 0 ? product.height.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Глубина (см)',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.height = double.tryParse(normalized) ?? 0;
-              });
-            },
-          ),
-        ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
+          ],
+          breakpoint: 760,
+          maxColumns: 2,
+          minItemWidth: 200,
+          spacing: 12,
+          runSpacing: 10,
+        ),
       ],
     );
   }
@@ -3535,22 +3563,28 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       context: context,
       title: 'Информация о заказе',
       children: [
-        _buildFieldGrid([
-          _buildManagerField(),
-          _buildCustomerField(),
-          _buildDatePickerField(
-            label: 'Дата заказа',
-            value: _orderDate,
-            onTap: _pickOrderDate,
-            emptyError: 'Укажите дату заказа',
-          ),
-          _buildDatePickerField(
-            label: 'Срок выполнения',
-            value: _dueDate,
-            onTap: _pickDueDate,
-            emptyError: 'Укажите срок',
-          ),
-        ], maxColumns: 2),
+        _buildFieldGrid(
+          [
+            _buildDatePickerField(
+              label: 'Дата заказа',
+              value: _orderDate,
+              onTap: _pickOrderDate,
+              emptyError: 'Укажите дату заказа',
+            ),
+            _buildCustomerField(),
+            _buildManagerField(),
+            _buildDatePickerField(
+              label: 'Срок выполнения',
+              value: _dueDate,
+              onTap: _pickDueDate,
+              emptyError: 'Укажите срок',
+            ),
+          ],
+          maxColumns: 3,
+          minItemWidth: 220,
+          spacing: 12,
+          runSpacing: 10,
+        ),
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -3649,58 +3683,65 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                 ),
             ];
 
-            return _buildFieldGrid([
-              DropdownButtonFormField<String?>(
-                value: hasSelectedHandle
-                    ? _selectedHandleId
-                    : (_selectedHandleId != null &&
-                            _selectedHandleDescription != '-'
-                        ? _selectedHandleId
-                        : null),
-                decoration: const InputDecoration(
-                  labelText: 'Ручки',
-                  border: OutlineInputBorder(),
-                ),
-                items: dropdownItems,
-                onChanged: (val) {
-                  setState(() {
-                    _selectedHandleId = val;
-                    if (val == null) {
-                      _selectedHandleDescription = '-';
-                    } else {
-                      final matches =
-                          handleItems.where((item) => item.id == val).toList();
-                      if (matches.isEmpty) {
-                        _selectedHandleDescription =
-                            _selectedHandleDescription == '-' ? '-' :
-                                _selectedHandleDescription;
+            return _buildFieldGrid(
+              [
+                DropdownButtonFormField<String?>(
+                  value: hasSelectedHandle
+                      ? _selectedHandleId
+                      : (_selectedHandleId != null &&
+                              _selectedHandleDescription != '-'
+                          ? _selectedHandleId
+                          : null),
+                  decoration: const InputDecoration(
+                    labelText: 'Ручки',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: dropdownItems,
+                  onChanged: (val) {
+                    setState(() {
+                      _selectedHandleId = val;
+                      if (val == null) {
+                        _selectedHandleDescription = '-';
                       } else {
-                        final desc = matches.first.description.trim();
-                        _selectedHandleDescription =
-                            desc.isEmpty ? '-' : matches.first.description;
+                        final matches =
+                            handleItems.where((item) => item.id == val).toList();
+                        if (matches.isEmpty) {
+                          _selectedHandleDescription =
+                              _selectedHandleDescription == '-' ? '-' :
+                                  _selectedHandleDescription;
+                        } else {
+                          final desc = matches.first.description.trim();
+                          _selectedHandleDescription =
+                              desc.isEmpty ? '-' : matches.first.description;
+                        }
                       }
-                    }
-                  });
-                },
-              ),
-              DropdownButtonFormField<String>(
-                value: _selectedCardboard,
-                decoration: const InputDecoration(
-                  labelText: 'Картон',
-                  border: OutlineInputBorder(),
+                    });
+                  },
                 ),
-                items: const [
-                  DropdownMenuItem(value: 'нет', child: Text('нет')),
-                  DropdownMenuItem(value: 'есть', child: Text('есть')),
-                ],
-                onChanged: (val) =>
-                    setState(() => _selectedCardboard = val ?? 'нет'),
-              ),
-            ],
-                breakpoint: 680,
-                maxColumns: 3,
-                minItemWidth: 200,
-                runSpacing: 16);
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Картон'),
+                  value: _selectedCardboard == 'есть',
+                  onChanged: (val) => setState(
+                      () => _selectedCardboard = (val ?? false) ? 'есть' : 'нет'),
+                ),
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Подрезка'),
+                  value: _trimmingEnabled,
+                  onChanged: (val) => setState(() => _trimmingEnabled = val ?? false),
+                ),
+              ],
+              breakpoint: 680,
+              maxColumns: 3,
+              minItemWidth: 200,
+              spacing: 12,
+              runSpacing: 10,
+            );
           },
         ),
       ],
