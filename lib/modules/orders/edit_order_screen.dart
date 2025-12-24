@@ -74,6 +74,8 @@ class _StageRuleOutcome {
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
+  static const bool _useSingleSheetLayout = true;
+
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -2746,21 +2748,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
     final formSections = [
-      _buildOrderInfoSection(context),
-      _buildProductBasics(_product),
-      _buildHandlesSection(context),
-      _buildPaintsSection(),
-      _buildFormSection(
-        context: context,
+      _buildSingleSheetLayout(
+        context,
+        isEditing: isEditing,
         showFormSummary: showFormSummary,
         showFormEditor: showFormEditor,
-        isEditing: isEditing,
         hasAssignedForm: hasAssignedForm,
         paintsAvailable: paintsAvailable,
       ),
-      _buildProductMaterialAndExtras(_product),
-      _buildCommentsSection(context),
-      _buildProductionSection(context),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -2896,7 +2891,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               return DropdownButtonFormField<String>(
                 value: items.contains(_product.type) ? _product.type : null,
                 decoration: const InputDecoration(
-                  labelText: 'Наименование изделия',
+                  labelText: 'Тип',
                   border: OutlineInputBorder(),
                 ),
                 items: items
@@ -2949,8 +2944,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           TextFormField(
             controller: _dimensionsController,
             decoration: const InputDecoration(
-              labelText: 'Размеры (Д Ш В)',
-              hintText: '23 34 45 / 23*34*45 / 23-34-45',
+              labelText: 'Размеры',
+              hintText: '23 34 45 / 23*34*45 / 23-34-45 / 23_34_45',
               border: OutlineInputBorder(),
             ),
             onChanged: _applyDimensions,
@@ -2966,6 +2961,105 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _buildStockExtraLayout(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _stockExtraSearchController,
+                focusNode: _stockExtraFocusNode,
+                decoration: InputDecoration(
+                  labelText: 'Лишнее на складе',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: _loadingStockExtra
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : (_stockExtraSearchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _stockExtraSearchController.clear();
+                                _onStockExtraSearchChanged('');
+                              },
+                            )),
+                ),
+                onChanged: _onStockExtraSearchChanged,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _stockExtra != null
+                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
+                    : 'Доступно: —',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _stockExtraQtyController,
+                decoration: InputDecoration(
+                  labelText: 'Количество для списания',
+                  border: const OutlineInputBorder(),
+                  helperText: _selectedStockExtraRow != null
+                      ? null
+                      : 'Сначала выберите позицию из списка',
+                ),
+                enabled: _selectedStockExtraRow != null,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (value) {
+                  final normalized = value.replaceAll(',', '.');
+                  final parsed = double.tryParse(normalized);
+                  double? nextValue =
+                      parsed != null && parsed >= 0 ? parsed : null;
+                  if (nextValue != null && _stockExtra != null) {
+                    final double available = _stockExtra!;
+                    if (available >= 0 && nextValue > available) {
+                      nextValue = available;
+                      final text = _formatDecimal(available);
+                      _stockExtraQtyController.value = TextEditingValue(
+                        text: text,
+                        selection: TextSelection.collapsed(offset: text.length),
+                      );
+                    }
+                  }
+                  setState(() {
+                    _stockExtraQtyTouched = true;
+                    _stockExtraSelectedQty = nextValue;
+                    _product.leftover = _stockExtraSelectedQty != null &&
+                            _stockExtraSelectedQty! > 0
+                        ? _stockExtraSelectedQty
+                        : null;
+                    if (_writeOffStockExtra &&
+                        (_stockExtraSelectedQty == null ||
+                            _stockExtraSelectedQty! <= 0)) {
+                      _writeOffStockExtra = false;
+                    }
+                  });
+                },
+              ),
+              const SizedBox(height: 4),
+              _buildStockExtraResults(),
+            ],
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Списать лишнее при сохранении'),
+            value: _writeOffStockExtra,
+            onChanged: (_selectedStockExtraRow != null &&
+                    (_stockExtraSelectedQty ?? 0) > 0)
+                ? (v) => setState(() => _writeOffStockExtra = v)
+                : null,
+          ),
+        ),
+        const SizedBox(height: 12),
         Builder(
           builder: (context) {
             final papers = _paperItems();
@@ -3242,105 +3336,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           },
         ),
         const SizedBox(height: 12),
-        _buildStockExtraLayout(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _stockExtraSearchController,
-                focusNode: _stockExtraFocusNode,
-                decoration: InputDecoration(
-                  labelText: 'Лишнее на складе',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: _loadingStockExtra
-                      ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : (_stockExtraSearchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _stockExtraSearchController.clear();
-                                _onStockExtraSearchChanged('');
-                              },
-                            )),
-                ),
-                onChanged: _onStockExtraSearchChanged,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _stockExtra != null
-                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
-                    : 'Доступно: —',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _stockExtraQtyController,
-                decoration: InputDecoration(
-                  labelText: 'Количество для списания',
-                  border: const OutlineInputBorder(),
-                  helperText: _selectedStockExtraRow != null
-                      ? null
-                      : 'Сначала выберите позицию из списка',
-                ),
-                enabled: _selectedStockExtraRow != null,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                onChanged: (value) {
-                  final normalized = value.replaceAll(',', '.');
-                  final parsed = double.tryParse(normalized);
-                  double? nextValue =
-                      parsed != null && parsed >= 0 ? parsed : null;
-                  if (nextValue != null && _stockExtra != null) {
-                    final double available = _stockExtra!;
-                    if (available >= 0 && nextValue > available) {
-                      nextValue = available;
-                      final text = _formatDecimal(available);
-                      _stockExtraQtyController.value = TextEditingValue(
-                        text: text,
-                        selection: TextSelection.collapsed(offset: text.length),
-                      );
-                    }
-                  }
-                  setState(() {
-                    _stockExtraQtyTouched = true;
-                    _stockExtraSelectedQty = nextValue;
-                    _product.leftover = _stockExtraSelectedQty != null &&
-                            _stockExtraSelectedQty! > 0
-                        ? _stockExtraSelectedQty
-                        : null;
-                    if (_writeOffStockExtra &&
-                        (_stockExtraSelectedQty == null ||
-                            _stockExtraSelectedQty! <= 0)) {
-                      _writeOffStockExtra = false;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 4),
-              _buildStockExtraResults(),
-            ],
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Списать лишнее при сохранении'),
-            value: _writeOffStockExtra,
-            onChanged: (_selectedStockExtraRow != null &&
-                    (_stockExtraSelectedQty ?? 0) > 0)
-                ? (v) => setState(() => _writeOffStockExtra = v)
-                : null,
-          ),
-        ),
-        const SizedBox(height: 12),
         _buildFieldGrid([
           TextFormField(
             initialValue: product.widthB?.toString() ?? '',
@@ -3406,11 +3401,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildSectionCard({
-    required BuildContext context,
-    required String title,
-    required List<Widget> children,
+  Widget _buildSingleSheetLayout(
+    BuildContext context, {
+    required bool isEditing,
+    required bool showFormSummary,
+    required bool showFormEditor,
+    required bool hasAssignedForm,
+    required bool paintsAvailable,
   }) {
+    final sections = [
+      _buildOrderInfoSection(context),
+      _buildProductBasics(_product),
+      _buildHandlesSection(context),
+      _buildPaintsSection(),
+      _buildFormSection(
+        context: context,
+        showFormSummary: showFormSummary,
+        showFormEditor: showFormEditor,
+        isEditing: isEditing,
+        hasAssignedForm: hasAssignedForm,
+        paintsAvailable: paintsAvailable,
+      ),
+      _buildProductMaterialAndExtras(_product),
+      _buildCommentsSection(context),
+      _buildProductionSection(context),
+    ];
+
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -3418,22 +3434,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Flexible(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ...children,
+            for (int i = 0; i < sections.length; i++) ...[
+              if (i > 0) const Divider(height: 24),
+              sections[i],
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required BuildContext context,
+    required String title,
+    required List<Widget> children,
+  }) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.titleMedium,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ...children,
+      ],
+    );
+
+    if (_useSingleSheetLayout) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: content,
+      );
+    }
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: content,
       ),
     );
   }
