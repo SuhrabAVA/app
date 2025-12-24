@@ -73,14 +73,7 @@ class _StageRuleOutcome {
       {required this.stages, this.shouldCompleteBobbin = false, this.bobbinId});
 }
 
-class _OrderSection {
-  final String title;
-  final Widget content;
-  const _OrderSection({required this.title, required this.content});
-}
-
-class _EditOrderScreenState extends State<EditOrderScreen>
-    with SingleTickerProviderStateMixin {
+class _EditOrderScreenState extends State<EditOrderScreen> {
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -109,7 +102,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   final ScrollController _formScrollController = ScrollController();
   final TextEditingController _paperSearchController = TextEditingController();
   final TextEditingController _paintSearchController = TextEditingController();
-  final TextEditingController _categorySearchController = TextEditingController();
+  final TextEditingController _categorySearchController =
+      TextEditingController();
   final ScrollController _paperListController = ScrollController();
   final ScrollController _paintListController = ScrollController();
   final ScrollController _categoryListController = ScrollController();
@@ -158,7 +152,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         if (series.isNotEmpty && no != null) {
           final form = await _sb
               .from('forms')
-              .select('title, description, image_url, size, product_type, colors')
+              .select(
+                  'title, description, image_url, size, product_type, colors')
               .eq('series', series)
               .eq('number', no)
               .maybeSingle();
@@ -213,8 +208,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         _formResults = results
             .where((row) {
               final dynamic enabledRaw = row['is_enabled'];
-              final bool enabled =
-                  enabledRaw is bool ? enabledRaw : ((row['status'] ?? '') != 'disabled');
+              final bool enabled = enabledRaw is bool
+                  ? enabledRaw
+                  : ((row['status'] ?? '') != 'disabled');
               return enabled;
             })
             .map((row) => Map<String, dynamic>.from(row))
@@ -241,8 +237,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         _loadingForms = false;
         _selectedOldFormImageUrl = null;
       } else {
-        final selectedValue =
-            _selectedOldFormRow != null ? _oldFormInputValue(_selectedOldFormRow!) : null;
+        final selectedValue = _selectedOldFormRow != null
+            ? _oldFormInputValue(_selectedOldFormRow!)
+            : null;
         if (_selectedOldFormRow != null && selectedValue != trimmed) {
           _selectedOldFormRow = null;
           _selectedOldFormImageUrl = null;
@@ -255,8 +252,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
 
     _formSearchDebounce?.cancel();
     if (trimmed.isEmpty) return;
-    _formSearchDebounce =
-        Timer(const Duration(milliseconds: 250), () => _reloadForms(search: value));
+    _formSearchDebounce = Timer(
+        const Duration(milliseconds: 250), () => _reloadForms(search: value));
   }
 
   void _onStockExtraSearchChanged(String value) {
@@ -278,8 +275,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     if (trimmed.isEmpty) {
       _updateStockExtra(query: '');
     } else {
-      _stockExtraSearchDebounce = Timer(
-          const Duration(milliseconds: 250), () => _updateStockExtra(query: trimmed));
+      _stockExtraSearchDebounce = Timer(const Duration(milliseconds: 250),
+          () => _updateStockExtra(query: trimmed));
     }
   }
 
@@ -314,12 +311,6 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       selection: TextSelection.collapsed(offset: description.length),
     );
     _stockExtraFocusNode.unfocus();
-  }
-
-  void _resetFormScroll() {
-    if (_formScrollController.hasClients) {
-      _formScrollController.jumpTo(0);
-    }
   }
 
   Widget _buildStockExtraResults() {
@@ -395,79 +386,32 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   final _formKey = GlobalKey<FormState>();
   final _uuid = const Uuid();
   final SupabaseClient _sb = Supabase.instance.client;
-  static const List<String> _sectionTitles = [
-    'Заказ',
-    'Изделие',
-    'Фурнитура',
-    'Краски',
-    'Форма',
-    'Материалы',
-    'Производство',
-    'Комментарии',
-  ];
-  late final TabController _tabController;
 
   // Персонал: выбранный менеджер из списка сотрудников с ролью «Менеджер»
   String? _selectedManager;
-  final TextEditingController _managerDisplayController = TextEditingController();
+  final TextEditingController _managerDisplayController =
+      TextEditingController();
   // Список доступных менеджеров (ФИО), загружается из PersonnelProvider
   List<String> _managerNames = [];
   // Клиент и комментарии
   late TextEditingController _customerController;
   late TextEditingController _commentsController;
-  late TextEditingController _sizeController;
   DateTime? _orderDate;
   DateTime? _dueDate;
   bool _contractSigned = false;
   bool _paymentDone = false;
   late ProductModel _product;
   List<String> _selectedParams = [];
-  bool _trimmingEnabled = false;
   // Ручки (из склада)
   String? _selectedHandleId;
   String _selectedHandleDescription = '-';
   // Картон: либо «нет», либо «есть»
   String _selectedCardboard = 'нет';
-  String _formatDimensions({double? width, double? height, double? depth}) {
-    String normalize(double? value) {
-      if (value == null || value <= 0) return '';
-      var text = value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 2);
-      while (text.contains('.') && text.endsWith('0')) {
-        text = text.substring(0, text.length - 1);
-      }
-      if (text.endsWith('.')) text = text.substring(0, text.length - 1);
-      return text;
-    }
-
-    final parts = [
-      normalize(depth),
-      normalize(width),
-      normalize(height),
-    ].where((part) => part.isNotEmpty).toList();
-
-    return parts.join(' ');
-  }
-
-  void _updateDimensionsFromInput(String value) {
-    final matches = RegExp(r'([0-9]+(?:[.,][0-9]+)?)')
-        .allMatches(value)
-        .map((m) => m.group(1))
-        .whereType<String>()
-        .map((s) => double.tryParse(s.replaceAll(',', '.')))
-        .whereType<double>()
-        .toList();
-
-    setState(() {
-      _product.depth = matches.isNotEmpty ? matches[0] : 0;
-      _product.width = matches.length > 1 ? matches[1] : 0;
-      _product.height = matches.length > 2 ? matches[2] : 0;
-    });
-    _scheduleStagePreviewUpdate();
-  }
   double _makeready = 0;
   double _val = 0;
   String? _stageTemplateId;
-  final TextEditingController _stageTemplateController = TextEditingController();
+  final TextEditingController _stageTemplateController =
+      TextEditingController();
   final FocusNode _stageTemplateFocusNode = FocusNode();
   String _stageTemplateSearchText = '';
   String? _selectedStageTemplateName;
@@ -495,7 +439,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   TmcModel? _stockExtraItem;
   double? _stockExtra;
   double? _stockExtraSelectedQty;
-  final TextEditingController _stockExtraSearchController = TextEditingController();
+  final TextEditingController _stockExtraSearchController =
+      TextEditingController();
   final FocusNode _stockExtraFocusNode = FocusNode();
   Timer? _stockExtraSearchDebounce;
   bool _loadingStockExtra = false;
@@ -504,7 +449,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   bool _writeOffStockExtra =
       false; // <-- добавлено: списывать ли лишнее при сохранении
   bool _stockExtraQtyTouched = false;
-  final TextEditingController _stockExtraQtyController = TextEditingController();
+  final TextEditingController _stockExtraQtyController =
+      TextEditingController();
 
   PlatformFile? _pickedPdf;
   bool _lengthExceeded = false;
@@ -568,14 +514,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
 
   @override
   void initState() {
-    super.initState();
-    _tabController = TabController(length: _sectionTitles.length, vsync: this);
-    _tabController.addListener(() {
-      if (_tabController.indexIsChanging) {
-        _resetFormScroll();
-      }
-    });
-    // Доп. попытка загрузить номер формы после первой отрисовки
+// Доп. попытка загрузить номер формы после первой отрисовки
     bool _defensiveFormLoadScheduled = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_defensiveFormLoadScheduled && widget.order != null) {
@@ -587,6 +526,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     _stageTemplateController.text = '';
     _stageTemplateController.addListener(_onStageTemplateTextChanged);
     _lastPreviewPaintsFilled = _hasAnyPaints();
+
+    super.initState();
 
     // order передан при редактировании, initialOrder - при создании на основе шаблона
     final template = widget.order ?? widget.initialOrder;
@@ -604,25 +545,15 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     _updateManagerDisplayController();
     _customerController = TextEditingController(text: template?.customer ?? '');
     _commentsController = TextEditingController(text: template?.comments ?? '');
-    _sizeController = TextEditingController(
-      text: _formatDimensions(
-        width: template?.product.width,
-        height: template?.product.height,
-        depth: template?.product.depth,
-      ),
-    );
-    _sizeController.addListener(() {
-      _updateDimensionsFromInput(_sizeController.text);
-    });
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
     _contractSigned = template?.contractSigned ?? false;
     _paymentDone = template?.paymentDone ?? false;
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
-    _trimmingEnabled = _selectedParams
-        .any((p) => p.toLowerCase().trim() == 'подрезка');
     final initialHandle = template?.handle?.trim();
-    if (initialHandle != null && initialHandle.isNotEmpty && initialHandle != '-') {
+    if (initialHandle != null &&
+        initialHandle.isNotEmpty &&
+        initialHandle != '-') {
       _selectedHandleDescription = initialHandle;
     } else {
       _selectedHandleDescription = '-';
@@ -816,8 +747,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           flexoTitle = 'Флексопечать';
         }
         if (flexoTitle != null &&
-            RegExp(r'^[a-z0-9_\-]+$')
-                .hasMatch(flexoTitle!.toLowerCase())) {
+            RegExp(r'^[a-z0-9_\-]+$').hasMatch(flexoTitle!.toLowerCase())) {
           flexoTitle = 'Флексопечать';
         }
       }
@@ -861,8 +791,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       }
       if (bob != null) {
         bobbinId = (bob['id'] as String?) ?? bobbinId;
-        bobbinTitle =
-            (bob['title'] as String?) ?? (bob['name'] as String?) ?? bobbinTitle;
+        bobbinTitle = (bob['title'] as String?) ??
+            (bob['name'] as String?) ??
+            bobbinTitle;
       }
     } catch (_) {}
 
@@ -897,8 +828,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
 
     double? _parseLeadingNumber(String? source) {
       if (source == null) return null;
-      final match =
-          RegExp(r'[0-9]+(?:[.,][0-9]+)?').firstMatch(source.replaceAll(',', '.'));
+      final match = RegExp(r'[0-9]+(?:[.,][0-9]+)?')
+          .firstMatch(source.replaceAll(',', '.'));
       if (match == null) return null;
       return double.tryParse(match.group(0)!);
     }
@@ -936,7 +867,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                 (m['id'] as String?);
             if (sid != null && flexoId != null && sid == flexoId) return true;
             final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
+                    '';
             return title.contains('флексопечать') || title.contains('flexo');
           }) >=
           0;
@@ -996,7 +928,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                 (m['id'] as String?);
             if (sid != null && bobbinId != null && sid == bobbinId) return true;
             final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
+                    '';
             return title.contains('бобинорезка') ||
                 title.contains('бабинорезка') ||
                 title.contains('bobbin');
@@ -1127,7 +1060,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         row.tmc = match;
         row.nameNotFound = match == null;
         if (match != null && row.qtyGrams != null) {
-          row.exceeded = _gramsToStockUnit(row.qtyGrams!, match) > match.quantity;
+          row.exceeded =
+              _gramsToStockUnit(row.qtyGrams!, match) > match.quantity;
         } else if (match == null) {
           row.exceeded = false;
         }
@@ -1175,9 +1109,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   String _formatGrams(double grams) {
     final precision = grams % 1 == 0 ? 0 : 2;
     final fixed = grams.toStringAsFixed(precision);
-    final trimmed = fixed
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    final trimmed =
+        fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
     return '$trimmed г';
   }
 
@@ -1296,7 +1229,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       _managerNames = names;
       if (_selectedManager != null && _selectedManager!.trim().isNotEmpty) {
         if (!_managerNames.contains(_selectedManager)) {
-          _managerNames = List<String>.from(_managerNames)..add(_selectedManager!);
+          _managerNames = List<String>.from(_managerNames)
+            ..add(_selectedManager!);
         }
       }
       _managerNames.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -1385,10 +1319,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
 
   @override
   void dispose() {
-    _tabController.dispose();
     _customerController.dispose();
     _commentsController.dispose();
-    _sizeController.dispose();
     _paintInfoController.dispose();
     _formScrollController.dispose();
     _paperSearchController.dispose();
@@ -1428,7 +1360,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     );
   }
 
-  Future<void> _updateStockExtra({String? query, bool includeAllResults = false}) async {
+  Future<void> _updateStockExtra(
+      {String? query, bool includeAllResults = false}) async {
     final typeTitle = _product.type.trim();
     final search = query ?? _stockExtraSearchController.text.trim();
     if (typeTitle.isEmpty) {
@@ -1484,8 +1417,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           .eq('category_id', cat['id']);
       if (search.isNotEmpty) {
         final sanitized = search.replaceAll("'", "''");
-        builder = builder.or(
-            'description.ilike.%$sanitized%,size.ilike.%$sanitized%');
+        builder = builder
+            .or('description.ilike.%$sanitized%,size.ilike.%$sanitized%');
       }
       final rows = await builder.order('description').limit(100);
       final List<Map<String, dynamic>> results = [];
@@ -1533,7 +1466,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           final double maxAvailable = displayQty != null && displayQty > 0
               ? displayQty
               : templateLeftover;
-          nextSelectedQty = math.max(0, math.min(templateLeftover, maxAvailable));
+          nextSelectedQty =
+              math.max(0, math.min(templateLeftover, maxAvailable));
         } else if (displayQty != null && displayQty > 0) {
           nextSelectedQty = displayQty;
         } else {
@@ -1546,12 +1480,14 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           _stockExtra = displayQty;
           _stockExtraItem = null;
           _selectedStockExtraRow = selectedRow;
-          _stockExtraResults =
-              (includeAllResults || search.isNotEmpty) ? results : <Map<String, dynamic>>[];
+          _stockExtraResults = (includeAllResults || search.isNotEmpty)
+              ? results
+              : <Map<String, dynamic>>[];
           _loadingStockExtra = false;
           _stockExtraSelectedQty = nextSelectedQty;
-          _product.leftover =
-              nextSelectedQty != null && nextSelectedQty > 0 ? nextSelectedQty : null;
+          _product.leftover = nextSelectedQty != null && nextSelectedQty > 0
+              ? nextSelectedQty
+              : null;
           if (_writeOffStockExtra && (_stockExtraSelectedQty ?? 0) <= 0) {
             _writeOffStockExtra = false;
           }
@@ -1706,10 +1642,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       }
       if (found != null) {
         restored.add(_PaintEntry(
-            tmc: found,
-            name: found.description,
-            qtyGrams: grams,
-            memo: memo));
+            tmc: found, name: found.description, qtyGrams: grams, memo: memo));
       } else {
         restored.add(_PaintEntry(name: name, qtyGrams: grams, memo: memo));
       }
@@ -1801,8 +1734,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           for (final it in items) {
             final name = (it['name'] ?? '').toString().trim();
             final qtyRaw = it['qty_kg'];
-            final qtyKg =
-                (qtyRaw is num) ? qtyRaw.toDouble() : double.tryParse('$qtyRaw');
+            final qtyKg = (qtyRaw is num)
+                ? qtyRaw.toDouble()
+                : double.tryParse('$qtyRaw');
             final grams = qtyKg == null ? null : qtyKg * 1000;
             final memo = (it['info'] ?? '').toString();
             final tmc = warehouse.getPaintByName(name);
@@ -1814,8 +1748,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   memo: memo));
             } else {
               // В редком случае, если номенклатуры уже нет - просто с текстом.
-              restored.add(
-                  _PaintEntry(name: name, qtyGrams: grams, memo: memo));
+              restored
+                  .add(_PaintEntry(name: name, qtyGrams: grams, memo: memo));
             }
           }
           final sharedInfo = _deriveSharedPaintInfo(restored);
@@ -2062,10 +1996,6 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     final penName =
         _selectedHandleDescription == '-' ? '' : _selectedHandleDescription;
     _upsertPensInParameters(penName);
-    _selectedParams.removeWhere((p) => p.toLowerCase().trim() == 'подрезка');
-    if (_trimmingEnabled) {
-      _selectedParams.add('Подрезка');
-    }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     late OrderModel createdOrUpdatedOrder;
@@ -2078,7 +2008,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         dueDate: _dueDate,
         product: _product,
         additionalParams: _selectedParams,
-        handle: _selectedHandleDescription == '-' ? '-' : _selectedHandleDescription,
+        handle: _selectedHandleDescription == '-'
+            ? '-'
+            : _selectedHandleDescription,
         cardboard: _selectedCardboard,
         material: _selectedMaterial,
         makeready: _makeready,
@@ -2106,7 +2038,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         dueDate: _dueDate,
         product: _product,
         additionalParams: _selectedParams,
-        handle: _selectedHandleDescription == '-' ? '-' : _selectedHandleDescription,
+        handle: _selectedHandleDescription == '-'
+            ? '-'
+            : _selectedHandleDescription,
         cardboard: _selectedCardboard,
         material: _selectedMaterial,
         makeready: _makeready,
@@ -2421,9 +2355,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
             (_stockExtraSelectedQty != null && _stockExtraSelectedQty! > 0)
                 ? _stockExtraSelectedQty!
                 : 0;
-        if (selectedExtra != null &&
-            typeTitle.isNotEmpty &&
-            selectedQty > 0) {
+        if (selectedExtra != null && typeTitle.isNotEmpty && selectedQty > 0) {
           final cat = await _sb
               .from('warehouse_categories')
               .select('id, title, code')
@@ -2458,14 +2390,11 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   await _sb
                       .from('warehouse_category_writeoffs')
                       .insert(writeoffPayload);
-                  await _sb
-                      .from('warehouse_category_items')
-                      .update({
-                        'quantity': math.max(0, q - qtyToWriteOff),
-                        if (sizeLabel != null && sizeLabel.isNotEmpty)
-                          'size': sizeLabel,
-                      })
-                      .match({'id': itemId});
+                  await _sb.from('warehouse_category_items').update({
+                    'quantity': math.max(0, q - qtyToWriteOff),
+                    if (sizeLabel != null && sizeLabel.isNotEmpty)
+                      'size': sizeLabel,
+                  }).match({'id': itemId});
                 }
               }
             }
@@ -2496,9 +2425,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
   String? _productSizeLabel() {
     String format(double value) {
       final String fixed = value.toStringAsFixed(2);
-      final String trimmed = fixed
-          .replaceAll(RegExp(r'0+$'), '')
-          .replaceAll(RegExp(r'[.]$'), '');
+      final String trimmed =
+          fixed.replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'[.]$'), '');
       return trimmed.isEmpty ? '0' : trimmed;
     }
 
@@ -2619,8 +2547,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       if (_isOldForm) {
         if (_selectedOldFormRow != null) {
           final form = _selectedOldFormRow!;
-          selectedFormNumber =
-              ((form['number'] ?? 0) as num?)?.toInt();
+          selectedFormNumber = ((form['number'] ?? 0) as num?)?.toInt();
           rawSeries = form['series'];
           rawCode = form['code'];
           rawSize = form['size'] ?? form['title'];
@@ -2669,8 +2596,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
             formColors: formColors,
             imageBytes: _newFormImageBytes,
           );
-          selectedFormNumber =
-              ((created['number'] ?? 0) as num?)?.toInt();
+          selectedFormNumber = ((created['number'] ?? 0) as num?)?.toInt();
           final createdSeries = _sanitizeText(created['series']);
           if (createdSeries != null && createdSeries.isNotEmpty) {
             series = createdSeries;
@@ -2762,48 +2688,23 @@ class _EditOrderScreenState extends State<EditOrderScreen>
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
-    final sections = <_OrderSection>[
-      _OrderSection(
-        title: _sectionTitles[0],
-        content: _buildOrderInfoSection(context),
+    final formSections = [
+      _buildOrderInfoSection(context),
+      _buildProductBasics(_product),
+      _buildHandlesSection(context),
+      _buildPaintsSection(),
+      _buildFormSection(
+        context: context,
+        showFormSummary: showFormSummary,
+        showFormEditor: showFormEditor,
+        isEditing: isEditing,
+        hasAssignedForm: hasAssignedForm,
+        paintsAvailable: paintsAvailable,
       ),
-      _OrderSection(
-        title: _sectionTitles[1],
-        content: _buildProductBasics(_product),
-      ),
-      _OrderSection(
-        title: _sectionTitles[2],
-        content: _buildHandlesSection(context),
-      ),
-      _OrderSection(
-        title: _sectionTitles[3],
-        content: _buildPaintsSection(),
-      ),
-      _OrderSection(
-        title: _sectionTitles[4],
-        content: _buildFormSection(
-          context: context,
-          showFormSummary: showFormSummary,
-          showFormEditor: showFormEditor,
-          isEditing: isEditing,
-          hasAssignedForm: hasAssignedForm,
-          paintsAvailable: paintsAvailable,
-        ),
-      ),
-      _OrderSection(
-        title: _sectionTitles[5],
-        content: _buildProductMaterialAndExtras(_product),
-      ),
-      _OrderSection(
-        title: _sectionTitles[6],
-        content: _buildProductionSection(context),
-      ),
-      _OrderSection(
-        title: _sectionTitles[7],
-        content: _buildCommentsSection(context),
-      ),
+      _buildProductMaterialAndExtras(_product),
+      _buildProductionSection(context),
+      _buildCommentsSection(context),
     ];
-    assert(sections.length == _tabController.length);
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -2859,53 +2760,41 @@ class _EditOrderScreenState extends State<EditOrderScreen>
         key: _formKey,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final formList = SizedBox(
-              height: constraints.maxHeight,
-              child: Column(
-                children: [
-                  Material(
-                    color: Theme.of(context).colorScheme.surfaceVariant,
-                    child: TabBar(
-                      controller: _tabController,
-                      isScrollable: true,
-                      labelPadding:
-                          const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      tabs: sections.map((s) => Tab(text: s.title)).toList(),
+            final formList = LayoutBuilder(
+              builder: (context, innerConstraints) {
+                final maxWrapWidth =
+                    math.min(innerConstraints.maxWidth, 1500.0);
+                final useTwoColumns = maxWrapWidth >= 1024;
+                final sectionWidth =
+                    useTwoColumns ? (maxWrapWidth - 16) / 2 : maxWrapWidth;
+                return Scrollbar(
+                  controller: _formScrollController,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: _formScrollController,
+                    padding: const EdgeInsets.all(16),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxWrapWidth),
+                        child: Wrap(
+                          spacing: 16,
+                          runSpacing: 16,
+                          children: formSections
+                              .map(
+                                (section) => SizedBox(
+                                  width: useTwoColumns
+                                      ? sectionWidth
+                                      : maxWrapWidth,
+                                  child: section,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: TabBarView(
-                      controller: _tabController,
-                      children: sections
-                          .map(
-                            (section) => LayoutBuilder(
-                              builder: (context, innerConstraints) {
-                                final maxWrapWidth =
-                                    math.min(innerConstraints.maxWidth, 1500.0);
-                                return Scrollbar(
-                                  controller: _formScrollController,
-                                  thumbVisibility: true,
-                                  child: SingleChildScrollView(
-                                    controller: _formScrollController,
-                                    padding: const EdgeInsets.all(16),
-                                    child: Center(
-                                      child: ConstrainedBox(
-                                        constraints:
-                                            BoxConstraints(maxWidth: maxWrapWidth),
-                                        child: section.content,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          )
-                          .toList(),
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             );
 
             if (constraints.maxWidth < 1200) {
@@ -2960,22 +2849,23 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   setState(() {
                     _product.type = val ?? '';
                     _selectedStockExtraRow = null;
-                  _stockExtraResults = [];
-                  _stockExtra = null;
-                  _stockExtraSelectedQty = null;
-                  _stockExtraQtyTouched = false;
-                  _product.leftover = null;
-                });
-                _stockExtraSearchDebounce?.cancel();
-                _stockExtraSearchController.clear();
-                _updateStockExtraQtyController();
-                _updateStockExtra(includeAllResults: true);
-              },
-            );
-          },
-        ),
+                    _stockExtraResults = [];
+                    _stockExtra = null;
+                    _stockExtraSelectedQty = null;
+                    _stockExtraQtyTouched = false;
+                    _product.leftover = null;
+                  });
+                  _stockExtraSearchDebounce?.cancel();
+                  _stockExtraSearchController.clear();
+                  _updateStockExtraQtyController();
+                  _updateStockExtra(includeAllResults: true);
+                },
+              );
+            },
+          ),
           TextFormField(
-            initialValue: product.quantity > 0 ? product.quantity.toString() : '',
+            initialValue:
+                product.quantity > 0 ? product.quantity.toString() : '',
             decoration: const InputDecoration(
               labelText: 'Тираж',
               border: OutlineInputBorder(),
@@ -2998,24 +2888,51 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           ),
         ], breakpoint: 680, minItemWidth: 220),
         const SizedBox(height: 12),
-        _buildFieldGrid(
-          [
-            TextFormField(
-              controller: _sizeController,
-              decoration: const InputDecoration(
-                labelText: 'Размеры (Д × Ш × В)',
-                hintText: '23 34 45 или 23*34*45',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (val) => _updateDimensionsFromInput(val),
+        _buildFieldGrid([
+          TextFormField(
+            initialValue: product.depth > 0 ? product.depth.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Длина (см)',
+              border: OutlineInputBorder(),
             ),
-          ],
-          breakpoint: 760,
-          maxColumns: 2,
-          minItemWidth: 200,
-          spacing: 12,
-          runSpacing: 10,
-        ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.depth = double.tryParse(normalized) ?? 0;
+              });
+            },
+          ),
+          TextFormField(
+            initialValue: product.width > 0 ? product.width.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Ширина (см)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.width = double.tryParse(normalized) ?? 0;
+              });
+              _scheduleStagePreviewUpdate();
+            },
+          ),
+          TextFormField(
+            initialValue: product.height > 0 ? product.height.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Глубина (см)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.height = double.tryParse(normalized) ?? 0;
+              });
+            },
+          ),
+        ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
       ],
     );
   }
@@ -3116,10 +3033,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                           _matFormatCtl.text = '';
                           _matGramCtl.text = '';
                           _matNameError = (_matNameCtl.text.trim().isEmpty ||
-                                  allNames
-                                      .map((e) => e.toLowerCase())
-                                      .contains(
-                                          _matNameCtl.text.trim().toLowerCase()))
+                                  allNames.map((e) => e.toLowerCase()).contains(
+                                      _matNameCtl.text.trim().toLowerCase()))
                               ? null
                               : 'Выберите материал из списка';
                           _matFormatError = null;
@@ -3128,7 +3043,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                               allNames.map((e) => e.toLowerCase()).toList();
                           final typed = _matNameCtl.text.trim().toLowerCase();
                           if (lowerNames.contains(typed)) {
-                            _matSelectedName = allNames[lowerNames.indexOf(typed)];
+                            _matSelectedName =
+                                allNames[lowerNames.indexOf(typed)];
                           }
                         });
                         _scheduleStagePreviewUpdate();
@@ -3178,19 +3094,19 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                           _matSelectedFormat = null;
                           _matSelectedGrammage = null;
                           _matGramCtl.text = '';
-                          _matFormatError = (_matFormatCtl.text.trim().isEmpty ||
-                                  formatOptions
-                                      .map((e) => e.toLowerCase())
-                                      .contains(_matFormatCtl.text
-                                          .trim()
-                                          .toLowerCase()))
-                              ? null
-                              : 'Выберите формат из списка';
+                          _matFormatError =
+                              (_matFormatCtl.text.trim().isEmpty ||
+                                      formatOptions
+                                          .map((e) => e.toLowerCase())
+                                          .contains(_matFormatCtl.text
+                                              .trim()
+                                              .toLowerCase()))
+                                  ? null
+                                  : 'Выберите формат из списка';
                           final lowerF = formatOptions
                               .map((e) => e.toLowerCase())
                               .toList();
-                          final typed =
-                              _matFormatCtl.text.trim().toLowerCase();
+                          final typed = _matFormatCtl.text.trim().toLowerCase();
                           if (lowerF.contains(typed)) {
                             _matSelectedFormat =
                                 formatOptions[lowerF.indexOf(typed)];
@@ -3244,8 +3160,9 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                           _matGramError = (_matGramCtl.text.trim().isEmpty ||
                                   gramOptions
                                       .map((e) => e.toLowerCase())
-                                      .contains(
-                                          _matGramCtl.text.trim().toLowerCase()))
+                                      .contains(_matGramCtl.text
+                                          .trim()
+                                          .toLowerCase()))
                               ? null
                               : 'Выберите грамаж из списка';
                           final lowerG =
@@ -3262,8 +3179,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                     return TextField(
                       controller: controller,
                       focusNode: focusNode,
-                      enabled:
-                          _matSelectedName != null && _matSelectedFormat != null,
+                      enabled: _matSelectedName != null &&
+                          _matSelectedFormat != null,
                       decoration: InputDecoration(
                         labelText: 'Грамаж',
                         border: const OutlineInputBorder(),
@@ -3284,8 +3201,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                       _matGramCtl.text = value;
                       _matSelectedGrammage = value;
                       _matGramError = null;
-                      final tmc =
-                          findExact(_matSelectedName!, _matSelectedFormat!, value);
+                      final tmc = findExact(
+                          _matSelectedName!, _matSelectedFormat!, value);
                       if (tmc != null) {
                         _selectMaterial(tmc);
                       }
@@ -3366,19 +3283,17 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                       final text = _formatDecimal(available);
                       _stockExtraQtyController.value = TextEditingValue(
                         text: text,
-                        selection:
-                            TextSelection.collapsed(offset: text.length),
+                        selection: TextSelection.collapsed(offset: text.length),
                       );
                     }
                   }
                   setState(() {
                     _stockExtraQtyTouched = true;
                     _stockExtraSelectedQty = nextValue;
-                    _product.leftover =
-                        _stockExtraSelectedQty != null &&
-                                _stockExtraSelectedQty! > 0
-                            ? _stockExtraSelectedQty
-                            : null;
+                    _product.leftover = _stockExtraSelectedQty != null &&
+                            _stockExtraSelectedQty! > 0
+                        ? _stockExtraSelectedQty
+                        : null;
                     if (_writeOffStockExtra &&
                         (_stockExtraSelectedQty == null ||
                             _stockExtraSelectedQty! <= 0)) {
@@ -3447,11 +3362,11 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                     _selectedMaterialTmc ?? _resolvePaperByText();
                 if (materialTmc != null && d != null) {
                   _lengthExceeded = () {
-                    final current = Provider.of<WarehouseProvider>(context,
-                            listen: false)
-                        .allTmc
-                        .where((t) => t.id == materialTmc.id)
-                        .toList();
+                    final current =
+                        Provider.of<WarehouseProvider>(context, listen: false)
+                            .allTmc
+                            .where((t) => t.id == materialTmc.id)
+                            .toList();
                     final available = current.isNotEmpty
                         ? current.first.quantity
                         : materialTmc.quantity;
@@ -3563,28 +3478,22 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       context: context,
       title: 'Информация о заказе',
       children: [
-        _buildFieldGrid(
-          [
-            _buildDatePickerField(
-              label: 'Дата заказа',
-              value: _orderDate,
-              onTap: _pickOrderDate,
-              emptyError: 'Укажите дату заказа',
-            ),
-            _buildCustomerField(),
-            _buildManagerField(),
-            _buildDatePickerField(
-              label: 'Срок выполнения',
-              value: _dueDate,
-              onTap: _pickDueDate,
-              emptyError: 'Укажите срок',
-            ),
-          ],
-          maxColumns: 3,
-          minItemWidth: 220,
-          spacing: 12,
-          runSpacing: 10,
-        ),
+        _buildFieldGrid([
+          _buildManagerField(),
+          _buildCustomerField(),
+          _buildDatePickerField(
+            label: 'Дата заказа',
+            value: _orderDate,
+            onTap: _pickOrderDate,
+            emptyError: 'Укажите дату заказа',
+          ),
+          _buildDatePickerField(
+            label: 'Срок выполнения',
+            value: _dueDate,
+            onTap: _pickDueDate,
+            emptyError: 'Укажите срок',
+          ),
+        ], maxColumns: 2),
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -3624,11 +3533,10 @@ class _EditOrderScreenState extends State<EditOrderScreen>
             final List<TmcModel> handleItems = [
               ...warehouse.getTmcByType('Ручки'),
               ...warehouse.getTmcByType('ручки'),
-            ]
-                .where((item) => seen.add(item.id))
-                .toList(growable: true);
-            handleItems.sort((a, b) =>
-                a.description.toLowerCase().compareTo(b.description.toLowerCase()));
+            ].where((item) => seen.add(item.id)).toList(growable: true);
+            handleItems.sort((a, b) => a.description
+                .toLowerCase()
+                .compareTo(b.description.toLowerCase()));
 
             TmcModel? _findHandleMatch() {
               if (_selectedHandleDescription == '-' ||
@@ -3671,7 +3579,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
               ...handleItems.map(
                 (item) => DropdownMenuItem<String?>(
                   value: item.id,
-                  child: Text(item.description.isEmpty ? item.id : item.description),
+                  child: Text(
+                      item.description.isEmpty ? item.id : item.description),
                 ),
               ),
               if (!hasSelectedHandle &&
@@ -3683,65 +3592,59 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                 ),
             ];
 
-            return _buildFieldGrid(
-              [
-                DropdownButtonFormField<String?>(
-                  value: hasSelectedHandle
-                      ? _selectedHandleId
-                      : (_selectedHandleId != null &&
-                              _selectedHandleDescription != '-'
-                          ? _selectedHandleId
-                          : null),
-                  decoration: const InputDecoration(
-                    labelText: 'Ручки',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: dropdownItems,
-                  onChanged: (val) {
-                    setState(() {
-                      _selectedHandleId = val;
-                      if (val == null) {
-                        _selectedHandleDescription = '-';
+            return _buildFieldGrid([
+              DropdownButtonFormField<String?>(
+                value: hasSelectedHandle
+                    ? _selectedHandleId
+                    : (_selectedHandleId != null &&
+                            _selectedHandleDescription != '-'
+                        ? _selectedHandleId
+                        : null),
+                decoration: const InputDecoration(
+                  labelText: 'Ручки',
+                  border: OutlineInputBorder(),
+                ),
+                items: dropdownItems,
+                onChanged: (val) {
+                  setState(() {
+                    _selectedHandleId = val;
+                    if (val == null) {
+                      _selectedHandleDescription = '-';
+                    } else {
+                      final matches =
+                          handleItems.where((item) => item.id == val).toList();
+                      if (matches.isEmpty) {
+                        _selectedHandleDescription =
+                            _selectedHandleDescription == '-'
+                                ? '-'
+                                : _selectedHandleDescription;
                       } else {
-                        final matches =
-                            handleItems.where((item) => item.id == val).toList();
-                        if (matches.isEmpty) {
-                          _selectedHandleDescription =
-                              _selectedHandleDescription == '-' ? '-' :
-                                  _selectedHandleDescription;
-                        } else {
-                          final desc = matches.first.description.trim();
-                          _selectedHandleDescription =
-                              desc.isEmpty ? '-' : matches.first.description;
-                        }
+                        final desc = matches.first.description.trim();
+                        _selectedHandleDescription =
+                            desc.isEmpty ? '-' : matches.first.description;
                       }
-                    });
-                  },
+                    }
+                  });
+                },
+              ),
+              DropdownButtonFormField<String>(
+                value: _selectedCardboard,
+                decoration: const InputDecoration(
+                  labelText: 'Картон',
+                  border: OutlineInputBorder(),
                 ),
-                CheckboxListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text('Картон'),
-                  value: _selectedCardboard == 'есть',
-                  onChanged: (val) => setState(
-                      () => _selectedCardboard = (val ?? false) ? 'есть' : 'нет'),
-                ),
-                CheckboxListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text('Подрезка'),
-                  value: _trimmingEnabled,
-                  onChanged: (val) => setState(() => _trimmingEnabled = val ?? false),
-                ),
-              ],
-              breakpoint: 680,
-              maxColumns: 3,
-              minItemWidth: 200,
-              spacing: 12,
-              runSpacing: 10,
-            );
+                items: const [
+                  DropdownMenuItem(value: 'нет', child: Text('нет')),
+                  DropdownMenuItem(value: 'есть', child: Text('есть')),
+                ],
+                onChanged: (val) =>
+                    setState(() => _selectedCardboard = val ?? 'нет'),
+              ),
+            ],
+                breakpoint: 680,
+                maxColumns: 3,
+                minItemWidth: 200,
+                runSpacing: 16);
           },
         ),
       ],
@@ -3875,9 +3778,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
           ..sort((a, b) => a.description.toLowerCase().compareTo(
                 b.description.toLowerCase(),
               ));
-        final paints = warehouse
-            .getTmcByType('Краска')
-            .toList(growable: true)
+        final paints = warehouse.getTmcByType('Краска').toList(growable: true)
           ..sort((a, b) => a.description.toLowerCase().compareTo(
                 b.description.toLowerCase(),
               ));
@@ -3962,8 +3863,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   thumbVisibility: true,
                   child: ListView.separated(
                     controller: _paperListController,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     itemBuilder: (context, index) {
                       final paper = filtered[index];
                       final subtitle = [
@@ -4046,17 +3947,19 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   thumbVisibility: true,
                   child: ListView.separated(
                     controller: _paintListController,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     itemBuilder: (context, index) {
                       final paint = filtered[index];
                       ImageProvider? preview;
                       if ((paint.imageBase64 ?? '').isNotEmpty) {
                         try {
-                          preview = MemoryImage(base64Decode(paint.imageBase64!));
+                          preview =
+                              MemoryImage(base64Decode(paint.imageBase64!));
                         } catch (_) {}
                       }
-                      if (preview == null && (paint.imageUrl ?? '').isNotEmpty) {
+                      if (preview == null &&
+                          (paint.imageUrl ?? '').isNotEmpty) {
                         preview = NetworkImage(paint.imageUrl!);
                       }
                       final qty = _stockQtyToGrams(paint);
@@ -4103,8 +4006,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
       final qtyValue = row['quantity'];
       final qty = (qtyValue is num)
           ? qtyValue.toDouble()
-          : double.tryParse('$qtyValue') ??
-              0.0;
+          : double.tryParse('$qtyValue') ?? 0.0;
       return _matchesWarehouseQuery(_categorySearch, [
         description,
         sizeLabel,
@@ -4169,8 +4071,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   thumbVisibility: true,
                   child: ListView.separated(
                     controller: _categoryListController,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     itemBuilder: (context, index) {
                       final row = filtered[index];
                       final description =
@@ -4181,16 +4083,15 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                           ? qv.toDouble()
                           : double.tryParse('$qv') ?? 0.0;
                       final subtitleParts = <String>[];
-                      subtitleParts.add('Количество: ${qty.toStringAsFixed(2)}');
+                      subtitleParts
+                          .add('Количество: ${qty.toStringAsFixed(2)}');
                       if (sizeLabel.isNotEmpty) {
                         subtitleParts.add('Размер: $sizeLabel');
                       }
                       return ListTile(
                         dense: true,
                         title: Text(
-                          description.isEmpty
-                              ? 'Без названия'
-                              : description,
+                          description.isEmpty ? 'Без названия' : description,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -4274,8 +4175,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                     final query = textValue.text.toLowerCase().trim();
                     if (query.isEmpty) return templates;
                     return templates
-                        .where(
-                            (tpl) => tpl.name.toLowerCase().contains(query));
+                        .where((tpl) => tpl.name.toLowerCase().contains(query));
                   },
                   fieldViewBuilder:
                       (context, controller, focusNode, onFieldSubmitted) {
@@ -4289,8 +4189,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                       onFieldSubmitted: (value) {
                         try {
                           final tpl = templates.firstWhere(
-                            (t) =>
-                                t.name.toLowerCase() == value.toLowerCase(),
+                            (t) => t.name.toLowerCase() == value.toLowerCase(),
                           );
                           _onStageTemplateSelected(tpl);
                         } catch (_) {}
@@ -4650,8 +4549,7 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                         row.name = tmc.description;
                         row.nameNotFound = false;
                         if (row.qtyGrams != null) {
-                          final need =
-                              _gramsToStockUnit(row.qtyGrams!, tmc);
+                          final need = _gramsToStockUnit(row.qtyGrams!, tmc);
                           row.exceeded = need > tmc.quantity;
                         } else {
                           row.exceeded = false;
@@ -4962,11 +4860,11 @@ class _EditOrderScreenState extends State<EditOrderScreen>
             final series = (form['series'] ?? '').toString().trim();
             final number = ((form['number'] ?? 0) as num).toInt();
             final code = (form['code'] ?? '').toString().trim();
-            final size = (form['size'] ?? form['title'] ?? '').toString().trim();
+            final size =
+                (form['size'] ?? form['title'] ?? '').toString().trim();
             final productType = (form['product_type'] ?? '').toString().trim();
-            final colors = (form['colors'] ?? form['description'] ?? '')
-                .toString()
-                .trim();
+            final colors =
+                (form['colors'] ?? form['description'] ?? '').toString().trim();
             final subtitle = <String>[];
             if (size.isNotEmpty) subtitle.add('Размер: $size');
             if (productType.isNotEmpty) subtitle.add('Тип: $productType');
@@ -4991,7 +4889,8 @@ class _EditOrderScreenState extends State<EditOrderScreen>
                   _selectedOldFormRow = form;
                   _selectedOldForm = null;
                   final imageUrl = (form['image_url'] ?? '').toString().trim();
-                  _selectedOldFormImageUrl = imageUrl.isNotEmpty ? imageUrl : null;
+                  _selectedOldFormImageUrl =
+                      imageUrl.isNotEmpty ? imageUrl : null;
                   _formResults = [];
                   _loadingForms = false;
                 });
