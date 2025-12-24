@@ -124,12 +124,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       child: DataTable(
                         showCheckboxColumn: false,
                         columns: const [
-                          DataColumn(label: Text('№')),
-                          DataColumn(label: Text('Заказчик')),
                           DataColumn(label: Text('Номер заказа')),
-                          DataColumn(label: Text('Дата заказа')),
-                          DataColumn(label: Text('Срок')),
+                          DataColumn(label: Text('Дата')),
+                          DataColumn(label: Text('Заказчик')),
                           DataColumn(label: Text('Продукт')),
+                          DataColumn(label: Text('Размер')),
                           DataColumn(label: Text('Тираж')),
                           DataColumn(label: Text('Статус')),
                           DataColumn(label: Text('Действия')),
@@ -140,6 +139,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             final o = orders[index];
                             final product = o.product;
                             final totalQty = product.quantity;
+                            final productSize = _formatProductSize(product);
                             final statusInfo = _computeStatus(o, allTasks);
                             final statusLabel = statusInfo.label;
                             final missing = _isIncomplete(o);
@@ -156,21 +156,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 return missing ? Colors.grey.shade200 : null;
                               }),
                               cells: [
-                                DataCell(Text('${index + 1}')),
-                                DataCell(Text(o.customer)),
                                 DataCell(Text(orderDisplayId(o))),
                                 DataCell(Text(_formatDate(o.orderDate))),
-                                DataCell(Text(_formatDate(o.dueDate))),
+                                DataCell(Text(o.customer)),
                                 DataCell(Text(product.type)),
+                                DataCell(Text(productSize)),
                                 DataCell(Text(totalQty.toString())),
                                 DataCell(
                                   statusLabel == 'В работе' && stageName != null
                                       ? Tooltip(
                                           message:
                                               'Текущий этап: $stageName',
-                                          child: Text(statusLabel),
+                                          child: _StatusBadge(
+                                              color: statusInfo.color,
+                                              label: statusLabel),
                                         )
-                                      : Text(statusLabel),
+                                      : _StatusBadge(
+                                          color: statusInfo.color,
+                                          label: statusLabel,
+                                        ),
                                 ),
                                 DataCell(Row(
                                   children: [
@@ -380,6 +384,44 @@ class _OrdersScreenState extends State<OrdersScreen> {
       return doubleVal.toInt().toString();
     }
     return doubleVal.toStringAsFixed(2);
+  }
+
+  String _formatProductSize(ProductModel product) {
+    String? formatDimension(double? value) {
+      if (value == null || value <= 0) return null;
+      final rounded = value.toDouble();
+      if (rounded == rounded.roundToDouble()) {
+        return rounded.toInt().toString();
+      }
+      return rounded.toStringAsFixed(2);
+    }
+
+    final dims = <String>[];
+    final width = formatDimension(product.width);
+    final height = formatDimension(product.height);
+    final depth = formatDimension(product.depth);
+    if (width != null) dims.add(width);
+    if (height != null) dims.add(height);
+    if (depth != null) dims.add(depth);
+
+    var result = dims.join('×');
+
+    final extras = <String>[];
+    final roll = formatDimension(product.roll);
+    if (roll != null) extras.add('Рулон $roll');
+    final widthB = formatDimension(product.widthB);
+    if (widthB != null) extras.add('Б $widthB');
+    final blQty = product.blQuantity;
+    if (blQty != null && blQty.isNotEmpty) extras.add('Кол-во $blQty');
+    final length = formatDimension(product.length);
+    if (length != null) extras.add('L $length');
+
+    if (extras.isNotEmpty) {
+      final extraText = extras.join(', ');
+      result = result.isEmpty ? extraText : '$result ($extraText)';
+    }
+
+    return result.isEmpty ? '—' : result;
   }
 
   Future<void> _confirmShipment(OrderModel order) async {
@@ -915,13 +957,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final String statusLabel = statusInfo.label;
     final product = order.product;
     final totalQty = product.quantity;
+    final productSize = _formatProductSize(product);
     final missing = _isIncomplete(order);
     final bool isCompleted = statusLabel == 'Завершено';
     final bool isShipping = _shippingInProgress.contains(order.id);
     final String? stageName =
         _currentStageName(order, allTasks, personnel);
     return SizedBox(
-      width: 256,
+      width: 240,
       child: Card(
         color: missing ? Colors.grey.shade100 : null,
         elevation: 1,
@@ -934,16 +977,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Первая строка: заказчик и статус
+                // Номер и статус заказа
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(
-                      child: Text(
-                        order.customer,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      '№ ${orderDisplayId(order)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
                       ),
                     ),
                     statusLabel == 'В работе' && stageName != null
@@ -952,131 +994,69 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             child: _StatusBadge(
                                 color: statusColor, label: statusLabel),
                           )
-                        : _StatusBadge(
-                            color: statusColor, label: statusLabel),
+                        : _StatusBadge(color: statusColor, label: statusLabel),
                   ],
                 ),
-                const SizedBox(height: 2),
-                // Вторая строка: номер заказа
-                Text('Номер: ${orderDisplayId(order)}',
+                const SizedBox(height: 4),
+                // Заказчик
+                Text(
+                  order.customer,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                // Дата заказа
+                Text('Дата заказа: ${_formatDate(order.orderDate)}',
                     style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                const SizedBox(height: 2),
-                // Даты
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text('Дата заказа: ${_formatDate(order.orderDate)}',
-                          style: const TextStyle(fontSize: 10)),
-                    ),
-                    Expanded(
-                      child: Text('Срок: ${_formatDate(order.dueDate)}',
-                          style: const TextStyle(fontSize: 10)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 6),
                 // Информация о продукте
                 Text('Изделие: ${product.type}',
                     style: const TextStyle(
                         fontSize: 11, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 1),
+                const SizedBox(height: 2),
+                Text('Размер: $productSize',
+                    style: const TextStyle(fontSize: 11)),
+                const SizedBox(height: 2),
                 Text('Тираж: $totalQty шт.',
                     style: const TextStyle(
                         fontSize: 11, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 3),
-                // Статусы договора и оплаты
-                Row(
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                            order.contractSigned
-                                ? Icons.check_circle_outline
-                                : Icons.error_outline,
-                            size: 16,
-                            color:
-                                order.contractSigned ? Colors.green : Colors.red),
-                        const SizedBox(width: 4),
-                        Text(
-                            order.contractSigned
-                                ? 'Договор подписан'
-                                : 'Договор не подписан',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: order.contractSigned
-                                    ? Colors.green
-                                    : Colors.red)),
-                      ],
+                if (isCompleted)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      'Факт: ${order.actualQty != null ? _formatQuantity(order.actualQty!) : '—'} шт.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    const SizedBox(width: 8),
-                    Row(
-                      children: [
-                        Icon(
-                            order.paymentDone
-                                ? Icons.check_circle_outline
-                                : Icons.error_outline,
-                            size: 16,
-                            color: order.paymentDone ? Colors.green : Colors.red),
-                        const SizedBox(width: 4),
-                        Text(order.paymentDone ? 'Оплачено' : 'Не оплачено',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: order.paymentDone
-                                    ? Colors.green
-                                    : Colors.red)),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
+                  ),
+                const SizedBox(height: 8),
                 // Кнопки действий
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    IconButton(
-                      onPressed: () => _showOrderTimeline(order),
-                      icon: const Icon(Icons.schedule),
-                      tooltip: 'Время',
-                    ),
-                    IconButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => EditOrderScreen(order: order)),
-                        );
-                      },
-                      icon: const Icon(Icons.edit_outlined),
-                      tooltip: 'Редактировать',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Менеджер: ${order.manager.isEmpty ? '—' : order.manager}',
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                          if (isCompleted)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4.0),
-                              child: Text(
-                                'Факт: ${order.actualQty != null ? _formatQuantity(order.actualQty!) : '—'} шт.',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: () => _showOrderTimeline(order),
+                          icon: const Icon(Icons.schedule),
+                          tooltip: 'Время',
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      EditOrderScreen(order: order)),
+                            );
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          tooltip: 'Редактировать',
+                        ),
+                      ],
                     ),
                     if (isCompleted && !order.isShipped)
                       ElevatedButton(
