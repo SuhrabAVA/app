@@ -46,6 +46,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<String> _filterProducts = [];
   DateTimeRange? _filterDateRange;
   final Set<String> _shippingInProgress = <String>{};
+  final ScrollController _tableHorizontalController = ScrollController();
+  final ScrollController _tableVerticalController = ScrollController();
+  final ScrollController _cardsScrollController = ScrollController();
 
   /// Проверяет, полностью ли заполнены ключевые поля заказа для отправки
   /// в производство. Заказ считается «незавершённым», если не выбран
@@ -61,6 +64,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _tableHorizontalController.dispose();
+    _tableVerticalController.dispose();
+    _cardsScrollController.dispose();
     super.dispose();
   }
 
@@ -120,103 +126,120 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   }
                   // Если выбран режим таблицы, отображаем DataTable, иначе карточки
                   if (_asTable) {
-                    return SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        showCheckboxColumn: false,
-                        columns: const [
-                          DataColumn(label: Text('Номер заказа')),
-                          DataColumn(label: Text('Дата')),
-                          DataColumn(label: Text('Заказчик')),
-                          DataColumn(label: Text('Продукт')),
-                          DataColumn(label: Text('Размер')),
-                          DataColumn(label: Text('Тираж')),
-                          DataColumn(label: Text('Статус')),
-                          DataColumn(label: Text('Действия')),
-                        ],
-                        rows: List<DataRow>.generate(
-                          orders.length,
-                          (index) {
-                            final o = orders[index];
-                            final product = o.product;
-                            final totalQty = product.quantity;
-                            final productSize = _formatProductSize(product);
-                            final statusInfo = _computeStatus(o, allTasks);
-                            final statusLabel = statusInfo.label;
-                            final missing = _isIncomplete(o);
-                            final stageName =
-                                _currentStageName(o, allTasks, personnel);
-                            return DataRow(
-                              onSelectChanged: (_) => _openViewOrder(o),
-                              color: MaterialStateProperty.resolveWith<Color?>(
-                                  (states) {
-                                final hoverColor =
-                                    warehouseRowHoverColor.resolve(states);
-                                if (hoverColor != null) return hoverColor;
-                                // Если заказ неполон, подсвечиваем строку серым
-                                return missing ? Colors.grey.shade200 : null;
-                              }),
-                              cells: [
-                                DataCell(Text(orderDisplayId(o))),
-                                DataCell(Text(_formatDate(o.orderDate))),
-                                DataCell(Text(o.customer)),
-                                DataCell(Text(product.type)),
-                                DataCell(Text(productSize)),
-                                DataCell(Text(totalQty.toString())),
-                                DataCell(
-                                  statusLabel == 'В работе' && stageName != null
-                                      ? Tooltip(
-                                          message:
-                                              'Текущий этап: $stageName',
-                                          child: _StatusBadge(
-                                              color: statusInfo.color,
-                                              label: statusLabel),
-                                        )
-                                      : _StatusBadge(
-                                          color: statusInfo.color,
-                                          label: statusLabel,
-                                        ),
-                                ),
-                                DataCell(Row(
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.history),
-                                      tooltip: 'Время',
-                                      onPressed: () => _showOrderTimeline(o),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit),
-                                      tooltip: 'Редактировать',
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                              builder: (_) =>
-                                                  EditOrderScreen(order: o)),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                )),
+                    return Scrollbar(
+                      controller: _tableVerticalController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _tableVerticalController,
+                        child: Scrollbar(
+                          controller: _tableHorizontalController,
+                          thumbVisibility: true,
+                          notificationPredicate: (notif) => notif.depth == 1,
+                          child: SingleChildScrollView(
+                            controller: _tableHorizontalController,
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              showCheckboxColumn: false,
+                              columns: const [
+                                DataColumn(label: Text('Номер заказа')),
+                                DataColumn(label: Text('Дата')),
+                                DataColumn(label: Text('Заказчик')),
+                                DataColumn(label: Text('Продукт')),
+                                DataColumn(label: Text('Размер')),
+                                DataColumn(label: Text('Тираж')),
+                                DataColumn(label: Text('Статус')),
+                                DataColumn(label: Text('Действия')),
                               ],
-                            );
-                          },
+                              rows: List<DataRow>.generate(
+                                orders.length,
+                                (index) {
+                                  final o = orders[index];
+                                  final product = o.product;
+                                  final totalQty = product.quantity;
+                                  final productSize = _formatProductSize(product);
+                                  final statusInfo = _computeStatus(o, allTasks);
+                                  final statusLabel = statusInfo.label;
+                                  final missing = _isIncomplete(o);
+                                  final stageName =
+                                      _currentStageName(o, allTasks, personnel);
+                                  return DataRow(
+                                    onSelectChanged: (_) => _openViewOrder(o),
+                                    color: MaterialStateProperty
+                                        .resolveWith<Color?>((states) {
+                                      final hoverColor =
+                                          warehouseRowHoverColor.resolve(states);
+                                      if (hoverColor != null) return hoverColor;
+                                      // Если заказ неполон, подсвечиваем строку серым
+                                      return missing ? Colors.grey.shade200 : null;
+                                    }),
+                                    cells: [
+                                      DataCell(Text(orderDisplayId(o))),
+                                      DataCell(Text(_formatDate(o.orderDate))),
+                                      DataCell(Text(o.customer)),
+                                      DataCell(Text(product.type)),
+                                      DataCell(Text(productSize)),
+                                      DataCell(Text(totalQty.toString())),
+                                      DataCell(
+                                        statusLabel == 'В работе' &&
+                                                stageName != null
+                                            ? Tooltip(
+                                                message:
+                                                    'Текущий этап: $stageName',
+                                                child: _StatusBadge(
+                                                    color: statusInfo.color,
+                                                    label: statusLabel),
+                                              )
+                                            : _StatusBadge(
+                                                color: statusInfo.color,
+                                                label: statusLabel,
+                                              ),
+                                      ),
+                                      DataCell(Row(
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.history),
+                                            tooltip: 'Время',
+                                            onPressed: () =>
+                                                _showOrderTimeline(o),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.edit),
+                                            tooltip: 'Редактировать',
+                                            onPressed: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        EditOrderScreen(
+                                                            order: o)),
+                                              );
+                                            },
+                                          ),
+                                        ],
+                                      )),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     );
                   } else {
-                    final Map<String, List<OrderModel>> ordersByCustomer = {};
-                    for (final o in orders) {
-                      ordersByCustomer.putIfAbsent(o.customer, () => []).add(o);
-                    }
-                    return SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: orders
-                            .map((o) =>
-                                _buildOrderCard(o, allTasks, personnel))
-                            .toList(),
+                    return Scrollbar(
+                      controller: _cardsScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _cardsScrollController,
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: orders
+                              .map((o) =>
+                                  _buildOrderCard(o, allTasks, personnel))
+                              .toList(),
+                        ),
                       ),
                     );
                   }
@@ -410,12 +433,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final extras = <String>[];
     final roll = formatDimension(product.roll);
     if (roll != null) extras.add('Рулон $roll');
-    final widthB = formatDimension(product.widthB);
-    if (widthB != null) extras.add('Б $widthB');
     final blQty = product.blQuantity;
     if (blQty != null && blQty.isNotEmpty) extras.add('Кол-во $blQty');
-    final length = formatDimension(product.length);
-    if (length != null) extras.add('L $length');
 
     if (extras.isNotEmpty) {
       final extraText = extras.join(', ');
