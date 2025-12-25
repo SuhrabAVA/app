@@ -2000,9 +2000,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _product.parameters = p.trim();
   }
 
-  Future<void> _saveOrder() async {
+  Future<void> _saveOrder({bool closeImmediately = false}) async {
     // Флаг: создаём новый заказ или редактируем
     final bool isCreating = (widget.order == null);
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final taskProvider = Provider.of<TaskProvider>(context, listen: false);
     if (!_formKey.currentState!.validate()) return;
     _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
     final params = {..._selectedParams};
@@ -2014,21 +2017,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _selectedParams = params.toList();
     if (_orderDate == null) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(content: Text('Укажите дату заказа')),
         );
       return;
     }
     if (_dueDate == null) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(content: Text('Укажите срок выполнения')),
         );
       return;
     }
     if (_lengthExceeded) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(content: Text('Недостаточно материала на складе')),
         );
       return;
@@ -2036,12 +2039,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _validatePaintNames();
     if (_hasInvalidPaintNames()) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
               content: Text('Данной краски нет на складе. Уточните название.')),
         );
       return;
     }
+    if (closeImmediately && mounted) navigator.pop();
     final managerName = widget.order != null
         ? widget.order!.manager
         : (_selectedManager?.trim().isNotEmpty ?? false)
@@ -2075,10 +2079,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         comments: _commentsController.text.trim(),
       );
       if (_created == null) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
+        if (mounted) {
+          messenger.showSnackBar(
             const SnackBar(content: Text('Не удалось создать заказ')),
           );
+        }
         return;
       }
       createdOrUpdatedOrder = _created;
@@ -2336,9 +2341,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         );
         await provider.updateOrder(withAssignment);
         await provider.refresh();
-        if (mounted) {
-          await context.read<TaskProvider>().refresh();
-        }
+        await taskProvider.refresh();
         createdOrUpdatedOrder = withAssignment;
       }
     }
@@ -2349,16 +2352,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     // === Конец обработки формы ===
 
-    if (!mounted) return;
+    if (!mounted && !closeImmediately) return;
 
     // Списание материалов/готовой продукции (бумага по длине L)
     final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
     final double need = (_product.length ?? 0).toDouble();
     if (paperTmc != null && need > 0) {
-      final current = Provider.of<WarehouseProvider>(context, listen: false)
-          .allTmc
-          .where((t) => t.id == paperTmc.id)
-          .toList();
+      final current = warehouse.allTmc.where((t) => t.id == paperTmc.id).toList();
       final double availableQty =
           current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
       final String itemId = paperTmc.id;
@@ -2369,12 +2369,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final double toWriteOff = need - prevLen;
 
       if (toWriteOff > 0 && toWriteOff > availableQty) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
+        if (mounted) {
+          messenger.showSnackBar(
             const SnackBar(
                 content: Text(
                     'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
           );
+        }
         return;
       }
 
@@ -2385,7 +2386,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(
               content: Text('Не удалось списать бумагу: ${error.toString()}'),
             ),
@@ -2456,9 +2457,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       } catch (e) {
         if (mounted) {
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text('Ошибка списания лишнего: ' + e.toString())));
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text('Ошибка списания лишнего: ${e.toString()}'),
+            ),
+          );
         }
       }
     }
@@ -2466,7 +2469,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 // Независимо от создания/редактирования - синхронизируем список красок
 // c полем product.parameters и таблицей order_paints.
     await _persistPaints(createdOrUpdatedOrder.id);
-    if (mounted) Navigator.of(context).pop();
+    if (!closeImmediately && mounted) navigator.pop();
   }
 
   String _formatDecimal(double value, {int fractionDigits = 2}) {
@@ -2812,8 +2815,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               },
             ),
           TextButton(
-            onPressed: () async {
-              await _saveOrder();
+            onPressed: () {
+              _saveOrder(closeImmediately: true);
             },
             child:
                 const Text('Сохранить', style: TextStyle(color: Colors.white)),

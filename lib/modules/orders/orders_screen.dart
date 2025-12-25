@@ -76,17 +76,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
       appBar: AppBar(
         title: const Text('Модуль оформления заказа'),
         actions: [
-          TextButton.icon(
-            onPressed: () {
-              // История заказов — пока просто snackbar
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Раздел "История" в разработке')),
-              );
-            },
-            icon: const Icon(Icons.history, color: Colors.white),
-            label: const Text('История', style: TextStyle(color: Colors.white)),
-          ),
-          const SizedBox(width: 8),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.push(

@@ -52,7 +52,9 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
   Future<void> _addEmployeeTab() async {
     final personnel = context.read<PersonnelProvider>();
     // Список доступных для выбора сотрудников (не включаем уже открытые)
-    final available = personnel.employees.where((e) => !_employeeIds.contains(e.id)).toList();
+    final available = personnel.employees
+        .where((e) => !e.isFired && !_employeeIds.contains(e.id))
+        .toList();
     if (available.isEmpty) {
       // Все сотрудники уже открыты
       return;

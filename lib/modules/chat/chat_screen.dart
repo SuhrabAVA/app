@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -29,14 +32,22 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _chatReady = false;
   final _scroll = ScrollController();
 
+  Future<void> _subscribeToRoom() async {
+    if (!_chatReady) return;
+    try {
+      await _chat.subscribe(widget.roomId);
+    } catch (e, st) {
+      debugPrint('Chat subscribe error: $e');
+      debugPrint('$st');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     // Подписываемся в addPostFrame, чтобы гарантированно был доступен Provider
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_chatReady) {
-        _chat.subscribe(widget.roomId);
-      }
+      unawaited(_subscribeToRoom());
     });
   }
 
