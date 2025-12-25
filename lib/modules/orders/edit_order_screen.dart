@@ -2736,17 +2736,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final paintsAvailable = _hasAnyPaints();
     final baseTheme = Theme.of(context);
     final compactTextTheme = baseTheme.textTheme.apply(
-      fontSizeFactor: 0.95,
+      fontSizeFactor: 0.92,
       bodyColor: baseTheme.textTheme.bodyMedium?.color,
       displayColor: baseTheme.textTheme.bodyLarge?.color,
     );
     final compactTheme = baseTheme.copyWith(
+      visualDensity: VisualDensity.compact,
       textTheme: compactTextTheme,
       inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 10,
+          horizontal: 10,
+          vertical: 8,
         ),
       ),
     );
@@ -2829,13 +2830,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     thumbVisibility: true,
                     child: SingleChildScrollView(
                       controller: _formScrollController,
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(6),
                       child: Center(
                         child: ConstrainedBox(
                           constraints: BoxConstraints(maxWidth: maxWrapWidth),
                           child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
+                            spacing: 6,
+                            runSpacing: 6,
                             children: formSections
                                 .map(
                                   (section) => SizedBox(
@@ -3499,8 +3500,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildFieldGrid(
     List<Widget> fields, {
     double breakpoint = 720,
-    double spacing = 10,
-    double runSpacing = 6,
+    double spacing = 8,
+    double runSpacing = 4,
     double minItemWidth = 260,
     int maxColumns = 2,
   }) {
@@ -3539,7 +3540,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     bool wrapWithCard = true,
   }) {
     final content = Padding(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3547,7 +3548,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             title,
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           ...children,
         ],
       ),
@@ -3686,8 +3687,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Widget _buildContractsRow() {
     return Wrap(
-      spacing: 12,
-      runSpacing: 8,
+      spacing: 8,
+      runSpacing: 4,
       children: [
         _buildContractSignedTile(),
         _buildPaymentDoneTile(),
@@ -3821,6 +3822,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
             ];
 
+            final extras = Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                _buildCompactCheckboxTile(
+                  value: _cardboardChecked,
+                  onChanged: (val) => setState(() {
+                    _cardboardChecked = val ?? false;
+                    _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
+                  }),
+                  label: 'Картон',
+                  width: 150,
+                ),
+                _buildCompactCheckboxTile(
+                  value: _trimming,
+                  onChanged: (val) => setState(() => _trimming = val ?? false),
+                  label: 'Подрезка',
+                  width: 150,
+                ),
+              ],
+            );
+
             return _buildFieldGrid([
               DropdownButtonFormField<String?>(
                 value: hasSelectedHandle
@@ -3856,30 +3879,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   });
                 },
               ),
-              CheckboxListTile(
-                value: _cardboardChecked,
-                onChanged: (val) => setState(() {
-                  _cardboardChecked = val ?? false;
-                  _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
-                }),
-                title: const Text('Картон'),
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              CheckboxListTile(
-                value: _trimming,
-                onChanged: (val) => setState(() => _trimming = val ?? false),
-                title: const Text('Подрезка'),
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
+              extras,
             ],
-                breakpoint: 680,
-                maxColumns: 3,
-                minItemWidth: 200,
-                runSpacing: 16);
+                breakpoint: 620,
+                maxColumns: 2,
+                minItemWidth: 220,
+                runSpacing: 8,
+                spacing: 8);
           },
     );
 
@@ -3913,27 +3919,39 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  Widget _buildCompactCheckboxTile({
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+    required String label,
+    double width = 180,
+  }) {
+    return SizedBox(
+      width: width,
+      child: CheckboxListTile(
+        value: value,
+        onChanged: onChanged,
+        title: Text(label),
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        controlAffinity: ListTileControlAffinity.leading,
+        contentPadding: EdgeInsets.zero,
+      ),
+    );
+  }
+
   Widget _buildContractSignedTile() {
-    return CheckboxListTile(
+    return _buildCompactCheckboxTile(
       value: _contractSigned,
       onChanged: (val) => setState(() => _contractSigned = val ?? false),
-      title: const Text('Договор подписан'),
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      controlAffinity: ListTileControlAffinity.leading,
-      contentPadding: EdgeInsets.zero,
+      label: 'Договор подписан',
     );
   }
 
   Widget _buildPaymentDoneTile() {
-    return CheckboxListTile(
+    return _buildCompactCheckboxTile(
       value: _paymentDone,
       onChanged: (val) => setState(() => _paymentDone = val ?? false),
-      title: const Text('Оплата произведена'),
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      controlAffinity: ListTileControlAffinity.leading,
-      contentPadding: EdgeInsets.zero,
+      label: 'Оплата произведена',
     );
   }
 
