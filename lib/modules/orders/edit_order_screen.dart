@@ -383,6 +383,35 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  String _formatDimensionsInput() {
+    final parts = <String>[];
+    void add(double? value) {
+      if (value != null && value > 0) {
+        parts.add(_formatDecimal(value));
+      }
+    }
+
+    add(_product.depth);
+    add(_product.width);
+    add(_product.height);
+    return parts.join(' ');
+  }
+
+  void _applyDimensionsInput(String input) {
+    final matches =
+        RegExp(r'[0-9]+(?:[\\.,][0-9]+)?').allMatches(input.trim());
+    final values = matches
+        .map((m) => double.tryParse(m.group(0)!.replaceAll(',', '.')))
+        .whereType<double>()
+        .toList();
+    setState(() {
+      _product.depth = values.isNotEmpty ? values[0] : 0;
+      _product.width = values.length > 1 ? values[1] : 0;
+      _product.height = values.length > 2 ? values[2] : 0;
+    });
+    _scheduleStagePreviewUpdate();
+  }
+
   final _formKey = GlobalKey<FormState>();
   final _uuid = const Uuid();
   final SupabaseClient _sb = Supabase.instance.client;
@@ -396,6 +425,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Клиент и комментарии
   late TextEditingController _customerController;
   late TextEditingController _commentsController;
+  late final TextEditingController _dimensionsController;
   DateTime? _orderDate;
   DateTime? _dueDate;
   bool _contractSigned = false;
@@ -407,6 +437,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String _selectedHandleDescription = '-';
   // Картон: либо «нет», либо «есть»
   String _selectedCardboard = 'нет';
+  bool _cardboardChecked = false;
+  bool _trimming = false;
   double _makeready = 0;
   double _val = 0;
   String? _stageTemplateId;
@@ -550,6 +582,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _contractSigned = template?.contractSigned ?? false;
     _paymentDone = template?.paymentDone ?? false;
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
+    _trimming = _selectedParams.contains('Подрезка');
     final initialHandle = template?.handle?.trim();
     if (initialHandle != null &&
         initialHandle.isNotEmpty &&
@@ -562,6 +595,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Заменяем старое значение «офсет» на «есть», если встречается в переданном заказе
     final rawCardboard = template?.cardboard ?? 'нет';
     _selectedCardboard = rawCardboard == 'офсет' ? 'есть' : rawCardboard;
+    _cardboardChecked = _selectedCardboard == 'есть';
     _makeready = template?.makeready ?? 0;
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
@@ -614,6 +648,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         leftover: null,
       );
     }
+    _dimensionsController = TextEditingController(
+      text: _formatDimensionsInput(),
+    );
     _stockExtraSelectedQty =
         (_product.leftover != null && _product.leftover! > 0)
             ? _product.leftover
@@ -1321,6 +1358,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   void dispose() {
     _customerController.dispose();
     _commentsController.dispose();
+    _dimensionsController.dispose();
     _paintInfoController.dispose();
     _formScrollController.dispose();
     _paperSearchController.dispose();
@@ -1958,6 +1996,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Флаг: создаём новый заказ или редактируем
     final bool isCreating = (widget.order == null);
     if (!_formKey.currentState!.validate()) return;
+    _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
+    final params = {..._selectedParams};
+    if (_trimming) {
+      params.add('Подрезка');
+    } else {
+      params.remove('Подрезка');
+    }
+    _selectedParams = params.toList();
     if (_orderDate == null) {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2689,11 +2735,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
     final formSections = [
-      _buildOrderInfoSection(context),
-      _buildProductBasics(_product),
-      _buildHandlesSection(context),
-      _buildPaintsSection(),
-      _buildFormSection(
+      _buildCompactOrderSheet(
         context: context,
         showFormSummary: showFormSummary,
         showFormEditor: showFormEditor,
@@ -2701,9 +2743,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         hasAssignedForm: hasAssignedForm,
         paintsAvailable: paintsAvailable,
       ),
-      _buildProductMaterialAndExtras(_product),
-      _buildProductionSection(context),
-      _buildCommentsSection(context),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -2827,112 +2866,140 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  Widget _buildCompactOrderSheet({
+    required BuildContext context,
+    required bool showFormSummary,
+    required bool showFormEditor,
+    required bool isEditing,
+    required bool hasAssignedForm,
+    required bool paintsAvailable,
+  }) {
+    const labelWidth = 200.0;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildLabelRow(
+              label: 'Дата',
+              labelWidth: labelWidth,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildDatePickerField(
+                      label: 'Дата заказа',
+                      value: _orderDate,
+                      onTap: _pickOrderDate,
+                      emptyError: 'Укажите дату заказа',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDatePickerField(
+                      label: 'Срок выполнения',
+                      value: _dueDate,
+                      onTap: _pickDueDate,
+                      emptyError: 'Укажите срок',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _buildLabelRow(
+              label: 'Заказчик',
+              labelWidth: labelWidth,
+              child: _buildCustomerField(),
+            ),
+            _buildLabelRow(
+              label: 'Тип',
+              labelWidth: labelWidth,
+              child: _buildProductTypeField(),
+            ),
+            _buildLabelRow(
+              label: 'Тираж',
+              labelWidth: labelWidth,
+              child: _buildQuantityField(),
+            ),
+            _buildLabelRow(
+              label: 'Размеры',
+              labelWidth: labelWidth,
+              child: _buildDimensionsField(),
+            ),
+            _buildLabelRow(
+              label: 'Ручки и картон',
+              labelWidth: labelWidth,
+              child: _buildHandlesSection(context, wrapWithCard: false),
+            ),
+            const Divider(),
+            _buildLabelRow(
+              label: 'Краски',
+              labelWidth: labelWidth,
+              child: _buildPaintsSection(wrapWithCard: false),
+            ),
+            const Divider(),
+            _buildLabelRow(
+              label: 'Форма',
+              labelWidth: labelWidth,
+              child: _buildFormSection(
+                context: context,
+                showFormSummary: showFormSummary,
+                showFormEditor: showFormEditor,
+                isEditing: isEditing,
+                hasAssignedForm: hasAssignedForm,
+                paintsAvailable: paintsAvailable,
+                wrapWithCard: false,
+              ),
+            ),
+            const Divider(),
+            _buildLabelRow(
+              label: 'Склад и материалы',
+              labelWidth: labelWidth,
+              child: _buildProductMaterialAndExtras(_product),
+            ),
+            const Divider(),
+            _buildLabelRow(
+              label: 'Приладка',
+              labelWidth: labelWidth,
+              child: _buildMakereadyFields(),
+            ),
+            _buildLabelRow(
+              label: 'Комментарий',
+              labelWidth: labelWidth,
+              child: _buildCommentsSection(context, wrapWithCard: false),
+            ),
+            _buildLabelRow(
+              label: 'Очередь',
+              labelWidth: labelWidth,
+              child: _buildProductionSection(
+                context,
+                wrapWithCard: false,
+                includeMakeready: false,
+              ),
+            ),
+            _buildLabelRow(
+              label: 'Договоры',
+              labelWidth: labelWidth,
+              child: _buildContractsRow(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Базовые поля продукта (наименование, тираж, габариты)
   Widget _buildProductBasics(ProductModel product) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildFieldGrid([
-          Consumer<ProductsProvider>(
-            builder: (context, provider, _) {
-              final items = _categoryTitles;
-              return DropdownButtonFormField<String>(
-                value: items.contains(_product.type) ? _product.type : null,
-                decoration: const InputDecoration(
-                  labelText: 'Наименование изделия',
-                  border: OutlineInputBorder(),
-                ),
-                items: items
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
-                onChanged: (val) {
-                  setState(() {
-                    _product.type = val ?? '';
-                    _selectedStockExtraRow = null;
-                    _stockExtraResults = [];
-                    _stockExtra = null;
-                    _stockExtraSelectedQty = null;
-                    _stockExtraQtyTouched = false;
-                    _product.leftover = null;
-                  });
-                  _stockExtraSearchDebounce?.cancel();
-                  _stockExtraSearchController.clear();
-                  _updateStockExtraQtyController();
-                  _updateStockExtra(includeAllResults: true);
-                },
-              );
-            },
-          ),
-          TextFormField(
-            initialValue:
-                product.quantity > 0 ? product.quantity.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Тираж',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final qty = int.tryParse(val) ?? 0;
-              product.quantity = qty;
-            },
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Введите тираж';
-              }
-              final qty = int.tryParse(value);
-              if (qty == null || qty <= 0) {
-                return 'Тираж должен быть > 0';
-              }
-              return null;
-            },
-          ),
+          _buildProductTypeField(),
+          _buildQuantityField(),
         ], breakpoint: 680, minItemWidth: 220),
         const SizedBox(height: 12),
-        _buildFieldGrid([
-          TextFormField(
-            initialValue: product.depth > 0 ? product.depth.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Длина (см)',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.depth = double.tryParse(normalized) ?? 0;
-              });
-            },
-          ),
-          TextFormField(
-            initialValue: product.width > 0 ? product.width.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Ширина (см)',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.width = double.tryParse(normalized) ?? 0;
-              });
-              _scheduleStagePreviewUpdate();
-            },
-          ),
-          TextFormField(
-            initialValue: product.height > 0 ? product.height.toString() : '',
-            decoration: const InputDecoration(
-              labelText: 'Глубина (см)',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              setState(() {
-                product.height = double.tryParse(normalized) ?? 0;
-              });
-            },
-          ),
-        ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
+        _buildDimensionsField(),
       ],
     );
   }
@@ -3405,38 +3472,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildSectionCard({
-    required BuildContext context,
-    required String title,
-    required List<Widget> children,
-  }) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Flexible(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildFieldGrid(
     List<Widget> fields, {
     double breakpoint = 720,
@@ -3473,11 +3508,172 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildOrderInfoSection(BuildContext context) {
-    return _buildSectionCard(
-      context: context,
-      title: 'Информация о заказе',
+  Widget _buildSectionCard({
+    required BuildContext context,
+    required String title,
+    required List<Widget> children,
+    bool wrapWithCard = true,
+  }) {
+    final content = Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 12),
+          ...children,
+        ],
+      ),
+    );
+
+    if (!wrapWithCard) return content;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: content,
+    );
+  }
+
+  Widget _buildLabelRow({
+    required String label,
+    required Widget child,
+    double labelWidth = 170,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: labelWidth,
+            child: Text(
+              '$label:',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDimensionsField() {
+    return TextFormField(
+      controller: _dimensionsController,
+      decoration: const InputDecoration(
+        labelText: 'Размеры',
+        hintText: '23 34 45 или 23*34*45',
+        border: OutlineInputBorder(),
+      ),
+      onChanged: _applyDimensionsInput,
+    );
+  }
+
+  Widget _buildProductTypeField() {
+    return Consumer<ProductsProvider>(
+      builder: (context, provider, _) {
+        final items = _categoryTitles;
+        return DropdownButtonFormField<String>(
+          value: items.contains(_product.type) ? _product.type : null,
+          decoration: const InputDecoration(
+            labelText: 'Наименование изделия',
+            border: OutlineInputBorder(),
+          ),
+          items: items
+              .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+              .toList(),
+          onChanged: (val) {
+            setState(() {
+              _product.type = val ?? '';
+              _selectedStockExtraRow = null;
+              _stockExtraResults = [];
+              _stockExtra = null;
+              _stockExtraSelectedQty = null;
+              _stockExtraQtyTouched = false;
+              _product.leftover = null;
+            });
+            _stockExtraSearchDebounce?.cancel();
+            _stockExtraSearchController.clear();
+            _updateStockExtraQtyController();
+            _updateStockExtra(includeAllResults: true);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildQuantityField() {
+    return TextFormField(
+      initialValue: _product.quantity > 0 ? _product.quantity.toString() : '',
+      decoration: const InputDecoration(
+        labelText: 'Тираж',
+        border: OutlineInputBorder(),
+      ),
+      keyboardType: TextInputType.number,
+      onChanged: (val) {
+        final qty = int.tryParse(val) ?? 0;
+        _product.quantity = qty;
+      },
+      validator: (value) {
+        if (value == null || value.trim().isEmpty) {
+          return 'Введите тираж';
+        }
+        final qty = int.tryParse(value);
+        if (qty == null || qty <= 0) {
+          return 'Тираж должен быть > 0';
+        }
+        return null;
+      },
+    );
+  }
+
+  Widget _buildMakereadyFields() {
+    return _buildFieldGrid([
+      TextFormField(
+        initialValue: _makeready > 0 ? '$_makeready' : '',
+        decoration: const InputDecoration(
+          labelText: 'Приладка',
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+        onChanged: (v) {
+          final normalized = v.replaceAll(',', '.');
+          _makeready = double.tryParse(normalized) ?? 0;
+        },
+      ),
+      TextFormField(
+        initialValue: _val > 0 ? '$_val' : '',
+        decoration: const InputDecoration(
+          labelText: 'ВАЛ',
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+        onChanged: (v) {
+          final normalized = v.replaceAll(',', '.');
+          _val = double.tryParse(normalized) ?? 0;
+        },
+      ),
+    ], breakpoint: 680, minItemWidth: 200);
+  }
+
+  Widget _buildContractsRow() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
       children: [
+        _buildContractSignedTile(),
+        _buildPaymentDoneTile(),
+      ],
+    );
+  }
+
+  Widget _buildOrderInfoSection(BuildContext context,
+      {bool wrapWithCard = true}) {
+    final content = [
         _buildFieldGrid([
           _buildManagerField(),
           _buildCustomerField(),
@@ -3518,17 +3714,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             );
           },
         ),
-      ],
+      ];
+
+    if (!wrapWithCard) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: content,
+      );
+    }
+
+    return _buildSectionCard(
+      context: context,
+      title: 'Информация о заказе',
+      children: content,
     );
   }
 
-  Widget _buildHandlesSection(BuildContext context) {
-    return _buildSectionCard(
-      context: context,
-      title: 'Дополнительные параметры',
-      children: [
-        Consumer<WarehouseProvider>(
-          builder: (context, warehouse, _) {
+  Widget _buildHandlesSection(BuildContext context,
+      {bool wrapWithCard = true}) {
+    final content = Consumer<WarehouseProvider>(
+      builder: (context, warehouse, _) {
             final seen = <String>{};
             final List<TmcModel> handleItems = [
               ...warehouse.getTmcByType('Ручки'),
@@ -3627,18 +3832,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   });
                 },
               ),
-              DropdownButtonFormField<String>(
-                value: _selectedCardboard,
-                decoration: const InputDecoration(
-                  labelText: 'Картон',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'нет', child: Text('нет')),
-                  DropdownMenuItem(value: 'есть', child: Text('есть')),
-                ],
-                onChanged: (val) =>
-                    setState(() => _selectedCardboard = val ?? 'нет'),
+              CheckboxListTile(
+                value: _cardboardChecked,
+                onChanged: (val) => setState(() {
+                  _cardboardChecked = val ?? false;
+                  _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
+                }),
+                title: const Text('Картон'),
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
+              CheckboxListTile(
+                value: _trimming,
+                onChanged: (val) => setState(() => _trimming = val ?? false),
+                title: const Text('Подрезка'),
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
               ),
             ],
                 breakpoint: 680,
@@ -3646,8 +3857,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 minItemWidth: 200,
                 runSpacing: 16);
           },
-        ),
-      ],
+    );
+
+    if (!wrapWithCard) return content;
+
+    return _buildSectionCard(
+      context: context,
+      title: 'Дополнительные параметры',
+      children: [content],
     );
   }
 
@@ -4112,40 +4329,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildProductionSection(BuildContext context) {
-    return _buildSectionCard(
-      context: context,
-      title: 'Производство',
-      children: [
-        _buildFieldGrid([
-          TextFormField(
-            initialValue: _makeready > 0 ? '$_makeready' : '',
-            decoration: const InputDecoration(
-              labelText: 'Приладка',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (v) {
-              final normalized = v.replaceAll(',', '.');
-              _makeready = double.tryParse(normalized) ?? 0;
-            },
-          ),
-          TextFormField(
-            initialValue: _val > 0 ? '$_val' : '',
-            decoration: const InputDecoration(
-              labelText: 'ВАЛ',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (v) {
-              final normalized = v.replaceAll(',', '.');
-              _val = double.tryParse(normalized) ?? 0;
-            },
-          ),
-        ], breakpoint: 680, minItemWidth: 200),
-        const SizedBox(height: 16),
-        Consumer<TemplateProvider>(
-          builder: (context, provider, _) {
+  Widget _buildProductionSection(BuildContext context,
+      {bool wrapWithCard = true, bool includeMakeready = true}) {
+    final children = <Widget>[];
+
+    if (includeMakeready) {
+      children.add(_buildMakereadyFields());
+      children.add(const SizedBox(height: 16));
+    }
+
+    children.add(
+      Consumer<TemplateProvider>(
+        builder: (context, provider, _) {
             final templates = provider.templates;
             if (_stageTemplateId != null && _stageTemplateId!.isNotEmpty) {
               final tpl = _findTemplateById(templates, _stageTemplateId);
@@ -4236,34 +4431,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             );
           },
         ),
-        const SizedBox(height: 16),
-        TextFormField(
-          initialValue: _actualQuantity,
-          decoration: const InputDecoration(
-            labelText: 'Фактическое количество',
-            border: OutlineInputBorder(),
-          ),
-          readOnly: true,
-        ),
-      ],
     );
+
+    children.add(const SizedBox(height: 16));
+    children.add(
+      TextFormField(
+        initialValue: _actualQuantity,
+        decoration: const InputDecoration(
+          labelText: 'Фактическое количество',
+          border: OutlineInputBorder(),
+        ),
+        readOnly: true,
+      ),
+    );
+
+    if (wrapWithCard) {
+      return _buildSectionCard(
+        context: context,
+        title: 'Производство',
+        children: children,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
+
   }
 
-  Widget _buildCommentsSection(BuildContext context) {
+  Widget _buildCommentsSection(BuildContext context,
+      {bool wrapWithCard = true}) {
+    final content = TextFormField(
+      controller: _commentsController,
+      decoration: const InputDecoration(
+        labelText: 'Комментарии к заказу',
+        border: OutlineInputBorder(),
+      ),
+      minLines: 2,
+      maxLines: 5,
+    );
+
+    if (!wrapWithCard) return content;
+
     return _buildSectionCard(
       context: context,
       title: 'Комментарии',
-      children: [
-        TextFormField(
-          controller: _commentsController,
-          decoration: const InputDecoration(
-            labelText: 'Комментарии к заказу',
-            border: OutlineInputBorder(),
-          ),
-          minLines: 2,
-          maxLines: 5,
-        ),
-      ],
+      children: [content],
     );
   }
 
@@ -4366,6 +4580,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool isEditing,
     required bool hasAssignedForm,
     required bool paintsAvailable,
+    bool wrapWithCard = true,
   }) {
     final content = <Widget>[];
     final controls = <Widget>[];
@@ -4438,9 +4653,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
     }
 
-    return _buildSectionCard(
-      context: context,
-      title: 'Форма',
+    if (wrapWithCard) {
+      return _buildSectionCard(
+        context: context,
+        title: 'Форма',
+        children: content,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: content,
     );
   }
@@ -4462,11 +4684,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildPaintsSection() {
-    return _buildSectionCard(
-      context: context,
-      title: 'Краски',
-      children: [
+  Widget _buildPaintsSection({bool wrapWithCard = true}) {
+    final content = [
         TextFormField(
           controller: _paintInfoController,
           decoration: const InputDecoration(
@@ -4636,7 +4855,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             label: const Text('Добавить краску'),
           ),
         ),
-      ],
+      ];
+
+    if (!wrapWithCard) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: content,
+      );
+    }
+
+    return _buildSectionCard(
+      context: context,
+      title: 'Краски',
+      children: content,
     );
   }
 
