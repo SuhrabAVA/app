@@ -2734,6 +2734,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
+    final baseTheme = Theme.of(context);
+    final compactTextTheme = baseTheme.textTheme.apply(
+      fontSizeFactor: 0.95,
+      bodyColor: baseTheme.textTheme.bodyMedium?.color,
+      displayColor: baseTheme.textTheme.bodyLarge?.color,
+    );
+    final compactTheme = baseTheme.copyWith(
+      textTheme: compactTextTheme,
+      inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
+      ),
+    );
     final formSections = [
       _buildCompactOrderSheet(
         context: context,
@@ -2795,72 +2811,75 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final formList = LayoutBuilder(
-              builder: (context, innerConstraints) {
-                final maxWrapWidth =
-                    math.min(innerConstraints.maxWidth, 1500.0);
-                final useTwoColumns = maxWrapWidth >= 1024;
-                final sectionWidth =
-                    useTwoColumns ? (maxWrapWidth - 16) / 2 : maxWrapWidth;
-                return Scrollbar(
-                  controller: _formScrollController,
-                  thumbVisibility: true,
-                  child: SingleChildScrollView(
+      body: Theme(
+        data: compactTheme,
+        child: Form(
+          key: _formKey,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final formList = LayoutBuilder(
+                builder: (context, innerConstraints) {
+                  final maxWrapWidth =
+                      math.min(innerConstraints.maxWidth, 1500.0);
+                  final useTwoColumns = maxWrapWidth >= 1024;
+                  final sectionWidth =
+                      useTwoColumns ? (maxWrapWidth - 16) / 2 : maxWrapWidth;
+                  return Scrollbar(
                     controller: _formScrollController,
-                    padding: const EdgeInsets.all(12),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: maxWrapWidth),
-                        child: Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: formSections
-                              .map(
-                                (section) => SizedBox(
-                                  width: useTwoColumns
-                                      ? sectionWidth
-                                      : maxWrapWidth,
-                                  child: section,
-                                ),
-                              )
-                              .toList(),
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      controller: _formScrollController,
+                      padding: const EdgeInsets.all(8),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: maxWrapWidth),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: formSections
+                                .map(
+                                  (section) => SizedBox(
+                                    width: useTwoColumns
+                                        ? sectionWidth
+                                        : maxWrapWidth,
+                                    child: section,
+                                  ),
+                                )
+                                .toList(),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
-            );
+                  );
+                },
+              );
 
-            if (constraints.maxWidth < 1200) {
-              return formList;
-            }
+              if (constraints.maxWidth < 1200) {
+                return formList;
+              }
 
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: SizedBox(
-                    height: constraints.maxHeight,
-                    child: formList,
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: SizedBox(
+                      height: constraints.maxHeight,
+                      child: formList,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 2,
-                  child: SizedBox(
-                    height: constraints.maxHeight,
-                    child: _buildWarehousePreviewPanel(),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: constraints.maxHeight,
+                      child: _buildWarehousePreviewPanel(),
+                    ),
                   ),
-                ),
-              ],
-            );
-          },
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -2878,7 +2897,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3480,8 +3499,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildFieldGrid(
     List<Widget> fields, {
     double breakpoint = 720,
-    double spacing = 12,
-    double runSpacing = 8,
+    double spacing = 10,
+    double runSpacing = 6,
     double minItemWidth = 260,
     int maxColumns = 2,
   }) {
@@ -3520,7 +3539,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     bool wrapWithCard = true,
   }) {
     final content = Padding(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3528,7 +3547,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             title,
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           ...children,
         ],
       ),
@@ -3548,7 +3567,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     double labelWidth = 170,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
