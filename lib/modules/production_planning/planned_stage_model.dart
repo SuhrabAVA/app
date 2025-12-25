@@ -1,29 +1,58 @@
 class PlannedStage {
   final String stageId;
   final String stageName;
+  final List<String> alternativeStageIds;
+  final List<String> alternativeStageNames;
   String? comment;
 
   PlannedStage({
     required this.stageId,
     required this.stageName,
+    this.alternativeStageIds = const [],
+    this.alternativeStageNames = const [],
     this.comment,
   });
 
-  PlannedStage copyWith({String? comment}) => PlannedStage(
+  List<String> get allStageIds =>
+      [stageId, ...alternativeStageIds.where((id) => id != stageId)].toSet().toList();
+
+  List<String> get allStageNames =>
+      [stageName, ...alternativeStageNames.where((n) => n != stageName)].toSet().toList();
+
+  PlannedStage copyWith({
+    String? comment,
+    List<String>? alternativeStageIds,
+    List<String>? alternativeStageNames,
+  }) =>
+      PlannedStage(
         stageId: stageId,
         stageName: stageName,
+        alternativeStageIds: alternativeStageIds ?? this.alternativeStageIds,
+        alternativeStageNames: alternativeStageNames ?? this.alternativeStageNames,
         comment: comment ?? this.comment,
       );
 
   Map<String, dynamic> toMap() => {
         'stageId': stageId,
         'stageName': stageName,
+        if (alternativeStageIds.isNotEmpty) 'alternativeStageIds': alternativeStageIds,
+        if (alternativeStageNames.isNotEmpty) 'alternativeStageNames': alternativeStageNames,
         if (comment != null && comment!.isNotEmpty) 'comment': comment,
       };
 
   factory PlannedStage.fromMap(Map<String, dynamic> map) => PlannedStage(
         stageId: map['stageId'] as String,
         stageName: map['stageName'] as String? ?? '',
+        alternativeStageIds: (map['alternativeStageIds'] as List?)
+                ?.whereType<dynamic>()
+                .map((e) => e.toString())
+                .toList() ??
+            const [],
+        alternativeStageNames: (map['alternativeStageNames'] as List?)
+                ?.whereType<dynamic>()
+                .map((e) => e.toString())
+                .toList() ??
+            const [],
         comment: map['comment'] as String?,
       );
 }

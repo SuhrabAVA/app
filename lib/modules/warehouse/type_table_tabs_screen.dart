@@ -1039,11 +1039,33 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   List<TmcModel> _applyFilterItems(List<TmcModel> src) {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return src;
-    return src
-        .where((e) =>
-            e.description.toLowerCase().contains(q) ||
-            (e.note ?? '').toLowerCase().contains(q))
-        .toList();
+    bool matchesPaper(TmcModel e) {
+      final format = (e.format ?? '').toLowerCase().trim();
+      final grammage = (e.grammage ?? '').toLowerCase().trim();
+      final searchableParts = [
+        e.description,
+        if (format.isNotEmpty) format,
+        if (grammage.isNotEmpty) grammage,
+      ]
+          .join(' ')
+          .toLowerCase();
+
+      // Все слова из запроса должны присутствовать в одной строке
+      final tokens = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+      return tokens.every((token) => searchableParts.contains(token));
+    }
+
+    return src.where((e) {
+      final baseMatch =
+          e.description.toLowerCase().contains(q) || (e.note ?? '').toLowerCase().contains(q);
+      if (baseMatch) return true;
+
+      // Расширенный поиск только для бумаги: по комбинациям «наименование + формат + граммаж»
+      if (_normalizeType(widget.type) == 'paper') {
+        return matchesPaper(e);
+      }
+      return false;
+    }).toList();
   }
 
   /// Фильтр по тексту для логов
