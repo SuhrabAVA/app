@@ -61,7 +61,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
 
   Future<void> _addCategoryDialog() async {
     final name = TextEditingController();
-    bool hasSub = false;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -74,14 +73,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
                 controller: name,
                 decoration:
                     const InputDecoration(labelText: 'Название категории'),
-              ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                value: hasSub,
-                onChanged: (v) => setS(() => hasSub = v ?? false),
-                title: const Text('Использовать под-таблицы (table_key)'),
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
               ),
             ],
           ),
@@ -103,7 +94,7 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     await _sb.from('warehouse_categories').insert({
       'code': _slug(title),
       'title': title,
-      'has_subtables': hasSub,
+      'has_subtables': false,
     });
     await _load();
   }

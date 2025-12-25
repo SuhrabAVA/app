@@ -8,8 +8,6 @@ import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
 
 // Экран редактирования плана и создания этапов
-import '../production_planning/production_planning_screen.dart';
-
 // Экран с подробной информацией по конкретному заказу
 import 'production_details_screen.dart';
 
@@ -231,25 +229,6 @@ class _ProductionScreenState extends State<ProductionScreen>
                       Tab(text: 'Проблема'),
                       Tab(text: 'Завершённые'),
                     ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const ProductionPlanningScreen(),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Новое задание'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
               ],

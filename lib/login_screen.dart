@@ -183,7 +183,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         final List<_UserItem> users = [];
 
                         for (final e in personnel.employees) {
-                          // можно отфильтровать уволенных: if (e.isFired) continue;
+                          if (e.isFired) continue;
 
                           String positionName = '';
                           if (e.positionIds.isNotEmpty) {

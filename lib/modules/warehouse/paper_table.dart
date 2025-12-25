@@ -169,19 +169,27 @@ class _PaperTableState extends State<PaperTable> {
 
   List<DataRow> _buildGroupedRows() {
     // Текстовый поиск
-    final q = _searchController.text.toLowerCase();
+    final tokens = _searchController.text
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
 
     // 1) мульти-фильтр
     List<TmcModel> list = _applyMultiFilters(_papers);
 
     // 2) текстовый поиск
     list = list.where((item) {
-      if (q.isEmpty) return true;
-      return item.description.toLowerCase().contains(q) ||
-          (item.format ?? '').toLowerCase().contains(q) ||
-          (item.grammage ?? '').toLowerCase().contains(q) ||
-          (item.note ?? '').toLowerCase().contains(q) ||
-          item.quantity.toString().toLowerCase().contains(q);
+      if (tokens.isEmpty) return true;
+      final haystack = [
+        item.description,
+        item.format ?? '',
+        item.grammage ?? '',
+        item.note ?? '',
+        item.quantity.toString(),
+      ].join(' ').toLowerCase();
+
+      return tokens.every((token) => haystack.contains(token));
     }).toList();
 
     // 3) сортировка групп по алфавиту и внутри группы по формату, затем по грамажу
