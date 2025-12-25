@@ -2811,13 +2811,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   thumbVisibility: true,
                   child: SingleChildScrollView(
                     controller: _formScrollController,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(12),
                     child: Center(
                       child: ConstrainedBox(
                         constraints: BoxConstraints(maxWidth: maxWrapWidth),
                         child: Wrap(
-                          spacing: 16,
-                          runSpacing: 16,
+                          spacing: 12,
+                          runSpacing: 12,
                           children: formSections
                               .map(
                                 (section) => SizedBox(
@@ -2878,7 +2878,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -2983,6 +2983,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               labelWidth: labelWidth,
               child: _buildContractsRow(),
             ),
+            _buildLabelRow(
+              label: 'Менеджер',
+              labelWidth: labelWidth,
+              child: _buildManagerField(),
+            ),
           ],
         ),
       ),
@@ -2998,7 +3003,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _buildProductTypeField(),
           _buildQuantityField(),
         ], breakpoint: 680, minItemWidth: 220),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _buildDimensionsField(),
       ],
     );
@@ -3475,8 +3480,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildFieldGrid(
     List<Widget> fields, {
     double breakpoint = 720,
-    double spacing = 16,
-    double runSpacing = 12,
+    double spacing = 12,
+    double runSpacing = 8,
     double minItemWidth = 260,
     int maxColumns = 2,
   }) {
@@ -3515,7 +3520,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     bool wrapWithCard = true,
   }) {
     final content = Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3523,7 +3528,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             title,
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           ...children,
         ],
       ),
@@ -3543,7 +3548,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     double labelWidth = 170,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3690,7 +3695,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             emptyError: 'Укажите срок',
           ),
         ], maxColumns: 2),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         LayoutBuilder(
           builder: (context, constraints) {
             final bool narrow = constraints.maxWidth < 520;
@@ -3700,7 +3705,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               return Column(
                 children: [
                   contractTile,
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   paymentTile,
                 ],
               );
@@ -3708,7 +3713,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             return Row(
               children: [
                 Expanded(child: contractTile),
-                const SizedBox(width: 16),
+                const SizedBox(width: 12),
                 Expanded(child: paymentTile),
               ],
             );
