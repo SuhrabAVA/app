@@ -74,8 +74,6 @@ class _StageRuleOutcome {
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
-  static const bool _useSingleSheetLayout = true;
-
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -404,17 +402,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _paymentDone = false;
   late ProductModel _product;
   List<String> _selectedParams = [];
-  late final TextEditingController _dimensionsController =
-      TextEditingController();
   // Ручки (из склада)
   String? _selectedHandleId;
   String _selectedHandleDescription = '-';
   // Картон: либо «нет», либо «есть»
   String _selectedCardboard = 'нет';
-  bool _trimming = false;
   double _makeready = 0;
   double _val = 0;
-  bool _compactMode = false;
   String? _stageTemplateId;
   final TextEditingController _stageTemplateController =
       TextEditingController();
@@ -568,7 +562,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Заменяем старое значение «офсет» на «есть», если встречается в переданном заказе
     final rawCardboard = template?.cardboard ?? 'нет';
     _selectedCardboard = rawCardboard == 'офсет' ? 'есть' : rawCardboard;
-    _trimming = _selectedParams.contains('Подрезка');
     _makeready = template?.makeready ?? 0;
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
@@ -621,11 +614,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         leftover: null,
       );
     }
-    _dimensionsController.text = _formatDimensionsText(
-      _product.depth,
-      _product.width,
-      _product.height,
-    );
     _stockExtraSelectedQty =
         (_product.leftover != null && _product.leftover! > 0)
             ? _product.leftover
@@ -1358,7 +1346,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _matNameCtl.dispose();
     _matFormatCtl.dispose();
     _matGramCtl.dispose();
-    _dimensionsController.dispose();
     super.dispose();
   }
 
@@ -2009,7 +1996,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final penName =
         _selectedHandleDescription == '-' ? '' : _selectedHandleDescription;
     _upsertPensInParameters(penName);
-    _syncTrimmingParam();
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     late OrderModel createdOrUpdatedOrder;
@@ -2436,52 +2422,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         .replaceFirst(RegExp(r'\.$'), '');
   }
 
-  String _formatDimensionsText(double depth, double width, double height) {
-    final parts = <String>[];
-    for (final value in [depth, width, height]) {
-      if (value > 0) {
-        parts.add(_formatDecimal(value));
-      }
-    }
-    return parts.join(' ');
-  }
-
-  void _applyDimensions(String value) {
-    final matches = RegExp(r'[0-9]+(?:[.,][0-9]+)?')
-        .allMatches(value)
-        .map((m) => m.group(0))
-        .whereType<String>()
-        .toList();
-    if (matches.isEmpty) {
-      setState(() {
-        _product.depth = 0;
-        _product.width = 0;
-        _product.height = 0;
-      });
-      return;
-    }
-
-    double? parseAt(int index) {
-      if (index >= matches.length) return null;
-      final normalized = matches[index].replaceAll(',', '.');
-      return double.tryParse(normalized);
-    }
-
-    setState(() {
-      _product.depth = parseAt(0) ?? _product.depth;
-      _product.width = parseAt(1) ?? _product.width;
-      _product.height = parseAt(2) ?? _product.height;
-    });
-  }
-
-  void _syncTrimmingParam() {
-    _selectedParams.removeWhere(
-        (p) => p.toLowerCase().trim() == 'подрезка');
-    if (_trimming) {
-      _selectedParams.add('Подрезка');
-    }
-  }
-
   String? _productSizeLabel() {
     String format(double value) {
       final String fixed = value.toStringAsFixed(2);
@@ -2748,6 +2688,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
+    final formSections = [
+      _buildOrderInfoSection(context),
+      _buildProductBasics(_product),
+      _buildHandlesSection(context),
+      _buildPaintsSection(),
+      _buildFormSection(
+        context: context,
+        showFormSummary: showFormSummary,
+        showFormEditor: showFormEditor,
+        isEditing: isEditing,
+        hasAssignedForm: hasAssignedForm,
+        paintsAvailable: paintsAvailable,
+      ),
+      _buildProductMaterialAndExtras(_product),
+      _buildProductionSection(context),
+      _buildCommentsSection(context),
+    ];
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -2803,26 +2760,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         key: _formKey,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final compactLayout = constraints.maxWidth >= 1200;
-            final formSection = _buildSingleSheetLayout(
-              context,
-              isEditing: isEditing,
-              showFormSummary: showFormSummary,
-              showFormEditor: showFormEditor,
-              hasAssignedForm: hasAssignedForm,
-              paintsAvailable: paintsAvailable,
-              compact: compactLayout,
-            );
-            final scrollSection = compactLayout
-                ? _buildSingleSheetLayout(
-                    context,
-                    isEditing: isEditing,
-                    showFormSummary: showFormSummary,
-                    showFormEditor: showFormEditor,
-                    hasAssignedForm: hasAssignedForm,
-                    paintsAvailable: paintsAvailable,
-                  )
-                : formSection;
             final formList = LayoutBuilder(
               builder: (context, innerConstraints) {
                 final maxWrapWidth =
@@ -2842,7 +2779,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         child: Wrap(
                           spacing: 16,
                           runSpacing: 16,
-                          children: [scrollSection]
+                          children: formSections
                               .map(
                                 (section) => SizedBox(
                                   width: useTwoColumns
@@ -2871,10 +2808,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   flex: 3,
                   child: SizedBox(
                     height: constraints.maxHeight,
-                    child: Theme(
-                      data: _compactTheme(context),
-                      child: formSection,
-                    ),
+                    child: formList,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -2905,7 +2839,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               return DropdownButtonFormField<String>(
                 value: items.contains(_product.type) ? _product.type : null,
                 decoration: const InputDecoration(
-                  labelText: 'Тип',
+                  labelText: 'Наименование изделия',
                   border: OutlineInputBorder(),
                 ),
                 items: items
@@ -2956,15 +2890,49 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         const SizedBox(height: 12),
         _buildFieldGrid([
           TextFormField(
-            controller: _dimensionsController,
+            initialValue: product.depth > 0 ? product.depth.toString() : '',
             decoration: const InputDecoration(
-              labelText: 'Размеры',
-              hintText: '23 34 45 / 23*34*45 / 23-34-45 / 23_34_45',
+              labelText: 'Длина (см)',
               border: OutlineInputBorder(),
             ),
-            onChanged: _applyDimensions,
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.depth = double.tryParse(normalized) ?? 0;
+              });
+            },
           ),
-        ], breakpoint: 760, maxColumns: 2, minItemWidth: 240),
+          TextFormField(
+            initialValue: product.width > 0 ? product.width.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Ширина (см)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.width = double.tryParse(normalized) ?? 0;
+              });
+              _scheduleStagePreviewUpdate();
+            },
+          ),
+          TextFormField(
+            initialValue: product.height > 0 ? product.height.toString() : '',
+            decoration: const InputDecoration(
+              labelText: 'Глубина (см)',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (val) {
+              final normalized = val.replaceAll(',', '.');
+              setState(() {
+                product.height = double.tryParse(normalized) ?? 0;
+              });
+            },
+          ),
+        ], breakpoint: 760, maxColumns: 3, minItemWidth: 180),
       ],
     );
   }
@@ -2975,105 +2943,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildStockExtraLayout(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _stockExtraSearchController,
-                focusNode: _stockExtraFocusNode,
-                decoration: InputDecoration(
-                  labelText: 'Лишнее на складе',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: _loadingStockExtra
-                      ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : (_stockExtraSearchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _stockExtraSearchController.clear();
-                                _onStockExtraSearchChanged('');
-                              },
-                            )),
-                ),
-                onChanged: _onStockExtraSearchChanged,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _stockExtra != null
-                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
-                    : 'Доступно: —',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _stockExtraQtyController,
-                decoration: InputDecoration(
-                  labelText: 'Количество для списания',
-                  border: const OutlineInputBorder(),
-                  helperText: _selectedStockExtraRow != null
-                      ? null
-                      : 'Сначала выберите позицию из списка',
-                ),
-                enabled: _selectedStockExtraRow != null,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                onChanged: (value) {
-                  final normalized = value.replaceAll(',', '.');
-                  final parsed = double.tryParse(normalized);
-                  double? nextValue =
-                      parsed != null && parsed >= 0 ? parsed : null;
-                  if (nextValue != null && _stockExtra != null) {
-                    final double available = _stockExtra!;
-                    if (available >= 0 && nextValue > available) {
-                      nextValue = available;
-                      final text = _formatDecimal(available);
-                      _stockExtraQtyController.value = TextEditingValue(
-                        text: text,
-                        selection: TextSelection.collapsed(offset: text.length),
-                      );
-                    }
-                  }
-                  setState(() {
-                    _stockExtraQtyTouched = true;
-                    _stockExtraSelectedQty = nextValue;
-                    _product.leftover = _stockExtraSelectedQty != null &&
-                            _stockExtraSelectedQty! > 0
-                        ? _stockExtraSelectedQty
-                        : null;
-                    if (_writeOffStockExtra &&
-                        (_stockExtraSelectedQty == null ||
-                            _stockExtraSelectedQty! <= 0)) {
-                      _writeOffStockExtra = false;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 4),
-              _buildStockExtraResults(),
-            ],
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Списать лишнее при сохранении'),
-            value: _writeOffStockExtra,
-            onChanged: (_selectedStockExtraRow != null &&
-                    (_stockExtraSelectedQty ?? 0) > 0)
-                ? (v) => setState(() => _writeOffStockExtra = v)
-                : null,
-          ),
-        ),
-        const SizedBox(height: 12),
         Builder(
           builder: (context) {
             final papers = _paperItems();
@@ -3350,6 +3219,105 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           },
         ),
         const SizedBox(height: 12),
+        _buildStockExtraLayout(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _stockExtraSearchController,
+                focusNode: _stockExtraFocusNode,
+                decoration: InputDecoration(
+                  labelText: 'Лишнее на складе',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: _loadingStockExtra
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : (_stockExtraSearchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _stockExtraSearchController.clear();
+                                _onStockExtraSearchChanged('');
+                              },
+                            )),
+                ),
+                onChanged: _onStockExtraSearchChanged,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _stockExtra != null
+                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
+                    : 'Доступно: —',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _stockExtraQtyController,
+                decoration: InputDecoration(
+                  labelText: 'Количество для списания',
+                  border: const OutlineInputBorder(),
+                  helperText: _selectedStockExtraRow != null
+                      ? null
+                      : 'Сначала выберите позицию из списка',
+                ),
+                enabled: _selectedStockExtraRow != null,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (value) {
+                  final normalized = value.replaceAll(',', '.');
+                  final parsed = double.tryParse(normalized);
+                  double? nextValue =
+                      parsed != null && parsed >= 0 ? parsed : null;
+                  if (nextValue != null && _stockExtra != null) {
+                    final double available = _stockExtra!;
+                    if (available >= 0 && nextValue > available) {
+                      nextValue = available;
+                      final text = _formatDecimal(available);
+                      _stockExtraQtyController.value = TextEditingValue(
+                        text: text,
+                        selection: TextSelection.collapsed(offset: text.length),
+                      );
+                    }
+                  }
+                  setState(() {
+                    _stockExtraQtyTouched = true;
+                    _stockExtraSelectedQty = nextValue;
+                    _product.leftover = _stockExtraSelectedQty != null &&
+                            _stockExtraSelectedQty! > 0
+                        ? _stockExtraSelectedQty
+                        : null;
+                    if (_writeOffStockExtra &&
+                        (_stockExtraSelectedQty == null ||
+                            _stockExtraSelectedQty! <= 0)) {
+                      _writeOffStockExtra = false;
+                    }
+                  });
+                },
+              ),
+              const SizedBox(height: 4),
+              _buildStockExtraResults(),
+            ],
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Списать лишнее при сохранении'),
+            value: _writeOffStockExtra,
+            onChanged: (_selectedStockExtraRow != null &&
+                    (_stockExtraSelectedQty ?? 0) > 0)
+                ? (v) => setState(() => _writeOffStockExtra = v)
+                : null,
+          ),
+        ),
+        const SizedBox(height: 12),
         _buildFieldGrid([
           TextFormField(
             initialValue: product.widthB?.toString() ?? '',
@@ -3411,128 +3379,60 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             },
           ),
         ], breakpoint: 680, minItemWidth: 200),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            ElevatedButton.icon(
+              onPressed: _pickPdf,
+              icon: const Icon(Icons.attach_file),
+              label: Text(
+                _pickedPdf?.name ??
+                    (widget.order?.pdfUrl != null
+                        ? widget.order!.pdfUrl!.split('/').last
+                        : 'Прикрепить PDF'),
+              ),
+            ),
+            if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.open_in_new),
+                onPressed: _openPdf,
+              ),
+            ]
+          ],
+        ),
       ],
     );
-  }
-
-  ThemeData _compactTheme(BuildContext context) {
-    final base = Theme.of(context);
-    return base.copyWith(
-      textTheme: base.textTheme.apply(fontSizeFactor: 0.95, heightFactor: 1.0),
-      inputDecorationTheme: base.inputDecorationTheme.copyWith(
-        isDense: true,
-        contentPadding:
-            const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-      ),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-
-  Widget _buildSingleSheetLayout(
-    BuildContext context, {
-    required bool isEditing,
-    required bool showFormSummary,
-    required bool showFormEditor,
-    required bool hasAssignedForm,
-    required bool paintsAvailable,
-    bool compact = false,
-  }) {
-    final previousCompact = _compactMode;
-    _compactMode = compact;
-    Widget buildContent() {
-      final sections = [
-        _buildOrderInfoSection(context),
-        _buildProductBasics(_product),
-        _buildHandlesSection(context),
-        _buildPaintsSection(),
-        _buildFormSection(
-          context: context,
-          showFormSummary: showFormSummary,
-          showFormEditor: showFormEditor,
-          isEditing: isEditing,
-          hasAssignedForm: hasAssignedForm,
-          paintsAvailable: paintsAvailable,
-        ),
-        _buildProductMaterialAndExtras(_product),
-        _buildCommentsSection(context),
-        _buildProductionSection(context),
-      ];
-
-      final content = Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (int i = 0; i < sections.length; i++) ...[
-            if (i > 0)
-              SizedBox(height: compact ? 8 : 16),
-            sections[i],
-          ],
-        ],
-      );
-
-      if (compact) {
-        return Padding(
-          padding: const EdgeInsets.all(12),
-          child: content,
-        );
-      }
-
-      return Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: content,
-        ),
-      );
-    }
-
-    try {
-      return buildContent();
-    } finally {
-      _compactMode = previousCompact;
-    }
   }
 
   Widget _buildSectionCard({
     required BuildContext context,
     required String title,
     required List<Widget> children,
-    bool dense = false,
   }) {
-    final useDense = dense || _compactMode;
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Flexible(
-              child: Text(
-                title,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontSize: useDense ? 14 : null,
-                    height: useDense ? 1.0 : null),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: useDense ? 8 : 12),
-        ...children,
-      ],
-    );
-
-    if (_useSingleSheetLayout) {
-      return Padding(
-        padding: EdgeInsets.symmetric(vertical: useDense ? 4 : 6),
-        child: content,
-      );
-    }
-
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: content,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
       ),
     );
   }
@@ -3544,33 +3444,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     double runSpacing = 12,
     double minItemWidth = 260,
     int maxColumns = 2,
-    bool dense = false,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final useDense = dense || _compactMode;
-        final itemHeight = useDense ? 44.0 : null;
-        final effectiveSpacing = useDense ? 8.0 : spacing;
-        final effectiveRunSpacing = useDense ? 8.0 : runSpacing;
         final maxWidth = constraints.maxWidth;
         int columns = maxWidth >= breakpoint ? maxColumns : 1;
         columns = columns.clamp(1, maxColumns);
         double width = columns == 1
             ? maxWidth
-            : (maxWidth - effectiveSpacing * (columns - 1)) / columns;
+            : (maxWidth - spacing * (columns - 1)) / columns;
         while (columns > 1 && width < minItemWidth) {
           columns -= 1;
           width = columns == 1
               ? maxWidth
-              : (maxWidth - effectiveSpacing * (columns - 1)) / columns;
+              : (maxWidth - spacing * (columns - 1)) / columns;
         }
         return Wrap(
-          spacing: effectiveSpacing,
-          runSpacing: effectiveRunSpacing,
+          spacing: spacing,
+          runSpacing: runSpacing,
           children: fields
               .map((child) => SizedBox(
                     width: columns == 1 ? maxWidth : width,
-                    height: itemHeight,
                     child: child,
                   ))
               .toList(),
@@ -3585,14 +3479,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       title: 'Информация о заказе',
       children: [
         _buildFieldGrid([
+          _buildManagerField(),
+          _buildCustomerField(),
           _buildDatePickerField(
             label: 'Дата заказа',
             value: _orderDate,
             onTap: _pickOrderDate,
             emptyError: 'Укажите дату заказа',
           ),
-          _buildCustomerField(),
-          _buildManagerField(),
           _buildDatePickerField(
             label: 'Срок выполнения',
             value: _dueDate,
@@ -3600,6 +3494,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             emptyError: 'Укажите срок',
           ),
         ], maxColumns: 2),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final bool narrow = constraints.maxWidth < 520;
+            final contractTile = _buildContractSignedTile();
+            final paymentTile = _buildPaymentDoneTile();
+            if (narrow) {
+              return Column(
+                children: [
+                  contractTile,
+                  const SizedBox(height: 8),
+                  paymentTile,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: contractTile),
+                const SizedBox(width: 16),
+                Expanded(child: paymentTile),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -3709,38 +3627,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   });
                 },
               ),
-            ], breakpoint: 680, maxColumns: 2, minItemWidth: 240);
+              DropdownButtonFormField<String>(
+                value: _selectedCardboard,
+                decoration: const InputDecoration(
+                  labelText: 'Картон',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'нет', child: Text('нет')),
+                  DropdownMenuItem(value: 'есть', child: Text('есть')),
+                ],
+                onChanged: (val) =>
+                    setState(() => _selectedCardboard = val ?? 'нет'),
+              ),
+            ],
+                breakpoint: 680,
+                maxColumns: 3,
+                minItemWidth: 200,
+                runSpacing: 16);
           },
         ),
-        const SizedBox(height: 12),
-        _buildFieldGrid([
-          CheckboxListTile(
-            value: _selectedCardboard == 'есть',
-            onChanged: (val) {
-              setState(() {
-                _selectedCardboard = (val ?? false) ? 'есть' : 'нет';
-              });
-            },
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: const Text('Картон'),
-            contentPadding: EdgeInsets.zero,
-          ),
-          CheckboxListTile(
-            value: _trimming,
-            onChanged: (val) {
-              setState(() {
-                _trimming = val ?? false;
-              });
-            },
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: const Text('Подрезка'),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ], maxColumns: 2, minItemWidth: 220),
       ],
     );
   }
@@ -4356,52 +4262,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
           minLines: 2,
           maxLines: 5,
-        ),
-        const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final bool narrow = constraints.maxWidth < 520;
-            final contractTile = _buildContractSignedTile();
-            final paymentTile = _buildPaymentDoneTile();
-            if (narrow) {
-              return Column(
-                children: [
-                  contractTile,
-                  const SizedBox(height: 8),
-                  paymentTile,
-                ],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: contractTile),
-                const SizedBox(width: 16),
-                Expanded(child: paymentTile),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            ElevatedButton.icon(
-              onPressed: _pickPdf,
-              icon: const Icon(Icons.attach_file),
-              label: Text(
-                _pickedPdf?.name ??
-                    (widget.order?.pdfUrl != null
-                        ? widget.order!.pdfUrl!.split('/').last
-                        : 'Прикрепить PDF'),
-              ),
-            ),
-            if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.open_in_new),
-                onPressed: _openPdf,
-              ),
-            ]
-          ],
         ),
       ],
     );
