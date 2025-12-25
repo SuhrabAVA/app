@@ -314,8 +314,14 @@ void _ensureFlexoOrdering(List<String> stageIds, PersonnelProvider personnel) {
 }
 
 /// Разрешить старт только для самого первого незавершённого этапа заказа
-bool _isFirstPendingStage(
-    TaskProvider tasks, PersonnelProvider personnel, TaskModel task) {
+typedef StageGroupingResolver = String Function(String orderId, String stageId);
+
+bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
+    TaskModel task,
+    {StageGroupingResolver? groupResolver}) {
+  String _groupKey(String stageId) =>
+      groupResolver?.call(task.orderId, stageId) ?? stageId;
+
   // Все задачи этого заказа
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;
@@ -324,7 +330,8 @@ bool _isFirstPendingStage(
   final stages = <String, bool>{}; // stageId -> hasPending
   for (final t in all) {
     final pending = t.status != TaskStatus.completed;
-    stages[t.stageId] = (stages[t.stageId] ?? false) || pending;
+    final key = _groupKey(t.stageId);
+    stages[key] = (stages[key] ?? false) || pending;
   }
 
   // Отфильтровать только pending этапы
@@ -334,9 +341,14 @@ bool _isFirstPendingStage(
 
   final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
   if (orderedStages.isNotEmpty) {
+    final orderedKeys = <String>[];
+    for (final id in orderedStages) {
+      final k = _groupKey(id);
+      if (!orderedKeys.contains(k)) orderedKeys.add(k);
+    }
     final indexMap = <String, int>{};
-    for (var i = 0; i < orderedStages.length; i++) {
-      indexMap.putIfAbsent(orderedStages[i], () => i);
+    for (var i = 0; i < orderedKeys.length; i++) {
+      indexMap.putIfAbsent(orderedKeys[i], () => i);
     }
     pendingStageIds.sort((a, b) {
       final ia = indexMap[a];
@@ -369,7 +381,7 @@ bool _isFirstPendingStage(
   final firstPendingStageId = pendingStageIds.first;
 
   // Разрешаем старт, если наш task относится к самому первому незавершённому этапу
-  return task.stageId == firstPendingStageId;
+  return _groupKey(task.stageId) == firstPendingStageId;
 }
 
 Future<ExecutionMode?> _askExecMode(BuildContext context,
@@ -618,6 +630,43 @@ class _TasksScreenState extends State<TasksScreen>
     } catch (_) {
       return null;
     }
+  }
+
+  String _stageGroupKey(String orderId, String stageId) {
+    final order = _orderById(orderId);
+    final templateId = order?.stageTemplateId;
+    if (order == null || templateId == null || templateId.isEmpty) {
+      return stageId;
+    }
+
+    final templates = context.read<TemplateProvider>().templates;
+    for (final tpl in templates) {
+      if (tpl.id != templateId) continue;
+      for (final stage in tpl.stages) {
+        if (stage.allStageIds.contains(stageId)) {
+          final ids = [...stage.allStageIds]..sort();
+          return ids.join('|');
+        }
+      }
+    }
+
+    return stageId;
+  }
+
+  bool _isStageGroupLocked(TaskProvider provider, TaskModel task) {
+    final groupKey = _stageGroupKey(task.orderId, task.stageId);
+    final related = provider.tasks.where((t) =>
+        t.orderId == task.orderId && _stageGroupKey(t.orderId, t.stageId) == groupKey);
+
+    final anyActive = related.any(
+        (t) => t.id != task.id && t.status == TaskStatus.inProgress);
+    final anyDone =
+        related.any((t) => t.id != task.id && t.status == TaskStatus.completed);
+
+    if (task.status == TaskStatus.completed) return false;
+    if (task.status == TaskStatus.inProgress) return anyDone;
+
+    return anyActive || anyDone;
   }
 
   String _formatQuantityDisplay(String raw) {
@@ -1906,6 +1955,7 @@ class _TasksScreenState extends State<TasksScreen>
     final int effCap = capacity <= 0 ? 1 : capacity;
     final ExecutionMode? stageMode = _stageExecutionMode(task);
     final ExecutionMode myExecMode = _execModeForUser(task, widget.employeeId);
+    final bool groupLocked = _isStageGroupLocked(provider, task);
     // Consider a user an assignee only if they are explicitly assigned AND executing in
     // separate mode. Helpers (joint execution) should not gain full control over the task.
     final bool isAssignee = task.assignees.isEmpty ||
@@ -1951,9 +2001,11 @@ class _TasksScreenState extends State<TasksScreen>
                 task.status == TaskStatus.problem ||
                 (task.status == TaskStatus.inProgress && _slotAvailable()))) &&
         _isFirstPendingStage(context.read<TaskProvider>(),
-            context.read<PersonnelProvider>(), task) &&
+            context.read<PersonnelProvider>(), task,
+            groupResolver: _stageGroupKey) &&
         stageModeAllowsJoin &&
-        !shiftPaused;
+        !shiftPaused &&
+        !groupLocked;
 
     // Пауза/Завершить/Проблема доступны только своим исполнителям
     final bool canPause =
@@ -2172,11 +2224,20 @@ class _TasksScreenState extends State<TasksScreen>
                     Future<void> onStart() async {
                       // Sequential stage guard
                       if (!_isFirstPendingStage(context.read<TaskProvider>(),
-                          context.read<PersonnelProvider>(), task)) {
+                          context.read<PersonnelProvider>(), task,
+                          groupResolver: _stageGroupKey)) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
                                   'Сначала выполните предыдущий этап заказа')));
+                        }
+                        return;
+                      }
+
+                      if (_isStageGroupLocked(tp, task)) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text('Уже выполняется альтернативный этап')));
                         }
                         return;
                       }
