@@ -418,23 +418,28 @@ class OrdersProvider with ChangeNotifier {
     final sanitizedProduct = productName.replaceAll("'", "''");
     final category = await _supabase
         .from('warehouse_categories')
-        .select('id')
-        .or('title.eq.' + sanitizedProduct + ',code.eq.' + sanitizedProduct)
+        .select('id, has_subtables')
+        .or('title.eq.$sanitizedProduct,code.eq.$sanitizedProduct')
         .maybeSingle();
 
     if (category == null || category['id'] == null) {
       throw Exception('Категория для "$productName" не найдена');
     }
 
+    final bool hasSubtables = (category['has_subtables'] ?? false) == true;
     final String categoryId = category['id'].toString();
 
     Map<String, dynamic>? item;
     try {
-      final rows = await _supabase
+      var rowsQuery = _supabase
           .from('warehouse_category_items')
           .select('id, quantity, table_key')
           .eq('category_id', categoryId)
           .eq('description', customerName);
+      if (hasSubtables) {
+        rowsQuery = rowsQuery.eq('table_key', productName);
+      }
+      final rows = await rowsQuery;
       if (rows is List && rows.isNotEmpty) {
         final raw = rows.first;
         if (raw is Map) {
@@ -454,6 +459,7 @@ class OrdersProvider with ChangeNotifier {
             'description': customerName,
             'quantity': initialQty,
             if (sizeLabel != null && sizeLabel.isNotEmpty) 'size': sizeLabel,
+            if (hasSubtables) 'table_key': productName,
           })
           .select('id, quantity, table_key')
           .single();
@@ -555,19 +561,24 @@ class OrdersProvider with ChangeNotifier {
     final String sanitizedProduct = productName.replaceAll("'", "''");
     final dynamic category = await _supabase
         .from('warehouse_categories')
-        .select('id, title, code')
-        .or('title.eq.' + sanitizedProduct + ',code.eq.' + sanitizedProduct)
+        .select('id, title, code, has_subtables')
+        .or('title.eq.$sanitizedProduct,code.eq.$sanitizedProduct')
         .maybeSingle();
 
     if (category == null || category['id'] == null) {
       return null;
     }
 
-    final rows = await _supabase
+    final bool hasSubtables = (category['has_subtables'] ?? false) == true;
+    var rowsQuery = _supabase
         .from('warehouse_category_items')
         .select('id, description, quantity, size, comment')
         .eq('category_id', category['id'])
         .eq('description', customerName);
+    if (hasSubtables) {
+      rowsQuery = rowsQuery.eq('table_key', productName);
+    }
+    final rows = await rowsQuery;
 
     if (rows is List && rows.isNotEmpty) {
       final raw = rows.first;

@@ -1427,10 +1427,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     try {
+      final sanitizedTitle = typeTitle.replaceAll("'", "''");
       final cat = await _sb
           .from('warehouse_categories')
-          .select('id, title, code')
-          .or('title.eq.' + typeTitle + ',code.eq.' + typeTitle)
+          .select('id, title, code, has_subtables')
+          .or('title.eq.$sanitizedTitle,code.eq.$sanitizedTitle')
           .maybeSingle();
       if (cat == null) {
         if (mounted) {
@@ -1449,10 +1450,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         return;
       }
 
+      final bool hasSubtables = (cat['has_subtables'] ?? false) == true;
       var builder = _sb
           .from('warehouse_category_items')
           .select('id, description, quantity, table_key, size')
           .eq('category_id', cat['id']);
+      if (hasSubtables) {
+        builder = builder.eq('table_key', typeTitle);
+      }
       if (search.isNotEmpty) {
         final sanitized = search.replaceAll("'", "''");
         builder = builder
