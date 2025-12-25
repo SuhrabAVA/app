@@ -1645,7 +1645,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   void _ensureStockExtrasLoaded() {
     if (_stockExtraAutoloaded) return;
     _stockExtraAutoloaded = true;
-    _updateStockExtra(includeAllResults: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _updateStockExtra(includeAllResults: true);
+    });
   }
 
   void _restorePaintsFromParams(WarehouseProvider warehouse) {
