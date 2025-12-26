@@ -216,48 +216,6 @@ class TaskProvider with ChangeNotifier {
     return false;
   }
 
-  List<String> _applyFlexoOrdering(
-      List<Map<String, dynamic>> orderedRows, List<String> orderedIds) {
-    if (orderedIds.length <= 1) return orderedIds;
-
-    int flexoIndex = -1;
-    int bobbinIndex = -1;
-    for (var i = 0; i < orderedIds.length; i++) {
-      final id = orderedIds[i];
-      final row = orderedRows[i];
-      if (flexoIndex == -1 && _isFlexoStage(id, row)) {
-        flexoIndex = i;
-      }
-      if (bobbinIndex == -1 && _isBobbinStage(id, row)) {
-        bobbinIndex = i;
-      }
-    }
-
-    if (flexoIndex == -1) return orderedIds;
-
-    final adjusted = List<String>.from(orderedIds);
-    final flexoId = adjusted.removeAt(flexoIndex);
-
-    if (bobbinIndex == -1) {
-      adjusted.insert(0, flexoId);
-      return adjusted;
-    }
-
-    var bobIndex = bobbinIndex;
-    if (bobbinIndex > flexoIndex) {
-      bobIndex -= 1;
-    }
-
-    if (bobIndex != 0 && bobIndex >= 0 && bobIndex < adjusted.length) {
-      final bobbinId = adjusted.removeAt(bobIndex);
-      adjusted.insert(0, bobbinId);
-    }
-
-    final targetIndex = adjusted.isEmpty ? 0 : 1;
-    adjusted.insert(targetIndex.clamp(0, adjusted.length), flexoId);
-    return adjusted;
-  }
-
   Future<Map<String, Map<String, dynamic>>> _workplaceMeta(
       List<String> stageIds) async {
     if (stageIds.isEmpty) return const {};
@@ -337,11 +295,23 @@ class TaskProvider with ChangeNotifier {
           filteredRows[i].addAll(extras);
         }
       }
-      return _applyFlexoOrdering(filteredRows, result);
+      return result;
     }
 
-    // Try public view that already contains auto-added stages (flexo/bobbin, etc.)
-    // and respects the step order for the order or its external code.
+    // Try production view that already contains proper step numbering/order for
+    // the plan.
+    try {
+      final rows = await _supabase
+          .from('production.v_plan_with_stages')
+          .select('stage_id, stage_name, step_no, order_id, order_code')
+          .or('order_id.eq.$orderId,order_code.eq.$orderId')
+          .order('step_no', ascending: true);
+      final seq = await fromRows(rows);
+      if (seq.isNotEmpty) return seq;
+    } catch (_) {}
+
+    // Try public view that already contains auto-added stages (flexo/bobbin,
+    // etc.) and respects the step order for the order or its external code.
     try {
       final rows = await _supabase
           .from('v_order_plan_stages')
