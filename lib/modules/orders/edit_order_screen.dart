@@ -2218,13 +2218,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
         }
 
-        // Build a list of valid stage IDs (must exist in 'workplaces')
-        final List<String> __validStageIds = [];
-        for (final sm in stageMaps) {
+        bool _looksLikeBobbin(Map<String, dynamic> sm) {
+          final title =
+              ((sm['stageName'] ?? sm['title']) as String?)?.toLowerCase() ?? '';
+          return title.contains('бобинорезка') ||
+              title.contains('бабинорезка') ||
+              title.contains('bobbin');
+        }
+
+        String? _resolveStageId(Map<String, dynamic> sm) {
           final sid = (sm['stageId'] as String?) ??
               (sm['stageid'] as String?) ??
               (sm['stage_id'] as String?) ??
+              (sm['workplaceId'] as String?) ??
+              (sm['workplace_id'] as String?) ??
               (sm['id'] as String?);
+          if ((_looksLikeBobbin(sm) || sid == null || sid.isEmpty) &&
+              __bobbinId != null &&
+              __bobbinId!.isNotEmpty) {
+            return __bobbinId;
+          }
+          return sid;
+        }
+
+        // Build a list of valid stage IDs (must exist in 'workplaces')
+        final List<String> __validStageIds = [];
+        for (final sm in stageMaps) {
+          final sid = _resolveStageId(sm);
           if (sid == null || sid.isEmpty) continue;
           try {
             final exists = await _sb
@@ -2232,7 +2252,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 .select('id')
                 .eq('id', sid)
                 .maybeSingle();
-            if (exists != null) __validStageIds.add(sid);
+            if (exists != null || _looksLikeBobbin(sm)) {
+              __validStageIds.add(sid);
+            }
           } catch (_) {}
         }
         if (__validStageIds.isNotEmpty) {
@@ -2247,12 +2269,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         // create new tasks for each stage (only if stage exists)
         for (final sm in stageMaps) {
-          final stageId = (sm['stageId'] as String?) ??
-              (sm['stageid'] as String?) ??
-              (sm['stage_id'] as String?) ??
-              (sm['workplaceId'] as String?) ??
-              (sm['workplace_id'] as String?) ??
-              (sm['id'] as String?);
+          final stageId = _resolveStageId(sm);
           if (stageId == null || stageId.isEmpty) continue;
           try {
             final exists = await _sb
@@ -2260,8 +2277,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 .select('id')
                 .eq('id', stageId)
                 .maybeSingle();
-            if (exists == null)
+            if (exists == null && !_looksLikeBobbin(sm)) {
               continue; // skip invalid stageId to avoid FK/insert errors
+            }
             await _sb.from('tasks').insert({
               'order_id': createdOrUpdatedOrder.id,
               'stage_id': stageId,
