@@ -14,6 +14,7 @@ import '../personnel/workplace_model.dart';
 import '../analytics/analytics_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
+import '../production_planning/planned_stage_model.dart';
 import 'task_model.dart';
 import 'task_provider.dart';
 import '../common/pdf_view_screen.dart';
