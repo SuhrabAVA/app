@@ -1863,11 +1863,11 @@ class _TasksScreenState extends State<TasksScreen>
     final double verticalSpacing = scaled(6);
     final TextStyle stageTextStyle = TextStyle(fontSize: scaled(14));
 
-    final stageIds = <String>{};
+    final taskStageIds = <String>{};
     for (final t in tasksForOrder) {
-      stageIds.add(t.stageId);
+      taskStageIds.add(t.stageId);
     }
-    if (stageIds.isEmpty) return const SizedBox.shrink();
+    if (taskStageIds.isEmpty) return const SizedBox.shrink();
 
     final sequence =
         taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
@@ -1875,19 +1875,17 @@ class _TasksScreenState extends State<TasksScreen>
     final orderedStageIds = <String>[];
     if (sequence.isNotEmpty) {
       for (final id in sequence) {
-        if (stageIds.contains(id)) {
+        if (!orderedStageIds.contains(id)) {
           orderedStageIds.add(id);
         }
       }
-      if (orderedStageIds.length != stageIds.length) {
-        final extras = stageIds
-            .where((id) => !orderedStageIds.contains(id))
-            .toList()
-          ..sort();
-        orderedStageIds.addAll(extras);
+      for (final id in taskStageIds) {
+        if (!orderedStageIds.contains(id)) {
+          orderedStageIds.add(id);
+        }
       }
     } else {
-      orderedStageIds.addAll(stageIds);
+      orderedStageIds.addAll(taskStageIds);
       orderedStageIds.sort((a, b) {
         String name(String id) {
           try {
