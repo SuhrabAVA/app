@@ -358,17 +358,26 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;
 
-  // Сгруппировать по этапу; интересуют только этапы, где есть не completed
-  final stages = <String, bool>{}; // stageId -> hasPending
+  // Сгруппировать по этапу; фиксируем и незавершённые, и уже завершённые
+  // альтернативы, чтобы не блокировать последующие этапы, когда одна из
+  // альтернатив завершена.
+  final stages = <String, Map<String, bool>>{}; // stageId -> {pending, completed}
   for (final t in all) {
     final pending = t.status != TaskStatus.completed;
+    final completed = t.status == TaskStatus.completed;
     final key = _groupKey(t.stageId);
-    stages[key] = (stages[key] ?? false) || pending;
+    final current = stages[key] ?? {'pending': false, 'completed': false};
+    stages[key] = {
+      'pending': current['pending'] == true || pending,
+      'completed': current['completed'] == true || completed,
+    };
   }
 
   // Отфильтровать только pending этапы
-  final pendingStageIds =
-      stages.entries.where((e) => e.value).map((e) => e.key).toList();
+  final pendingStageIds = stages.entries
+      .where((e) => e.value['pending'] == true && e.value['completed'] != true)
+      .map((e) => e.key)
+      .toList();
   if (pendingStageIds.isEmpty) return true;
 
   final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
