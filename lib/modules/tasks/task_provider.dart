@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
 
+import '../../services/app_auth.dart';
+
 import '../orders/order_model.dart';
 import 'task_model.dart';
 
@@ -23,13 +25,7 @@ class TaskProvider with ChangeNotifier {
   }
 
   Future<void> _ensureAuthed() async {
-    final auth = _supabase.auth;
-    if (auth.currentUser == null) {
-      // Use anon sign-in or your existing auth flow
-      try {
-        await auth.signInAnonymously();
-      } catch (_) {}
-    }
+    await AppAuth.ensureSignedIn();
   }
 
   // Convert SQL row (snake_case) into TaskModel (camelCase map)
@@ -298,6 +294,18 @@ class TaskProvider with ChangeNotifier {
       return result;
     }
 
+    // Try public view that already contains auto-added stages (flexo/bobbin,
+    // etc.) and respects the step order for the order or its external code.
+    try {
+      final rows = await _supabase
+          .from('v_order_plan_stages')
+          .select('stage_id, stage_name, step_no, order_id, order_code')
+          .or('order_id.eq.$orderId,order_code.eq.$orderId')
+          .order('step_no', ascending: true);
+      final seq = await fromRows(rows);
+      if (seq.isNotEmpty) return seq;
+    } catch (_) {}
+
     // Try production view that already contains proper step numbering/order for
     // the plan.
     try {
@@ -306,17 +314,6 @@ class TaskProvider with ChangeNotifier {
           .select('stage_id, stage_name, step_no, order_id, order_code')
           .or('order_id.eq.$orderId,order_code.eq.$orderId')
           .order('step_no', ascending: true);
-      final seq = await fromRows(rows);
-      if (seq.isNotEmpty) return seq;
-    } catch (_) {}
-
-    // Try public view that already contains auto-added stages (flexo/bobbin,
-    // etc.) and respects the step order for the order or its external code.
-    try {
-      final rows = await _supabase
-          .from('v_order_plan_stages')
-          .select('stage_id, stage_name, step_no, order_id, order_code')
-          .or('order_id.eq.$orderId,order_code.eq.$orderId');
       final seq = await fromRows(rows);
       if (seq.isNotEmpty) return seq;
     } catch (_) {}
