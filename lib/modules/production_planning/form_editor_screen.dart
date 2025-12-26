@@ -1070,6 +1070,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           });
         }
 
+        void _sortStageMaps() {
+          final entries = stageMaps.asMap().entries.toList();
+          int _orderOf(Map<String, dynamic> m, int fallback) {
+            final rawOrder = m['order'] ?? m['step'] ?? m['position'];
+            if (rawOrder is num) return rawOrder.toInt();
+            if (rawOrder is String) {
+              final parsed = int.tryParse(rawOrder);
+              if (parsed != null) return parsed;
+            }
+            return fallback;
+          }
+
+          entries.sort((a, b) {
+            final ao = _orderOf(a.value, a.key);
+            final bo = _orderOf(b.value, b.key);
+            final cmp = ao.compareTo(bo);
+            if (cmp != 0) return cmp;
+            return a.key.compareTo(b.key);
+          });
+
+          stageMaps
+            ..clear()
+            ..addAll(entries.map((e) => e.value));
+        }
+
+        _sortStageMaps();
+
         // === Custom stage logic (Flexo insert; Bobbin remove when format==width) ===
         String? __flexoId;
         String? __flexoTitle;

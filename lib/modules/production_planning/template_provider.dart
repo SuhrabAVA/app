@@ -83,21 +83,46 @@ class TemplateProvider with ChangeNotifier {
   }
 
   List<Map<String, dynamic>> _normalizeStages(dynamic raw) {
+    List<Map<String, dynamic>> _sortByOrder(List<Map<String, dynamic>> list) {
+      final entries = list.asMap().entries.toList();
+      int _orderOf(Map<String, dynamic> m, int fallback) {
+        final rawOrder = m['order'] ?? m['step'] ?? m['position'];
+        if (rawOrder is num) return rawOrder.toInt();
+        if (rawOrder is String) {
+          final parsed = int.tryParse(rawOrder);
+          if (parsed != null) return parsed;
+        }
+        return fallback;
+      }
+
+      entries.sort((a, b) {
+        final ao = _orderOf(a.value, a.key);
+        final bo = _orderOf(b.value, b.key);
+        final cmp = ao.compareTo(bo);
+        if (cmp != 0) return cmp;
+        return a.key.compareTo(b.key);
+      });
+
+      return entries.map((e) => e.value).toList();
+    }
+
     if (raw == null) return const [];
     if (raw is List) {
-      return raw.map<Map<String, dynamic>>((e) {
+      final list = raw.map<Map<String, dynamic>>((e) {
         if (e is Map<String, dynamic>) return e;
         if (e is Map) return Map<String, dynamic>.from(e);
         return <String, dynamic>{};
       }).toList();
+      return _sortByOrder(list);
     }
     if (raw is Map) {
       // Старый словарный формат {"1": {...}, "2": {...}}
-      return (raw as Map).entries.map<Map<String, dynamic>>((e) {
+      final list = (raw as Map).entries.map<Map<String, dynamic>>((e) {
         final v = Map<String, dynamic>.from(e.value as Map);
         v['order'] = int.tryParse(e.key.toString()) ?? v['order'] ?? 0;
         return v;
       }).toList();
+      return _sortByOrder(list);
     }
     return const [];
   }
