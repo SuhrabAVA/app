@@ -696,14 +696,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   String _resolveStageName(Map<String, dynamic> stage) {
-    final dynamic raw = stage['stageName'] ??
-        stage['workplaceName'] ??
-        stage['title'] ??
-        stage['name'];
-    if (raw is String && raw.trim().isNotEmpty) {
-      return raw.trim();
+    final baseName = (() {
+      final dynamic raw = stage['stageName'] ??
+          stage['workplaceName'] ??
+          stage['title'] ??
+          stage['name'];
+      if (raw is String && raw.trim().isNotEmpty) {
+        return raw.trim();
+      }
+      return '';
+    })();
+
+    final altNames = <String>[];
+    final rawAlt = stage['alternativeStageNames'];
+    if (rawAlt is List) {
+      altNames.addAll(rawAlt.whereType<String>().map((e) => e.trim()).where((e) => e.isNotEmpty));
     }
-    return 'Без названия';
+
+    final names = <String>{...altNames};
+    if (baseName.isNotEmpty) names.add(baseName);
+
+    if (names.isEmpty) return 'Без названия';
+    return names.join(' / ');
   }
 
   void _setStageTemplateText(String value) {
@@ -1211,6 +1225,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               'workplaceId': s.stageId,
               'stageName': s.stageName,
               'workplaceName': s.stageName,
+              if (s.alternativeStageIds.isNotEmpty)
+                'alternativeStageIds': List<String>.from(s.alternativeStageIds),
+              if (s.alternativeStageNames.isNotEmpty)
+                'alternativeStageNames': List<String>.from(s.alternativeStageNames),
             })
         .toList();
 
