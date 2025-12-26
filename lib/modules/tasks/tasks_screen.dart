@@ -673,31 +673,40 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
-  String _stageGroupKey(String orderId, String stageId) {
+  List<String> _stageGroupMembers(String orderId, String stageId) {
     final order = _orderById(orderId);
     final templateId = order?.stageTemplateId;
     if (order == null || templateId == null || templateId.isEmpty) {
-      return stageId;
+      return [stageId];
     }
 
-    final templates = context.read<TemplateProvider>().templates;
+    final templateProvider =
+        Provider.of<TemplateProvider?>(context, listen: false);
+    final templates = templateProvider?.templates ?? const [];
     for (final tpl in templates) {
       if (tpl.id != templateId) continue;
       for (final stage in tpl.stages) {
         if (stage.allStageIds.contains(stageId)) {
           final ids = [...stage.allStageIds]..sort();
-          return ids.join('|');
+          return ids;
         }
       }
     }
 
-    return stageId;
+    return [stageId];
   }
 
+  String _stageGroupKey(String orderId, String stageId) =>
+      _stageGroupMembers(orderId, stageId).join('|');
+
   bool _isStageGroupLocked(TaskProvider provider, TaskModel task) {
-    final groupKey = _stageGroupKey(task.orderId, task.stageId);
+    final groupMembers = _stageGroupMembers(task.orderId, task.stageId);
+    // Блокируем только альтернативные группы (2+ различных этапа).
+    final hasAlternatives = groupMembers.toSet().length > 1;
+    if (!hasAlternatives) return false;
+
     final related = provider.tasks.where((t) =>
-        t.orderId == task.orderId && _stageGroupKey(t.orderId, t.stageId) == groupKey);
+        t.orderId == task.orderId && groupMembers.contains(t.stageId));
 
     final anyActive = related.any(
         (t) => t.id != task.id && t.status == TaskStatus.inProgress);
