@@ -246,6 +246,37 @@ String _workplaceName(PersonnelProvider personnel, String stageId) {
   return stageId;
 }
 
+String _stageLabelForOrder(PersonnelProvider personnel, TemplateProvider templates,
+    OrdersProvider orders, String orderId, String stageId) {
+  OrderModel? order;
+  try {
+    order = orders.orders.firstWhere((o) => o.id == orderId);
+  } catch (_) {}
+  final templateId = order?.stageTemplateId;
+  if (templateId == null || templateId.isEmpty) {
+    return _workplaceName(personnel, stageId);
+  }
+
+  PlannedStage? planned;
+  for (final tpl in templates.templates) {
+    if (tpl.id != templateId) continue;
+    for (final stage in tpl.stages) {
+      if (stage.allStageIds.contains(stageId)) {
+        planned = stage;
+        break;
+      }
+    }
+  }
+
+  if (planned == null) return _workplaceName(personnel, stageId);
+
+  final labels = <String>{};
+  for (final id in planned.allStageIds) {
+    labels.add(_workplaceName(personnel, id));
+  }
+  return labels.join(' / ');
+}
+
 String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
   final wp = personnel.workplaceById(stageId);
   final text = wp?.unit?.trim();
@@ -1801,6 +1832,8 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _buildStageList(OrderModel order, double scale) {
     final taskProvider = context.read<TaskProvider>();
     final personnel = context.read<PersonnelProvider>();
+    final ordersProvider = context.read<OrdersProvider>();
+    final templates = context.read<TemplateProvider>();
     final tasksForOrder =
         taskProvider.tasks.where((t) => t.orderId == order.id).toList();
 
@@ -1882,7 +1915,8 @@ class _TasksScreenState extends State<TasksScreen>
                     SizedBox(width: horizontalGap),
                     Expanded(
                       child: Text(
-                        stage.name,
+                        _stageLabelForOrder(
+                            personnel, templates, ordersProvider, order.id, id),
                         style: stageTextStyle,
                         overflow: TextOverflow.ellipsis,
                         maxLines: 2,
