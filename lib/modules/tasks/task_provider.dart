@@ -335,6 +335,26 @@ class TaskProvider with ChangeNotifier {
       }
     } catch (_) {}
 
+    // Try the stage template attached to the order (plan_templates).
+    try {
+      final order = await _supabase
+          .from('orders')
+          .select('stage_template_id')
+          .eq('id', orderId)
+          .maybeSingle();
+
+      final tplId = order?['stage_template_id']?.toString();
+      if (tplId != null && tplId.isNotEmpty) {
+        final tpl = await _supabase
+            .from('plan_templates')
+            .select('stages')
+            .eq('id', tplId)
+            .maybeSingle();
+        final seq = await fromRows(tpl?['stages']);
+        if (seq.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
     // Fallback to legacy public.* tables
     try {
       final plan = await _supabase
