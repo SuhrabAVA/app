@@ -340,6 +340,17 @@ class TaskProvider with ChangeNotifier {
       return _applyFlexoOrdering(filteredRows, result);
     }
 
+    // Try public view that already contains auto-added stages (flexo/bobbin, etc.)
+    // and respects the step order for the order or its external code.
+    try {
+      final rows = await _supabase
+          .from('v_order_plan_stages')
+          .select('stage_id, stage_name, step_no, order_id, order_code')
+          .or('order_id.eq.$orderId,order_code.eq.$orderId');
+      final seq = await fromRows(rows);
+      if (seq.isNotEmpty) return seq;
+    } catch (_) {}
+
     // Try new schema production.*
     try {
       final plan = await _supabase
