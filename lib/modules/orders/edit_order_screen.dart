@@ -2783,18 +2783,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final paintsAvailable = _hasAnyPaints();
     final baseTheme = Theme.of(context);
     final compactTextTheme = baseTheme.textTheme.apply(
-      fontSizeFactor: 0.92,
+      fontSizeFactor: 0.88,
       bodyColor: baseTheme.textTheme.bodyMedium?.color,
       displayColor: baseTheme.textTheme.bodyLarge?.color,
     );
     final compactTheme = baseTheme.copyWith(
-      visualDensity: VisualDensity.compact,
+      visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
       textTheme: compactTextTheme,
       inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 6,
+          horizontal: 8,
+          vertical: 4,
         ),
       ),
     );
@@ -2881,14 +2881,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       controller: _formScrollController,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 4,
-                        vertical: 6,
+                        vertical: 4,
                       ),
                       child: Center(
                         child: ConstrainedBox(
                           constraints: BoxConstraints(maxWidth: maxWrapWidth),
                           child: Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
+                            spacing: 4,
+                            runSpacing: 4,
                             children: formSections
                                 .map(
                                   (section) => SizedBox(
@@ -2950,7 +2950,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(6),
+        padding: const EdgeInsets.all(4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3075,7 +3075,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _buildProductTypeField(),
           _buildQuantityField(),
         ], breakpoint: 680, minItemWidth: 220),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         _buildDimensionsField(),
       ],
     );
@@ -3222,7 +3222,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     _scheduleStagePreviewUpdate();
                   },
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Autocomplete<String>(
                   optionsBuilder: (text) => filter(formatOptions, text.text),
                   displayStringForOption: (s) => s,
@@ -3287,7 +3287,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     _scheduleStagePreviewUpdate();
                   },
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Autocomplete<String>(
                   optionsBuilder: (text) => filter(gramOptions, text.text),
                   displayStringForOption: (s) => s,
@@ -3354,7 +3354,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   },
                 ),
                 if (paperQty != null) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Text(
                       'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
                 ],
@@ -3362,7 +3362,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             );
           },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 3),
         _buildStockExtraLayout(
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3395,14 +3395,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
                 onChanged: _onStockExtraSearchChanged,
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 3),
               Text(
                 _stockExtra != null
                     ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
                     : 'Доступно: —',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               TextField(
                 controller: _stockExtraQtyController,
                 decoration: InputDecoration(
@@ -3461,7 +3461,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 : null,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 3),
         _buildFieldGrid([
           TextFormField(
             initialValue: product.widthB?.toString() ?? '',
@@ -3523,7 +3523,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             },
           ),
         ], breakpoint: 680, minItemWidth: 200),
-        const SizedBox(height: 12),
+        const SizedBox(height: 3),
         Row(
           children: [
             ElevatedButton.icon(
@@ -3592,7 +3592,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     bool wrapWithCard = true,
   }) {
     final content = Padding(
-      padding: const EdgeInsets.all(6),
+      padding: const EdgeInsets.all(4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3620,7 +3620,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     double labelWidth = 150,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3767,7 +3767,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             emptyError: 'Укажите срок',
           ),
         ], maxColumns: 2),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         LayoutBuilder(
           builder: (context, constraints) {
             final bool narrow = constraints.maxWidth < 520;
@@ -3777,7 +3777,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               return Column(
                 children: [
                   contractTile,
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 3),
                   paymentTile,
                 ],
               );
@@ -4073,7 +4073,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             searchColumn,
-            const SizedBox(height: 12),
+            const SizedBox(height: 3),
             writeOffSwitch,
           ],
         );
@@ -4165,7 +4165,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             onChanged: (value) => setState(() => _paperSearch = value),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Expanded(
           child: filtered.isEmpty
               ? const Center(child: Text('Нет бумаги по текущему запросу'))
@@ -4249,7 +4249,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             onChanged: (value) => setState(() => _paintSearch = value),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Expanded(
           child: filtered.isEmpty
               ? const Center(child: Text('Нет красок по текущему запросу'))
@@ -4334,7 +4334,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Нет записей по текущей категории продукта.'),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               ElevatedButton.icon(
                 onPressed: () => _updateStockExtra(includeAllResults: true),
                 icon: const Icon(Icons.refresh),
@@ -4373,7 +4373,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             onChanged: (value) => setState(() => _categorySearch = value),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Expanded(
           child: filtered.isEmpty
               ? buildEmptyState()
@@ -4519,7 +4519,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 3),
                 _buildStagePreviewSection(context),
               ],
             );
@@ -4681,7 +4681,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (showFormSummary) {
       controls.addAll([
         _buildFormSummary(context),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Align(
           alignment: Alignment.centerLeft,
           child: OutlinedButton.icon(
@@ -4694,7 +4694,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     if (showFormEditor) {
       if (controls.isNotEmpty) {
-        controls.add(const SizedBox(height: 12));
+        controls.add(const SizedBox(height: 3));
       }
       if (isEditing && hasAssignedForm) {
         controls.addAll([
@@ -4713,7 +4713,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     if (controls.isNotEmpty) {
-      controls.add(const SizedBox(height: 12));
+      controls.add(const SizedBox(height: 3));
     }
 
     controls.add(
@@ -4729,7 +4729,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (!paintsAvailable) {
       content.addAll([
         _buildFormDisabledNotice(context),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
       ]);
     }
 
@@ -4799,7 +4799,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             });
           },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 3),
         ...List.generate(_paints.length, (i) {
           final row = _paints[i];
           return Padding(
@@ -5012,7 +5012,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
         onChanged: _onFormSearchChanged,
       ));
-      widgets.add(const SizedBox(height: 8));
+      widgets.add(const SizedBox(height: 4));
       if (_loadingForms) {
         widgets.add(const Padding(
           padding: EdgeInsets.only(bottom: 8),
@@ -5028,7 +5028,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ));
       }
     } else {
-      widgets.add(const SizedBox(height: 8));
+      widgets.add(const SizedBox(height: 4));
       if (_newFormImageBytes != null) {
         widgets.add(Padding(
           padding: const EdgeInsets.only(bottom: 8),
