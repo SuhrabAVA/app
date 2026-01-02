@@ -2794,7 +2794,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 10,
-          vertical: 8,
+          vertical: 6,
         ),
       ),
     );
@@ -2867,8 +2867,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             builder: (context, constraints) {
               final formList = LayoutBuilder(
                 builder: (context, innerConstraints) {
-                  final maxWrapWidth =
-                      math.min(innerConstraints.maxWidth, 1500.0);
+                  final availableWidth = innerConstraints.maxWidth;
+                  final maxWrapWidth = availableWidth >= 800
+                      ? math.min(availableWidth * 0.55, 720.0)
+                      : availableWidth;
                   final useTwoColumns = maxWrapWidth >= 1024;
                   final sectionWidth =
                       useTwoColumns ? (maxWrapWidth - 16) / 2 : maxWrapWidth;
@@ -2877,7 +2879,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     thumbVisibility: true,
                     child: SingleChildScrollView(
                       controller: _formScrollController,
-                      padding: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 6,
+                      ),
                       child: Center(
                         child: ConstrainedBox(
                           constraints: BoxConstraints(maxWidth: maxWrapWidth),
@@ -2941,11 +2946,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool hasAssignedForm,
     required bool paintsAvailable,
   }) {
-    const labelWidth = 200.0;
+    const labelWidth = 150.0;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -2962,7 +2967,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       emptyError: 'Укажите дату заказа',
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: _buildDatePickerField(
                       label: 'Срок выполнения',
@@ -3612,7 +3617,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildLabelRow({
     required String label,
     required Widget child,
-    double labelWidth = 170,
+    double labelWidth = 150,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
