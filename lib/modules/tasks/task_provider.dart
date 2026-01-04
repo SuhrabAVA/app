@@ -132,7 +132,16 @@ class TaskProvider with ChangeNotifier {
       return null;
     }
 
-    final raw = pick(const ['order', 'position', 'idx', 'step_no', 'stepNo']);
+    final raw = pick(const [
+      'order',
+      'position',
+      'idx',
+      'step_no',
+      'stepNo',
+      'step',
+      'sequence',
+      'sequence_no'
+    ]);
     if (raw is int) return raw;
     if (raw is num) return raw.toInt();
     if (raw is String) {
@@ -334,7 +343,23 @@ class TaskProvider with ChangeNotifier {
         if (seq.isNotEmpty) return seq;
       }
     } catch (_) {}
- // Try the stage template attached to the order (plan_templates).
+
+
+    // Try legacy json-based production_plans used by production module UI.
+    try {
+      final plan = await _supabase
+          .from('production_plans')
+          .select('stages')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['stages'] != null) {
+        final seq = await fromRows(plan['stages']);
+        if (seq.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Try the stage template attached to the order (plan_templates).
+
     try {
       final order = await _supabase
           .from('orders')
