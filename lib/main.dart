@@ -54,26 +54,8 @@ Future<void> main() async {
     },
   );
 
-  // 4) На Windows пропускаем signInWithPassword (если нужно — авторизуйтесь в рантайме)
-  if (!Platform.isWindows) {
-    final authEmail = dotenv.env['AUTH_EMAIL'];
-    final authPassword = dotenv.env['AUTH_PASSWORD'];
-    if ((authEmail?.isNotEmpty ?? false) &&
-        (authPassword?.isNotEmpty ?? false)) {
-      try {
-        await Supabase.instance.client.auth.signInWithPassword(
-          email: authEmail!,
-          password: authPassword!,
-        );
-      } catch (e, st) {
-        // ignore: avoid_print
-        print('❌ Auth signInWithPassword error: $e\n$st');
-      }
-    }
-  } else {
-    // ignore: avoid_print
-    print('ℹ️ Skipping signInWithPassword on Windows build');
-  }
+  // 4) Авто-вход на всех платформах (больше НИЧЕГО не пропускаем на Windows)
+  await _ensureSignedInFromEnv();
 
   // 5) Запускаем приложение с провайдерами
   runApp(
@@ -83,8 +65,8 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
         ChangeNotifierProvider(create: (_) => PersonnelProvider()),
         ChangeNotifierProvider(create: (_) => OrdersProvider()),
-        ChangeNotifierProvider(create: (_) => ProductionQueueProvider()),
         ChangeNotifierProvider(create: (_) => StageProvider()),
+        ChangeNotifierProvider(create: (_) => ProductionQueueProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),
         ChangeNotifierProvider(create: (_) => AnalyticsProvider()),
         ChangeNotifierProvider(create: (_) => ProductsProvider()),
@@ -93,4 +75,41 @@ Future<void> main() async {
       child: const MyApp(),
     ),
   );
+}
+
+/// Пытается войти по .env; если пользователя нет — создаёт и входит.
+/// Если AUTH_EMAIL / AUTH_PASSWORD не заданы — просто ничего не делает.
+Future<void> _ensureSignedInFromEnv() async {
+  final authEmail = dotenv.env['AUTH_EMAIL'];
+  final authPassword = dotenv.env['AUTH_PASSWORD'];
+
+  if ((authEmail?.isNotEmpty ?? false) && (authPassword?.isNotEmpty ?? false)) {
+    final auth = Supabase.instance.client.auth;
+
+    try {
+      await auth.signInWithPassword(email: authEmail!, password: authPassword!);
+      // ignore: avoid_print
+      print('✅ Signed in as $authEmail');
+      return;
+    } on AuthException catch (e) {
+      // ignore: avoid_print
+      print('⚠️ signIn failed: ${e.message}. Trying signUp...');
+      try {
+        await auth.signUp(email: authEmail!, password: authPassword!);
+        await auth.signInWithPassword(email: authEmail, password: authPassword);
+        // ignore: avoid_print
+        print('✅ Signed up & signed in as $authEmail');
+        return;
+      } catch (e2) {
+        // ignore: avoid_print
+        print('❌ signUp/signIn retry error: $e2');
+      }
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('❌ Auth error: $e\n$st');
+    }
+  } else {
+    // ignore: avoid_print
+    print('ℹ️ AUTH_EMAIL/AUTH_PASSWORD не заданы — авто-вход пропущен.');
+  }
 }
