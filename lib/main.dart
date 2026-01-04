@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'utils/http_overrides.dart';
 import 'my_app.dart';
@@ -36,14 +37,17 @@ Future<void> main() async {
   // 1) Загружаем .env
   await dotenv.load(fileName: ".env");
 
-  // 2) Ловим Flutter ошибки в консоль
+  // 2) Локали для форматирования дат
+  await initializeDateFormatting('ru');
+
+  // 3) Ловим Flutter ошибки в консоль
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
     // ignore: avoid_print
     print('🔥 FLUTTER ERROR: ${details.exception}\n${details.stack}');
   };
 
-  // 3) Инициализируем Supabase
+  // 4) Инициализируем Supabase
   await Supabase.initialize(
     url: dotenv.env['SUPABASE_URL']!,
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
@@ -54,10 +58,10 @@ Future<void> main() async {
     },
   );
 
-  // 4) Авто-вход на всех платформах (больше НИЧЕГО не пропускаем на Windows)
+  // 5) Авто-вход на всех платформах (больше НИЧЕГО не пропускаем на Windows)
   await _ensureSignedInFromEnv();
 
-  // 5) Запускаем приложение с провайдерами
+  // 6) Запускаем приложение с провайдерами
   runApp(
     MultiProvider(
       providers: [
