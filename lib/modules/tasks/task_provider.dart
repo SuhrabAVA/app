@@ -132,7 +132,8 @@ class TaskProvider with ChangeNotifier {
       return null;
     }
 
-    final raw = pick(const ['order', 'position', 'idx', 'step_no', 'stepNo']);
+    final raw = pick(
+        const ['order', 'position', 'idx', 'step_no', 'stepNo', 'step']);
     if (raw is int) return raw;
     if (raw is num) return raw.toInt();
     if (raw is String) {
