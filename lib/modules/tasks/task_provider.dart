@@ -344,6 +344,7 @@ class TaskProvider with ChangeNotifier {
       }
     } catch (_) {}
 
+
     // Try legacy json-based production_plans used by production module UI.
     try {
       final plan = await _supabase
@@ -358,6 +359,7 @@ class TaskProvider with ChangeNotifier {
     } catch (_) {}
 
     // Try the stage template attached to the order (plan_templates).
+
     try {
       final order = await _supabase
           .from('orders')
@@ -376,7 +378,6 @@ class TaskProvider with ChangeNotifier {
         if (seq.isNotEmpty) return seq;
       }
     } catch (_) {}
-
     // Fallback to legacy public.* tables
     try {
       final plan = await _supabase
