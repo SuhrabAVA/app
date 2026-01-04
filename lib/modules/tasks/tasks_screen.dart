@@ -12,6 +12,7 @@ import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
 import '../analytics/analytics_provider.dart';
+import '../production/production_queue_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../production_planning/planned_stage_model.dart';
@@ -926,6 +927,9 @@ class _TasksScreenState extends State<TasksScreen>
     final ordersProvider = context.watch<OrdersProvider>();
     final taskProvider = context.watch<TaskProvider>();
     final templateProvider = context.watch<TemplateProvider>();
+    final queue = context.watch<ProductionQueueProvider>();
+
+    queue.syncOrders(ordersProvider.orders.map((o) => o.id));
 
     final media = MediaQuery.of(context);
     final bool isTablet =
@@ -1037,6 +1041,8 @@ class _TasksScreenState extends State<TasksScreen>
     final sectionedTasks = tasksForWorkplace
         .where((t) => _sectionForTask(t) == _selectedStatus)
         .toList();
+    sectionedTasks.sort((a, b) =>
+        queue.priorityOf(a.orderId).compareTo(queue.priorityOf(b.orderId)));
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
             (t) => t.id == _selectedTask!.id,
