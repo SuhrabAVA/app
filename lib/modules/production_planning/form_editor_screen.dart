@@ -1437,11 +1437,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             await _sb.from('prod_plan_stages').insert({
               'plan_id': planId,
               'stage_id': stageId,
-              'step': step,
-              'step_no': step,
+              'step': step++,
               'status': 'waiting',
             });
-            step++;
           }
           // Mark bobbin as done here as well
           if (__shouldCompleteBobbin && __bobbinId != null) {
@@ -1499,11 +1497,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             await _sb.from('prod_plan_stages').insert({
               'plan_id': planId,
               'stage_id': stageId,
-              'step': step,
-              'step_no': step,
+              'step': step++,
               'status': 'waiting',
             });
-            step++;
           }
           // Mark bobbin as done here as well
           if (__shouldCompleteBobbin && __bobbinId != null) {
