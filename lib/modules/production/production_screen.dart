@@ -48,13 +48,16 @@ class _ProductionScreenState extends State<ProductionScreen>
   void _ensureController(int length) {
     if (_tabController.length == length) return;
     _tabController.removeListener(_handleTabChange);
-    _tabController.dispose();
+
+    final oldController = _tabController;
     _tabController = TabController(
       length: length,
       vsync: this,
       initialIndex: _tabIndex.clamp(0, length - 1),
     );
     _tabController.addListener(_handleTabChange);
+
+    oldController.dispose();
   }
 
   String _formatDate(DateTime date) =>
