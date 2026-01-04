@@ -262,10 +262,10 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
               );
               if (_employeeIds.length > 1) {
                 // Если открыто несколько вкладок, закрываем текущую вкладку
+                final oldController = _employeeTabController;
                 setState(() {
                   _employeeIds.removeAt(tabIndex);
                   // Пересоздаём TabController для нового списка сотрудников
-                  _employeeTabController.dispose();
                   _employeeTabController =
                       TabController(length: _employeeIds.length, vsync: this);
                   // Выставляем индекс на предыдущую вкладку, если она есть
@@ -273,6 +273,7 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
                     _employeeTabController.index = tabIndex - 1;
                   }
                 });
+                oldController.dispose();
               } else {
                 // Если это последняя вкладка, выходим на экран входа
                 AuthHelper.clear();
