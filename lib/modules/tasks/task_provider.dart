@@ -7,11 +7,22 @@ import '../../services/app_auth.dart';
 import '../orders/order_model.dart';
 import 'task_model.dart';
 
+class _StageSequenceData {
+  final List<String> ids;
+  final Map<String, Map<String, dynamic>> meta;
+
+  const _StageSequenceData({required this.ids, required this.meta});
+  const _StageSequenceData.empty()
+      : ids = const [],
+        meta = const {};
+}
+
 class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TaskModel> _tasks = [];
   final Map<String, List<String>> _orderStageSequences = {};
+  final Map<String, Map<String, String>> _orderStageNames = {};
   RealtimeChannel? _channel;
 
   TaskProvider() {
@@ -67,6 +78,21 @@ class TaskProvider with ChangeNotifier {
     return TaskModel.fromMap(data, id);
   }
 
+  String? stageNameForOrder(String orderId, String stageId) {
+    if (orderId.isNotEmpty) {
+      final names = _orderStageNames[orderId];
+      final resolved = names?[stageId]?.trim();
+      if (resolved != null && resolved.isNotEmpty) return resolved;
+    }
+
+    for (final entry in _orderStageNames.values) {
+      final resolved = entry[stageId]?.trim();
+      if (resolved != null && resolved.isNotEmpty) return resolved;
+    }
+
+    return null;
+  }
+
   Future<void> refresh() async {
     await _ensureAuthed();
     try {
@@ -114,12 +140,28 @@ class TaskProvider with ChangeNotifier {
         continue;
       }
       final existing = _orderStageSequences[orderId];
-      if (existing != null && existing.isNotEmpty) {
+      final existingNames = _orderStageNames[orderId];
+      if (existing != null &&
+          existing.isNotEmpty &&
+          existingNames != null &&
+          existingNames.isNotEmpty) {
         continue;
       }
-      final seq = await _fetchStageSequence(orderId);
-      if (seq.isNotEmpty) {
-        _orderStageSequences[orderId] = seq;
+      final data = await _fetchStageSequence(orderId);
+      if (data.ids.isNotEmpty) {
+        _orderStageSequences[orderId] = data.ids;
+      }
+      if (data.meta.isNotEmpty) {
+        final names = <String, String>{};
+        data.meta.forEach((stageId, meta) {
+          final name = _readStageName(meta).trim();
+          if (name.isNotEmpty) {
+            names[stageId] = name;
+          }
+        });
+        if (names.isNotEmpty) {
+          _orderStageNames[orderId] = names;
+        }
       }
     }
   }
@@ -262,11 +304,11 @@ class TaskProvider with ChangeNotifier {
     }
   }
 
-  Future<List<String>> _fetchStageSequence(String orderId) async {
+  Future<_StageSequenceData> _fetchStageSequence(String orderId) async {
     await _ensureAuthed();
 
-    Future<List<String>> fromRows(dynamic rows) async {
-      if (rows is! List || rows.isEmpty) return const [];
+    Future<_StageSequenceData> fromRows(dynamic rows) async {
+      if (rows is! List || rows.isEmpty) return const _StageSequenceData.empty();
       final list = <Map<String, dynamic>>[];
       for (final r in rows) {
         if (r is Map<String, dynamic>) {
@@ -275,7 +317,7 @@ class TaskProvider with ChangeNotifier {
           list.add(Map<String, dynamic>.from(r));
         }
       }
-      if (list.isEmpty) return const [];
+      if (list.isEmpty) return const _StageSequenceData.empty();
       list.sort((a, b) {
         final ai = _readOrderIndex(a);
         final bi = _readOrderIndex(b);
@@ -291,7 +333,7 @@ class TaskProvider with ChangeNotifier {
           filteredRows.add(Map<String, dynamic>.from(m));
         }
       }
-      if (result.isEmpty) return const [];
+      if (result.isEmpty) return const _StageSequenceData.empty();
       final meta = await _workplaceMeta(result);
       for (var i = 0; i < filteredRows.length; i++) {
         final id = result[i];
@@ -300,7 +342,14 @@ class TaskProvider with ChangeNotifier {
           filteredRows[i].addAll(extras);
         }
       }
-      return result;
+      final names = <String, Map<String, dynamic>>{};
+      for (final row in filteredRows) {
+        final id = _readStageId(row);
+        if (id.isEmpty) continue;
+        names[id] = Map<String, dynamic>.from(row);
+      }
+
+      return _StageSequenceData(ids: result, meta: names);
     }
 
     // Try public view that already contains auto-added stages (flexo/bobbin,
@@ -312,7 +361,7 @@ class TaskProvider with ChangeNotifier {
           .or('order_id.eq.$orderId,order_code.eq.$orderId')
           .order('step_no', ascending: true);
       final seq = await fromRows(rows);
-      if (seq.isNotEmpty) return seq;
+      if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
 
     // Try production view that already contains proper step numbering/order for
@@ -324,7 +373,7 @@ class TaskProvider with ChangeNotifier {
           .or('order_id.eq.$orderId,order_code.eq.$orderId')
           .order('step_no', ascending: true);
       final seq = await fromRows(rows);
-      if (seq.isNotEmpty) return seq;
+      if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
 
     // Try new schema production.*
@@ -340,7 +389,7 @@ class TaskProvider with ChangeNotifier {
             .select('stage_id, order, position, idx, step_no')
             .eq('plan_id', plan['id'].toString());
         final seq = await fromRows(rows);
-        if (seq.isNotEmpty) return seq;
+        if (seq.ids.isNotEmpty) return seq;
       }
     } catch (_) {}
 
@@ -354,7 +403,7 @@ class TaskProvider with ChangeNotifier {
           .maybeSingle();
       if (plan != null && plan is Map && plan['stages'] != null) {
         final seq = await fromRows(plan['stages']);
-        if (seq.isNotEmpty) return seq;
+        if (seq.ids.isNotEmpty) return seq;
       }
     } catch (_) {}
 
@@ -375,10 +424,27 @@ class TaskProvider with ChangeNotifier {
             .eq('id', tplId)
             .maybeSingle();
         final seq = await fromRows(tpl?['stages']);
-        if (seq.isNotEmpty) return seq;
+        if (seq.ids.isNotEmpty) return seq;
       }
     } catch (_) {}
     // Fallback to legacy public.* tables
+    try {
+      final rows = await _supabase
+          .from('workplace_stages')
+          .select('stage_id, order')
+          .eq('order_id', orderId);
+      final seq = await fromRows(rows);
+      if (seq.ids.isNotEmpty) return seq;
+    } catch (_) {}
+    try {
+      final rows = await _supabase
+          .from('order_stages')
+          .select('stage_id, order')
+          .eq('order_id', orderId);
+      final seq = await fromRows(rows);
+      if (seq.ids.isNotEmpty) return seq;
+    } catch (_) {}
+
     try {
       final plan = await _supabase
           .from('prod_plans')
@@ -391,11 +457,11 @@ class TaskProvider with ChangeNotifier {
             .select('stage_id, order, position, idx, step_no')
             .eq('plan_id', plan['id'].toString());
         final seq = await fromRows(rows);
-        if (seq.isNotEmpty) return seq;
+        if (seq.ids.isNotEmpty) return seq;
       }
     } catch (_) {}
 
-    return const [];
+    return const _StageSequenceData.empty();
   }
 
   /// Создаёт отдельную задачу для пользователя (режим "Отдельный исполнитель").

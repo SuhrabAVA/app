@@ -239,23 +239,35 @@ bool _containsBobbin(String text) {
       lower.contains('bobbin');
 }
 
-String _workplaceName(PersonnelProvider personnel, String stageId) {
+String _workplaceName(PersonnelProvider personnel, String stageId,
+    {TaskProvider? tasks, String? orderId}) {
   try {
     final wp = personnel.workplaces.firstWhere((w) => w.id == stageId);
     if (wp.name.isNotEmpty) return wp.name;
   } catch (_) {}
+
+  if (tasks != null) {
+    final resolvedName = tasks.stageNameForOrder(orderId ?? '', stageId);
+    if (resolvedName != null && resolvedName.isNotEmpty) return resolvedName;
+  }
+
   return stageId;
 }
 
-String _stageLabelForOrder(PersonnelProvider personnel, TemplateProvider templates,
-    OrdersProvider orders, String orderId, String stageId) {
+String _stageLabelForOrder(
+    PersonnelProvider personnel,
+    TemplateProvider templates,
+    OrdersProvider orders,
+    TaskProvider tasks,
+    String orderId,
+    String stageId) {
   OrderModel? order;
   try {
     order = orders.orders.firstWhere((o) => o.id == orderId);
   } catch (_) {}
   final templateId = order?.stageTemplateId;
   if (templateId == null || templateId.isEmpty) {
-    return _workplaceName(personnel, stageId);
+    return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
   }
 
   PlannedStage? planned;
@@ -269,11 +281,13 @@ String _stageLabelForOrder(PersonnelProvider personnel, TemplateProvider templat
     }
   }
 
-  if (planned == null) return _workplaceName(personnel, stageId);
+  if (planned == null) {
+    return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
+  }
 
   final labels = <String>{};
   for (final id in planned.allStageIds) {
-    labels.add(_workplaceName(personnel, id));
+    labels.add(_workplaceName(personnel, id, tasks: tasks, orderId: orderId));
   }
   return labels.join(' / ');
 }
@@ -1932,8 +1946,8 @@ class _TasksScreenState extends State<TasksScreen>
                     SizedBox(width: horizontalGap),
                     Expanded(
                       child: Text(
-                        _stageLabelForOrder(
-                            personnel, templates, ordersProvider, order.id, id),
+                        _stageLabelForOrder(personnel, templates, ordersProvider,
+                            taskProvider, order.id, id),
                         style: stageTextStyle,
                         overflow: TextOverflow.ellipsis,
                         maxLines: 2,
