@@ -21,7 +21,7 @@ class ProductionScreen extends StatefulWidget {
 }
 
 class _ProductionScreenState extends State<ProductionScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late TabController _tabController;
   int _tabIndex = 0;
 
@@ -198,7 +198,9 @@ class _ProductionScreenState extends State<ProductionScreen>
     final orders = ordersProvider.orders;
     final tasks = taskProvider.tasks;
 
-    queue.syncOrders(orders.map((o) => o.id));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      queue.syncOrders(orders.map((o) => o.id));
+    });
 
     final types = <String>{
       ...productsProvider.products,
