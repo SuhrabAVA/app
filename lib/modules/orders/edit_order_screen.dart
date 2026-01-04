@@ -838,7 +838,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         bob = await _sb
             .from('workplaces')
             .select('id,title,name')
-            .eq('id', 'w_bobbiner')
+            .eq('id', 'w_bobiner')
             .maybeSingle();
       }
       if (bob != null) {
@@ -996,7 +996,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final resolvedTitle = (bobbinTitle?.trim().isNotEmpty ?? false)
           ? bobbinTitle
           : 'Бабинорезка';
-      final fallbackId = resolvedId ?? 'w_bobbiner';
+      final fallbackId = resolvedId ?? 'w_bobiner';
       stageMaps.insert(0, {
         'stageId': fallbackId,
         'workplaceId': fallbackId,
