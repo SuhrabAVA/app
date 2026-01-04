@@ -1,3 +1,4 @@
+
 // lib/modules/orders/edit_order_screen.dart
 import 'dart:async';
 import 'dart:convert';
@@ -2782,19 +2783,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
     final paintsAvailable = _hasAnyPaints();
     final baseTheme = Theme.of(context);
+    // Apply a more compact theme by reducing font size, increasing density,
+    // and tightening field padding. This shrinks the entire form by roughly 20%.
     final compactTextTheme = baseTheme.textTheme.apply(
-      fontSizeFactor: 0.88,
+      fontSizeFactor: 0.70,
       bodyColor: baseTheme.textTheme.bodyMedium?.color,
       displayColor: baseTheme.textTheme.bodyLarge?.color,
     );
     final compactTheme = baseTheme.copyWith(
-      visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+      // Use the densest visual density available to minimize vertical space.
+      visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
       textTheme: compactTextTheme,
       inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
         isDense: true,
+        // Tighten content padding to reduce field height further.
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 8,
-          vertical: 4,
+          vertical: 1,
         ),
       ),
     );
@@ -2868,8 +2873,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               final formList = LayoutBuilder(
                 builder: (context, innerConstraints) {
                   final availableWidth = innerConstraints.maxWidth;
+                  // Limit the maximum width to roughly 45% of the available
+                  // space to encourage even more compact layouts and reduce the need
+                  // to scroll.
                   final maxWrapWidth = availableWidth >= 800
-                      ? math.min(availableWidth * 0.55, 720.0)
+                      ? math.min(availableWidth * 0.45, 720.0)
                       : availableWidth;
                   final useTwoColumns = maxWrapWidth >= 1024;
                   final sectionWidth =
@@ -2915,15 +2923,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    flex: 3,
+                    // Split evenly between the form and the warehouse preview.
+                    flex: 1,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: formList,
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  // Reduce the horizontal gap between panels by 20%.
+                  const SizedBox(width: 12),
                   Expanded(
-                    flex: 2,
+                    flex: 1,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: _buildWarehousePreviewPanel(),
@@ -3004,13 +3014,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               labelWidth: labelWidth,
               child: _buildHandlesSection(context, wrapWithCard: false),
             ),
-            const Divider(),
+            const Divider(height: 3),
             _buildLabelRow(
               label: 'Краски',
               labelWidth: labelWidth,
               child: _buildPaintsSection(wrapWithCard: false),
             ),
-            const Divider(),
+            const Divider(height: 3),
             _buildLabelRow(
               label: 'Форма',
               labelWidth: labelWidth,
@@ -3024,13 +3034,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 wrapWithCard: false,
               ),
             ),
-            const Divider(),
+            const Divider(height: 3),
             _buildLabelRow(
               label: 'Склад и материалы',
               labelWidth: labelWidth,
               child: _buildProductMaterialAndExtras(_product),
             ),
-            const Divider(),
+            const Divider(height: 3),
             _buildLabelRow(
               label: 'Приладка',
               labelWidth: labelWidth,
@@ -3450,16 +3460,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               _buildStockExtraResults(),
             ],
           ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Списать лишнее при сохранении'),
+                    _buildCompactSwitchTile(
+            label: 'Списать лишнее при сохранении',
             value: _writeOffStockExtra,
             onChanged: (_selectedStockExtraRow != null &&
                     (_stockExtraSelectedQty ?? 0) > 0)
                 ? (v) => setState(() => _writeOffStockExtra = v)
                 : null,
-          ),
+          )
         ),
         const SizedBox(height: 3),
         _buildFieldGrid([
@@ -3620,7 +3628,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     double labelWidth = 150,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1.5),
+      // Reduce vertical padding to make rows even more compact.
+      padding: const EdgeInsets.symmetric(vertical: 1.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3631,7 +3640,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
-          const SizedBox(width: 8),
+          // Narrow the gap between label and field.
+          const SizedBox(width: 6),
           Expanded(child: child),
         ],
       ),
@@ -3739,8 +3749,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Widget _buildContractsRow() {
     return Wrap(
-      spacing: 8,
-      runSpacing: 4,
+      spacing: 6,
+      runSpacing: 3,
       children: [
         _buildContractSignedTile(),
         _buildPaymentDoneTile(),
@@ -3875,8 +3885,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ];
 
             final extras = Wrap(
-              spacing: 8,
-              runSpacing: 4,
+              // Reduce spacing to shrink the area used by the checkboxes.
+              spacing: 6,
+              runSpacing: 3,
               children: [
                 _buildCompactCheckboxTile(
                   value: _cardboardChecked,
@@ -3885,13 +3896,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
                   }),
                   label: 'Картон',
-                  width: 150,
+                  width: 100,
                 ),
                 _buildCompactCheckboxTile(
                   value: _trimming,
                   onChanged: (val) => setState(() => _trimming = val ?? false),
                   label: 'Подрезка',
-                  width: 150,
+                  width: 100,
                 ),
               ],
             );
@@ -3970,25 +3981,99 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       },
     );
   }
+  // Scale factors for compact toggles (≈40% smaller).
+  static const double _kCompactCheckboxScale = 0.6;
+  static const double _kCompactSwitchScale = 0.6;
+
+  Widget _buildCompactSwitchTile({
+    required bool value,
+    required ValueChanged<bool>? onChanged,
+    required String label,
+  }) {
+    final theme = Theme.of(context);
+    final enabled = onChanged != null;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: enabled ? () => onChanged(!value) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontSize: 13,
+                  height: 1.1,
+                  color: enabled ? null : theme.disabledColor,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Transform.scale(
+              scale: _kCompactSwitchScale,
+              child: Switch(
+                value: value,
+                onChanged: onChanged,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildCompactCheckboxTile({
     required bool value,
     required ValueChanged<bool?> onChanged,
     required String label,
-    double width = 180,
+    double? width,
   }) {
-    return SizedBox(
-      width: width,
-      child: CheckboxListTile(
-        value: value,
-        onChanged: onChanged,
-        title: Text(label),
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        controlAffinity: ListTileControlAffinity.leading,
-        contentPadding: EdgeInsets.zero,
+    final theme = Theme.of(context);
+
+    final tile = InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Transform.scale(
+              scale: _kCompactCheckboxScale,
+              alignment: Alignment.centerLeft,
+              child: Checkbox(
+                value: value,
+                onChanged: onChanged,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontSize: 13,
+                  height: 1.1,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
+
+    if (width == null) return tile;
+    return SizedBox(width: width, child: tile);
   }
 
   Widget _buildContractSignedTile() {
@@ -4056,29 +4141,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Widget _buildStockExtraLayout(Widget searchColumn, Widget writeOffSwitch) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 720;
-        if (isWide) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: searchColumn),
-              const SizedBox(width: 16),
-              SizedBox(width: 240, child: writeOffSwitch),
-            ],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            searchColumn,
-            const SizedBox(height: 3),
-            writeOffSwitch,
-          ],
-        );
-      },
-    );
+    // Hide the stock extra search and results entirely to further reduce
+    // the height of the materials section. Only the switch to write off
+    // leftovers is shown.
+    return writeOffSwitch;
   }
 
   Widget _buildWarehousePreviewPanel() {
@@ -4096,7 +4162,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         final categoryItems = _stockExtraResults;
 
         return Card(
-          margin: const EdgeInsets.only(right: 16, top: 16, bottom: 16),
+          // Use symmetric margins reduced by 20% to keep the panel centred and compact.
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           child: DefaultTabController(
             length: 3,
             child: Column(
@@ -4765,7 +4832,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final theme = Theme.of(context);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      // Reduce padding for a more compact notice.
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
         borderRadius: BorderRadius.circular(8),
@@ -4967,8 +5035,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   List<Widget> _buildFormEditorControls() {
     final widgets = <Widget>[
-      SwitchListTile(
-        title: Text(_isOldForm ? 'Старая форма' : 'Новая форма'),
+      _buildCompactSwitchTile(
+        label: _isOldForm ? 'Старая форма' : 'Новая форма',
         value: _isOldForm,
         onChanged: (val) {
           _formSearchDebounce?.cancel();
@@ -4997,8 +5065,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             }
           }
         },
-        contentPadding: EdgeInsets.zero,
-      ),
+      )
     ];
 
     if (_isOldForm) {
