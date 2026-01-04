@@ -42,8 +42,13 @@ class TaskProvider with ChangeNotifier {
   // Convert SQL row (snake_case) into TaskModel (camelCase map)
   TaskModel _rowToTask(Map<String, dynamic> row) {
     Map<String, dynamic> data = {};
-    data['orderId'] = (row['order_id'] ?? '').toString();
-    data['stageId'] = (row['stage_id'] ?? '').toString();
+    String _normalizeId(dynamic value) {
+      final raw = value?.toString() ?? '';
+      return raw.trim();
+    }
+
+    data['orderId'] = _normalizeId(row['order_id']);
+    data['stageId'] = _normalizeId(row['stage_id']);
     data['status'] = (row['status'] ?? 'waiting').toString();
     data['spentSeconds'] = (row['spent_seconds'] as int?) ?? 0;
     final startedAt = row['started_at'];

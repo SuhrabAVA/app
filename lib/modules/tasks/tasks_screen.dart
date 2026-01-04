@@ -534,8 +534,9 @@ class _TasksScreenState extends State<TasksScreen>
   late final _TaskSelectionState _selection;
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
-    if (_selection.workplaceId == value) return;
-    _selection.workplaceId = value;
+    final normalized = value?.trim();
+    if (_selection.workplaceId == normalized) return;
+    _selection.workplaceId = normalized;
     _selection.notifyListeners();
   }
   TaskModel? get _selectedTask => _selection.task;

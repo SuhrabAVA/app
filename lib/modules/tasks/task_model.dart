@@ -138,8 +138,13 @@ class TaskModel {
   // поля с разными названиями
   // orderId и stageId могут быть как строками, так и числами в исходных данных,
   // поэтому приводим найденное значение к строке через `toString()`.
-  final orderId = pick(['orderId', 'order_id', 'orderid'])?.toString() ?? '';
-  final stageId = pick(['stageId', 'stage_id', 'stageid'])?.toString() ?? '';
+  String _normalizeId(dynamic value) {
+    final raw = value?.toString() ?? '';
+    return raw.trim();
+  }
+
+  final orderId = _normalizeId(pick(['orderId', 'order_id', 'orderid']));
+  final stageId = _normalizeId(pick(['stageId', 'stage_id', 'stageid']));
 
   final statusStr = (map['status'] as String?) ?? 'waiting';
   TaskStatus status;
