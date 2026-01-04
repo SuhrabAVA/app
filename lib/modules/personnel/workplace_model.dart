@@ -35,7 +35,22 @@ class WorkplaceModel {
   factory WorkplaceModel.fromMap(Map<String, dynamic> map, String id) =>
       WorkplaceModel(
         id: id,
-        name: map['name'] as String? ?? '',
+        name: (() {
+          final candidates = [
+            map['name'],
+            map['title'],
+            map['short_name'],
+            map['code'],
+            map['workplace_name'],
+            map['stage_name'],
+          ];
+          for (final candidate in candidates) {
+            if (candidate == null) continue;
+            final text = candidate.toString().trim();
+            if (text.isNotEmpty) return text;
+          }
+          return '';
+        })(),
         description: map['description'] as String?,
         positionIds: List<String>.from(map['positionIds'] ?? []),
         hasMachine:

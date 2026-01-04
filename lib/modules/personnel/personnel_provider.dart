@@ -127,6 +127,9 @@ class PersonnelProvider extends ChangeNotifier {
       ..clear()
       ..addAll(rows.map((r) => WorkplaceModel.fromMap({
             'name': r['name'],
+            'title': r['title'],
+            'short_name': r['short_name'],
+            'code': r['code'],
             'positionIds': r['position_ids'] ?? const [],
             'has_machine': r['has_machine'],
             'max_concurrent_workers': r['max_concurrent_workers'],
