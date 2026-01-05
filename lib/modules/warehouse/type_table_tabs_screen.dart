@@ -2236,6 +2236,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (factual == null || factual < 0) return;
 
     final typeKey = _normalizeType(widget.type);
+    final unitLabel = isPaper ? 'м' : item.unit;
     try {
       if (typeKey == 'stationery' || typeKey == 'pens') {
         final provider = Provider.of<WarehouseProvider>(context, listen: false);
