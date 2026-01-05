@@ -1979,6 +1979,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
 
     final typeKey = _normalizeType(widget.type);
+    final unitLabel = isPaper ? 'м' : item.unit;
     try {
       if (typeKey == 'stationery' || typeKey == 'pens') {
         final provider = Provider.of<WarehouseProvider>(context, listen: false);
@@ -2016,45 +2017,222 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   /// Инвентаризация
   Future<void> _inventory(TmcModel item) async {
     final qtyC = TextEditingController(text: item.quantity.toStringAsFixed(2));
+    final weightC = TextEditingController();
+    final diameterC = TextEditingController();
     final noteC = TextEditingController();
     final isPaper = _normalizeType(widget.type) == 'paper';
     final paperDetails = isPaper ? _paperDetails(item) : '';
     final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
+    String method = 'meters';
+    double? format = double.tryParse((item.format ?? '').replaceAll(',', '.'));
+    double? grammage =
+        double.tryParse((item.grammage ?? '').replaceAll(',', '.'));
+    String? diameterColor;
+    final nameLow = item.description.toLowerCase();
+    if (nameLow.contains('бел')) {
+      diameterColor = 'white';
+    } else if (nameLow.contains('коричнев')) {
+      diameterColor = 'brown';
+    }
+    final formKey = GlobalKey<FormState>();
+
+    double? _computeFromWeight(double wKg, double fmt, double g) {
+      return ((wKg * 1000) / g) / (fmt / 100.0);
+    }
+
+    double? _computeFromDiameter(double d, double fmt, double g, bool isWhite) {
+      final r_m = (d / 2.0) / 100.0;
+      final area_m2 = r_m * r_m * 3.14;
+      final k = (isWhite ? 8.8 : 7.75) * fmt;
+      final res = ((area_m2 * k) * 1000.0) / g / (fmt / 100.0);
+      return res;
+    }
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Инвентаризация: ${item.description}$titleSuffix'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyC,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration:
-                  const InputDecoration(labelText: 'Фактическое количество'),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Text('Инвентаризация: ${item.description}$titleSuffix'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isPaper) ...[
+                    DropdownButtonFormField<String>(
+                      value: method,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'meters', child: Text('Ввести метры')),
+                        DropdownMenuItem(
+                            value: 'weight', child: Text('По весу (кг)')),
+                        DropdownMenuItem(
+                            value: 'diameter', child: Text('По диаметру (см)')),
+                      ],
+                      onChanged: (v) => setS(() => method = v ?? 'meters'),
+                      decoration: const InputDecoration(labelText: 'Способ'),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (!isPaper || method == 'meters')
+                    TextFormField(
+                      controller: qtyC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                          labelText: 'Фактическое количество'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d < 0)
+                            ? 'Укажите количество'
+                            : null;
+                      },
+                    ),
+                  if (isPaper && method == 'weight') ...[
+                    TextFormField(
+                      controller: weightC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Вес (кг)'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите вес' : null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.format ?? ''),
+                      onChanged: (v) =>
+                          format = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Формат (см)'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.grammage ?? ''),
+                      onChanged: (v) =>
+                          grammage = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
+                    ),
+                  ],
+                  if (isPaper && method == 'diameter') ...[
+                    TextFormField(
+                      controller: diameterC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Диаметр (см)'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите диаметр' : null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.format ?? ''),
+                      onChanged: (v) =>
+                          format = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Формат (см)'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.grammage ?? ''),
+                      onChanged: (v) =>
+                          grammage = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: diameterColor,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'white', child: Text('Белая бумага')),
+                        DropdownMenuItem(
+                            value: 'brown', child: Text('Коричневая бумага')),
+                      ],
+                      onChanged: (v) => setS(() => diameterColor = v),
+                      decoration:
+                          const InputDecoration(labelText: 'Тип бумаги'),
+                      validator: (v) {
+                        if (method == 'diameter' && (v == null || v.isEmpty)) {
+                          return 'Выберите тип бумаги';
+                        }
+                        return null;
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: noteC,
+                    decoration: const InputDecoration(
+                        labelText: 'Заметка (необязательно)'),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: noteC,
-              decoration:
-                  const InputDecoration(labelText: 'Заметка (необязательно)'),
-            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () {
+                  if (!isPaper || formKey.currentState!.validate()) {
+                    Navigator.pop(context, true);
+                  }
+                },
+                child: const Text('Сохранить')),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Сохранить')),
-        ],
       ),
     );
 
     if (ok != true) return;
-    final factual = double.tryParse(qtyC.text.replaceAll(',', '.'));
+    double? factual = double.tryParse(qtyC.text.replaceAll(',', '.'));
+    if (isPaper) {
+      if (method == 'weight') {
+        if (format == null || format == 0 || grammage == null || grammage == 0) {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Укажите формат и грамаж')));
+          }
+          return;
+        }
+        final w = double.tryParse(weightC.text.replaceAll(',', '.')) ?? 0;
+        factual = _computeFromWeight(w, format!, grammage!);
+      } else if (method == 'diameter') {
+        if (format == null || format == 0 || grammage == null || grammage == 0) {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Укажите формат и грамаж')));
+          }
+          return;
+        }
+        final d = double.tryParse(diameterC.text.replaceAll(',', '.')) ?? 0;
+        if (diameterColor == null || diameterColor!.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Выберите тип бумаги')));
+          }
+          return;
+        }
+        final white = diameterColor == 'white';
+        factual = _computeFromDiameter(d, format!, grammage!, white);
+      }
+    }
+
     if (factual == null || factual < 0) return;
 
     final typeKey = _normalizeType(widget.type);
@@ -2144,7 +2322,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text(
-                  'Инвентаризация сохранена (${factual.toStringAsFixed(2)} ${item.unit})')),
+                  'Инвентаризация сохранена (${factual.toStringAsFixed(2)} $unitLabel)')),
         );
       }
     } catch (e) {
