@@ -478,9 +478,65 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       if (table == 'Инвентаризация') {
         final selectedKey = _selectedPaperKey ?? '';
         final opt = _paperMap[selectedKey];
-        final counted = double.tryParse(
-                _controllers['counted']!.text.trim().replaceAll(',', '.')) ??
-            0;
+        final formatStr = _controllers['format']!.text.trim();
+        final grammageStr = _controllers['grammage']!.text.trim();
+        final format = double.tryParse(formatStr.replaceAll(',', '.')) ?? 0.0;
+        final grammage =
+            double.tryParse(grammageStr.replaceAll(',', '.')) ?? 0.0;
+
+        double counted = 0;
+
+        double? fromWeight(double wKg) =>
+            ((wKg * 1000) / grammage) / (format / 100.0);
+
+        double? fromDiameter(double d, bool isWhite) {
+          final r_m = (d / 2.0) / 100.0;
+          final area_m2 = r_m * r_m * math.pi;
+          final k = (isWhite ? 8.8 : 7.75) * format;
+          return ((area_m2 * k) * 1000.0) / grammage / (format / 100.0);
+        }
+
+        if (_paperMethod == 'meters') {
+          counted = double.tryParse(
+                  _controllers['counted']!.text.trim().replaceAll(',', '.')) ??
+              0;
+        } else if (_paperMethod == 'weight') {
+          if (format <= 0 || grammage <= 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Укажите формат и грамаж')),
+            );
+            return;
+          }
+          final w = double.tryParse(
+                  _controllers['weight']!.text.replaceAll(',', '.')) ??
+              0.0;
+          counted = fromWeight(w) ?? 0.0;
+        } else if (_paperMethod == 'diameter') {
+          if (format <= 0 || grammage <= 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Укажите формат и грамаж')),
+            );
+            return;
+          }
+          if ((_paperDiameterColor ?? '').isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Выберите тип бумаги')),
+            );
+            return;
+          }
+          final d = double.tryParse(
+                  _controllers['diameter']!.text.replaceAll(',', '.')) ??
+              0.0;
+          final isWhite = _paperDiameterColor == 'white';
+          counted = fromDiameter(d, isWhite) ?? 0.0;
+        }
+
+        if (counted <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Укажите корректное количество')),
+          );
+          return;
+        }
 
         final papers = wh.getTmcByType('Бумага');
         final existing = papers.firstWhere(
@@ -1341,13 +1397,87 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 validator: (val) => val == null ? 'Выберите бумагу' : null,
               ),
             ),
-            _buildField(
-              'counted',
-              'Фактическое количество метров',
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Способ ввода',
+                border: OutlineInputBorder(),
               ),
+              value: _paperMethod,
+              items: const [
+                DropdownMenuItem(value: 'meters', child: Text('Ввести метры')),
+                DropdownMenuItem(value: 'weight', child: Text('По весу (кг)')),
+                DropdownMenuItem(
+                    value: 'diameter', child: Text('По диаметру (см)')),
+              ],
+              onChanged: (v) => setState(() => _paperMethod = v ?? 'meters'),
             ),
+            const SizedBox(height: 8),
+            if (_paperMethod == 'meters')
+              _buildField(
+                'counted',
+                'Фактическое количество метров',
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+            if (_paperMethod == 'weight')
+              _buildField(
+                'weight',
+                'Вес (кг)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+            if (_paperMethod == 'diameter') ...[
+              _buildField(
+                'diameter',
+                'Диаметр (см)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 8),
+              FormField<String>(
+                initialValue: _paperDiameterColor,
+                validator: (value) {
+                  final current = value ?? _paperDiameterColor;
+                  if (_paperMethod == 'diameter' && (current == null || current.isEmpty)) {
+                    return 'Выберите тип бумаги';
+                  }
+                  return null;
+                },
+                builder: (state) {
+                  final options = const <Map<String, String>>[
+                    {'key': 'white', 'label': 'Белый крафт'},
+                    {'key': 'brown', 'label': 'Крафт коричневый'},
+                  ];
+                  return InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Тип бумаги',
+                      border: const OutlineInputBorder(),
+                      errorText: state.errorText,
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: options.map((opt) {
+                        final key = opt['key']!;
+                        final label = opt['label']!;
+                        final isSelected = _paperDiameterColor == key;
+                        return ChoiceChip(
+                          label: Text(label),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _paperDiameterColor = selected ? key : null;
+                            });
+                            state.didChange(selected ? key : null);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  );
+                },
+              ),
+            ],
             _buildField('note', 'Заметки'),
           ],
         );
