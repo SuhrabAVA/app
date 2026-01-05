@@ -541,14 +541,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       required Map<String, dynamic> logRow,
       required String typeKey,
       String? itemId}) {
+    bool isPlaceholder(String value) {
+      final normalized = value.trim();
+      return normalized.isEmpty || normalized == '-' || normalized == '—';
+    }
+
     final baseDescr = (baseRow['description'] ?? '').toString().trim();
-    if (baseDescr.isNotEmpty) return baseDescr;
+    if (baseDescr.isNotEmpty && !isPlaceholder(baseDescr)) return baseDescr;
 
     if (typeKey == 'pens') {
       final parts = <String>[];
       void addPart(dynamic value) {
         final s = (value ?? '').toString().trim();
-        if (s.isNotEmpty) parts.add(s);
+        if (s.isEmpty || isPlaceholder(s)) return;
+        parts.add(s);
       }
 
       addPart(baseRow['name']);

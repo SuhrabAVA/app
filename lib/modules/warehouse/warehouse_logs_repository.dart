@@ -395,10 +395,15 @@ class WarehouseLogsRepository {
     required String typeKey,
   }) {
     final List<String> parts = <String>[];
+    bool isPlaceholder(String text) {
+      final normalized = text.trim();
+      return normalized.isEmpty || normalized == '-' || normalized == '—';
+    }
+
     void add(dynamic value) {
       if (value == null) return;
       final String text = value.toString().trim();
-      if (text.isEmpty) return;
+      if (text.isEmpty || isPlaceholder(text)) return;
       final bool exists = parts.any(
           (String existing) => existing.toLowerCase() == text.toLowerCase());
       if (!exists) parts.add(text);
@@ -412,6 +417,8 @@ class WarehouseLogsRepository {
     add(raw['description']);
     add(raw['name']);
     add(raw['title']);
+    add(raw['item_name']);
+    add(raw['product_name']);
     if (typeKey == 'pens') {
       add(base['color']);
       add(raw['color']);
