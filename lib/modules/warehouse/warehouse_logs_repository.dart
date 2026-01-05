@@ -304,25 +304,74 @@ class WarehouseLogsRepository {
     String orderBy = 'description',
     bool ascending = true,
     String selectFields = '*',
+    String? fallbackSelectFields,
   }) async {
     for (final String table in tables) {
-      try {
-        final PostgrestFilterBuilder<dynamic> baseQuery =
-            _client.from(table).select(selectFields);
-        final PostgrestTransformBuilder<dynamic> query = ids.isEmpty
-            ? baseQuery.order(orderBy, ascending: ascending)
-            : baseQuery
-                .or(ids.map((dynamic e) => '$fk.eq.$e').join(','))
-                .order(orderBy, ascending: ascending);
-        final dynamic data = await query;
-        return (data as List).cast<Map<String, dynamic>>();
-      } catch (error, stack) {
-        if (error is PostgrestException &&
-            _isMissingRelationError(error, table)) {
-          continue;
+      final List<String?> attemptedOrders = <String?>[
+        orderBy,
+        'name',
+        'title',
+        'description',
+        'product_name',
+        'id',
+        null,
+      ];
+      final List<String> selectCandidates = <String>[
+        selectFields,
+        if (fallbackSelectFields != null &&
+            fallbackSelectFields.isNotEmpty &&
+            fallbackSelectFields != selectFields)
+          fallbackSelectFields,
+      ];
+      final Set<String?> seen = <String?>{};
+      for (final String select in selectCandidates) {
+        seen.clear();
+        for (final String? order
+            in attemptedOrders.where((String? value) => seen.add(value))) {
+          try {
+            final PostgrestFilterBuilder<dynamic> baseQuery =
+                _client.from(table).select(select);
+            final PostgrestTransformBuilder<dynamic> query = ids.isEmpty
+                ? (order == null
+                    ? baseQuery
+                    : baseQuery.order(order, ascending: ascending))
+                : baseQuery
+                    .or(ids.map((dynamic e) => '$fk.eq.$e').join(','))
+                    .order(order ?? fk, ascending: ascending);
+            final dynamic data = await query;
+            return (data as List).cast<Map<String, dynamic>>();
+          } on PostgrestException catch (error) {
+            final String code = (error.code?.toString() ?? '').toLowerCase();
+            final String message =
+                (error.message?.toString() ?? '').toLowerCase();
+            final String details =
+                (error.details?.toString() ?? '').toLowerCase();
+            final String? orderLower = order?.toLowerCase();
+            final bool orderColumnMissing = orderLower != null &&
+                (code == '42703' ||
+                    message.contains(orderLower) && message.contains('column') ||
+                    details.contains(orderLower) && details.contains('column'));
+
+            final bool selectColumnMissing = code == '42703' ||
+                message.contains('column') ||
+                details.contains('column');
+
+            if (orderColumnMissing) {
+              continue;
+            }
+            if (selectColumnMissing) {
+              break;
+            }
+            if (_isMissingRelationError(error, table)) {
+              break;
+            }
+            debugPrint('WarehouseLogsRepository: $error for table $table');
+          } catch (error, stack) {
+            debugPrint('WarehouseLogsRepository: $error for table $table');
+            debugPrintStack(stackTrace: stack);
+          }
+          break;
         }
-        debugPrint('WarehouseLogsRepository: $error for table $table');
-        debugPrintStack(stackTrace: stack);
       }
     }
     return <Map<String, dynamic>>[];
@@ -499,7 +548,10 @@ class WarehouseLogsRepository {
     if (typeKey == 'paper') {
       return 'id, description, unit, format, grammage';
     }
-    return 'id, description, unit';
+    if (typeKey == 'pens') {
+      return 'id, name, color, quantity';
+    }
+    return 'id, description, unit, name';
   }
 
   static WarehouseLogEntry _mapToEntry({
@@ -602,6 +654,7 @@ class WarehouseLogsRepository {
       fk: 'id',
       ids: ids,
       selectFields: _baseSelectFieldsForLogs(typeKey),
+      fallbackSelectFields: '*',
     );
     final Map<String, Map<String, dynamic>> baseMap =
         <String, Map<String, dynamic>>{
@@ -672,6 +725,7 @@ class WarehouseLogsRepository {
       fk: 'id',
       ids: ids,
       selectFields: _baseSelectFieldsForLogs(typeKey),
+      fallbackSelectFields: '*',
     );
     final Map<String, Map<String, dynamic>> baseMap =
         <String, Map<String, dynamic>>{
@@ -741,6 +795,7 @@ class WarehouseLogsRepository {
       fk: 'id',
       ids: ids,
       selectFields: _baseSelectFieldsForLogs(typeKey),
+      fallbackSelectFields: '*',
     );
     final Map<String, Map<String, dynamic>> baseMap =
         <String, Map<String, dynamic>>{
