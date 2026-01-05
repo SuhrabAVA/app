@@ -9,6 +9,37 @@ import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
 import '../../utils/media_viewer.dart';
 
+String _cleanSizeLabel(String size) {
+  final trimmed = size.trim();
+  if (trimmed.isEmpty) return '';
+
+  final parenthetical = RegExp(r'\(([^)]*)\)').allMatches(trimmed).toList();
+  final base = trimmed.replaceAll(RegExp(r'\([^)]*\)'), '').trim();
+  final extras = <String>[];
+
+  for (final match in parenthetical) {
+    final parts = (match.group(1) ?? '')
+        .split(',')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+
+    for (final part in parts) {
+      final lower = part.toLowerCase();
+      if (lower.startsWith('б') ||
+          lower.startsWith('кол-во') ||
+          lower.startsWith('l')) {
+        continue;
+      }
+      extras.add(part);
+    }
+  }
+
+  if (extras.isEmpty) return base;
+  if (base.isEmpty) return extras.join(', ');
+  return '$base (${extras.join(', ')})';
+}
+
 enum FormsSort {
   numberDesc,
   numberAsc,
@@ -580,7 +611,8 @@ class _FormsScreenState extends State<FormsScreen> {
                         ? '$series №${n > 0 ? n.toString() : ''}'
                         : (n > 0 ? '№' + n.toString() : '?');
 
-                    final sizeStr = (row['size'] ?? '').toString();
+                    final sizeStr =
+                        _cleanSizeLabel((row['size'] ?? '').toString());
                     final typeStr = (row['product_type'] ?? '').toString();
                     final colorsStr = (row['colors'] ?? '').toString();
                     final subtitleParts = <String>[];

@@ -29,6 +29,7 @@ import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../tasks/task_provider.dart';
+import '../../utils/media_viewer.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -2604,12 +2605,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final extras = <String>[];
     final roll = formatDimension(_product.roll);
     if (roll != null) extras.add('Рулон $roll');
-    final widthB = formatDimension(_product.widthB);
-    if (widthB != null) extras.add('Б $widthB');
-    final blQty = _product.blQuantity;
-    if (blQty != null && blQty.isNotEmpty) extras.add('Кол-во $blQty');
-    final length = formatDimension(_product.length);
-    if (length != null) extras.add('L $length');
     if (extras.isNotEmpty) {
       final extraText = extras.join(', ');
       result = result.isEmpty ? extraText : '$result ($extraText)';
@@ -2617,6 +2612,38 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     result = result.trim();
     return result.isEmpty ? null : result;
+  }
+
+  String? _cleanFormSizeExtras(String? size) {
+    if (size == null) return null;
+    final trimmed = size.trim();
+    if (trimmed.isEmpty) return null;
+
+    final matches = RegExp(r'\(([^)]*)\)').allMatches(trimmed).toList();
+    final base = trimmed.replaceAll(RegExp(r'\([^)]*\)'), '').trim();
+    final extras = <String>[];
+
+    for (final match in matches) {
+      final parts = (match.group(1) ?? '')
+          .split(',')
+          .map((p) => p.trim())
+          .where((p) => p.isNotEmpty)
+          .toList();
+
+      for (final part in parts) {
+        final lower = part.toLowerCase();
+        if (lower.startsWith('б') ||
+            lower.startsWith('кол-во') ||
+            lower.startsWith('l')) {
+          continue;
+        }
+        extras.add(part);
+      }
+    }
+
+    if (extras.isEmpty) return base.isEmpty ? null : base;
+    if (base.isEmpty) return extras.join(', ');
+    return '$base (${extras.join(', ')})';
   }
 
   String? _composeFormProductType() {
@@ -5097,7 +5124,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (imageUrl != null && imageUrl.isNotEmpty) {
         widgets.add(Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: Image.network(imageUrl, height: 120),
+          child: GestureDetector(
+            onTap: () => showImagePreview(
+              context,
+              imageUrl: imageUrl,
+              title: _formSearchCtl.text.trim().isNotEmpty
+                  ? _formSearchCtl.text.trim()
+                  : null,
+            ),
+            child: Image.network(imageUrl, height: 120),
+          ),
         ));
       }
     } else {
@@ -5105,7 +5141,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (_newFormImageBytes != null) {
         widgets.add(Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: Image.memory(_newFormImageBytes!, height: 100),
+          child: GestureDetector(
+            onTap: () => showImagePreview(
+              context,
+              bytes: _newFormImageBytes,
+              title: _formSearchCtl.text.trim().isNotEmpty
+                  ? _formSearchCtl.text.trim()
+                  : null,
+            ),
+            child: Image.memory(_newFormImageBytes!, height: 100),
+          ),
         ));
       }
       widgets.add(ElevatedButton.icon(
@@ -5134,8 +5179,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_orderFormNo != null) {
       items.add(Text('Номер формы: ${_orderFormNo}'));
     }
-    if (_orderFormSize != null && _orderFormSize!.trim().isNotEmpty) {
-      items.add(Text('Размер: ${_orderFormSize!}'));
+    final displaySize = _cleanFormSizeExtras(_orderFormSize);
+    if (displaySize != null && displaySize.isNotEmpty) {
+      items.add(Text('Размер: $displaySize'));
     }
     if (_orderFormProductType != null &&
         _orderFormProductType!.trim().isNotEmpty) {
@@ -5147,9 +5193,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_orderFormImageUrl != null && _orderFormImageUrl!.isNotEmpty) {
       items.add(Padding(
         padding: const EdgeInsets.only(top: 4),
-        child: Image.network(
-          _orderFormImageUrl!,
-          height: 120,
+        child: GestureDetector(
+          onTap: () => showImagePreview(
+            context,
+            imageUrl: _orderFormImageUrl!,
+            title: _orderFormDisplay,
+          ),
+          child: Image.network(
+            _orderFormImageUrl!,
+            height: 120,
+          ),
         ),
       ));
     }
@@ -5258,13 +5311,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final series = (form['series'] ?? '').toString().trim();
             final number = ((form['number'] ?? 0) as num).toInt();
             final code = (form['code'] ?? '').toString().trim();
-            final size =
-                (form['size'] ?? form['title'] ?? '').toString().trim();
+            final size = _cleanFormSizeExtras(
+                    (form['size'] ?? form['title'] ?? '').toString())
+                ?.trim();
             final productType = (form['product_type'] ?? '').toString().trim();
             final colors =
                 (form['colors'] ?? form['description'] ?? '').toString().trim();
             final subtitle = <String>[];
-            if (size.isNotEmpty) subtitle.add('Размер: $size');
+            if (size != null && size.isNotEmpty) subtitle.add('Размер: $size');
             if (productType.isNotEmpty) subtitle.add('Тип: $productType');
             if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
             final primaryTitle = () {
