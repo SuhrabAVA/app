@@ -1980,7 +1980,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _matchesWarehouseQuery(String query, Iterable<String> fields) {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return true;
-    return fields.any((field) => field.toLowerCase().contains(normalized));
+    final searchable = fields.map((field) => field.toLowerCase()).join(' ');
+    final tokens = normalized
+        .split(RegExp(r'[\s,;]+'))
+        .where((token) => token.isNotEmpty)
+        .toList();
+
+    return tokens.every((token) => searchable.contains(token));
   }
 
   /// --- Helpers for idempotent write-offs ---
