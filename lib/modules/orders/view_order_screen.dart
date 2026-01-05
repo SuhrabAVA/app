@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/storage_service.dart' as storage;
 import 'order_model.dart';
@@ -22,6 +23,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
   bool _loadingFiles = false;
   List<Map<String, dynamic>> _files = const [];
   List<Map<String, dynamic>> _paints = const [];
+  String? _stageTemplateName;
 
   @override
   void initState() {
@@ -41,9 +43,21 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       final repo = OrdersRepository();
       final paints = await repo.getPaints(widget.order.id);
       final files = await storage.listOrderFiles(widget.order.id);
+      String? stageTemplateName;
+      final tplId = widget.order.stageTemplateId;
+      if (tplId != null && tplId.isNotEmpty) {
+        final tpl = await Supabase.instance.client
+            .from('plan_templates')
+            .select('name')
+            .eq('id', tplId)
+            .maybeSingle();
+        final name = tpl?['name']?.toString();
+        if (name != null && name.isNotEmpty) stageTemplateName = name;
+      }
       setState(() {
         _paints = paints;
         _files = files;
+        _stageTemplateName = stageTemplateName;
       });
     } catch (_) {
       // ignore errors in read-only view
@@ -75,12 +89,18 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
           .join(' × ');
       if (dims.isNotEmpty) parts.add(dims);
     }
+    return parts.isEmpty ? '—' : parts.join(', ');
+  }
+
+  String _additionalDimensions() {
+    final p = widget.order.product;
+    final parts = <String>[];
     if (p.widthB != null) parts.add('Ширина b: ${_fmtNum(p.widthB)}');
     if (p.blQuantity != null && p.blQuantity!.isNotEmpty) {
       parts.add('Количество: ${p.blQuantity}');
     }
     if (p.length != null) parts.add('Длина L: ${_fmtNum(p.length)}');
-    return parts.isEmpty ? '—' : parts.join(', ');
+    return parts.join(', ');
   }
 
   String _materialSummary() {
@@ -259,6 +279,11 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
                               ],
                             ),
                           ),
+                          if (_additionalDimensions().isNotEmpty)
+                            _buildLabelRow(
+                              label: 'Доп. размеры',
+                              child: Text(_additionalDimensions()),
+                            ),
                           const Divider(height: 3),
                           _buildLabelRow(
                             label: 'Приладка',
@@ -277,7 +302,8 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text('Статус: ${o.status}'),
-                                Text('Шаблон этапов: ${o.stageTemplateId ?? '—'}'),
+                                Text(
+                                    'Шаблон этапов: ${_stageTemplateName ?? o.stageTemplateId ?? '—'}'),
                               ],
                             ),
                           ),
