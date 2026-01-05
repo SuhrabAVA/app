@@ -893,11 +893,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// Открывает экран просмотра заказа.
   void _openViewOrder(OrderModel order) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ViewOrderScreen(order: order),
-      ),
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => ViewOrderDialog(order: order),
     );
   }
 

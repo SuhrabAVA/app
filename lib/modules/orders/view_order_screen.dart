@@ -1,21 +1,24 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'order_model.dart';
-import '../../services/storage_service.dart' as storage;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../services/storage_service.dart' as storage;
+import 'order_model.dart';
 import 'orders_repository.dart';
 
-class ViewOrderScreen extends StatefulWidget {
+class ViewOrderDialog extends StatefulWidget {
   final OrderModel order;
-  const ViewOrderScreen({super.key, required this.order});
+  const ViewOrderDialog({super.key, required this.order});
 
   @override
-  State<ViewOrderScreen> createState() => _ViewOrderScreenState();
+  State<ViewOrderDialog> createState() => _ViewOrderDialogState();
 }
 
-class _ViewOrderScreenState extends State<ViewOrderScreen> {
+class _ViewOrderDialogState extends State<ViewOrderDialog> {
   final _date = DateFormat('dd.MM.yyyy');
+  final ScrollController _scrollController = ScrollController();
   bool _loadingFiles = false;
   List<Map<String, dynamic>> _files = const [];
   List<Map<String, dynamic>> _paints = const [];
@@ -24,6 +27,12 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -37,7 +46,7 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
         _files = files;
       });
     } catch (_) {
-      // ignore
+      // ignore errors in read-only view
     } finally {
       if (mounted) setState(() => _loadingFiles = false);
     }
@@ -56,122 +65,295 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
     return '$trimmed г';
   }
 
+  String _dimensionsSummary() {
+    final p = widget.order.product;
+    final parts = <String>[];
+    if (p.width != null || p.height != null || p.depth != null) {
+      final dims = [p.width, p.height, p.depth]
+          .where((v) => v != null)
+          .map((v) => _fmtNum(v))
+          .join(' × ');
+      if (dims.isNotEmpty) parts.add(dims);
+    }
+    if (p.widthB != null) parts.add('Ширина b: ${_fmtNum(p.widthB)}');
+    if (p.blQuantity != null && p.blQuantity!.isNotEmpty) {
+      parts.add('Количество: ${p.blQuantity}');
+    }
+    if (p.length != null) parts.add('Длина L: ${_fmtNum(p.length)}');
+    return parts.isEmpty ? '—' : parts.join(', ');
+  }
+
+  String _materialSummary() {
+    final m = widget.order.material;
+    if (m == null) return '—';
+    final parts = <String>[];
+    if (m.name.isNotEmpty) parts.add(m.name);
+    if (m.format != null && m.format!.isNotEmpty) parts.add('Формат: ${m.format}');
+    if (m.grammage != null && m.grammage!.isNotEmpty) {
+      parts.add('Грамаж: ${m.grammage}');
+    }
+    if (m.unit != null && m.unit!.isNotEmpty) parts.add('Ед.: ${m.unit}');
+    if (m.quantity != null) parts.add('Кол-во: ${_fmtNum(m.quantity)}');
+    return parts.isEmpty ? '—' : parts.join(', ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final o = widget.order;
     final p = o.product;
-    final m = o.material;
-    return Scaffold(
-      appBar: AppBar(title: Text('Заказ ${o.id}')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _section('Основное', [
-              _kv('Заказчик', o.customer),
-              _kv('Менеджер', o.manager.isEmpty ? '—' : o.manager),
-              _kv('Дата заказа', _fmtDate(o.orderDate)),
-              _kv('Срок', _fmtDate(o.dueDate)),
-              _kv('Статус', o.status),
-              _kv('Комментарии', o.comments.isEmpty ? '—' : o.comments),
-              _kv('Договор подписан', o.contractSigned ? 'Да' : 'Нет'),
-              _kv('Оплата', o.paymentDone ? 'Проведена' : 'Нет'),
-            ]),
-            _section('Продукт', [
-              _kv('Вид изделия', p.type),
-              _kv('Тираж', p.quantity.toString()),
-              _kv('Длина', _fmtNum(p.depth)),
-              _kv('Ширина', _fmtNum(p.width)),
-              _kv('Высота', _fmtNum(p.height)),
-              _kv('Ширина b', _fmtNum(p.widthB)),
-              _kv('Количество', p.blQuantity ?? '—'),
-              _kv('Длина L (м)', _fmtNum(p.length)),
-              _kv('Параметры', p.parameters.isEmpty ? '—' : p.parameters),
-            ]),
-            _section('Форма', [
-              _kv('Код формы', o.formCode ?? '—'),
-              _kv('Серия', o.formSeries ?? '—'),
-              _kv('Номер', o.newFormNo?.toString() ?? '—'),
-              _kv('Старая форма', o.isOldForm ? 'Да' : 'Нет'),
-            ]),
-            _section('Материал', [
-              _kv('Наименование', m?.name ?? '—'),
-              _kv('Формат', m?.format ?? '—'),
-              _kv('Грамаж', m?.grammage ?? '—'),
-              _kv('Ед.', m?.unit ?? '—'),
-              _kv('Кол-во', _fmtNum(m?.quantity)),
-            ]),
-            _section('Канцелярия', [
-              _kv('Ручки', o.handle),
-              _kv('Картон', o.cardboard),
-            ]),
-            _paints.isEmpty
-                ? const SizedBox.shrink()
-                : _section(
-                    'Краски',
-                    _paints.map((e) {
-                      final name = (e['name'] ?? '').toString();
-                      final qty = e['qty_kg'];
-                      final memo = (e['info'] ?? '').toString();
-                      double? grams;
-                      if (qty is num) {
-                        grams = qty.toDouble() * 1000;
-                      } else if (qty is String && qty.trim().isNotEmpty) {
-                        final parsed =
-                            double.tryParse(qty.replaceAll(',', '.'));
-                        if (parsed != null) {
-                          grams = parsed * 1000;
-                        }
-                      }
-                      final v = (grams == null)
-                          ? (memo.isEmpty ? '—' : memo)
-                          : '${_formatGrams(grams)}${memo.isNotEmpty ? ' ($memo)' : ''}';
-                      return _kv(name, v);
-                    }).toList()),
-            _section('Файлы', [
-              if (_loadingFiles) const LinearProgressIndicator(),
-              if (!_loadingFiles && _files.isEmpty)
-                const Text('Нет приложенных файлов'),
-              ..._files.map((f) => _fileTile(f)).toList(),
-            ]),
-          ],
-        ),
-      ),
-    );
-  }
+    final size = MediaQuery.of(context).size;
+    final dialogHeight = size.height - 32;
+    final dialogWidth = math.min(size.width - 32, 1100.0);
 
-  Widget _section(String title, List<Widget> children) {
-    return Card(
-      elevation: 1,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: dialogHeight,
+          maxWidth: dialogWidth,
+        ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(title,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-            ...children,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Заказ ${o.assignmentId ?? o.id}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Обновить данные',
+                    onPressed: _loadingFiles ? null : _load,
+                    icon: const Icon(Icons.refresh),
+                  ),
+                  IconButton(
+                    tooltip: 'Закрыть',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  child: Card(
+                    margin: EdgeInsets.zero,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildLabelRow(
+                            label: 'Дата',
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _valueBlock(
+                                      'Дата заказа', _fmtDate(o.orderDate)),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _valueBlock(
+                                      'Срок выполнения', _fmtDate(o.dueDate)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          _buildLabelRow(
+                              label: 'Заказчик', child: Text(o.customer)),
+                          _buildLabelRow(
+                              label: 'Тип', child: Text(p.type.isEmpty ? '—' : p.type)),
+                          _buildLabelRow(
+                              label: 'Тираж',
+                              child: Text(p.quantity > 0
+                                  ? p.quantity.toString()
+                                  : '—')),
+                          _buildLabelRow(
+                              label: 'Размеры',
+                              child: Text(_dimensionsSummary())),
+                          _buildLabelRow(
+                            label: 'Ручки и картон',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Ручки: ${o.handle}'),
+                                Text('Картон: ${o.cardboard}'),
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 3),
+                          _buildLabelRow(
+                            label: 'Краски',
+                            child: _paints.isEmpty
+                                ? const Text('—')
+                                : Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: _paints.map((e) {
+                                      final name = (e['name'] ?? '').toString();
+                                      final qty = e['qty_kg'];
+                                      final memo = (e['info'] ?? '').toString();
+                                      double? grams;
+                                      if (qty is num) {
+                                        grams = qty.toDouble() * 1000;
+                                      } else if (qty is String && qty.trim().isNotEmpty) {
+                                        final parsed =
+                                            double.tryParse(qty.replaceAll(',', '.'));
+                                        if (parsed != null) {
+                                          grams = parsed * 1000;
+                                        }
+                                      }
+                                      final v = (grams == null)
+                                          ? (memo.isEmpty ? '—' : memo)
+                                          : '${_formatGrams(grams)}${memo.isNotEmpty ? ' ($memo)' : ''}';
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.symmetric(vertical: 2.0),
+                                        child: Text('$name: $v'),
+                                      );
+                                    }).toList(),
+                                  ),
+                          ),
+                          const Divider(height: 3),
+                          _buildLabelRow(
+                            label: 'Форма',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Код формы: ${o.formCode ?? '—'}'),
+                                Text('Серия: ${o.formSeries ?? '—'}'),
+                                Text('Номер: ${o.newFormNo?.toString() ?? '—'}'),
+                                Text('Старая форма: ${o.isOldForm ? 'Да' : 'Нет'}'),
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 3),
+                          _buildLabelRow(
+                            label: 'Склад и материалы',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(_materialSummary()),
+                                if (p.parameters.isNotEmpty)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 2.0),
+                                    child: Text('Параметры: ${p.parameters}'),
+                                  ),
+                                if (p.leftover != null)
+                                  Text('Лишнее: ${_fmtNum(p.leftover)}'),
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 3),
+                          _buildLabelRow(
+                            label: 'Приладка',
+                            child: Text(o.makeready > 0
+                                ? _fmtNum(o.makeready)
+                                : '—'),
+                          ),
+                          _buildLabelRow(
+                            label: 'Комментарий',
+                            child:
+                                Text(o.comments.isEmpty ? '—' : o.comments),
+                          ),
+                          _buildLabelRow(
+                            label: 'Очередь',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Статус: ${o.status}'),
+                                Text('Шаблон этапов: ${o.stageTemplateId ?? '—'}'),
+                              ],
+                            ),
+                          ),
+                          _buildLabelRow(
+                            label: 'Договоры',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Договор подписан: ${o.contractSigned ? 'Да' : 'Нет'}'),
+                                Text('Оплата: ${o.paymentDone ? 'Проведена' : 'Нет'}'),
+                              ],
+                            ),
+                          ),
+                          _buildLabelRow(
+                            label: 'Менеджер',
+                            child: Text(o.manager.isEmpty ? '—' : o.manager),
+                          ),
+                          const Divider(height: 3),
+                          _buildLabelRow(
+                            label: 'Файлы',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (_loadingFiles) const LinearProgressIndicator(),
+                                if (!_loadingFiles && _files.isEmpty)
+                                  const Text('Нет приложенных файлов'),
+                                ..._files.map((f) => _fileTile(f)).toList(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _kv(String k, String v) {
+  Widget _valueBlock(String title, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 12, color: Colors.black54),
+        ),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  Widget _buildLabelRow({
+    required String label,
+    required Widget child,
+    double labelWidth = 150,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-              width: 180,
-              child: Text(k, style: const TextStyle(color: Colors.black54))),
-          const SizedBox(width: 12),
-          Expanded(child: Text(v)),
+            width: labelWidth,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: child),
         ],
       ),
     );
@@ -180,44 +362,48 @@ class _ViewOrderScreenState extends State<ViewOrderScreen> {
   Widget _fileTile(Map<String, dynamic> f) {
     final fileName = (f['filename'] ?? f['name'] ?? 'Файл.pdf').toString();
     final objectPath = (f['objectPath'] ?? f['path'] ?? '').toString();
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: const Icon(Icons.picture_as_pdf),
-      title: Text(fileName),
-      trailing: TextButton.icon(
-        onPressed: objectPath.isEmpty
-            ? null
-            : () async {
-                final url = await storage.getSignedUrl(objectPath);
-                // ignore: use_build_context_synchronously
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text(fileName),
-                    content: Text('Открыть PDF во внешнем просмотрщике?'),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Отмена')),
-                      TextButton(
-                        onPressed: () async {
-                          Navigator.pop(context);
-                          // Use url_launcher
-                          try {
-                            await launchUrl(Uri.parse(url),
-                                mode: LaunchMode.externalApplication);
-                          } catch (_) {}
-                        },
-                        child: const Text('Открыть'),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        children: [
+          const Icon(Icons.picture_as_pdf, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(fileName)),
+          TextButton.icon(
+            onPressed: objectPath.isEmpty
+                ? null
+                : () async {
+                    final url = await storage.getSignedUrl(objectPath);
+                    if (!mounted) return;
+                    showDialog(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: Text(fileName),
+                        content:
+                            const Text('Открыть PDF во внешнем просмотрщике?'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Отмена')),
+                          TextButton(
+                            onPressed: () async {
+                              Navigator.pop(context);
+                              try {
+                                await launchUrl(Uri.parse(url),
+                                    mode: LaunchMode.externalApplication);
+                              } catch (_) {}
+                            },
+                            child: const Text('Открыть'),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
-        icon: const Icon(Icons.open_in_new),
-        label: const Text('Открыть'),
+                    );
+                  },
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Открыть'),
+          ),
+        ],
       ),
-      subtitle: Text(objectPath),
     );
   }
 }
