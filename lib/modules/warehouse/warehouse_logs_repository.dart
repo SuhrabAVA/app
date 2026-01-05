@@ -496,6 +496,11 @@ class WarehouseLogsRepository {
   }
 
   static String _baseSelectFieldsForLogs(String typeKey) {
+    if (typeKey == 'pens') {
+      // У ручек нет колонки description, используем реальные поля, чтобы не
+      // получать пустой placeholder в логах.
+      return 'id, name, unit, color';
+    }
     if (typeKey == 'paper') {
       return 'id, description, unit, format, grammage';
     }
