@@ -929,7 +929,11 @@ class _TasksScreenState extends State<TasksScreen>
     final templateProvider = context.watch<TemplateProvider>();
     final queue = context.watch<ProductionQueueProvider>();
 
-    queue.syncOrders(ordersProvider.orders.map((o) => o.id));
+    final orderIds = ordersProvider.orders.map((o) => o.id).toList(growable: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      queue.syncOrders(orderIds);
+    });
 
     final media = MediaQuery.of(context);
     final bool isTablet =
