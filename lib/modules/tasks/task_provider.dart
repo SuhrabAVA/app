@@ -320,11 +320,11 @@ class TaskProvider with ChangeNotifier {
           .select('assignment_id, stage_template_id')
           .eq('id', orderId)
           .maybeSingle();
-      if (order is Map) {
-        final orderMap = Map<String, dynamic>.from(order);
-        orderCode = orderMap['assignment_id']?.toString();
-        stageTemplateId = orderMap['stage_template_id']?.toString();
-      }
+      final orderMap = order is Map
+          ? Map<String, dynamic>.from(order)
+          : const <String, dynamic>{};
+      orderCode = orderMap['assignment_id']?.toString();
+      stageTemplateId = orderMap['stage_template_id']?.toString();
     } catch (_) {}
 
     Future<_StageSequenceData> fromRows(dynamic rows) async {
