@@ -9,6 +9,8 @@
 //
 // Требуется: services/app_auth.dart с AppAuth.ensureSignedIn().
 //
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -403,6 +405,97 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         ],
       ),
     );
+  }
+
+  List<String> _decodeStringList(dynamic raw) {
+    if (raw == null) return const [];
+    if (raw is List) {
+      return raw.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toList();
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded
+              .map((e) => e?.toString() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList();
+        }
+      } catch (_) {}
+    }
+    return const [];
+  }
+
+  List<String> _plannedStageIds(pcompat.PlannedStage planned) {
+    final ids = <String>{};
+    final primary = planned.stageId.trim();
+    if (primary.isNotEmpty) ids.add(primary);
+    final extra = planned.extra;
+    final altIds = _decodeStringList(
+      extra['alternativeStageIds'] ?? extra['alternative_stage_ids'],
+    );
+    ids.addAll(altIds.where((id) => id.trim().isNotEmpty));
+    return ids.toList();
+  }
+
+  List<String> _plannedStageNames(pcompat.PlannedStage planned) {
+    final names = <String>{};
+    final base = planned.stageName.trim();
+    if (base.isNotEmpty) names.add(base);
+    final extra = planned.extra;
+    final altNames = _decodeStringList(
+      extra['alternativeStageNames'] ?? extra['alternative_stage_names'],
+    );
+    for (final name in altNames) {
+      final trimmed = name.trim();
+      if (trimmed.isNotEmpty) names.add(trimmed);
+    }
+    return names.toList();
+  }
+
+  String _resolveStageName(
+    String stageId,
+    PersonnelProvider personnel,
+  ) {
+    try {
+      final stage = personnel.workplaces.firstWhere((s) => s.id == stageId);
+      if (stage.name.trim().isNotEmpty) return stage.name.trim();
+    } catch (_) {}
+    return stageId;
+  }
+
+  String _plannedStageLabel(
+    pcompat.PlannedStage planned,
+    List<String> stageIds,
+    PersonnelProvider personnel,
+  ) {
+    final names = _plannedStageNames(planned);
+    if (names.isNotEmpty) {
+      return names.join(' / ');
+    }
+    if (stageIds.isEmpty) return planned.stageName;
+    final resolved = stageIds
+        .map((id) => _resolveStageName(id, personnel))
+        .where((name) => name.trim().isNotEmpty)
+        .toList();
+    return resolved.isEmpty ? planned.stageName : resolved.toSet().join(' / ');
+  }
+
+  TaskStatus? _groupStatus(List<TaskModel> stageTasks) {
+    if (stageTasks.isEmpty) return null;
+    if (stageTasks.any((t) => t.status == TaskStatus.problem)) {
+      return TaskStatus.problem;
+    }
+    if (stageTasks.any((t) => t.status == TaskStatus.inProgress)) {
+      return TaskStatus.inProgress;
+    }
+    if (stageTasks.any((t) => t.status == TaskStatus.paused)) {
+      return TaskStatus.paused;
+    }
+    if (stageTasks.any((t) => t.status == TaskStatus.completed)) {
+      return TaskStatus.completed;
+    }
+    return TaskStatus.waiting;
   }
 
   @override
@@ -870,40 +963,18 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                           for (final planned in _plannedStages)
                             Builder(
                               builder: (context) {
-                                final stageId = planned.stageId;
-                                final stage = personnel.workplaces.firstWhere(
-                                  (s) => s.id == stageId,
-                                  orElse: () => WorkplaceModel(
-                                    id: stageId,
-                                    name: planned.stageName,
-                                    positionIds: [],
-                                  ),
-                                );
-                                final stageTasks = tasksByStage[stageId] ?? [];
-                                TaskStatus? stageStatus;
-                                if (stageTasks.isEmpty) {
-                                  stageStatus = null;
-                                } else if (stageTasks.every(
-                                  (t) => t.status == TaskStatus.completed,
-                                )) {
-                                  stageStatus = TaskStatus.completed;
-                                } else if (stageTasks.any(
-                                  (t) => t.status == TaskStatus.problem,
-                                )) {
-                                  stageStatus = TaskStatus.problem;
-                                } else if (stageTasks.any(
-                                  (t) => t.status == TaskStatus.inProgress,
-                                )) {
-                                  stageStatus = TaskStatus.inProgress;
-                                } else if (stageTasks.any(
-                                  (t) => t.status == TaskStatus.paused,
-                                )) {
-                                  stageStatus = TaskStatus.paused;
-                                } else {
-                                  stageStatus = TaskStatus.waiting;
+                                final stageIds = _plannedStageIds(planned);
+                                final stageLabel =
+                                    _plannedStageLabel(planned, stageIds, personnel);
+                                final stageTasks = <TaskModel>[];
+                                for (final id in stageIds) {
+                                  stageTasks.addAll(
+                                      tasksByStage[id] ?? const <TaskModel>[]);
                                 }
+                                final stageStatus = _groupStatus(stageTasks);
+                                final statusForColor = stageStatus ?? TaskStatus.waiting;
                                 Color bgColor;
-                                switch (stageStatus) {
+                                switch (statusForColor) {
                                   case TaskStatus.completed:
                                     bgColor = Colors.green.withOpacity(0.2);
                                     break;
@@ -975,7 +1046,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                               CrossAxisAlignment.start,
                                           children: [
                                             Text(
-                                              stage.name,
+                                              stageLabel,
                                               style: const TextStyle(
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.bold,

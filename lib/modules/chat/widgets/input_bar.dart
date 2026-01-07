@@ -36,7 +36,7 @@ class ChatInputBar extends StatefulWidget {
 
 class _ChatInputBarState extends State<ChatInputBar> {
   final _controller = TextEditingController();
-  final _recorder = AudioRecorder();
+  AudioRecorder? _recorder;
   bool _recording = false;
   final FocusNode _focusNode = FocusNode();
   final LayerLink _mentionLink = LayerLink();
@@ -92,7 +92,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
     _hideMentionOverlay();
     _focusNode.dispose();
     _controller.dispose();
-    _stopRecordingIfNeeded();
+    _stopRecordingIfNeeded(notify: false);
     super.dispose();
   }
 
@@ -420,7 +420,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
       );
       return;
     }
-    if (!await _recorder.hasPermission()) {
+    _recorder ??= AudioRecorder();
+    if (!await _recorder!.hasPermission()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Нет разрешения на запись')),
       );
@@ -431,15 +432,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
     } else {
       final dir = Directory.systemTemp.createTempSync('chat_audio_');
       final path = p.join(dir.path, 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
-      await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+      await _recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
       setState(() => _recording = true);
     }
   }
 
-  Future<void> _stopRecordingIfNeeded() async {
-    if (!_recording) return;
-    final path = await _recorder.stop();
-    setState(() => _recording = false);
+  Future<void> _stopRecordingIfNeeded({bool notify = true}) async {
+    if (!_recording || _recorder == null) return;
+    final path = await _recorder!.stop();
+    if (notify && mounted) {
+      setState(() => _recording = false);
+    } else {
+      _recording = false;
+    }
     if (path == null) return;
     final file = File(path);
     if (!await file.exists()) return;
