@@ -991,10 +991,13 @@ class _TasksScreenState extends State<TasksScreen>
       ),
     );
 
-    final workplaces = personnel.workplaces
+    final filteredWorkplaces = personnel.workplaces
         .where(
             (w) => w.positionIds.any((p) => employee.positionIds.contains(p)))
         .toList();
+    final workplaces = filteredWorkplaces.isEmpty
+        ? personnel.workplaces
+        : filteredWorkplaces;
 
     if (_selectedWorkplaceId == null && workplaces.isNotEmpty) {
       _selection.workplaceId = savedWid ?? _selectedWorkplaceId;
