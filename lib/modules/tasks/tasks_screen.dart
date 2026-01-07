@@ -1095,6 +1095,7 @@ class _TasksScreenState extends State<TasksScreen>
               DropdownButton<String>(
                 value: _selectedWorkplaceId,
                 isDense: true,
+                isExpanded: true,
                 style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
                 itemHeight: math.max(
                   scaled(48),
@@ -1104,7 +1105,21 @@ class _TasksScreenState extends State<TasksScreen>
                   for (final w in workplaces)
                     DropdownMenuItem(
                       value: w.id,
-                      child: Text(w.name, style: TextStyle(fontSize: scaled(12.5))),
+                      child: Text(
+                        w.name,
+                        style: TextStyle(fontSize: scaled(12.5)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                selectedItemBuilder: (context) => [
+                  for (final w in workplaces)
+                    Text(
+                      w.name,
+                      style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                 ],
                 onChanged: (val) {
