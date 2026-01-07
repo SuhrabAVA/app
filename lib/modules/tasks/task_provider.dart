@@ -183,6 +183,7 @@ class TaskProvider with ChangeNotifier {
       'order',
       'position',
       'idx',
+      'seq',
       'step_no',
       'stepNo',
       'step',
@@ -311,6 +312,19 @@ class TaskProvider with ChangeNotifier {
 
   Future<_StageSequenceData> _fetchStageSequence(String orderId) async {
     await _ensureAuthed();
+    String? orderCode;
+    String? stageTemplateId;
+    try {
+      final order = await _supabase
+          .from('orders')
+          .select('assignment_id, stage_template_id')
+          .eq('id', orderId)
+          .maybeSingle();
+      if (order is Map) {
+        orderCode = order['assignment_id']?.toString();
+        stageTemplateId = order['stage_template_id']?.toString();
+      }
+    } catch (_) {}
 
     Future<_StageSequenceData> fromRows(dynamic rows) async {
       if (rows is! List || rows.isEmpty) return const _StageSequenceData.empty();
@@ -327,6 +341,7 @@ class TaskProvider with ChangeNotifier {
         'order',
         'position',
         'idx',
+        'seq',
         'step_no',
         'stepNo',
         'step',
@@ -382,10 +397,18 @@ class TaskProvider with ChangeNotifier {
     // Try public view that already contains auto-added stages (flexo/bobbin,
     // etc.) and respects the step order for the order or its external code.
     try {
+      final filters = <String>[
+        'order_id.eq.$orderId',
+        'order_code.eq.$orderId',
+        if (orderCode != null &&
+            orderCode!.isNotEmpty &&
+            orderCode != orderId)
+          'order_code.eq.$orderCode',
+      ];
       final rows = await _supabase
           .from('v_order_plan_stages')
           .select('stage_id, stage_name, step_no, order_id, order_code')
-          .or('order_id.eq.$orderId,order_code.eq.$orderId')
+          .or(filters.join(','))
           .order('step_no', ascending: true);
       final seq = await fromRows(rows);
       if (seq.ids.isNotEmpty) return seq;
@@ -394,10 +417,18 @@ class TaskProvider with ChangeNotifier {
     // Try production view that already contains proper step numbering/order for
     // the plan.
     try {
+      final filters = <String>[
+        'order_id.eq.$orderId',
+        'order_code.eq.$orderId',
+        if (orderCode != null &&
+            orderCode!.isNotEmpty &&
+            orderCode != orderId)
+          'order_code.eq.$orderCode',
+      ];
       final rows = await _supabase
           .from('production.v_plan_with_stages')
           .select('stage_id, stage_name, step_no, order_id, order_code')
-          .or('order_id.eq.$orderId,order_code.eq.$orderId')
+          .or(filters.join(','))
           .order('step_no', ascending: true);
       final seq = await fromRows(rows);
       if (seq.ids.isNotEmpty) return seq;
@@ -436,24 +467,17 @@ class TaskProvider with ChangeNotifier {
 
     // Try the stage template attached to the order (plan_templates).
 
-    try {
-      final order = await _supabase
-          .from('orders')
-          .select('stage_template_id')
-          .eq('id', orderId)
-          .maybeSingle();
-
-      final tplId = order?['stage_template_id']?.toString();
-      if (tplId != null && tplId.isNotEmpty) {
+    if (stageTemplateId != null && stageTemplateId!.isNotEmpty) {
+      try {
         final tpl = await _supabase
             .from('plan_templates')
             .select('stages')
-            .eq('id', tplId)
+            .eq('id', stageTemplateId!)
             .maybeSingle();
         final seq = await fromRows(tpl?['stages']);
         if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
     // Fallback to legacy public.* tables
     try {
       final rows = await _supabase
@@ -481,7 +505,7 @@ class TaskProvider with ChangeNotifier {
       if (plan != null && plan is Map && plan['id'] != null) {
         final rows = await _supabase
             .from('prod_plan_stages')
-            .select('stage_id, order, position, idx, step_no')
+            .select('stage_id, order, position, idx, step_no, seq')
             .eq('plan_id', plan['id'].toString());
         final seq = await fromRows(rows);
         if (seq.ids.isNotEmpty) return seq;
