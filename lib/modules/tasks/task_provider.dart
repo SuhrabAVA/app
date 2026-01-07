@@ -323,12 +323,34 @@ class TaskProvider with ChangeNotifier {
         }
       }
       if (list.isEmpty) return const _StageSequenceData.empty();
-      list.sort((a, b) {
-        final ai = _readOrderIndex(a);
-        final bi = _readOrderIndex(b);
-        if (ai != bi) return ai.compareTo(bi);
-        return _readStageId(a).compareTo(_readStageId(b));
+      final orderKeys = const [
+        'order',
+        'position',
+        'idx',
+        'step_no',
+        'stepNo',
+        'step',
+        'sequence',
+        'sequence_no',
+      ];
+      final hasExplicitOrder = list.any((row) {
+        for (final key in orderKeys) {
+          if (!row.containsKey(key)) continue;
+          final value = row[key];
+          if (value == null) continue;
+          if (value is String && value.trim().isEmpty) continue;
+          return true;
+        }
+        return false;
       });
+      if (hasExplicitOrder) {
+        list.sort((a, b) {
+          final ai = _readOrderIndex(a);
+          final bi = _readOrderIndex(b);
+          if (ai != bi) return ai.compareTo(bi);
+          return _readStageId(a).compareTo(_readStageId(b));
+        });
+      }
       final result = <String>[];
       final filteredRows = <Map<String, dynamic>>[];
       for (final m in list) {
