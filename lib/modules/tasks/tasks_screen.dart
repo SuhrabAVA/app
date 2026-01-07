@@ -1972,33 +1972,62 @@ class _TasksScreenState extends State<TasksScreen>
     final sequence =
         taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
 
-    final orderedStageIds = <String>[];
+    final orderedGroupKeys = <String>[];
+    final groupMembersByKey = <String, List<String>>{};
+    final groupRepresentative = <String, String>{};
+
+    String registerStage(String stageId) {
+      final members = _stageGroupMembers(order.id, stageId);
+      final key = members.join('|');
+      groupMembersByKey.putIfAbsent(key, () => members);
+      groupRepresentative.putIfAbsent(
+        key,
+        () => members.isNotEmpty ? members.first : stageId,
+      );
+      return key;
+    }
+
     if (sequence.isNotEmpty) {
       for (final id in sequence) {
-        if (!orderedStageIds.contains(id)) {
-          orderedStageIds.add(id);
+        final key = registerStage(id);
+        if (!orderedGroupKeys.contains(key)) {
+          orderedGroupKeys.add(key);
         }
       }
       for (final id in taskStageIds) {
-        if (!orderedStageIds.contains(id)) {
-          orderedStageIds.add(id);
+        final key = registerStage(id);
+        if (!orderedGroupKeys.contains(key)) {
+          orderedGroupKeys.add(key);
         }
       }
     } else {
-      orderedStageIds.addAll(taskStageIds);
-      orderedStageIds.sort((a, b) {
-        String name(String id) {
-          try {
-            final w = personnel.workplaces.firstWhere((w) => w.id == id);
-            return (w.name.isNotEmpty ? w.name : id).toLowerCase();
-          } catch (_) {
-            return id.toLowerCase();
-          }
+      for (final id in taskStageIds) {
+        final key = registerStage(id);
+        if (!orderedGroupKeys.contains(key)) {
+          orderedGroupKeys.add(key);
         }
+      }
 
-        return name(a).compareTo(name(b));
-      });
-      _ensureFlexoOrdering(orderedStageIds, personnel);
+      String labelForKey(String key) {
+        final repId = groupRepresentative[key] ?? key.split('|').first;
+        return _stageLabelForOrder(
+                personnel, templates, ordersProvider, taskProvider, order.id, repId)
+            .toLowerCase();
+      }
+
+      orderedGroupKeys.sort((a, b) => labelForKey(a).compareTo(labelForKey(b)));
+
+      final repToKey = <String, String>{};
+      for (final entry in groupRepresentative.entries) {
+        repToKey[entry.value] = entry.key;
+      }
+      final repIds = orderedGroupKeys
+          .map((key) => groupRepresentative[key] ?? key.split('|').first)
+          .toList();
+      _ensureFlexoOrdering(repIds, personnel);
+      orderedGroupKeys
+        ..clear()
+        ..addAll(repIds.map((id) => repToKey[id] ?? id));
     }
 
     return Column(
@@ -2008,16 +2037,20 @@ class _TasksScreenState extends State<TasksScreen>
             style:
                 TextStyle(fontWeight: FontWeight.bold, fontSize: scaled(14))),
         SizedBox(height: verticalSpacing),
-        for (final id in orderedStageIds)
+        for (final key in orderedGroupKeys)
           Builder(
             builder: (context) {
+              final groupIds =
+                  groupMembersByKey[key] ?? key.split('|').toList();
+              final repId = groupRepresentative[key] ?? groupIds.first;
               final stage = personnel.workplaces.firstWhere(
-                (w) => w.id == id,
+                (w) => w.id == repId,
                 orElse: () =>
-                    WorkplaceModel(id: id, name: id, positionIds: const []),
+                    WorkplaceModel(id: repId, name: repId, positionIds: const []),
               );
-              final stageTasks =
-                  tasksForOrder.where((t) => t.stageId == id).toList();
+              final stageTasks = tasksForOrder
+                  .where((t) => groupIds.contains(t.stageId))
+                  .toList();
               final completed = stageTasks.isNotEmpty &&
                   stageTasks.every((t) => t.status == TaskStatus.completed);
               return Padding(
@@ -2033,7 +2066,7 @@ class _TasksScreenState extends State<TasksScreen>
                     Expanded(
                       child: Text(
                         _stageLabelForOrder(personnel, templates, ordersProvider,
-                            taskProvider, order.id, id),
+                            taskProvider, order.id, repId),
                         style: stageTextStyle,
                         overflow: TextOverflow.ellipsis,
                         maxLines: 2,
