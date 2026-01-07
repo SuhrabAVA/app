@@ -2249,21 +2249,39 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return sid;
         }
 
+        List<String> _extractStageIds(Map<String, dynamic> sm) {
+          final ids = <String>{};
+          final primary = _resolveStageId(sm);
+          if (primary != null && primary.isNotEmpty) {
+            ids.add(primary);
+          }
+          final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
+          if (rawAlt is List) {
+            for (final entry in rawAlt) {
+              final id = entry?.toString() ?? '';
+              if (id.trim().isNotEmpty) ids.add(id);
+            }
+          }
+          return ids.toList();
+        }
+
         // Build a list of valid stage IDs (must exist in 'workplaces')
         final List<String> __validStageIds = [];
         for (final sm in stageMaps) {
-          final sid = _resolveStageId(sm);
-          if (sid == null || sid.isEmpty) continue;
-          try {
-            final exists = await _sb
-                .from('workplaces')
-                .select('id')
-                .eq('id', sid)
-                .maybeSingle();
-            if (exists != null || _looksLikeBobbin(sm)) {
-              __validStageIds.add(sid);
-            }
-          } catch (_) {}
+          final stageIds = _extractStageIds(sm);
+          for (final sid in stageIds) {
+            if (sid.isEmpty) continue;
+            try {
+              final exists = await _sb
+                  .from('workplaces')
+                  .select('id')
+                  .eq('id', sid)
+                  .maybeSingle();
+              if (exists != null || _looksLikeBobbin(sm)) {
+                __validStageIds.add(sid);
+              }
+            } catch (_) {}
+          }
         }
         if (__validStageIds.isNotEmpty) {
           await _sb
@@ -2276,27 +2294,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           // (logically indicates a template/config error)
         }
         // create new tasks for each stage (only if stage exists)
+        final createdStageIds = <String>{};
         for (final sm in stageMaps) {
-          final stageId = _resolveStageId(sm);
-          if (stageId == null || stageId.isEmpty) continue;
-          try {
-            final exists = await _sb
-                .from('workplaces')
-                .select('id')
-                .eq('id', stageId)
-                .maybeSingle();
-            if (exists == null && !_looksLikeBobbin(sm)) {
-              continue; // skip invalid stageId to avoid FK/insert errors
+          final stageIds = _extractStageIds(sm);
+          for (final stageId in stageIds) {
+            if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
+            try {
+              final exists = await _sb
+                  .from('workplaces')
+                  .select('id')
+                  .eq('id', stageId)
+                  .maybeSingle();
+              if (exists == null && !_looksLikeBobbin(sm)) {
+                continue; // skip invalid stageId to avoid FK/insert errors
+              }
+              await _sb.from('tasks').insert({
+                'order_id': createdOrUpdatedOrder.id,
+                'stage_id': stageId,
+                'status': 'waiting',
+                'assignees': [],
+                'comments': [],
+              });
+              createdStageIds.add(stageId);
+            } catch (e) {
+              // ignore problematic stage ids to avoid breaking whole save
             }
-            await _sb.from('tasks').insert({
-              'order_id': createdOrUpdatedOrder.id,
-              'stage_id': stageId,
-              'status': 'waiting',
-              'assignees': [],
-              'comments': [],
-            });
-          } catch (e) {
-            // ignore problematic stage ids to avoid breaking whole save
           }
         }
 

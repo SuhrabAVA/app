@@ -293,6 +293,33 @@ String _stageLabelForOrder(
   return labels.join(' / ');
 }
 
+Map<String, String> _stageGroupMapForOrder(
+  OrderModel order,
+  TemplateProvider templates,
+) {
+  final templateId = order.stageTemplateId;
+  if (templateId == null || templateId.isEmpty) return const {};
+  final tpl = templates.templates
+      .firstWhere(
+        (t) => t.id == templateId,
+        orElse: () =>
+            TemplateModel(id: '', name: '', stages: const <PlannedStage>[]),
+      );
+  if (tpl.id.isEmpty) return const {};
+
+  final map = <String, String>{};
+  for (final stage in tpl.stages) {
+    final ids = stage.allStageIds.where((id) => id.trim().isNotEmpty).toList();
+    if (ids.isEmpty) continue;
+    final sortedIds = List<String>.from(ids)..sort();
+    final key = sortedIds.join('|');
+    for (final id in sortedIds) {
+      map[id] = key;
+    }
+  }
+  return map;
+}
+
 String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
   final wp = personnel.workplaceById(stageId);
   final text = wp?.unit?.trim();
@@ -1018,8 +1045,38 @@ class _TasksScreenState extends State<TasksScreen>
       return null;
     }
 
+    final stageGroupByOrder = <String, Map<String, String>>{};
+    for (final order in ordersProvider.orders) {
+      final map = _stageGroupMapForOrder(order, templateProvider);
+      if (map.isNotEmpty) {
+        stageGroupByOrder[order.id] = map;
+      }
+    }
+
+    String taskGroupKey(TaskModel task) {
+      final lookup = stageGroupByOrder[task.orderId];
+      final groupKey = lookup?[task.stageId] ?? task.stageId;
+      return '${task.orderId}::$groupKey';
+    }
+
+    final tasksByGroup = <String, List<TaskModel>>{};
+    for (final task in taskProvider.tasks) {
+      final key = taskGroupKey(task);
+      tasksByGroup.putIfAbsent(key, () => []).add(task);
+    }
+
     final tasksForWorkplace = taskProvider.tasks
         .where((t) => t.stageId == _selectedWorkplaceId)
+        .where((task) {
+          final groupKey = taskGroupKey(task);
+          final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+          final groupHasActive =
+              groupTasks.any((t) => t.status != TaskStatus.waiting);
+          if (groupHasActive && task.status == TaskStatus.waiting) {
+            return false;
+          }
+          return true;
+        })
         .toList();
 
     if (_selectedTask == null && savedTid != null) {

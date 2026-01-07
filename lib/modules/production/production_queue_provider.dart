@@ -11,9 +11,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ProductionQueueProvider with ChangeNotifier {
   static const _prefsKeyOrder = 'production_order_sequence';
   static const _prefsKeyHidden = 'production_hidden_orders';
+  static const _defaultGroup = 'global';
 
-  final List<String> _orderSequence = [];
-  final Set<String> _hiddenOrders = {};
+  final Map<String, List<String>> _orderSequences = {};
+  final Map<String, Set<String>> _hiddenOrders = {};
 
   bool _loaded = false;
 
@@ -23,6 +24,21 @@ class ProductionQueueProvider with ChangeNotifier {
     _load();
   }
 
+  String _normalizeGroup(String groupId) {
+    final trimmed = groupId.trim();
+    return trimmed.isEmpty ? _defaultGroup : trimmed;
+  }
+
+  List<String> _sequenceForGroup(String groupId) {
+    final key = _normalizeGroup(groupId);
+    return _orderSequences.putIfAbsent(key, () => <String>[]);
+  }
+
+  Set<String> _hiddenForGroup(String groupId) {
+    final key = _normalizeGroup(groupId);
+    return _hiddenOrders.putIfAbsent(key, () => <String>{});
+  }
+
   Future<void> _load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -30,15 +46,42 @@ class ProductionQueueProvider with ChangeNotifier {
       if (rawSequence != null && rawSequence.isNotEmpty) {
         final decoded = jsonDecode(rawSequence);
         if (decoded is List) {
-          _orderSequence.clear();
-          _orderSequence
-              .addAll(decoded.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty));
+          _orderSequences[_defaultGroup] = decoded
+              .map((e) => e?.toString() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList();
+        } else if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (value is List) {
+              _orderSequences[key.toString()] = value
+                  .map((e) => e?.toString() ?? '')
+                  .where((e) => e.isNotEmpty)
+                  .toList();
+            }
+          });
         }
       }
 
-      final rawHidden = prefs.getStringList(_prefsKeyHidden);
-      if (rawHidden != null) {
-        _hiddenOrders..clear()..addAll(rawHidden.where((e) => e.trim().isNotEmpty));
+      final rawHiddenMap = prefs.getString(_prefsKeyHidden);
+      if (rawHiddenMap != null && rawHiddenMap.isNotEmpty) {
+        final decoded = jsonDecode(rawHiddenMap);
+        if (decoded is List) {
+          _hiddenOrders[_defaultGroup] =
+              decoded.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toSet();
+        } else if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (value is List) {
+              _hiddenOrders[key.toString()] =
+                  value.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toSet();
+            }
+          });
+        }
+      } else {
+        final rawHidden = prefs.getStringList(_prefsKeyHidden);
+        if (rawHidden != null) {
+          _hiddenOrders[_defaultGroup] =
+              rawHidden.where((e) => e.trim().isNotEmpty).toSet();
+        }
       }
     } catch (e) {
       debugPrint('❌ Failed to load production queue prefs: $e');
@@ -51,29 +94,39 @@ class ProductionQueueProvider with ChangeNotifier {
   Future<void> _persist() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsKeyOrder, jsonEncode(_orderSequence));
-      await prefs.setStringList(_prefsKeyHidden, _hiddenOrders.toList());
+      final orderPayload = <String, List<String>>{};
+      _orderSequences.forEach((key, value) {
+        orderPayload[key] = value.where((e) => e.trim().isNotEmpty).toList();
+      });
+      final hiddenPayload = <String, List<String>>{};
+      _hiddenOrders.forEach((key, value) {
+        hiddenPayload[key] = value.where((e) => e.trim().isNotEmpty).toList();
+      });
+      await prefs.setString(_prefsKeyOrder, jsonEncode(orderPayload));
+      await prefs.setString(_prefsKeyHidden, jsonEncode(hiddenPayload));
     } catch (e) {
       debugPrint('❌ Failed to persist production queue prefs: $e');
     }
   }
 
   /// Добавляем недостающие id и удаляем отсутствующие в [ids].
-  void syncOrders(Iterable<String> ids) {
+  void syncOrders(Iterable<String> ids, {String groupId = _defaultGroup}) {
     final set = ids.where((e) => e.trim().isNotEmpty).toSet();
+    final sequence = _sequenceForGroup(groupId);
+    final hidden = _hiddenForGroup(groupId);
     bool changed = false;
 
     for (final id in set) {
-      if (!_orderSequence.contains(id)) {
-        _orderSequence.add(id);
+      if (!sequence.contains(id)) {
+        sequence.add(id);
         changed = true;
       }
     }
 
-    final toRemove = _orderSequence.where((id) => !set.contains(id)).toList();
+    final toRemove = sequence.where((id) => !set.contains(id)).toList();
     if (toRemove.isNotEmpty) {
-      _orderSequence.removeWhere((id) => toRemove.contains(id));
-      _hiddenOrders.removeWhere((id) => toRemove.contains(id));
+      sequence.removeWhere((id) => toRemove.contains(id));
+      hidden.removeWhere((id) => toRemove.contains(id));
       changed = true;
     }
 
@@ -85,53 +138,58 @@ class ProductionQueueProvider with ChangeNotifier {
 
   /// Возвращает приоритет (индекс) заказа. Новые id получают самый низкий
   /// приоритет (в конец списка).
-  int priorityOf(String orderId) {
-    final idx = _orderSequence.indexOf(orderId);
+  int priorityOf(String orderId, {String groupId = _defaultGroup}) {
+    final sequence = _sequenceForGroup(groupId);
+    final idx = sequence.indexOf(orderId);
     if (idx != -1) return idx;
-    _orderSequence.add(orderId);
+    sequence.add(orderId);
     _persist();
-    return _orderSequence.length - 1;
+    return sequence.length - 1;
   }
 
   /// Сортирует заказы по сохранённой очереди.
-  List<T> sortByPriority<T>(List<T> items, String Function(T) idSelector) {
+  List<T> sortByPriority<T>(List<T> items, String Function(T) idSelector,
+      {String groupId = _defaultGroup}) {
     final copy = [...items];
-    copy.sort((a, b) => priorityOf(idSelector(a)).compareTo(priorityOf(idSelector(b))));
+    copy.sort((a, b) =>
+        priorityOf(idSelector(a), groupId: groupId).compareTo(priorityOf(idSelector(b), groupId: groupId)));
     return copy;
   }
 
   /// Переставляет видимые заказы, сохраняя положение остальных.
-  void applyVisibleReorder(List<String> orderedIds) {
+  void applyVisibleReorder(List<String> orderedIds, {String groupId = _defaultGroup}) {
     if (orderedIds.isEmpty) return;
+    final sequence = _sequenceForGroup(groupId);
     final set = orderedIds.toSet();
 
     for (final id in orderedIds) {
-      if (!_orderSequence.contains(id)) {
-        _orderSequence.add(id);
+      if (!sequence.contains(id)) {
+        sequence.add(id);
       }
     }
 
-    final anchor = _orderSequence.indexWhere(set.contains);
-    final insertPosition = anchor == -1 ? _orderSequence.length : anchor;
+    final anchor = sequence.indexWhere(set.contains);
+    final insertPosition = anchor == -1 ? sequence.length : anchor;
 
-    _orderSequence.removeWhere(set.contains);
-    _orderSequence.insertAll(insertPosition, orderedIds);
+    sequence.removeWhere(set.contains);
+    sequence.insertAll(insertPosition, orderedIds);
 
     _persist();
     notifyListeners();
   }
 
-  bool isHidden(String orderId) => _hiddenOrders.contains(orderId);
+  bool isHidden(String orderId, {String groupId = _defaultGroup}) =>
+      _hiddenForGroup(groupId).contains(orderId);
 
-  void hideOrder(String orderId) {
-    if (_hiddenOrders.add(orderId)) {
+  void hideOrder(String orderId, {String groupId = _defaultGroup}) {
+    if (_hiddenForGroup(groupId).add(orderId)) {
       _persist();
       notifyListeners();
     }
   }
 
-  void restoreOrder(String orderId) {
-    if (_hiddenOrders.remove(orderId)) {
+  void restoreOrder(String orderId, {String groupId = _defaultGroup}) {
+    if (_hiddenForGroup(groupId).remove(orderId)) {
       _persist();
       notifyListeners();
     }
