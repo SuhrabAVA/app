@@ -321,8 +321,9 @@ class TaskProvider with ChangeNotifier {
           .eq('id', orderId)
           .maybeSingle();
       if (order is Map) {
-        orderCode = order['assignment_id']?.toString();
-        stageTemplateId = order['stage_template_id']?.toString();
+        final orderMap = Map<String, dynamic>.from(order);
+        orderCode = orderMap['assignment_id']?.toString();
+        stageTemplateId = orderMap['stage_template_id']?.toString();
       }
     } catch (_) {}
 
