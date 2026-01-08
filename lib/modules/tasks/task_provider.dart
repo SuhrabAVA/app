@@ -321,7 +321,7 @@ class TaskProvider with ChangeNotifier {
           .eq('id', orderId)
           .maybeSingle();
       final orderMap = order is Map
-          ? Map<String, dynamic>.from(order)
+          ? Map<String, dynamic>.from(order as Map)
           : const <String, dynamic>{};
       orderCode = orderMap['assignment_id']?.toString();
       stageTemplateId = orderMap['stage_template_id']?.toString();
@@ -362,7 +362,7 @@ class TaskProvider with ChangeNotifier {
         }
       }
       if (list.isEmpty) return const _StageSequenceData.empty();
-      final orderKeys = const [
+      const orderKeys = [
         'order',
         'position',
         'idx',
@@ -373,7 +373,7 @@ class TaskProvider with ChangeNotifier {
         'sequence',
         'sequence_no',
       ];
-      final hasExplicitOrder = list.any((row) {
+      bool hasOrderValue(Map<String, dynamic> row) {
         for (final key in orderKeys) {
           if (!row.containsKey(key)) continue;
           final value = row[key];
@@ -382,14 +382,20 @@ class TaskProvider with ChangeNotifier {
           return true;
         }
         return false;
-      });
-      if (hasExplicitOrder) {
-        list.sort((a, b) {
-          final ai = _readOrderIndex(a);
-          final bi = _readOrderIndex(b);
+      }
+
+      if (list.length > 1) {
+        final indexed = list.asMap().entries.toList();
+        indexed.sort((a, b) {
+          final ai = hasOrderValue(a.value) ? _readOrderIndex(a.value) : a.key;
+          final bi = hasOrderValue(b.value) ? _readOrderIndex(b.value) : b.key;
           if (ai != bi) return ai.compareTo(bi);
-          return _readStageId(a).compareTo(_readStageId(b));
+          if (a.key != b.key) return a.key.compareTo(b.key);
+          return _readStageId(a.value).compareTo(_readStageId(b.value));
         });
+        list
+          ..clear()
+          ..addAll(indexed.map((e) => e.value));
       }
       final result = <String>[];
       final filteredRows = <Map<String, dynamic>>[];
