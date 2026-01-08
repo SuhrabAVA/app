@@ -1063,11 +1063,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             stageMaps.add(Map<String, dynamic>.from(item));
           }
         } else if (stagesData is Map) {
-          (stagesData as Map).forEach((_, value) {
-            if (value is Map) {
-              stageMaps.add(Map<String, dynamic>.from(value));
+          final entries = stagesData.entries.toList();
+          for (final entry in entries) {
+            if (entry.value is! Map) continue;
+            final map = Map<String, dynamic>.from(entry.value as Map);
+            final hasOrder = map.containsKey('order') ||
+                map.containsKey('step') ||
+                map.containsKey('position') ||
+                map.containsKey('step_no');
+            if (!hasOrder) {
+              final parsed = int.tryParse(entry.key.toString());
+              if (parsed != null) {
+                map['order'] = parsed;
+              }
             }
-          });
+            stageMaps.add(map);
+          }
         }
 
         void _sortStageMaps() {

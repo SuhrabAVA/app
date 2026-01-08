@@ -2195,17 +2195,51 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (tplRow != null) {
         final stagesData = tplRow['stages'];
         List<Map<String, dynamic>> stageMaps = [];
+
+        int _orderOf(Map<String, dynamic> m, int fallback) {
+          final rawOrder = m['order'] ?? m['step'] ?? m['position'] ?? m['step_no'];
+          if (rawOrder is num) return rawOrder.toInt();
+          if (rawOrder is String) {
+            final parsed = int.tryParse(rawOrder);
+            if (parsed != null) return parsed;
+          }
+          return fallback;
+        }
+
         if (stagesData is List) {
           for (final item in stagesData.whereType<Map>()) {
             stageMaps.add(Map<String, dynamic>.from(item));
           }
         } else if (stagesData is Map) {
-          (stagesData as Map).forEach((_, value) {
-            if (value is Map) {
-              stageMaps.add(Map<String, dynamic>.from(value));
+          final entries = stagesData.entries.toList();
+          for (final entry in entries) {
+            if (entry.value is! Map) continue;
+            final map = Map<String, dynamic>.from(entry.value as Map);
+            final hasOrder = map.containsKey('order') ||
+                map.containsKey('step') ||
+                map.containsKey('position') ||
+                map.containsKey('step_no');
+            if (!hasOrder) {
+              final parsed = int.tryParse(entry.key.toString());
+              if (parsed != null) {
+                map['order'] = parsed;
+              }
             }
-          });
+            stageMaps.add(map);
+          }
         }
+
+        final entries = stageMaps.asMap().entries.toList();
+        entries.sort((a, b) {
+          final ao = _orderOf(a.value, a.key);
+          final bo = _orderOf(b.value, b.key);
+          final cmp = ao.compareTo(bo);
+          if (cmp != 0) return cmp;
+          return a.key.compareTo(b.key);
+        });
+        stageMaps
+          ..clear()
+          ..addAll(entries.map((e) => e.value));
 
         final outcome = await _applyStageRules(stageMaps);
         stageMaps = outcome.stages;

@@ -328,13 +328,37 @@ class TaskProvider with ChangeNotifier {
     } catch (_) {}
 
     Future<_StageSequenceData> fromRows(dynamic rows) async {
-      if (rows is! List || rows.isEmpty) return const _StageSequenceData.empty();
+      if (rows == null) return const _StageSequenceData.empty();
       final list = <Map<String, dynamic>>[];
-      for (final r in rows) {
-        if (r is Map<String, dynamic>) {
-          list.add(r);
-        } else if (r is Map) {
-          list.add(Map<String, dynamic>.from(r));
+      if (rows is List) {
+        if (rows.isEmpty) return const _StageSequenceData.empty();
+        for (final r in rows) {
+          if (r is Map<String, dynamic>) {
+            list.add(r);
+          } else if (r is Map) {
+            list.add(Map<String, dynamic>.from(r));
+          }
+        }
+      } else if (rows is Map) {
+        if (rows.isEmpty) return const _StageSequenceData.empty();
+        for (final entry in rows.entries) {
+          if (entry.value is! Map) continue;
+          final map = Map<String, dynamic>.from(entry.value as Map);
+          if (!map.containsKey('order') &&
+              !map.containsKey('position') &&
+              !map.containsKey('idx') &&
+              !map.containsKey('seq') &&
+              !map.containsKey('step_no') &&
+              !map.containsKey('stepNo') &&
+              !map.containsKey('step') &&
+              !map.containsKey('sequence') &&
+              !map.containsKey('sequence_no')) {
+            final parsed = int.tryParse(entry.key.toString());
+            if (parsed != null) {
+              map['order'] = parsed;
+            }
+          }
+          list.add(map);
         }
       }
       if (list.isEmpty) return const _StageSequenceData.empty();
