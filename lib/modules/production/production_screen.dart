@@ -15,16 +15,43 @@ import 'production_details_screen.dart';
 
 const _completedLabel = 'Завершенные';
 const _completedTabId = '__completed__';
+const _allLabel = 'Все';
+const _allTabId = '__all__';
+
+enum _ProductionSort {
+  queue,
+  dateDesc,
+  dateAsc,
+  nameAsc,
+  nameDesc,
+}
+
+String _sortLabel(_ProductionSort sort) {
+  switch (sort) {
+    case _ProductionSort.queue:
+      return 'По очереди';
+    case _ProductionSort.dateDesc:
+      return 'Сначала новые';
+    case _ProductionSort.dateAsc:
+      return 'Сначала старые';
+    case _ProductionSort.nameAsc:
+      return 'По названию А-Я';
+    case _ProductionSort.nameDesc:
+      return 'По названию Я-А';
+  }
+}
 
 class _ProductionTabInfo {
   final String id;
   final String label;
   final bool isCompleted;
+  final bool isAll;
 
   const _ProductionTabInfo({
     required this.id,
     required this.label,
     this.isCompleted = false,
+    this.isAll = false,
   });
 }
 
@@ -115,6 +142,9 @@ class _ProductionScreenState extends State<ProductionScreen>
     with TickerProviderStateMixin {
   late TabController _tabController;
   int _tabIndex = 0;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  _ProductionSort _sort = _ProductionSort.queue;
 
   @override
   void initState() {
@@ -127,6 +157,7 @@ class _ProductionScreenState extends State<ProductionScreen>
   void dispose() {
     _tabController.removeListener(_handleTabChange);
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -247,6 +278,7 @@ class _ProductionScreenState extends State<ProductionScreen>
     final workplaces = List.of(personnelProvider.workplaces)
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final tabs = [
+      const _ProductionTabInfo(id: _allTabId, label: _allLabel, isAll: true),
       for (final w in workplaces) _ProductionTabInfo(id: w.id, label: w.name),
       const _ProductionTabInfo(
         id: _completedTabId,
@@ -261,16 +293,79 @@ class _ProductionScreenState extends State<ProductionScreen>
         leading: const BackButton(),
         title: const Text('Модуль управления производственными заданиями'),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(52),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              labelColor: Colors.black,
-              unselectedLabelColor: Colors.grey,
-              tabs: [for (final t in tabs) Tab(text: t.label)],
-            ),
+          preferredSize: const Size.fromHeight(112),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: true,
+                  labelColor: Colors.black,
+                  unselectedLabelColor: Colors.grey,
+                  tabs: [for (final t in tabs) Tab(text: t.label)],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: (value) {
+                          setState(() {
+                            _searchQuery = value;
+                          });
+                        },
+                        decoration: InputDecoration(
+                          hintText: 'Поиск по заказам и заданиям',
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: _searchQuery.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() {
+                                      _searchQuery = '';
+                                    });
+                                  },
+                                ),
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<_ProductionSort>(
+                        value: _sort,
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _sort = value;
+                          });
+                        },
+                        items: _ProductionSort.values
+                            .map(
+                              (sort) => DropdownMenuItem(
+                                value: sort,
+                                child: Text(_sortLabel(sort)),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -291,6 +386,8 @@ class _ProductionScreenState extends State<ProductionScreen>
                 dimensionFormatter: _formatDimensions,
                 stageBuilder: _buildStageRow,
                 finalQuantity: _finalQuantity,
+                searchQuery: _searchQuery,
+                sort: _sort,
               ),
           ],
         ),
@@ -312,6 +409,8 @@ class _ProductionTab extends StatelessWidget {
     required this.dimensionFormatter,
     required this.stageBuilder,
     required this.finalQuantity,
+    required this.searchQuery,
+    required this.sort,
   });
 
   final _ProductionTabInfo tab;
@@ -328,6 +427,8 @@ class _ProductionTab extends StatelessWidget {
     Map<String, List<TaskModel>>,
   ) stageBuilder;
   final double Function(OrderModel) finalQuantity;
+  final String searchQuery;
+  final _ProductionSort sort;
 
   Map<String, _StageGroupInfo> _stageGroupsForOrder(
     OrderModel order,
@@ -429,6 +530,49 @@ class _ProductionTab extends StatelessWidget {
     return 'Без названия';
   }
 
+  bool _matchesSearch(OrderModel order) {
+    final query = searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    final id = order.id.toLowerCase();
+    final assignmentId = (order.assignmentId ?? '').toLowerCase();
+    final customer = order.customer.toLowerCase();
+    final product = order.product.type.toLowerCase();
+    return id.contains(query) ||
+        assignmentId.contains(query) ||
+        customer.contains(query) ||
+        product.contains(query);
+  }
+
+  List<OrderModel> _sortOrders(List<OrderModel> source) {
+    if (source.length < 2) return source;
+    final sorted = List<OrderModel>.from(source);
+    switch (sort) {
+      case _ProductionSort.queue:
+        return source;
+      case _ProductionSort.dateDesc:
+        sorted.sort((a, b) => b.orderDate.compareTo(a.orderDate));
+        break;
+      case _ProductionSort.dateAsc:
+        sorted.sort((a, b) => a.orderDate.compareTo(b.orderDate));
+        break;
+      case _ProductionSort.nameAsc:
+        sorted.sort(
+          (a, b) => _orderLabel(a).toLowerCase().compareTo(
+                _orderLabel(b).toLowerCase(),
+              ),
+        );
+        break;
+      case _ProductionSort.nameDesc:
+        sorted.sort(
+          (a, b) => _orderLabel(b).toLowerCase().compareTo(
+                _orderLabel(a).toLowerCase(),
+              ),
+        );
+        break;
+    }
+    return sorted;
+  }
+
   @override
   Widget build(BuildContext context) {
     final tasksByOrder = <String, List<TaskModel>>{};
@@ -451,8 +595,17 @@ class _ProductionTab extends StatelessWidget {
                 grouping.isCompleted &&
                 o.shippedAt == null;
           })
-          .toList()
-        ..sort((a, b) => b.orderDate.compareTo(a.orderDate));
+          .toList();
+      ordered = _sortOrders(ordered);
+      if (sort == _ProductionSort.queue) {
+        ordered.sort((a, b) => b.orderDate.compareTo(a.orderDate));
+      }
+    } else if (tab.isAll) {
+      ordered = orders.toList();
+      ordered = _sortOrders(ordered);
+      if (sort == _ProductionSort.queue) {
+        ordered.sort((a, b) => b.orderDate.compareTo(a.orderDate));
+      }
     } else {
       final visible = orders.where((o) {
         final grouping = groupingByOrder[o.id];
@@ -465,8 +618,14 @@ class _ProductionTab extends StatelessWidget {
         queue.syncOrders(visible.map((o) => o.id), groupId: tab.id);
       });
 
-      ordered = queue.sortByPriority(visible, (o) => o.id, groupId: tab.id);
+      if (sort == _ProductionSort.queue) {
+        ordered = queue.sortByPriority(visible, (o) => o.id, groupId: tab.id);
+      } else {
+        ordered = _sortOrders(visible);
+      }
     }
+
+    ordered = ordered.where(_matchesSearch).toList();
 
     if (ordered.isEmpty) {
       return const Center(
