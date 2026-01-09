@@ -70,7 +70,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToEnd() {
-    if (!_scroll.hasClients) return;
+    if (!mounted || !_scroll.hasClients) return;
     _scroll.animateTo(
       _scroll.position.maxScrollExtent,
       duration: const Duration(milliseconds: 250),
@@ -126,7 +126,10 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context, chat, _) {
         final list = chat.messages(widget.roomId);
         // автопрокрутка вниз при новых сообщениях
-        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _scrollToEnd();
+        });
 
         final media = MediaQuery.of(context);
         final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
