@@ -141,6 +141,7 @@ class ProductionScreen extends StatefulWidget {
 
 class _ProductionScreenState extends State<ProductionScreen>
     with TickerProviderStateMixin {
+  static const String _allProductTypesValue = '__all_product_types__';
   late TabController _tabController;
   int _tabIndex = 0;
   final TextEditingController _searchController = TextEditingController();
@@ -383,25 +384,26 @@ class _ProductionScreenState extends State<ProductionScreen>
                       ),
                     ),
                     const SizedBox(width: 10),
-                    PopupMenuButton<String?>(
+                    PopupMenuButton<String>(
                       tooltip: 'Фильтр по типу продукта',
                       onSelected: (value) {
                         setState(() {
-                          _productTypeFilter = value;
+                          _productTypeFilter =
+                              value == _allProductTypesValue ? null : value;
                         });
                       },
                       itemBuilder: (context) => [
-                        const PopupMenuItem<String?>(
-                          value: null,
+                        const PopupMenuItem<String>(
+                          value: _allProductTypesValue,
                           child: Text('Все типы'),
                         ),
                         if (_loadingProductTypes)
-                          const PopupMenuItem<String?>(
+                          const PopupMenuItem<String>(
                             enabled: false,
                             child: Text('Загрузка...'),
                           ),
                         for (final type in productTypeOptions)
-                          PopupMenuItem<String?>(
+                          PopupMenuItem<String>(
                             value: type,
                             child: Text(type),
                           ),
