@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 import '../orders/orders_provider.dart';
@@ -145,12 +146,19 @@ class _ProductionScreenState extends State<ProductionScreen>
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   _ProductionSort _sort = _ProductionSort.queue;
+  bool _menuPinned = false;
+  bool _menuEdgeHover = false;
+  bool _menuPanelHover = false;
+  String? _productTypeFilter;
+  List<String> _productTypes = [];
+  bool _loadingProductTypes = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 1, vsync: this);
     _tabController.addListener(_handleTabChange);
+    _loadProductTypes();
   }
 
   @override
@@ -165,6 +173,27 @@ class _ProductionScreenState extends State<ProductionScreen>
     setState(() {
       _tabIndex = _tabController.index;
     });
+  }
+
+  Future<void> _loadProductTypes() async {
+    setState(() => _loadingProductTypes = true);
+    try {
+      final rows =
+          await Supabase.instance.client.from('warehouse_categories').select();
+      final types = ((rows as List?) ?? [])
+          .map((row) => (row['title'] ?? '').toString().trim())
+          .where((title) => title.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      if (!mounted) return;
+      setState(() => _productTypes = types);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _productTypes = []);
+    } finally {
+      if (mounted) setState(() => _loadingProductTypes = false);
+    }
   }
 
   void _ensureController(int length) {
@@ -275,6 +304,14 @@ class _ProductionScreenState extends State<ProductionScreen>
     final orders = ordersProvider.orders;
     final tasks = taskProvider.tasks;
 
+    final productTypeOptions = {
+      ..._productTypes,
+      ...orders
+          .map((order) => order.product.type.trim())
+          .where((type) => type.isNotEmpty),
+    }.toList()
+      ..sort();
+
     final workplaces = List.of(personnelProvider.workplaces)
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final tabs = [
@@ -292,21 +329,24 @@ class _ProductionScreenState extends State<ProductionScreen>
       appBar: AppBar(
         leading: const BackButton(),
         title: const Text('Модуль управления производственными заданиями'),
+        actions: [
+          IconButton(
+            tooltip: _menuPinned
+                ? 'Скрыть список рабочих мест'
+                : 'Показать список рабочих мест',
+            icon: Icon(_menuPinned ? Icons.menu_open : Icons.menu),
+            onPressed: () {
+              setState(() {
+                _menuPinned = !_menuPinned;
+              });
+            },
+          ),
+        ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(112),
+          preferredSize: const Size.fromHeight(64),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TabBar(
-                  controller: _tabController,
-                  isScrollable: true,
-                  labelColor: Colors.black,
-                  unselectedLabelColor: Colors.grey,
-                  tabs: [for (final t in tabs) Tab(text: t.label)],
-                ),
-              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
                 child: Row(
@@ -343,6 +383,44 @@ class _ProductionScreenState extends State<ProductionScreen>
                       ),
                     ),
                     const SizedBox(width: 10),
+                    PopupMenuButton<String?>(
+                      tooltip: 'Фильтр по типу продукта',
+                      onSelected: (value) {
+                        setState(() {
+                          _productTypeFilter = value;
+                        });
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem<String?>(
+                          value: null,
+                          child: Text('Все типы'),
+                        ),
+                        if (_loadingProductTypes)
+                          const PopupMenuItem<String?>(
+                            enabled: false,
+                            child: Text('Загрузка...'),
+                          ),
+                        for (final type in productTypeOptions)
+                          PopupMenuItem<String?>(
+                            value: type,
+                            child: Text(type),
+                          ),
+                      ],
+                      child: IgnorePointer(
+                        child: OutlinedButton.icon(
+                          onPressed: () {},
+                          icon: const Icon(Icons.filter_list),
+                          label: Text(
+                            _productTypeFilter == null ||
+                                    _productTypeFilter!.trim().isEmpty
+                                ? 'Фильтр'
+                                : 'Тип: ${_productTypeFilter!}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
                     DropdownButtonHideUnderline(
                       child: DropdownButton<_ProductionSort>(
                         value: _sort,
@@ -370,26 +448,121 @@ class _ProductionScreenState extends State<ProductionScreen>
         ),
       ),
       body: SafeArea(
-        child: TabBarView(
-          controller: _tabController,
-          children: [
-            for (final tab in tabs)
-              _ProductionTab(
-                tab: tab,
-                allTasks: tasks,
-                taskProvider: taskProvider,
-                personnelProvider: personnelProvider,
-                orders: orders,
-                queue: queue,
-                templateProvider: templateProvider,
-                dateFormatter: _formatDate,
-                dimensionFormatter: _formatDimensions,
-                stageBuilder: _buildStageRow,
-                finalQuantity: _finalQuantity,
-                searchQuery: _searchQuery,
-                sort: _sort,
-              ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final panelWidth = constraints.maxWidth * 0.25;
+            final itemExtent = constraints.maxHeight / 35;
+            final menuOpen =
+                _menuPinned || _menuEdgeHover || _menuPanelHover;
+
+            return Stack(
+              children: [
+                TabBarView(
+                  controller: _tabController,
+                  children: [
+                    for (final tab in tabs)
+                      _ProductionTab(
+                        tab: tab,
+                        allTasks: tasks,
+                        taskProvider: taskProvider,
+                        personnelProvider: personnelProvider,
+                        orders: orders,
+                        queue: queue,
+                        templateProvider: templateProvider,
+                        dateFormatter: _formatDate,
+                        dimensionFormatter: _formatDimensions,
+                        stageBuilder: _buildStageRow,
+                        finalQuantity: _finalQuantity,
+                        searchQuery: _searchQuery,
+                        sort: _sort,
+                        productTypeFilter: _productTypeFilter,
+                      ),
+                  ],
+                ),
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 12,
+                  child: MouseRegion(
+                    onEnter: (_) => setState(() => _menuEdgeHover = true),
+                    onExit: (_) => setState(() => _menuEdgeHover = false),
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  left: menuOpen ? 0 : -panelWidth,
+                  top: 0,
+                  bottom: 0,
+                  width: panelWidth,
+                  child: MouseRegion(
+                    onEnter: (_) => setState(() => _menuPanelHover = true),
+                    onExit: (_) => setState(() => _menuPanelHover = false),
+                    child: Material(
+                      elevation: 4,
+                      color: Colors.white,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            color: Colors.grey.shade100,
+                            child: const Text(
+                              'Рабочие места',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              itemExtent: itemExtent,
+                              itemCount: tabs.length,
+                              itemBuilder: (context, index) {
+                                final tab = tabs[index];
+                                final isSelected = _tabIndex == index;
+                                return InkWell(
+                                  onTap: () {
+                                    _tabController.animateTo(index);
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    color: isSelected
+                                        ? Colors.blue.withOpacity(0.08)
+                                        : Colors.transparent,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      tab.label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                        color: isSelected
+                                            ? Colors.blueGrey.shade800
+                                            : Colors.black87,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -411,6 +584,7 @@ class _ProductionTab extends StatelessWidget {
     required this.finalQuantity,
     required this.searchQuery,
     required this.sort,
+    required this.productTypeFilter,
   });
 
   final _ProductionTabInfo tab;
@@ -429,6 +603,7 @@ class _ProductionTab extends StatelessWidget {
   final double Function(OrderModel) finalQuantity;
   final String searchQuery;
   final _ProductionSort sort;
+  final String? productTypeFilter;
 
   Map<String, _StageGroupInfo> _stageGroupsForOrder(
     OrderModel order,
@@ -530,17 +705,33 @@ class _ProductionTab extends StatelessWidget {
     return 'Без названия';
   }
 
-  bool _matchesSearch(OrderModel order) {
+  bool get _hasActiveFilters {
+    final query = searchQuery.trim();
+    final type = (productTypeFilter ?? '').trim();
+    return query.isNotEmpty || type.isNotEmpty;
+  }
+
+  bool _matchesFilters(OrderModel order) {
     final query = searchQuery.trim().toLowerCase();
-    if (query.isEmpty) return true;
-    final id = order.id.toLowerCase();
-    final assignmentId = (order.assignmentId ?? '').toLowerCase();
-    final customer = order.customer.toLowerCase();
-    final product = order.product.type.toLowerCase();
-    return id.contains(query) ||
-        assignmentId.contains(query) ||
-        customer.contains(query) ||
-        product.contains(query);
+    if (query.isNotEmpty) {
+      final id = order.id.toLowerCase();
+      final assignmentId = (order.assignmentId ?? '').toLowerCase();
+      final customer = order.customer.toLowerCase();
+      final product = order.product.type.toLowerCase();
+      final matchesQuery = id.contains(query) ||
+          assignmentId.contains(query) ||
+          customer.contains(query) ||
+          product.contains(query);
+      if (!matchesQuery) return false;
+    }
+
+    final typeFilter = (productTypeFilter ?? '').trim().toLowerCase();
+    if (typeFilter.isNotEmpty) {
+      final productType = order.product.type.trim().toLowerCase();
+      if (productType != typeFilter) return false;
+    }
+
+    return true;
   }
 
   List<OrderModel> _sortOrders(List<OrderModel> source) {
@@ -614,9 +805,11 @@ class _ProductionTab extends StatelessWidget {
         return !queue.isHidden(o.id, groupId: tab.id);
       }).toList();
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        queue.syncOrders(visible.map((o) => o.id), groupId: tab.id);
-      });
+      if (sort == _ProductionSort.queue && !_hasActiveFilters) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          queue.syncOrders(visible.map((o) => o.id), groupId: tab.id);
+        });
+      }
 
       if (sort == _ProductionSort.queue) {
         ordered = queue.sortByPriority(visible, (o) => o.id, groupId: tab.id);
@@ -625,7 +818,7 @@ class _ProductionTab extends StatelessWidget {
       }
     }
 
-    ordered = ordered.where(_matchesSearch).toList();
+    ordered = ordered.where(_matchesFilters).toList();
 
     if (ordered.isEmpty) {
       return const Center(
@@ -633,6 +826,9 @@ class _ProductionTab extends StatelessWidget {
             style: TextStyle(color: Colors.grey)),
       );
     }
+
+    final canReorder =
+        !tab.isCompleted && !tab.isAll && sort == _ProductionSort.queue && !_hasActiveFilters;
 
     return tab.isCompleted
         ? ListView.builder(
@@ -660,40 +856,69 @@ class _ProductionTab extends StatelessWidget {
               );
             },
           )
-        : ReorderableListView.builder(
-            buildDefaultDragHandles: false,
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 48),
-            itemCount: ordered.length,
-            onReorder: (oldIndex, newIndex) {
-              if (newIndex > oldIndex) newIndex -= 1;
-              final updated = List.of(ordered);
-              final item = updated.removeAt(oldIndex);
-              updated.insert(newIndex, item);
-              queue.applyVisibleReorder(updated.map((e) => e.id).toList(), groupId: tab.id);
-            },
-            itemBuilder: (context, index) {
-              final order = ordered[index];
-              final grouping = groupingByOrder[order.id]!;
-              final stageRow = stageBuilder(
-                grouping.stageGroups,
-                grouping.tasksByGroup,
-              );
-              final qty = finalQuantity(order);
+        : canReorder
+            ? ReorderableListView.builder(
+                buildDefaultDragHandles: false,
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 48),
+                itemCount: ordered.length,
+                onReorder: (oldIndex, newIndex) {
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  final updated = List.of(ordered);
+                  final item = updated.removeAt(oldIndex);
+                  updated.insert(newIndex, item);
+                  queue.applyVisibleReorder(
+                    updated.map((e) => e.id).toList(),
+                    groupId: tab.id,
+                  );
+                },
+                itemBuilder: (context, index) {
+                  final order = ordered[index];
+                  final grouping = groupingByOrder[order.id]!;
+                  final stageRow = stageBuilder(
+                    grouping.stageGroups,
+                    grouping.tasksByGroup,
+                  );
+                  final qty = finalQuantity(order);
 
-              return _buildOrderCard(
-                context: context,
-                order: order,
-                stageRow: stageRow,
-                completed: grouping.isCompleted,
-                qty: qty,
-                dateFormatter: dateFormatter,
-                dimensionFormatter: dimensionFormatter,
-                orderLabel: _orderLabel(order),
-                showDragHandle: true,
-                dragIndex: index,
+                  return _buildOrderCard(
+                    context: context,
+                    order: order,
+                    stageRow: stageRow,
+                    completed: grouping.isCompleted,
+                    qty: qty,
+                    dateFormatter: dateFormatter,
+                    dimensionFormatter: dimensionFormatter,
+                    orderLabel: _orderLabel(order),
+                    showDragHandle: true,
+                    dragIndex: index,
+                  );
+                },
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 48),
+                itemCount: ordered.length,
+                itemBuilder: (context, index) {
+                  final order = ordered[index];
+                  final grouping = groupingByOrder[order.id]!;
+                  final stageRow = stageBuilder(
+                    grouping.stageGroups,
+                    grouping.tasksByGroup,
+                  );
+                  final qty = finalQuantity(order);
+
+                  return _buildOrderCard(
+                    context: context,
+                    order: order,
+                    stageRow: stageRow,
+                    completed: grouping.isCompleted,
+                    qty: qty,
+                    dateFormatter: dateFormatter,
+                    dimensionFormatter: dimensionFormatter,
+                    orderLabel: _orderLabel(order),
+                    showDragHandle: false,
+                  );
+                },
               );
-            },
-          );
   }
 
   Widget _buildOrderCard({
