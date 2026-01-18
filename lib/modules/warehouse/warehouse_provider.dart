@@ -12,6 +12,7 @@ import '../../utils/kostanay_time.dart';
 import 'warehouse_logs_repository.dart';
 
 class WarehouseProvider with ChangeNotifier {
+  static const String canceledMarker = '[ОТМЕНЕНО]';
   // ====== PENS DEDICATED TABLE RESOLUTION ======
   String? _resolvedPensTable; // cached pens table name (expected 'warehouse_pens')
 
@@ -1556,6 +1557,60 @@ class WarehouseProvider with ChangeNotifier {
     return false;
   }
 
+  String _appendCancelMarker(String? note) {
+    final existing = (note ?? '').trim();
+    if (existing.toLowerCase().contains(canceledMarker.toLowerCase())) {
+      return existing;
+    }
+    if (existing.isEmpty) {
+      return canceledMarker;
+    }
+    return '$canceledMarker $existing';
+  }
+
+  Future<bool> _markLogCanceled(
+    List<String> tables,
+    String logId, {
+    bool useStationeryKey = false,
+    required List<String> noteCandidates,
+  }) async {
+    for (final table in tables) {
+      for (final noteColumn in noteCandidates) {
+        try {
+          var selectQuery = _sb.from(table).select(noteColumn).eq('id', logId);
+          if (useStationeryKey && _tableRequiresStationeryKey(table)) {
+            selectQuery = selectQuery.eq('table_key', _stationeryKey);
+          }
+          final row = await selectQuery.maybeSingle();
+          if (row == null || row.isEmpty) {
+            continue;
+          }
+          final existing = row[noteColumn]?.toString();
+          final updatedNote = _appendCancelMarker(existing);
+          if (updatedNote == existing) {
+            return true;
+          }
+          var updateQuery =
+              _sb.from(table).update({noteColumn: updatedNote}).eq('id', logId);
+          if (useStationeryKey && _tableRequiresStationeryKey(table)) {
+            updateQuery = updateQuery.eq('table_key', _stationeryKey);
+          }
+          final response = await updateQuery.select();
+          if (_hasAffectedRows(response)) {
+            return true;
+          }
+        } on PostgrestException catch (e) {
+          final code = e.code ?? '';
+          final message = (e.message ?? '').toLowerCase();
+          if (code == '42703' || message.contains('column')) {
+            continue;
+          }
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
   Future<void> cancelWriteoff({
     required String logId,
     required String itemId,
@@ -1582,10 +1637,19 @@ class WarehouseProvider with ChangeNotifier {
       if (sourceTable != null) sourceTable,
       ..._writeoffTables(typeKey),
     ];
-    final deleted =
-        await _deleteLogFromTables(tables, logId, useStationeryKey: true);
-    if (!deleted) {
-      throw Exception('Не удалось удалить запись списания');
+    final marked = await _markLogCanceled(
+      tables,
+      logId,
+      useStationeryKey: true,
+      noteCandidates: <String>[
+        if (_woMap[typeKey]?['note'] != null) _woMap[typeKey]!['note']!,
+        'note',
+        'reason',
+        'comment',
+      ],
+    );
+    if (!marked) {
+      throw Exception('Не удалось пометить списание как отменённое');
     }
 
     _invalidateLogsForType(typeKey);
@@ -1622,10 +1686,19 @@ class WarehouseProvider with ChangeNotifier {
       if (sourceTable != null) sourceTable,
       ..._arrivalTables(typeKey),
     ];
-    final deleted =
-        await _deleteLogFromTables(tables, logId, useStationeryKey: true);
-    if (!deleted) {
-      throw Exception('Не удалось удалить запись прихода');
+    final marked = await _markLogCanceled(
+      tables,
+      logId,
+      useStationeryKey: true,
+      noteCandidates: <String>[
+        if (_arrMap[typeKey]?['note'] != null) _arrMap[typeKey]!['note']!,
+        'note',
+        'reason',
+        'comment',
+      ],
+    );
+    if (!marked) {
+      throw Exception('Не удалось пометить приход как отменённый');
     }
 
     _invalidateLogsForType(typeKey);
@@ -1649,10 +1722,19 @@ class WarehouseProvider with ChangeNotifier {
       if (sourceTable != null) sourceTable,
       ..._inventoryTables(typeKey),
     ];
-    final deleted =
-        await _deleteLogFromTables(tables, logId, useStationeryKey: true);
-    if (!deleted) {
-      throw Exception('Не удалось удалить запись инвентаризации');
+    final marked = await _markLogCanceled(
+      tables,
+      logId,
+      useStationeryKey: true,
+      noteCandidates: <String>[
+        if (_invMap[typeKey]?['note'] != null) _invMap[typeKey]!['note']!,
+        'note',
+        'reason',
+        'comment',
+      ],
+    );
+    if (!marked) {
+      throw Exception('Не удалось пометить запись инвентаризации как отменённую');
     }
 
     _invalidateLogsForType(typeKey);

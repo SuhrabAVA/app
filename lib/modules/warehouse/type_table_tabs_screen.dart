@@ -429,21 +429,25 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
     return entries
-        .map((entry) => _LogRow(
-              id: entry.id,
-              description: entry.description,
-              quantity: entry.quantity.toDouble(),
-              unit: entry.unit,
-              dateIso: entry.timestampIso,
-              note: entry.note,
-              format: entry.format,
-              grammage: entry.grammage,
-              byName: entry.byName,
-              itemId: entry.itemId,
-              sourceTable: entry.sourceTable,
-              action: entry.action,
-              canUndo: (entry.itemId ?? '').isNotEmpty,
-            ))
+        .map((entry) {
+          final isCanceled = _logIsCanceled(const {}, entry.note);
+          return _LogRow(
+            id: entry.id,
+            description: entry.description,
+            quantity: entry.quantity.toDouble(),
+            unit: entry.unit,
+            dateIso: entry.timestampIso,
+            note: entry.note,
+            format: entry.format,
+            grammage: entry.grammage,
+            byName: entry.byName,
+            itemId: entry.itemId,
+            sourceTable: entry.sourceTable,
+            action: entry.action,
+            canUndo: (entry.itemId ?? '').isNotEmpty && !isCanceled,
+            isCanceled: isCanceled,
+          );
+        })
         .toList();
   }
 
@@ -742,6 +746,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'operator',
         'who'
       ]);
+      final isCanceled = _logIsCanceled(e, note);
       return _LogRow(
         id: id,
         description: descr,
@@ -754,7 +759,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         byName: by,
         itemId: baseId,
         action: WarehouseLogAction.writeoff,
-        canUndo: (baseId ?? '').isNotEmpty,
+        canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
+        isCanceled: isCanceled,
       );
     }).toList();
   }
@@ -838,6 +844,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'operator',
         'who'
       ]);
+      final isCanceled = _logIsCanceled(e, note);
       return _LogRow(
         id: id,
         description: descr,
@@ -850,7 +857,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         byName: by,
         itemId: baseId,
         action: WarehouseLogAction.inventory,
-        canUndo: (baseId ?? '').isNotEmpty,
+        canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
+        isCanceled: isCanceled,
       );
     }).toList();
   }
@@ -931,6 +939,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'operator',
         'who'
       ]);
+      final isCanceled = _logIsCanceled(e, note);
       return _LogRow(
         id: id,
         description: descr,
@@ -943,7 +952,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         byName: by,
         itemId: baseId,
         action: WarehouseLogAction.arrival,
-        canUndo: (baseId ?? '').isNotEmpty,
+        canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
+        isCanceled: isCanceled,
       );
     }).toList();
   }
@@ -1078,11 +1088,63 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   List<_LogRow> _applyFilterLogs(List<_LogRow> src) {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return src;
+    if (_normalizeType(widget.type) == 'paper') {
+      final tokens = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+      return src.where((e) {
+        final parts = [
+          e.description,
+          e.format ?? '',
+          e.grammage ?? '',
+          e.note ?? '',
+          e.unit,
+          e.byName ?? '',
+        ].join(' ').toLowerCase();
+        return tokens.every(parts.contains);
+      }).toList();
+    }
     return src
         .where((e) =>
             e.description.toLowerCase().contains(q) ||
             (e.note ?? '').toLowerCase().contains(q))
         .toList();
+  }
+
+  bool _toBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final v = value.toLowerCase().trim();
+      return v == 'true' || v == '1' || v == 'yes';
+    }
+    return false;
+  }
+
+  bool _logIsCanceled(Map<String, dynamic> row, String? note) {
+    final marker = WarehouseProvider.canceledMarker.toLowerCase();
+    final noteLower = (note ?? '').toLowerCase();
+    return _toBool(row['is_canceled']) ||
+        _toBool(row['is_cancelled']) ||
+        _toBool(row['canceled']) ||
+        _toBool(row['cancelled']) ||
+        noteLower.contains(marker);
+  }
+
+  MaterialStateProperty<Color?> _logRowColor(bool isCanceled) {
+    return MaterialStateProperty.resolveWith((states) {
+      if (isCanceled) {
+        return states.contains(MaterialState.hovered)
+            ? Colors.grey.shade300
+            : Colors.grey.shade200;
+      }
+      return warehouseRowHoverColor.resolve(states);
+    });
+  }
+
+  Text _logCellText(String value, bool isCanceled) {
+    return Text(
+      value,
+      style: isCanceled ? const TextStyle(color: Colors.grey) : null,
+    );
   }
 
   Future<void> _deleteTable() async {
@@ -1403,16 +1465,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   columns: columns,
                   rows: List<DataRow>.generate(rows.length, (i) {
                     final r = rows[i];
+                    final isCanceled = r.isCanceled;
                     final cells = <DataCell>[
-                      DataCell(Text('${i + 1}')),
-                      DataCell(Text(r.description)),
-                      DataCell(Text(r.quantity.toStringAsFixed(2))),
-                      DataCell(Text(r.unit)),
-                      if (showFmt) DataCell(Text(r.format ?? '')),
-                      if (showGram) DataCell(Text(r.grammage ?? '')),
-                      DataCell(Text(_fmtDate(r.dateIso))),
-                      DataCell(Text(r.note ?? '')),
-                      DataCell(Text(r.byName ?? '')),
+                      DataCell(_logCellText('${i + 1}', isCanceled)),
+                      DataCell(_logCellText(r.description, isCanceled)),
+                      DataCell(_logCellText(
+                          r.quantity.toStringAsFixed(2), isCanceled)),
+                      DataCell(_logCellText(r.unit, isCanceled)),
+                      if (showFmt)
+                        DataCell(_logCellText(r.format ?? '', isCanceled)),
+                      if (showGram)
+                        DataCell(_logCellText(r.grammage ?? '', isCanceled)),
+                      DataCell(_logCellText(_fmtDate(r.dateIso), isCanceled)),
+                      DataCell(_logCellText(r.note ?? '', isCanceled)),
+                      DataCell(_logCellText(r.byName ?? '', isCanceled)),
                       DataCell(r.canUndo
                           ? TextButton.icon(
                               onPressed: () => _undoLog(r),
@@ -1430,7 +1496,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       cells.removeRange(columns.length, cells.length);
                     }
 
-                    return DataRow(color: warehouseRowHoverColor, cells: cells);
+                    return DataRow(
+                      color: _logRowColor(isCanceled),
+                      cells: cells,
+                    );
                   }),
                 ),
               ),
@@ -1469,16 +1538,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   columns: columns,
                   rows: List<DataRow>.generate(rows.length, (i) {
                     final r = rows[i];
+                    final isCanceled = r.isCanceled;
                     final cells = <DataCell>[
-                      DataCell(Text('${i + 1}')),
-                      DataCell(Text(r.description)),
-                      DataCell(Text(r.quantity.toStringAsFixed(2))),
-                      DataCell(Text(r.unit)),
-                      if (showFmt) DataCell(Text(r.format ?? '')),
-                      if (showGram) DataCell(Text(r.grammage ?? '')),
-                      DataCell(Text(_fmtDate(r.dateIso))),
-                      DataCell(Text(r.note ?? '')),
-                      DataCell(Text(r.byName ?? '')),
+                      DataCell(_logCellText('${i + 1}', isCanceled)),
+                      DataCell(_logCellText(r.description, isCanceled)),
+                      DataCell(_logCellText(
+                          r.quantity.toStringAsFixed(2), isCanceled)),
+                      DataCell(_logCellText(r.unit, isCanceled)),
+                      if (showFmt)
+                        DataCell(_logCellText(r.format ?? '', isCanceled)),
+                      if (showGram)
+                        DataCell(_logCellText(r.grammage ?? '', isCanceled)),
+                      DataCell(_logCellText(_fmtDate(r.dateIso), isCanceled)),
+                      DataCell(_logCellText(r.note ?? '', isCanceled)),
+                      DataCell(_logCellText(r.byName ?? '', isCanceled)),
                       DataCell(r.canUndo
                           ? TextButton.icon(
                               onPressed: () => _undoLog(r),
@@ -1496,7 +1569,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       cells.removeRange(columns.length, cells.length);
                     }
 
-                    return DataRow(color: warehouseRowHoverColor, cells: cells);
+                    return DataRow(
+                      color: _logRowColor(isCanceled),
+                      cells: cells,
+                    );
                   }),
                 ),
               ),
@@ -1534,16 +1610,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   columns: columns,
                   rows: List<DataRow>.generate(rows.length, (i) {
                     final r = rows[i];
+                    final isCanceled = r.isCanceled;
                     final cells = <DataCell>[
-                      DataCell(Text('${i + 1}')),
-                      DataCell(Text(r.description)),
-                      DataCell(Text(r.quantity.toStringAsFixed(2))),
-                      DataCell(Text(r.unit)),
-                      if (showFmt) DataCell(Text(r.format ?? '')),
-                      if (showGram) DataCell(Text(r.grammage ?? '')),
-                      DataCell(Text(_fmtDate(r.dateIso))),
-                      DataCell(Text(r.note ?? '')),
-                      DataCell(Text(r.byName ?? '')),
+                      DataCell(_logCellText('${i + 1}', isCanceled)),
+                      DataCell(_logCellText(r.description, isCanceled)),
+                      DataCell(_logCellText(
+                          r.quantity.toStringAsFixed(2), isCanceled)),
+                      DataCell(_logCellText(r.unit, isCanceled)),
+                      if (showFmt)
+                        DataCell(_logCellText(r.format ?? '', isCanceled)),
+                      if (showGram)
+                        DataCell(_logCellText(r.grammage ?? '', isCanceled)),
+                      DataCell(_logCellText(_fmtDate(r.dateIso), isCanceled)),
+                      DataCell(_logCellText(r.note ?? '', isCanceled)),
+                      DataCell(_logCellText(r.byName ?? '', isCanceled)),
                     ];
 
                     while (cells.length < columns.length) {
@@ -1554,7 +1634,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       cells.removeRange(columns.length, cells.length);
                     }
 
-                    return DataRow(color: warehouseRowHoverColor, cells: cells);
+                    return DataRow(
+                      color: _logRowColor(isCanceled),
+                      cells: cells,
+                    );
                   }),
                 ),
               ),
@@ -2515,6 +2598,7 @@ class _LogRow {
   final String? sourceTable;
   final WarehouseLogAction? action;
   final bool canUndo;
+  final bool isCanceled;
 
   final String? note;
   final String? format;
@@ -2531,13 +2615,14 @@ class _LogRow {
     this.sourceTable,
     this.action,
     this.canUndo = false,
+    this.isCanceled = false,
     this.note,
     this.format,
     this.grammage,
     this.byName,
   });
 
-  _LogRow copyWith({bool? canUndo}) {
+  _LogRow copyWith({bool? canUndo, bool? isCanceled}) {
     return _LogRow(
       id: id,
       description: description,
@@ -2548,6 +2633,7 @@ class _LogRow {
       sourceTable: sourceTable,
       action: action,
       canUndo: canUndo ?? this.canUndo,
+      isCanceled: isCanceled ?? this.isCanceled,
       note: note,
       format: format,
       grammage: grammage,
