@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../orders/id_format.dart';
 import '../orders/order_model.dart';
 import '../orders/orders_provider.dart';
 import '../personnel/personnel_provider.dart';
@@ -212,20 +212,45 @@ class _ProductionScreenState extends State<ProductionScreen>
     oldController.dispose();
   }
 
-  String _formatDate(DateTime date) =>
-      DateFormat('dd MMM yyyy', 'ru').format(date.toLocal());
+  String _formatDate(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}.'
+        '${date.month.toString().padLeft(2, '0')}.'
+        '${date.year}';
+  }
 
   String _formatDimensions(OrderModel order) {
-    final w = order.product.width;
-    final h = order.product.height;
-    final d = order.product.depth;
+    final product = order.product;
 
-    String fmt(num value) {
-      if (value == value.toInt()) return value.toInt().toString();
-      return value.toString();
+    String? formatDimension(double? value) {
+      if (value == null || value <= 0) return null;
+      if (value == value.roundToDouble()) {
+        return value.toInt().toString();
+      }
+      return value.toStringAsFixed(2);
     }
 
-    return '${fmt(w)}×${fmt(h)}×${fmt(d)} мм';
+    final dims = <String>[];
+    final width = formatDimension(product.width);
+    final height = formatDimension(product.height);
+    final depth = formatDimension(product.depth);
+    if (width != null) dims.add(width);
+    if (height != null) dims.add(height);
+    if (depth != null) dims.add(depth);
+
+    var result = dims.join('×');
+
+    final extras = <String>[];
+    final roll = formatDimension(product.roll);
+    if (roll != null) extras.add('Рулон $roll');
+    final blQty = product.blQuantity;
+    if (blQty != null && blQty.isNotEmpty) extras.add('Кол-во $blQty');
+
+    if (extras.isNotEmpty) {
+      final extraText = extras.join(', ');
+      result = result.isEmpty ? extraText : '$result ($extraText)';
+    }
+
+    return result.isEmpty ? '—' : result;
   }
 
   Color _stageColor(TaskStatus status) {
@@ -288,10 +313,6 @@ class _ProductionScreenState extends State<ProductionScreen>
       scrollDirection: Axis.horizontal,
       child: Row(children: chips),
     );
-  }
-
-  double _finalQuantity(OrderModel order) {
-    return order.actualQty ?? order.shippedQty ?? order.product.quantity.toDouble();
   }
 
   @override
@@ -474,7 +495,6 @@ class _ProductionScreenState extends State<ProductionScreen>
                         dateFormatter: _formatDate,
                         dimensionFormatter: _formatDimensions,
                         stageBuilder: _buildStageRow,
-                        finalQuantity: _finalQuantity,
                         searchQuery: _searchQuery,
                         sort: _sort,
                         productTypeFilter: _productTypeFilter,
@@ -583,7 +603,6 @@ class _ProductionTab extends StatelessWidget {
     required this.dateFormatter,
     required this.dimensionFormatter,
     required this.stageBuilder,
-    required this.finalQuantity,
     required this.searchQuery,
     required this.sort,
     required this.productTypeFilter,
@@ -602,7 +621,6 @@ class _ProductionTab extends StatelessWidget {
     Map<String, _StageGroupInfo>,
     Map<String, List<TaskModel>>,
   ) stageBuilder;
-  final double Function(OrderModel) finalQuantity;
   final String searchQuery;
   final _ProductionSort sort;
   final String? productTypeFilter;
@@ -832,9 +850,9 @@ class _ProductionTab extends StatelessWidget {
     final canReorder =
         !tab.isCompleted && !tab.isAll && sort == _ProductionSort.queue && !_hasActiveFilters;
 
-    return tab.isCompleted
+    final Widget listView = tab.isCompleted
         ? ListView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 48),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 48),
             itemCount: ordered.length,
             itemBuilder: (context, index) {
               final order = ordered[index];
@@ -843,9 +861,9 @@ class _ProductionTab extends StatelessWidget {
                 grouping.stageGroups,
                 grouping.tasksByGroup,
               );
-              final qty = finalQuantity(order);
+              final qty = order.product.quantity.toDouble();
 
-              return _buildOrderCard(
+              return _buildOrderRow(
                 context: context,
                 order: order,
                 stageRow: stageRow,
@@ -861,7 +879,7 @@ class _ProductionTab extends StatelessWidget {
         : canReorder
             ? ReorderableListView.builder(
                 buildDefaultDragHandles: false,
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 48),
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 48),
                 itemCount: ordered.length,
                 onReorder: (oldIndex, newIndex) {
                   if (newIndex > oldIndex) newIndex -= 1;
@@ -880,9 +898,9 @@ class _ProductionTab extends StatelessWidget {
                     grouping.stageGroups,
                     grouping.tasksByGroup,
                   );
-                  final qty = finalQuantity(order);
+                  final qty = order.product.quantity.toDouble();
 
-                  return _buildOrderCard(
+                  return _buildOrderRow(
                     context: context,
                     order: order,
                     stageRow: stageRow,
@@ -897,7 +915,7 @@ class _ProductionTab extends StatelessWidget {
                 },
               )
             : ListView.builder(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 48),
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 48),
                 itemCount: ordered.length,
                 itemBuilder: (context, index) {
                   final order = ordered[index];
@@ -906,9 +924,9 @@ class _ProductionTab extends StatelessWidget {
                     grouping.stageGroups,
                     grouping.tasksByGroup,
                   );
-                  final qty = finalQuantity(order);
+                  final qty = order.product.quantity.toDouble();
 
-                  return _buildOrderCard(
+                  return _buildOrderRow(
                     context: context,
                     order: order,
                     stageRow: stageRow,
@@ -921,9 +939,53 @@ class _ProductionTab extends StatelessWidget {
                   );
                 },
               );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildTableHeader(context),
+        const SizedBox(height: 8),
+        Expanded(child: listView),
+      ],
+    );
   }
 
-  Widget _buildOrderCard({
+  Widget _buildTableHeader(BuildContext context) {
+    final headerStyle = const TextStyle(fontWeight: FontWeight.w600);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 140,
+              child: Text('Номер заказа', style: headerStyle),
+            ),
+            SizedBox(width: 110, child: Text('Дата', style: headerStyle)),
+            SizedBox(width: 150, child: Text('Заказчик', style: headerStyle)),
+            SizedBox(width: 130, child: Text('Продукт', style: headerStyle)),
+            SizedBox(width: 120, child: Text('Размер', style: headerStyle)),
+            SizedBox(width: 90, child: Text('Тираж', style: headerStyle)),
+            Expanded(child: Text('Этапы', style: headerStyle)),
+            SizedBox(
+              width: 90,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text('Действия', style: headerStyle),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderRow({
     required BuildContext context,
     required OrderModel order,
     required Widget stageRow,
@@ -935,92 +997,81 @@ class _ProductionTab extends StatelessWidget {
     required bool showDragHandle,
     int? dragIndex,
   }) {
-    return Card(
+    return Container(
       key: ValueKey(order.id),
-      elevation: 0.5,
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      color: completed ? Colors.green.withOpacity(0.12) : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: completed ? Colors.green.withOpacity(0.08) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ProductionDetailsScreen(order: order),
-            ),
+          showDialog(
+            context: context,
+            barrierDismissible: true,
+            builder: (_) => ProductionDetailsScreen(order: order),
           );
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
               SizedBox(
-                width: 120,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      dateFormatter(order.orderDate),
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      order.product.type,
-                      style: const TextStyle(fontSize: 12, color: Colors.black54),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      orderLabel,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      dimensionFormatter(order),
-                      style: const TextStyle(color: Colors.black87),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 3,
-                child: stageRow,
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
                 width: 140,
+                child: Text(
+                  orderDisplayId(order),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              SizedBox(
+                width: 110,
+                child: Text(dateFormatter(order.orderDate)),
+              ),
+              SizedBox(
+                width: 150,
+                child: Text(
+                  order.customer.isNotEmpty ? order.customer : orderLabel,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              SizedBox(
+                width: 130,
+                child: Text(
+                  order.product.type,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              SizedBox(
+                width: 120,
+                child: Text(
+                  dimensionFormatter(order),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              SizedBox(
+                width: 90,
+                child: Text(
+                  qty % 1 == 0 ? qty.toInt().toString() : qty.toString(),
+                ),
+              ),
+              Expanded(child: stageRow),
+              SizedBox(
+                width: 90,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (completed)
-                      Text(
-                        'Итог: ${qty % 1 == 0 ? qty.toInt() : qty}',
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    if (completed) const SizedBox(width: 8),
                     if (showDragHandle && dragIndex != null)
                       ReorderableDragStartListener(
                         index: dragIndex,
-                        child: const Icon(Icons.drag_indicator, color: Colors.grey),
+                        child: const Icon(
+                          Icons.drag_indicator,
+                          color: Colors.grey,
+                        ),
                       ),
                   ],
                 ),
