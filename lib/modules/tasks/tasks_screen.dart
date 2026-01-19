@@ -48,7 +48,10 @@ ExecutionMode? _parseExecutionModeLabel(String raw) {
   if (t.contains('solo') || t.contains('один') || t.contains('одиноч')) {
     return ExecutionMode.solo;
   }
-  if (t.contains('joint') || t.contains('совмест')) {
+  if (t.contains('совмест') && t.contains('работ')) {
+    return ExecutionMode.separate;
+  }
+  if (t.contains('joint') || t.contains('помощ')) {
     return ExecutionMode.joint;
   }
   if (t.contains('separ') || t.contains('отдель')) {
@@ -137,9 +140,99 @@ bool _needsExecModeRecord(
   return parsed != desiredMode;
 }
 
+String _timeTypeLabel(TaskTimeType type) {
+  switch (type) {
+    case TaskTimeType.production:
+      return 'Производство';
+    case TaskTimeType.pause:
+      return 'Пауза';
+    case TaskTimeType.problem:
+      return 'Проблема';
+    case TaskTimeType.shiftChange:
+      return 'Пересмена';
+    case TaskTimeType.setup:
+      return 'Наладка';
+  }
+}
+
+List<TaskTimeEvent> _taskTimeEvents(TaskModel task) {
+  final events = <TaskTimeEvent>[];
+  for (final comment in task.comments) {
+    if (comment.type != 'time_event') continue;
+    final parsed = TaskTimeEvent.fromPayload(
+        comment.text, comment.id, comment.timestamp, comment.userId);
+    if (parsed != null) events.add(parsed);
+  }
+  events.sort((a, b) => a.startTime.compareTo(b.startTime));
+  return events;
+}
+
+List<TaskTimeEvent> _timeEventsForUser(TaskModel task, String userId) {
+  return _taskTimeEvents(task)
+      .where((e) => e.subjectUserId == userId)
+      .toList();
+}
+
+TaskTimeEvent? _openEventForUser(TaskModel task, String userId) {
+  final events = _timeEventsForUser(task, userId)
+      .where((e) => e.endTime == null)
+      .toList();
+  if (events.isEmpty) return null;
+  events.sort((a, b) => a.startTime.compareTo(b.startTime));
+  return events.last;
+}
+
+Map<TaskTimeType, Duration> _timeTotalsForUser(TaskModel task, String userId) {
+  final totals = <TaskTimeType, Duration>{
+    for (final type in TaskTimeType.values) type: Duration.zero,
+  };
+  final now = DateTime.now().toUtc();
+  for (final event in _timeEventsForUser(task, userId)) {
+    final end = event.endTime ?? now;
+    final diff = end.difference(event.startTime);
+    totals[event.type] = (totals[event.type] ?? Duration.zero) + diff;
+  }
+  return totals;
+}
+
+Duration _totalTimeForUser(TaskModel task, String userId) {
+  final totals = _timeTotalsForUser(task, userId);
+  return totals.values.fold(Duration.zero, (acc, d) => acc + d);
+}
+
 enum UserRunState { idle, active, paused, finished, problem }
 
 UserRunState _userRunState(TaskModel task, String userId) {
+  final timeEvents = _timeEventsForUser(task, userId);
+  if (timeEvents.isNotEmpty) {
+    final open = _openEventForUser(task, userId);
+    if (open != null) {
+      switch (open.type) {
+        case TaskTimeType.production:
+        case TaskTimeType.setup:
+          return UserRunState.active;
+        case TaskTimeType.pause:
+        case TaskTimeType.shiftChange:
+          return UserRunState.paused;
+        case TaskTimeType.problem:
+          return UserRunState.problem;
+      }
+    }
+    final doneEvents =
+        task.comments.where((c) => c.type == 'user_done' && c.userId == userId);
+    if (doneEvents.isNotEmpty) {
+      doneEvents.toList().sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final lastDone = doneEvents.last.timestamp;
+      final lastEventTs = timeEvents
+          .map((e) => (e.endTime ?? e.startTime).millisecondsSinceEpoch)
+          .fold<int>(0, (a, b) => a > b ? a : b);
+      if (lastDone >= lastEventTs) {
+        return UserRunState.finished;
+      }
+    }
+    return UserRunState.idle;
+  }
+
   final events = task.comments
       .where((c) =>
           c.userId == userId &&
@@ -189,7 +282,29 @@ int _activeExecutorsCountForStage(TaskProvider provider, TaskModel pivot) {
   return count;
 }
 
+List<String> _helperIds(TaskModel task) {
+  if (task.assignees.isEmpty) return const [];
+  final ownerId = task.assignees.first;
+  final jointUsers = task.assignees
+      .where((id) => _execModeForUser(task, id) == ExecutionMode.joint)
+      .toList();
+  return jointUsers.where((id) => id != ownerId).toList();
+}
+
+List<String> _participantsSnapshot(TaskModel task, String userId) {
+  final participants = List<String>.from(task.assignees);
+  if (!participants.contains(userId)) {
+    participants.add(userId);
+  }
+  return participants;
+}
+
 Duration _userElapsed(TaskModel task, String userId) {
+  final timeEvents = _timeEventsForUser(task, userId);
+  if (timeEvents.isNotEmpty) {
+    return _totalTimeForUser(task, userId);
+  }
+
   final events = task.comments
       .where((c) =>
           c.userId == userId &&
@@ -483,21 +598,21 @@ Future<ExecutionMode?> _askExecMode(BuildContext context,
           children: [
             if (allowSolo)
               RadioListTile<ExecutionMode>(
-                title: const Text('Одиночное исполнение'),
+                title: const Text('Одиночное выполнение'),
                 value: ExecutionMode.solo,
                 groupValue: mode,
                 onChanged: (v) => setState(() => mode = v),
               ),
             if (allowJoint)
               RadioListTile<ExecutionMode>(
-                title: const Text('Совместное исполнение'),
+                title: const Text('С помощником'),
                 value: ExecutionMode.joint,
                 groupValue: mode,
                 onChanged: (v) => setState(() => mode = v),
               ),
             if (allowSeparate)
               RadioListTile<ExecutionMode>(
-                title: const Text('Отдельный исполнитель'),
+                title: const Text('Совместная работа'),
                 value: ExecutionMode.separate,
                 groupValue: mode,
                 onChanged: (v) => setState(() => mode = v),
@@ -791,9 +906,9 @@ class _TasksScreenState extends State<TasksScreen>
             ? 'Сообщил(а) о проблеме'
             : 'Проблема: ${comment.text}';
       case 'setup_start':
-        return 'Начал(а) настройку станка';
+        return 'Начал(а) наладку';
       case 'setup_done':
-        return 'Завершил(а) настройку станка';
+        return 'Завершил(а) наладку';
       case 'quantity_done':
         return 'Выполнил(а): ${_formatQuantityDisplay(comment.text)}';
       case 'quantity_team_total':
@@ -812,12 +927,12 @@ class _TasksScreenState extends State<TasksScreen>
         if (normalized.contains('solo') ||
             normalized.contains('один') ||
             normalized.contains('одиноч')) {
-          return 'Режим: одиночное исполнение';
+          return 'Режим: одиночное выполнение';
         }
         if (normalized.contains('joint') || normalized.contains('совмест')) {
-          return 'Режим: совместное исполнение';
+          return 'Режим: с помощником';
         }
-        return 'Режим: отдельный исполнитель';
+        return 'Режим: совместная работа';
       case 'shift_pause':
         return comment.text.isNotEmpty
             ? comment.text
@@ -906,6 +1021,15 @@ class _TasksScreenState extends State<TasksScreen>
         type: 'start',
         text: 'Начал(а) этап',
         userIdOverride: userId,
+      );
+      await provider.recordTimeEvent(
+        task: task,
+        type: TaskTimeType.production,
+        initiatedBy: userId,
+        subjectUserId: userId,
+        workplaceId: task.stageId,
+        participantsSnapshot: _participantsSnapshot(task, userId),
+        executionMode: _executionModeCode(stageMode),
       );
     }
   }
@@ -1318,14 +1442,18 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
-            _buildDetailsPanel(
+            _buildTaskHeaderPanel(
               selectedOrder,
               selectedWorkplace,
-              templateProvider.templates,
+              currentTask,
               scale,
             ),
+          if (currentTask != null)
+            SizedBox(height: scaled(12)),
+          if (currentTask != null)
+            _buildTimerStatusPanel(currentTask, scale),
           if (currentTask != null && selectedWorkplace != null)
-            SizedBox(height: scaled(16)),
+            SizedBox(height: scaled(12)),
           if (currentTask != null && selectedWorkplace != null)
             _buildControlPanel(
               currentTask,
@@ -1333,6 +1461,31 @@ class _TasksScreenState extends State<TasksScreen>
               taskProvider,
               scale,
               isTablet,
+            ),
+          if (currentTask != null)
+            SizedBox(height: scaled(12)),
+          if (currentTask != null)
+            _buildPerformersPanel(currentTask, scale, isTablet),
+          if (currentTask != null && selectedOrder != null)
+            SizedBox(height: scaled(12)),
+          if (currentTask != null && selectedOrder != null)
+            _buildResultPanel(selectedOrder, currentTask, scale),
+          if (currentTask != null)
+            SizedBox(height: scaled(12)),
+          if (currentTask != null)
+            _buildCommentsPanel(currentTask, scale),
+          if (currentTask != null)
+            SizedBox(height: scaled(12)),
+          if (currentTask != null)
+            _buildHistoryPanel(currentTask, scale),
+          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
+            SizedBox(height: scaled(12)),
+          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
+            _buildDetailsPanel(
+              selectedOrder,
+              selectedWorkplace,
+              templateProvider.templates,
+              scale,
             ),
         ],
       );
@@ -1455,6 +1608,391 @@ class _TasksScreenState extends State<TasksScreen>
         ),
         child: scaffold,
       ),
+    );
+  }
+
+  Widget _sectionCard(String title, Widget child, double scale) {
+    double scaled(double value) => value * scale;
+    return Container(
+      padding: EdgeInsets.all(scaled(14)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(scaled(12)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          )
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: scaled(14),
+            ),
+          ),
+          SizedBox(height: scaled(8)),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTaskHeaderPanel(OrderModel order, WorkplaceModel stage,
+      TaskModel task, double scale) {
+    final personnel = context.read<PersonnelProvider>();
+    final orderTitle = order.product.type.isNotEmpty
+        ? order.product.type
+        : orderDisplayId(order);
+    final status = _statusText(task.status);
+    final names = task.assignees
+        .map((id) => _employeeDisplayName(personnel, id))
+        .where((n) => n.isNotEmpty)
+        .toList();
+    final helpers = _helperIds(task)
+        .map((id) => _employeeDisplayName(personnel, id))
+        .where((n) => n.isNotEmpty)
+        .toList();
+    final executorLabel = names.isEmpty ? '—' : names.join(', ');
+    final helperLabel = helpers.isEmpty ? '—' : helpers.join(', ');
+    final workplaceLabel =
+        stage.name.isNotEmpty ? stage.name : _workplaceName(personnel, stage.id);
+
+    return _sectionCard(
+      'Задание',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(orderTitle,
+              style: TextStyle(
+                  fontSize: scale * 16, fontWeight: FontWeight.w600)),
+          SizedBox(height: scale * 6),
+          Text('Статус: $status'),
+          Text('Рабочее место: $workplaceLabel'),
+          Text('Исполнитель(и): $executorLabel'),
+          Text('Помощник(и): $helperLabel'),
+        ],
+      ),
+      scale,
+    );
+  }
+
+  Widget _buildTimerStatusPanel(TaskModel task, double scale) {
+    final String modeLabel = () {
+      final open = _openEventForUser(task, widget.employeeId);
+      if (open != null) return _timeTypeLabel(open.type);
+      return task.status == TaskStatus.waiting ? 'Ожидание' : _statusText(task.status);
+    }();
+    return _sectionCard(
+      'Таймер и статус',
+      StreamBuilder<DateTime>(
+        stream: Stream<DateTime>.periodic(
+            const Duration(seconds: 1), (_) => DateTime.now()),
+        builder: (context, _) {
+          final totals = _timeTotalsForUser(task, widget.employeeId);
+          final total = totals.values.fold(Duration.zero, (a, b) => a + b);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Текущий режим: $modeLabel'),
+              SizedBox(height: scale * 6),
+              Text('Всего: ${_formatDuration(total)}'),
+              SizedBox(height: scale * 6),
+              Wrap(
+                spacing: scale * 12,
+                runSpacing: scale * 6,
+                children: [
+                  for (final type in TaskTimeType.values)
+                    Text(
+                      '${_timeTypeLabel(type)}: ${_formatDuration(totals[type] ?? Duration.zero)}',
+                    ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+      scale,
+    );
+  }
+
+  Widget _buildPerformersPanel(TaskModel task, double scale, bool isTablet) {
+    final personnel = context.read<PersonnelProvider>();
+    final allAssignees = task.assignees;
+    final performerTiles = <Widget>[];
+    for (final id in allAssignees) {
+      final name = _employeeDisplayName(personnel, id);
+      final state = _userRunState(task, id);
+      String stateLabel = 'Ожидание';
+      switch (state) {
+        case UserRunState.active:
+          stateLabel = 'В работе';
+          break;
+        case UserRunState.paused:
+          stateLabel = 'Пауза';
+          break;
+        case UserRunState.problem:
+          stateLabel = 'Проблема';
+          break;
+        case UserRunState.finished:
+          stateLabel = 'Завершил(а)';
+          break;
+        case UserRunState.idle:
+          stateLabel = 'Ожидание';
+          break;
+      }
+      performerTiles.add(Text('$name — $stateLabel'));
+    }
+
+    return _sectionCard(
+      'Исполнители',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _AssignedEmployeesRow(
+              task: task,
+              scale: scale,
+              compact: isTablet,
+              currentUserId: widget.employeeId),
+          SizedBox(height: scale * 8),
+          ...performerTiles,
+        ],
+      ),
+      scale,
+    );
+  }
+
+  int _parseQuantity(String text) {
+    final match = RegExp(r'(\d+)').firstMatch(text);
+    if (match == null) return 0;
+    return int.tryParse(match.group(1) ?? '') ?? 0;
+  }
+
+  int _sumQuantities(TaskModel task) {
+    int total = 0;
+    for (final comment in task.comments) {
+      if (comment.type == 'quantity_done') {
+        total += _parseQuantity(comment.text);
+      }
+    }
+    return total;
+  }
+
+  String _latestQuantityLabel(TaskModel task) {
+    final items = task.comments
+        .where((c) => c.type == 'quantity_done')
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    if (items.isEmpty) return '—';
+    return items.last.text;
+  }
+
+  Widget _buildResultPanel(OrderModel order, TaskModel task, double scale) {
+    final totalQty = _sumQuantities(task);
+    final lastQty = _latestQuantityLabel(task);
+    return _sectionCard(
+      'Производственный результат',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Фактическое количество (заказ): '
+              '${order.actualQty?.toStringAsFixed(0) ?? '—'}'),
+          Text('Суммарно по исполнителям: ${totalQty > 0 ? totalQty : '—'}'),
+          Text('Последняя запись: $lastQty'),
+        ],
+      ),
+      scale,
+    );
+  }
+
+  Widget _buildCommentsPanel(TaskModel task, double scale) {
+    final isAssignee = task.assignees.contains(widget.employeeId) ||
+        task.assignees.isEmpty;
+    final personnel = context.watch<PersonnelProvider>();
+    final taskProvider = context.watch<TaskProvider>();
+    final aggregated = _collectOrderComments(taskProvider, task);
+
+    Widget commentList() {
+      if (aggregated.isEmpty) {
+        return const Text('Нет комментариев',
+            style: TextStyle(color: Colors.grey));
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final entry in aggregated)
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: scale * 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Builder(builder: (_) {
+                    IconData icon = Icons.info_outline;
+                    Color color = Colors.blueGrey;
+                    final c = entry.comment;
+                    switch (c.type) {
+                      case 'problem':
+                        icon = Icons.error_outline;
+                        color = Colors.redAccent;
+                        break;
+                      case 'pause':
+                        icon = Icons.pause_circle_outline;
+                        color = Colors.orange;
+                        break;
+                      case 'user_done':
+                      case 'quantity_done':
+                        icon = Icons.check_circle_outline;
+                        color = Colors.green;
+                        break;
+                      case 'setup_start':
+                      case 'setup_done':
+                        icon = Icons.build_outlined;
+                        color = Colors.indigo;
+                        break;
+                      case 'joined':
+                        icon = Icons.group_add_outlined;
+                        color = Colors.teal;
+                        break;
+                      case 'exec_mode':
+                      case 'exec_mode_stage':
+                        icon = Icons.settings_input_component_outlined;
+                        color = Colors.purple;
+                        break;
+                      case 'shift_pause':
+                        icon = Icons.pause_circle_outline;
+                        color = Colors.deepPurple;
+                        break;
+                      case 'shift_resume':
+                        icon = Icons.play_circle_outline;
+                        color = Colors.deepPurple;
+                        break;
+                      default:
+                        icon = Icons.info_outline;
+                        color = Colors.blueGrey;
+                    }
+                    return Icon(icon, size: 18, color: color);
+                  }),
+                  SizedBox(width: scale * 4),
+                  Expanded(
+                    child: Builder(
+                      builder: (_) {
+                        final headerParts = <String>[];
+                        final c = entry.comment;
+                        final ts = _formatTimestamp(c.timestamp);
+                        if (ts.isNotEmpty) headerParts.add(ts);
+                        final author = _employeeDisplayName(personnel, c.userId);
+                        if (author.isNotEmpty) {
+                          headerParts.add(author);
+                        }
+                        final stageName =
+                            _workplaceName(personnel, entry.stageId);
+                        if (stageName.isNotEmpty) {
+                          headerParts.add('Этап: $stageName');
+                        }
+                        final header = headerParts.join(' • ');
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (header.isNotEmpty)
+                              Text(
+                                header,
+                                style: const TextStyle(
+                                    fontSize: 10, color: Colors.grey),
+                              ),
+                            Text(
+                              _describeComment(entry.comment),
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+
+    return _sectionCard(
+      'Комментарии',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          commentList(),
+          SizedBox(height: scale * 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _chatController,
+                  maxLines: 1,
+                  readOnly: !isAssignee,
+                  decoration: const InputDecoration(
+                    hintText: 'Написать комментарий…',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              SizedBox(width: scale * 8),
+              ElevatedButton(
+                onPressed: isAssignee
+                    ? () async {
+                        final txt = _chatController.text.trim();
+                        if (txt.isEmpty) return;
+                        await context.read<TaskProvider>().addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'msg',
+                            text: txt,
+                            userIdOverride: widget.employeeId);
+                        _chatController.clear();
+                      }
+                    : null,
+                child: const Text('Отправить'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      scale,
+    );
+  }
+
+  Widget _buildHistoryPanel(TaskModel task, double scale) {
+    final personnel = context.read<PersonnelProvider>();
+    final events = _taskTimeEvents(task);
+    if (events.isEmpty) {
+      return _sectionCard(
+        'История событий',
+        const Text('История пока пуста'),
+        scale,
+      );
+    }
+    return _sectionCard(
+      'История событий',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final event in events)
+            Padding(
+              padding: EdgeInsets.only(bottom: scale * 6),
+              child: Text(
+                '${_formatTimestamp(event.startTime.millisecondsSinceEpoch)}'
+                ' — ${event.endTime != null ? _formatTimestamp(event.endTime!.millisecondsSinceEpoch) : '…'}'
+                ' · ${_timeTypeLabel(event.type)}'
+                ' · ${_employeeDisplayName(personnel, event.subjectUserId)}',
+              ),
+            ),
+        ],
+      ),
+      scale,
     );
   }
 
@@ -2131,7 +2669,6 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
       TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
-    final List<TaskModel> allRelated = _relatedTasks(provider, task);
     final int activeCount = _activeExecutorsCountForStage(provider, task);
     final bool shiftPaused = _isShiftPausedForStage(provider, task);
     final dynamic _rawCap = (stage as dynamic).maxConcurrentWorkers;
@@ -2153,7 +2690,6 @@ class _TasksScreenState extends State<TasksScreen>
     final double gapSmall = scaled(6);
     final double gapMedium = scaled(12);
     final double buttonSpacing = scaled(8);
-    final double spacing = scaled(8);
     final double mediumSpacing = scaled(16);
     final double radius = scaled(12);
 
@@ -2243,7 +2779,7 @@ class _TasksScreenState extends State<TasksScreen>
                             : null,
                       ),
                       icon: const Icon(Icons.build),
-                      label: const Text('Настройка станка'),
+                      label: const Text('Наладка'),
                     ),
                     SizedBox(width: buttonSpacing),
                     ElevatedButton(
@@ -2261,7 +2797,7 @@ class _TasksScreenState extends State<TasksScreen>
                             ? const VisualDensity(horizontal: -1, vertical: -1)
                             : null,
                       ),
-                      child: const Text('Завершить настройку станка'),
+                      child: const Text('Завершить наладку'),
                     ),
                     SizedBox(width: gapMedium),
                     StreamBuilder<DateTime>(
@@ -2287,24 +2823,6 @@ class _TasksScreenState extends State<TasksScreen>
                   ],
                 ),
               SizedBox(height: gapSmall),
-              // ⏱ Время этапа
-              Align(
-                alignment: Alignment.centerRight,
-                child: StreamBuilder<DateTime>(
-                  stream: Stream<DateTime>.periodic(
-                      const Duration(seconds: 1), (_) => DateTime.now()),
-                  builder: (context, _) {
-                    final d = _elapsed(task);
-                    String two(int n) => n.toString().padLeft(2, '0');
-                    final s =
-                        '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                    return Text('Время этапа: ' + s,
-                        style: TextStyle(fontSize: scaled(13)));
-                  },
-                ),
-              ),
-              SizedBox(height: gapSmall),
-
               // ==== Управление исполнением ===
               Builder(
                 builder: (context) {
@@ -2334,8 +2852,6 @@ class _TasksScreenState extends State<TasksScreen>
                         );
                     final rawCap = (stage as dynamic).maxConcurrentWorkers;
                     final effCap = (rawCap is num ? rawCap.toInt() : 1);
-                    final canStartCapacity =
-                        activeCount < (effCap <= 0 ? 1 : effCap);
 
                     UserRunState state;
                     if (jointGroup != null) {
@@ -2404,6 +2920,65 @@ class _TasksScreenState extends State<TasksScreen>
                             (stateRowUser == UserRunState.active ||
                                 stateRowUser == UserRunState.paused ||
                                 stateRowUser == UserRunState.problem));
+
+                    Future<void> recordTimeEventForUser(TaskTimeType type,
+                        {String? note}) async {
+                      final participants =
+                          _participantsSnapshot(task, widget.employeeId);
+                      final execMode = stageExecMode ??
+                          _execModeForUser(task, widget.employeeId);
+                      await tp.recordTimeEvent(
+                        task: task,
+                        type: type,
+                        initiatedBy: widget.employeeId,
+                        subjectUserId: currentRowUserId,
+                        workplaceId: task.stageId,
+                        participantsSnapshot: participants,
+                        executionMode: _executionModeCode(execMode),
+                        note: note,
+                      );
+
+                      if (jointGroup != null && isMyRow) {
+                        final helpers = jointGroup
+                            .where((id) => id != task.assignees.first)
+                            .toList();
+                        for (final helperId in helpers) {
+                          await tp.recordTimeEvent(
+                            task: task,
+                            type: type,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: helperId,
+                            workplaceId: task.stageId,
+                            participantsSnapshot: participants,
+                            executionMode: _executionModeCode(execMode),
+                            helperId: helperId,
+                            note: note,
+                          );
+                        }
+                      }
+                    }
+
+                    Future<void> closeTimeEventForUser({String? note}) async {
+                      await tp.closeOpenTimeEvent(
+                        task: task,
+                        initiatedBy: widget.employeeId,
+                        subjectUserId: currentRowUserId,
+                        note: note,
+                      );
+                      if (jointGroup != null && isMyRow) {
+                        final helpers = jointGroup
+                            .where((id) => id != task.assignees.first)
+                            .toList();
+                        for (final helperId in helpers) {
+                          await tp.closeOpenTimeEvent(
+                            task: task,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: helperId,
+                            note: note,
+                          );
+                        }
+                      }
+                    }
 
                     Future<void> onStart() async {
                       // Sequential stage guard
@@ -2508,6 +3083,7 @@ class _TasksScreenState extends State<TasksScreen>
                           type: 'start',
                           text: 'Начал(а) этап',
                           userIdOverride: widget.employeeId);
+                      await recordTimeEventForUser(TaskTimeType.production);
                     }
 
                     Future<void> onPause() async {
@@ -2518,6 +3094,8 @@ class _TasksScreenState extends State<TasksScreen>
                           type: 'pause',
                           text: comment,
                           userIdOverride: widget.employeeId);
+                      await recordTimeEventForUser(TaskTimeType.pause,
+                          note: comment);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
                         await context.read<TaskProvider>().updateStatus(
@@ -2531,29 +3109,29 @@ class _TasksScreenState extends State<TasksScreen>
                       final qtyInput =
                           await _askQuantity(context, unit: unitLabel);
                       if (qtyInput == null) return;
-                      final qty = qtyInput.quantity;
                       final qtyText = qtyInput.displayText;
                       final taskProvider = context.read<TaskProvider>();
                       if (jointGroup != null) {
-                        // JOINT: split quantity between team without мгновенного завершения
-                        final per =
-                            (qty / (jointGroup.isEmpty ? 1 : jointGroup.length))
-                                .floor();
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'quantity_team_total',
-                            text: qtyText,
-                            userIdOverride: widget.employeeId);
-                        for (final id in jointGroup) {
-                          final shareText = (unitLabel ?? '').isNotEmpty
-                              ? '$per ${unitLabel!}'
-                              : per.toString();
+                        final helperIds = jointGroup
+                            .where((id) => id != widget.employeeId)
+                            .toList();
+                        for (final id in helperIds) {
                           await taskProvider.addComment(
                               taskId: task.id,
-                              type: 'quantity_share',
-                              text: shareText,
+                              type: 'quantity_done',
+                              text: qtyText,
+                              userId: id);
+                          await taskProvider.addComment(
+                              taskId: task.id,
+                              type: 'user_done',
+                              text: 'done',
                               userId: id);
                         }
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'quantity_done',
+                            text: qtyText,
+                            userIdOverride: widget.employeeId);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'user_done',
@@ -2610,6 +3188,7 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                       }
 
+                      await closeTimeEventForUser(note: 'finish');
                       final latestTask = taskProvider.tasks.firstWhere(
                         (t) => t.id == task.id,
                         orElse: () => task,
@@ -2629,6 +3208,8 @@ class _TasksScreenState extends State<TasksScreen>
                           type: 'problem',
                           text: comment,
                           userIdOverride: widget.employeeId);
+                      await recordTimeEventForUser(TaskTimeType.problem,
+                          note: comment);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
                         await context
@@ -2674,6 +3255,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 startedAt: null);
                           }
                         }
+                        await recordTimeEventForUser(TaskTimeType.shiftChange);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'shift_pause',
@@ -2748,7 +3330,8 @@ class _TasksScreenState extends State<TasksScreen>
                                       child: const Text('⏸ Пауза')),
                                   ElevatedButton(
                                       onPressed: canFinishRow ? onFinish : null,
-                                      child: const Text('✓ Завершить')),
+                                      child:
+                                          const Text('✓ Завершить участие')),
                                   ElevatedButton(
                                       onPressed:
                                           canProblemRow ? onProblem : null,
@@ -2812,7 +3395,7 @@ class _TasksScreenState extends State<TasksScreen>
                   if (jointUsers.isNotEmpty) {
                     final labels = jointUsers.map(nameFor).toList();
                     final label = labels.isEmpty
-                        ? 'Совместное исполнение'
+                        ? 'С помощником'
                         : 'Помощники: ' + labels.join(', ');
                     if (separateUsers.isEmpty) {
                       rows.add(buildControlsFor(label, jointGroup: jointUsers));
@@ -2827,173 +3410,16 @@ class _TasksScreenState extends State<TasksScreen>
                       ));
                     }
                   } else if (task.assignees.isEmpty) {
-                    rows.add(buildControlsFor('Совместное исполнение',
+                    rows.add(buildControlsFor('С помощником',
                         jointGroup: jointUsers));
                   }
                   if (!task.assignees.contains(widget.employeeId) && canStart) {
                     rows.add(buildControlsFor('Вы', userId: widget.employeeId));
                   }
-                  return Column(
+              return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: rows);
                 },
-              ),
-              _AssignedEmployeesRow(
-                  task: task,
-                  scale: scale,
-                  compact: isTablet,
-                  currentUserId: widget.employeeId),
-              SizedBox(height: scaled(8)),
-              Text('Комментарии к этапу',
-                  style: TextStyle(
-                      fontSize: scaled(14), fontWeight: FontWeight.bold)),
-              SizedBox(height: gapSmall),
-              Builder(
-                builder: (context) {
-                  final personnel = context.watch<PersonnelProvider>();
-                  final taskProvider = context.watch<TaskProvider>();
-                  final aggregated = _collectOrderComments(taskProvider, task);
-                  if (aggregated.isEmpty) {
-                    return const Text('Нет комментариев',
-                        style: TextStyle(color: Colors.grey));
-                  }
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final entry in aggregated)
-                        Padding(
-                          padding: EdgeInsets.symmetric(vertical: gapSmall / 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Builder(builder: (_) {
-                                IconData icon = Icons.info_outline;
-                                Color color = Colors.blueGrey;
-                                final c = entry.comment;
-                                switch (c.type) {
-                                  case 'problem':
-                                    icon = Icons.error_outline;
-                                    color = Colors.redAccent;
-                                    break;
-                                  case 'pause':
-                                    icon = Icons.pause_circle_outline;
-                                    color = Colors.orange;
-                                    break;
-                                  case 'user_done':
-                                  case 'quantity_done':
-                                  case 'quantity_team_total':
-                                    icon = Icons.check_circle_outline;
-                                    color = Colors.green;
-                                    break;
-                                  case 'setup_start':
-                                  case 'setup_done':
-                                    icon = Icons.build_outlined;
-                                    color = Colors.indigo;
-                                    break;
-                                  case 'joined':
-                                    icon = Icons.group_add_outlined;
-                                    color = Colors.teal;
-                                    break;
-                                  case 'exec_mode':
-                                  case 'exec_mode_stage':
-                                    icon =
-                                        Icons.settings_input_component_outlined;
-                                    color = Colors.purple;
-                                    break;
-                                  case 'shift_pause':
-                                    icon = Icons.pause_circle_outline;
-                                    color = Colors.deepPurple;
-                                    break;
-                                  case 'shift_resume':
-                                    icon = Icons.play_circle_outline;
-                                    color = Colors.deepPurple;
-                                    break;
-                                  default:
-                                    icon = Icons.info_outline;
-                                    color = Colors.blueGrey;
-                                }
-                                return Icon(icon, size: 18, color: color);
-                              }),
-                              SizedBox(width: scaled(4)),
-                              Expanded(
-                                child: Builder(
-                                  builder: (_) {
-                                    final headerParts = <String>[];
-                                    final c = entry.comment;
-                                    final ts = _formatTimestamp(c.timestamp);
-                                    if (ts.isNotEmpty) headerParts.add(ts);
-                                    final author = _employeeDisplayName(
-                                        personnel, c.userId);
-                                    if (author.isNotEmpty) {
-                                      headerParts.add(author);
-                                    }
-                                    final stageName = _workplaceName(
-                                        personnel, entry.stageId);
-                                    if (stageName.isNotEmpty) {
-                                      headerParts.add('Этап: $stageName');
-                                    }
-                                    final header = headerParts.join(' • ');
-                                    return Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        if (header.isNotEmpty)
-                                          Text(
-                                            header,
-                                            style: const TextStyle(
-                                                fontSize: 10,
-                                                color: Colors.grey),
-                                          ),
-                                        Text(
-                                          _describeComment(entry.comment),
-                                          style: const TextStyle(fontSize: 14),
-                                        ),
-                                      ],
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              SizedBox(height: scaled(8)),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _chatController,
-                      maxLines: 1,
-                      readOnly: !isAssignee,
-                      decoration: const InputDecoration(
-                        hintText: 'Написать комментарий…',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: spacing),
-                  ElevatedButton(
-                    onPressed: isAssignee
-                        ? () async {
-                            final txt = _chatController.text.trim();
-                            if (txt.isEmpty) return;
-                            await context
-                                .read<TaskProvider>()
-                                .addCommentAutoUser(
-                                    taskId: task.id,
-                                    type: 'msg',
-                                    text: txt,
-                                    userIdOverride: widget.employeeId);
-                            _chatController.clear();
-                          }
-                        : null,
-                    child: const Text('Отправить'),
-                  ),
-                ],
               ),
               if (takenByAnother)
                 Padding(
@@ -3003,17 +3429,19 @@ class _TasksScreenState extends State<TasksScreen>
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade600,
+              if (activeCount <= 1)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade600,
+                    ),
+                    onPressed:
+                        canFinalizeTask ? () => _finalizeTask(task) : null,
+                    icon: const Icon(Icons.check_circle_outline),
+                    label: const Text('Завершить задание'),
                   ),
-                  onPressed: canFinalizeTask ? () => _finalizeTask(task) : null,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Завершить'),
                 ),
-              ),
             ],
           ),
         ],
@@ -3052,6 +3480,11 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Duration _elapsed(TaskModel task) {
+    final timeEvents = _timeEventsForUser(task, widget.employeeId);
+    if (timeEvents.isNotEmpty) {
+      return _totalTimeForUser(task, widget.employeeId);
+    }
+
     var seconds = task.spentSeconds;
     if (task.status == TaskStatus.inProgress && task.startedAt != null) {
       seconds +=
@@ -3306,6 +3739,32 @@ class _TasksScreenState extends State<TasksScreen>
       text: 'Начал(а) настройку станка',
       userIdOverride: widget.employeeId,
     );
+    final participants = _participantsSnapshot(task, widget.employeeId);
+    final execMode = _stageExecutionMode(task);
+    await provider.recordTimeEvent(
+      task: task,
+      type: TaskTimeType.setup,
+      initiatedBy: widget.employeeId,
+      subjectUserId: widget.employeeId,
+      workplaceId: task.stageId,
+      participantsSnapshot: participants,
+      executionMode: execMode != null ? _executionModeCode(execMode) : null,
+    );
+    final helpers = _helperIds(task);
+    if (helpers.isNotEmpty && task.assignees.first == widget.employeeId) {
+      for (final helperId in helpers) {
+        await provider.recordTimeEvent(
+          task: task,
+          type: TaskTimeType.setup,
+          initiatedBy: widget.employeeId,
+          subjectUserId: helperId,
+          workplaceId: task.stageId,
+          participantsSnapshot: participants,
+          executionMode: execMode != null ? _executionModeCode(execMode) : null,
+          helperId: helperId,
+        );
+      }
+    }
     if (!task.assignees.contains(widget.employeeId)) {
       try {
         await (provider as dynamic).addAssignee(task.id, widget.employeeId);
@@ -3324,6 +3783,23 @@ class _TasksScreenState extends State<TasksScreen>
       text: 'Завершил(а) настройку станка',
       userIdOverride: widget.employeeId,
     );
+    await provider.closeOpenTimeEvent(
+      task: task,
+      initiatedBy: widget.employeeId,
+      subjectUserId: widget.employeeId,
+      note: 'setup_done',
+    );
+    final helpers = _helperIds(task);
+    if (helpers.isNotEmpty && task.assignees.first == widget.employeeId) {
+      for (final helperId in helpers) {
+        await provider.closeOpenTimeEvent(
+          task: task,
+          initiatedBy: widget.employeeId,
+          subjectUserId: helperId,
+          note: 'setup_done',
+        );
+      }
+    }
   }
 
   Future<String?> _askFinishNote() async {
@@ -3367,10 +3843,10 @@ class _TasksScreenState extends State<TasksScreen>
         actions: [
           TextButton(
               onPressed: () => Navigator.of(context).pop('joint'),
-              child: const Text('Совместное исполнение')),
+              child: const Text('С помощником')),
           ElevatedButton(
               onPressed: () => Navigator.of(context).pop('separate'),
-              child: const Text('Отдельный')),
+              child: const Text('Совместная работа')),
         ],
       ),
     );
@@ -3393,6 +3869,15 @@ class _TasksScreenState extends State<TasksScreen>
         type: 'pause',
         text: comment,
         userIdOverride: widget.employeeId);
+    await provider.recordTimeEvent(
+      task: task,
+      type: TaskTimeType.pause,
+      initiatedBy: widget.employeeId,
+      subjectUserId: widget.employeeId,
+      workplaceId: task.stageId,
+      participantsSnapshot: _participantsSnapshot(task, widget.employeeId),
+      note: comment,
+    );
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(
@@ -3422,6 +3907,15 @@ class _TasksScreenState extends State<TasksScreen>
         type: 'problem',
         text: comment,
         userIdOverride: widget.employeeId);
+    await provider.recordTimeEvent(
+      task: task,
+      type: TaskTimeType.problem,
+      initiatedBy: widget.employeeId,
+      subjectUserId: widget.employeeId,
+      workplaceId: task.stageId,
+      participantsSnapshot: _participantsSnapshot(task, widget.employeeId),
+      note: comment,
+    );
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(
@@ -3442,6 +3936,7 @@ class _TasksScreenState extends State<TasksScreen>
         provider.tasks.where((t) => t.orderId == pivot.orderId).toList();
     for (final task in related) {
       for (final comment in task.comments) {
+        if (comment.type == 'time_event') continue;
         final key =
             '${task.id}-${comment.id}-${comment.timestamp}-${comment.type}-${comment.userId}-${comment.text}';
         cache[key] =
@@ -3461,6 +3956,15 @@ class _TasksScreenState extends State<TasksScreen>
 
   bool _isShiftPausedForStage(TaskProvider provider, TaskModel pivot) {
     final related = _relatedTasks(provider, pivot);
+    final timeEvents = <TaskTimeEvent>[];
+    for (final t in related) {
+      timeEvents.addAll(_taskTimeEvents(t));
+    }
+    final openShift = timeEvents
+        .where((e) => e.type == TaskTimeType.shiftChange && e.endTime == null)
+        .toList();
+    if (openShift.isNotEmpty) return true;
+
     final events = <TaskComment>[];
     for (final t in related) {
       for (final c in t.comments) {
@@ -3707,7 +4211,7 @@ class _AssignedEmployeesRow extends StatelessWidget {
 
       if (stageMode != null && stageMode != ExecutionMode.joint) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Помощники доступны только в совместном режиме.')));
+            content: Text('Помощники доступны только в режиме "С помощником".')));
         return;
       }
 
