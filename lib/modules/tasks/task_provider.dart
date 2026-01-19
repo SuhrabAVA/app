@@ -691,6 +691,189 @@ class TaskProvider with ChangeNotifier {
     }
   }
 
+  List<Map<String, dynamic>> _normalizeComments(dynamic value) {
+    final comments = <Map<String, dynamic>>[];
+    if (value is List) {
+      for (final item in value) {
+        if (item is Map) {
+          comments.add(Map<String, dynamic>.from(item));
+        }
+      }
+    } else if (value is Map) {
+      value.forEach((_, v) {
+        if (v is Map) {
+          comments.add(Map<String, dynamic>.from(v));
+        }
+      });
+    }
+    return comments;
+  }
+
+  int _parseCommentTimestamp(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value.trim());
+      if (parsed != null) return parsed;
+    }
+    return 0;
+  }
+
+  List<TaskComment> _toTaskComments(List<Map<String, dynamic>> comments) {
+    final result = <TaskComment>[];
+    for (final raw in comments) {
+      final id = (raw['id'] ?? '').toString();
+      result.add(TaskComment.fromMap(raw, id));
+    }
+    result.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return result;
+  }
+
+  int? _findOpenTimeEventIndex(List<Map<String, dynamic>> comments,
+      String subjectUserId) {
+    int? openIndex;
+    int latestTs = -1;
+    for (var i = 0; i < comments.length; i++) {
+      final comment = comments[i];
+      if ((comment['type'] ?? '') != 'time_event') continue;
+      final text = comment['text']?.toString() ?? '';
+      final timestamp = _parseCommentTimestamp(comment['timestamp']);
+      final event =
+          TaskTimeEvent.fromPayload(text, comment['id']?.toString() ?? '', timestamp, comment['userId']?.toString() ?? '');
+      if (event == null) continue;
+      if (event.subjectUserId != subjectUserId) continue;
+      if (event.endTime != null) continue;
+      if (timestamp > latestTs) {
+        latestTs = timestamp;
+        openIndex = i;
+      }
+    }
+    return openIndex;
+  }
+
+  Future<void> recordTimeEvent({
+    required TaskModel task,
+    required TaskTimeType type,
+    required String initiatedBy,
+    required String subjectUserId,
+    required String workplaceId,
+    required List<String> participantsSnapshot,
+    String? executionMode,
+    String? helperId,
+    String? note,
+  }) async {
+    try {
+      final row = await _supabase
+          .from('tasks')
+          .select('comments')
+          .eq('id', task.id)
+          .single();
+      final comments = _normalizeComments(row['comments']);
+      final now = DateTime.now().toUtc();
+      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
+      if (openIndex != null) {
+        final open = comments[openIndex];
+        final rawText = open['text']?.toString() ?? '';
+        final openEvent = TaskTimeEvent.fromPayload(
+            rawText,
+            open['id']?.toString() ?? '',
+            _parseCommentTimestamp(open['timestamp']),
+            open['userId']?.toString() ?? '');
+        if (openEvent != null) {
+          if (openEvent.type == type && openEvent.endTime == null) {
+            return;
+          }
+          final closed = openEvent.copyWith(endTime: now, note: note);
+          open['text'] = TaskTimeEvent.encodePayload(closed);
+        }
+      }
+
+      final event = TaskTimeEvent(
+        id: '${now.millisecondsSinceEpoch}-${subjectUserId}',
+        type: type,
+        startTime: now,
+        endTime: null,
+        initiatedBy: initiatedBy,
+        subjectUserId: subjectUserId,
+        taskId: task.id,
+        workplaceId: workplaceId,
+        participantsSnapshot: participantsSnapshot,
+        executionMode: executionMode,
+        helperId: helperId,
+        note: note,
+      );
+
+      comments.add({
+        'id': event.id,
+        'type': 'time_event',
+        'text': TaskTimeEvent.encodePayload(event),
+        'userId': subjectUserId,
+        'timestamp': now.millisecondsSinceEpoch,
+      });
+
+      comments.sort((a, b) =>
+          _parseCommentTimestamp(a['timestamp'])
+              .compareTo(_parseCommentTimestamp(b['timestamp'])));
+      await _supabase
+          .from('tasks')
+          .update({'comments': comments}).eq('id', task.id);
+
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        final current = _tasks[idx];
+        _tasks[idx] = current.copyWith(comments: _toTaskComments(comments));
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint('❌ recordTimeEvent error: $e\n$st');
+    }
+  }
+
+  Future<void> closeOpenTimeEvent({
+    required TaskModel task,
+    required String initiatedBy,
+    required String subjectUserId,
+    String? note,
+  }) async {
+    try {
+      final row = await _supabase
+          .from('tasks')
+          .select('comments')
+          .eq('id', task.id)
+          .single();
+      final comments = _normalizeComments(row['comments']);
+      final now = DateTime.now().toUtc();
+      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
+      if (openIndex == null) return;
+      final open = comments[openIndex];
+      final rawText = open['text']?.toString() ?? '';
+      final openEvent = TaskTimeEvent.fromPayload(
+          rawText,
+          open['id']?.toString() ?? '',
+          _parseCommentTimestamp(open['timestamp']),
+          open['userId']?.toString() ?? '');
+      if (openEvent == null) return;
+      final closed = openEvent.copyWith(endTime: now, note: note);
+      open['text'] = TaskTimeEvent.encodePayload(closed);
+
+      comments.sort((a, b) =>
+          _parseCommentTimestamp(a['timestamp'])
+              .compareTo(_parseCommentTimestamp(b['timestamp'])));
+      await _supabase
+          .from('tasks')
+          .update({'comments': comments}).eq('id', task.id);
+
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        final current = _tasks[idx];
+        _tasks[idx] = current.copyWith(comments: _toTaskComments(comments));
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint('❌ closeOpenTimeEvent error: $e\n$st');
+    }
+  }
+
   Future<void> assignToUser(String taskId, String userId) async {
     try {
       final row = await _supabase

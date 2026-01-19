@@ -1,5 +1,174 @@
+import 'dart:convert';
+
 /// Возможные статусы задачи.
 enum TaskStatus { waiting, inProgress, paused, completed, problem }
+
+/// Типы интервалов времени по задаче.
+enum TaskTimeType { production, pause, problem, shiftChange, setup }
+
+TaskTimeType? _parseTaskTimeType(String raw) {
+  final value = raw.trim().toLowerCase();
+  switch (value) {
+    case 'production':
+    case 'work':
+    case 'produce':
+      return TaskTimeType.production;
+    case 'pause':
+    case 'break':
+      return TaskTimeType.pause;
+    case 'problem':
+    case 'issue':
+      return TaskTimeType.problem;
+    case 'shift_change':
+    case 'shiftchange':
+    case 'shift':
+      return TaskTimeType.shiftChange;
+    case 'setup':
+    case 'naladka':
+      return TaskTimeType.setup;
+  }
+  return null;
+}
+
+String taskTimeTypeToString(TaskTimeType type) {
+  switch (type) {
+    case TaskTimeType.production:
+      return 'production';
+    case TaskTimeType.pause:
+      return 'pause';
+    case TaskTimeType.problem:
+      return 'problem';
+    case TaskTimeType.shiftChange:
+      return 'shift_change';
+    case TaskTimeType.setup:
+      return 'setup';
+  }
+}
+
+/// Событие учёта времени по задаче.
+class TaskTimeEvent {
+  final String id;
+  final TaskTimeType type;
+  final DateTime startTime;
+  final DateTime? endTime;
+  final String initiatedBy;
+  final String subjectUserId;
+  final String taskId;
+  final String workplaceId;
+  final List<String> participantsSnapshot;
+  final String? executionMode;
+  final String? helperId;
+  final String? note;
+
+  const TaskTimeEvent({
+    required this.id,
+    required this.type,
+    required this.startTime,
+    required this.endTime,
+    required this.initiatedBy,
+    required this.subjectUserId,
+    required this.taskId,
+    required this.workplaceId,
+    required this.participantsSnapshot,
+    this.executionMode,
+    this.helperId,
+    this.note,
+  });
+
+  TaskTimeEvent copyWith({
+    TaskTimeType? type,
+    DateTime? startTime,
+    DateTime? endTime,
+    String? initiatedBy,
+    String? subjectUserId,
+    String? taskId,
+    String? workplaceId,
+    List<String>? participantsSnapshot,
+    String? executionMode,
+    String? helperId,
+    String? note,
+  }) {
+    return TaskTimeEvent(
+      id: id,
+      type: type ?? this.type,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      initiatedBy: initiatedBy ?? this.initiatedBy,
+      subjectUserId: subjectUserId ?? this.subjectUserId,
+      taskId: taskId ?? this.taskId,
+      workplaceId: workplaceId ?? this.workplaceId,
+      participantsSnapshot: participantsSnapshot ?? this.participantsSnapshot,
+      executionMode: executionMode ?? this.executionMode,
+      helperId: helperId ?? this.helperId,
+      note: note ?? this.note,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'type': taskTimeTypeToString(type),
+        'startTime': startTime.toUtc().toIso8601String(),
+        if (endTime != null) 'endTime': endTime!.toUtc().toIso8601String(),
+        'initiatedBy': initiatedBy,
+        'subjectUserId': subjectUserId,
+        'taskId': taskId,
+        'workplaceId': workplaceId,
+        'participantsSnapshot': participantsSnapshot,
+        if (executionMode != null) 'executionMode': executionMode,
+        if (helperId != null) 'helperId': helperId,
+        if (note != null) 'note': note,
+      };
+
+  static TaskTimeEvent? fromPayload(
+      String payload, String id, int timestamp, String userId) {
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      final rawType = (map['type'] ?? '').toString();
+      final type = _parseTaskTimeType(rawType);
+      if (type == null) return null;
+      DateTime? parseTime(dynamic value) {
+        if (value == null) return null;
+        if (value is DateTime) return value.toUtc();
+        if (value is String && value.trim().isNotEmpty) {
+          try {
+            return DateTime.parse(value).toUtc();
+          } catch (_) {}
+        }
+        return null;
+      }
+
+      final start = parseTime(map['startTime']) ??
+          DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true);
+      final end = parseTime(map['endTime']);
+      final participants = <String>[];
+      final rawParticipants = map['participantsSnapshot'];
+      if (rawParticipants is List) {
+        participants.addAll(rawParticipants.map((e) => e.toString()));
+      }
+      return TaskTimeEvent(
+        id: id,
+        type: type,
+        startTime: start,
+        endTime: end,
+        initiatedBy: map['initiatedBy']?.toString() ?? userId,
+        subjectUserId: map['subjectUserId']?.toString() ?? userId,
+        taskId: map['taskId']?.toString() ?? '',
+        workplaceId: map['workplaceId']?.toString() ?? '',
+        participantsSnapshot: participants,
+        executionMode: map['executionMode']?.toString(),
+        helperId: map['helperId']?.toString(),
+        note: map['note']?.toString(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String encodePayload(TaskTimeEvent event) {
+    return jsonEncode(event.toMap());
+  }
+}
 
 /// Модель комментария к задаче. Каждый комментарий хранит тип (pause/problem),
 /// текст, идентификатор автора и временную метку. Используется для
