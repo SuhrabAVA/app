@@ -1081,10 +1081,6 @@ class _TasksScreenState extends State<TasksScreen>
     final queue = context.watch<ProductionQueueProvider>();
 
     final orderIds = ordersProvider.orders.map((o) => o.id).toList(growable: false);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      queue.syncOrders(orderIds);
-    });
 
     final media = MediaQuery.of(context);
     final bool isTablet =
@@ -1226,11 +1222,30 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
 
+    final queueGroupId = _selectedWorkplaceId?.trim().isNotEmpty == true
+        ? _selectedWorkplaceId!
+        : '';
+    final stageTasksAll = _selectedWorkplaceId == null
+        ? const <TaskModel>[]
+        : taskProvider.tasks.where((t) => t.stageId == _selectedWorkplaceId).toList();
+    final stageOrderIds =
+        stageTasksAll.map((task) => task.orderId).toSet().toList();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      queue.syncOrders(
+        _selectedWorkplaceId == null ? orderIds : stageOrderIds,
+        groupId: queueGroupId,
+      );
+    });
+
     final sectionedTasks = tasksForWorkplace
         .where((t) => _sectionForTask(t) == _selectedStatus)
         .toList();
     sectionedTasks.sort((a, b) =>
-        queue.priorityOf(a.orderId).compareTo(queue.priorityOf(b.orderId)));
+        queue
+            .priorityOf(a.orderId, groupId: queueGroupId)
+            .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
             (t) => t.id == _selectedTask!.id,
@@ -1402,9 +1417,17 @@ class _TasksScreenState extends State<TasksScreen>
                   _TaskCard(
                     task: task,
                     order: findOrder(task.orderId),
+                    readyForStage: task.status == TaskStatus.waiting &&
+                        _isFirstPendingStage(
+                          taskProvider,
+                          personnel,
+                          task,
+                          groupResolver: _stageGroupKey,
+                        ),
                     selected: _selectedTask?.id == task.id,
                     scale: scale,
                     compact: isCompactTablet || widget.compactList,
+                    showStageHint: task.status == TaskStatus.waiting,
                     onTap: () {
                       _persistTask(task.id);
                       setState(() {
@@ -4065,6 +4088,8 @@ class _TaskCard extends StatelessWidget {
   final TaskModel task;
   final OrderModel? order;
   final bool selected;
+  final bool readyForStage;
+  final bool showStageHint;
   final VoidCallback onTap;
   final bool compact;
   final double scale;
@@ -4074,6 +4099,8 @@ class _TaskCard extends StatelessWidget {
     required this.order,
     required this.onTap,
     this.selected = false,
+    this.readyForStage = false,
+    this.showStageHint = false,
     this.compact = false,
     this.scale = 1.0,
   });
@@ -4099,14 +4126,26 @@ class _TaskCard extends StatelessWidget {
     final double titleSize = scaled(compact ? 13 : 15);
     final double subtitleSize = scaled(compact ? 11.5 : 13);
     final double statusSize = scaled(12);
+    final String? stageHint = showStageHint
+        ? (readyForStage
+            ? 'Можно начинать: предыдущий этап завершён'
+            : 'Ожидает завершения предыдущего этапа')
+        : null;
+    final Color readyColor = Colors.green.shade600;
+    final Color stageHintColor =
+        readyForStage ? readyColor : Colors.grey.shade600;
 
     return Card(
       margin: EdgeInsets.symmetric(vertical: scaled(compact ? 4 : 6)),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(scaled(10)),
-        side:
-            BorderSide(color: selected ? Colors.blue : color.withOpacity(0.5)),
+        side: BorderSide(
+          color: selected
+              ? Colors.blue
+              : (readyForStage ? readyColor : color.withOpacity(0.5)),
+        ),
       ),
+      color: readyForStage ? readyColor.withOpacity(0.06) : null,
       child: ListTile(
         onTap: onTap,
         dense: compact,
@@ -4115,6 +4154,7 @@ class _TaskCard extends StatelessWidget {
             : (scale < 1
                 ? const VisualDensity(horizontal: -1, vertical: -1)
                 : null),
+        isThreeLine: stageHint != null && name.isNotEmpty,
         contentPadding: contentPadding,
         title: Text(
           displayTitle,
@@ -4126,15 +4166,37 @@ class _TaskCard extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: name.isNotEmpty
-            ? Text(
-                name,
-                style: TextStyle(
-                  fontSize: subtitleSize,
-                  color: Colors.grey[600],
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+        subtitle: (name.isNotEmpty || stageHint != null)
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (name.isNotEmpty)
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: subtitleSize,
+                        color: Colors.grey[600],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  if (stageHint != null)
+                    Padding(
+                      padding: EdgeInsets.only(top: name.isNotEmpty ? 2 : 0),
+                      child: Text(
+                        stageHint,
+                        style: TextStyle(
+                          fontSize: subtitleSize - 0.5,
+                          color: stageHintColor,
+                          fontWeight:
+                              readyForStage ? FontWeight.w600 : FontWeight.w500,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               )
             : null,
         trailing: Container(
