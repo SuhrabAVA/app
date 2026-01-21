@@ -2,6 +2,8 @@
 // ASCII-only file to avoid any encoding issues on Windows builds.
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../modules/personnel/workplace_model.dart';
+
 class PersonnelDB {
   final SupabaseClient s;
   PersonnelDB({SupabaseClient? client})
@@ -134,6 +136,7 @@ class PersonnelDB {
     int maxConcurrentWorkers = 1,
     List<String> positionIds = const [],
     String? unit,
+    WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
   }) async {
     await s.from('workplaces').insert({
       'id': id,
@@ -144,6 +147,7 @@ class PersonnelDB {
       'has_machine': hasMachine,
       'max_concurrent_workers': maxConcurrentWorkers,
       'unit': unit?.trim().isEmpty == true ? null : unit?.trim(),
+      'execution_mode': executionMode.name,
     });
     if (positionIds.isNotEmpty) {
       final rows = positionIds
@@ -163,6 +167,7 @@ class PersonnelDB {
     int? maxConcurrentWorkers,
     List<String>? positionIds,
     String? unit,
+    WorkplaceExecutionMode? executionMode,
   }) async {
     final patch = <String, dynamic>{};
     if (name != null) patch['name'] = name;
@@ -175,6 +180,9 @@ class PersonnelDB {
     if (unit != null) {
       final trimmed = unit.trim();
       patch['unit'] = trimmed.isEmpty ? null : trimmed;
+    }
+    if (executionMode != null) {
+      patch['execution_mode'] = executionMode.name;
     }
     if (patch.isNotEmpty) {
       await s.from('workplaces').update(patch).eq('id', id);

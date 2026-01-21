@@ -15,6 +15,14 @@ class WorkplacesScreen extends StatelessWidget {
     return Consumer<PersonnelProvider>(
       builder: (context, pr, _) {
         final items = pr.workplaces;
+        String modeLabel(WorkplaceExecutionMode mode) {
+          switch (mode) {
+            case WorkplaceExecutionMode.separate:
+              return 'Отдельный исполнитель';
+            case WorkplaceExecutionMode.joint:
+              return 'Одиночная или совместная работа';
+          }
+        }
         return Scaffold(
           appBar: AppBar(
             title: const Text('Рабочие места'),
@@ -45,7 +53,7 @@ class WorkplacesScreen extends StatelessWidget {
                     final roles =
                         names.isEmpty ? w.positionIds.join(', ') : names;
                     final unit = (w.unit ?? '').isNotEmpty ? w.unit : '—';
-                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}, макс.: ${w.maxConcurrentWorkers}";
+                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}, макс.: ${w.maxConcurrentWorkers}\nРежим: ${modeLabel(w.executionMode)}";
                   }(),
                 ),
                 trailing: Row(
@@ -79,6 +87,7 @@ class WorkplacesScreen extends StatelessWidget {
     final maxWorkersC = TextEditingController(text: '1');
     final unitC = TextEditingController();
     bool hasMachine = false;
+    WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint;
 
     // Локально храним выбранные id должностей
     final Set<String> selectedPositions = <String>{};
@@ -125,6 +134,34 @@ class WorkplacesScreen extends StatelessWidget {
                       value: hasMachine,
                       onChanged: (val) =>
                           setState(() => hasMachine = val ?? false),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Режим исполнения',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    RadioListTile<WorkplaceExecutionMode>(
+                      title: const Text('Одиночная или совместная работа'),
+                      value: WorkplaceExecutionMode.joint,
+                      groupValue: executionMode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => executionMode = value);
+                      },
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    RadioListTile<WorkplaceExecutionMode>(
+                      title: const Text('Отдельный исполнитель'),
+                      value: WorkplaceExecutionMode.separate,
+                      groupValue: executionMode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => executionMode = value);
+                      },
                       contentPadding: EdgeInsets.zero,
                     ),
                     const SizedBox(height: 8),
@@ -204,6 +241,7 @@ class WorkplacesScreen extends StatelessWidget {
                   hasMachine: hasMachine,
                   maxConcurrentWorkers: maxWorkers ?? 1,
                   unit: unitC.text.trim(),
+                  executionMode: executionMode,
                 );
               } catch (e) {
         if (context.mounted) {
@@ -272,12 +310,14 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
       TextEditingController(text: widget.workplace.unit ?? '');
   bool _hasMachine = false;
   late Set<String> _selectedPositions;
+  late WorkplaceExecutionMode _executionMode;
 
   @override
   void initState() {
     super.initState();
     _hasMachine = widget.workplace.hasMachine;
     _selectedPositions = {...widget.workplace.positionIds};
+    _executionMode = widget.workplace.executionMode;
     // Если есть описание в модели — можно раскомментировать:
     // _desc.text = widget.workplace.description;
   }
@@ -292,6 +332,7 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
           maxConcurrentWorkers: mw,
           positionIds: _selectedPositions.toList(),
           unit: _unit.text.trim(),
+          executionMode: _executionMode,
         );
     if (mounted) Navigator.pop(context);
   }
@@ -337,6 +378,34 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
               title: const Text('Настройка станка есть'),
               value: _hasMachine,
               onChanged: (val) => setState(() => _hasMachine = val ?? false),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Режим исполнения',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            RadioListTile<WorkplaceExecutionMode>(
+              title: const Text('Одиночная или совместная работа'),
+              value: WorkplaceExecutionMode.joint,
+              groupValue: _executionMode,
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _executionMode = value);
+              },
+              contentPadding: EdgeInsets.zero,
+            ),
+            RadioListTile<WorkplaceExecutionMode>(
+              title: const Text('Отдельный исполнитель'),
+              value: WorkplaceExecutionMode.separate,
+              groupValue: _executionMode,
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _executionMode = value);
+              },
+              contentPadding: EdgeInsets.zero,
             ),
             const SizedBox(height: 8),
             Align(
