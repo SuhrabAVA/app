@@ -6,6 +6,7 @@ class WorkplaceModel {
   final bool hasMachine;
   final int maxConcurrentWorkers;
   final String? unit;
+  final WorkplaceExecutionMode executionMode;
 
   WorkplaceModel({
     required this.id,
@@ -15,6 +16,7 @@ class WorkplaceModel {
     this.hasMachine = false,
     this.maxConcurrentWorkers = 1,
     this.unit,
+    this.executionMode = WorkplaceExecutionMode.joint,
   });
 
   /// Преобразование модели рабочего места в [Map] для сохранения в базе данных.
@@ -28,6 +30,7 @@ class WorkplaceModel {
         'has_machine': hasMachine,
         'max_concurrent_workers': maxConcurrentWorkers,
         'unit': unit,
+        'execution_mode': executionMode.name,
       };
 
   /// Создание модели из [Map], полученного из базы данных. Использует snake_case
@@ -59,5 +62,24 @@ class WorkplaceModel {
             (map['maxConcurrentWorkers'] as int?) ??
             1,
         unit: map['unit'] as String?,
+        executionMode:
+            parseWorkplaceExecutionMode(map['execution_mode'] ?? map['executionMode']),
       );
+}
+
+enum WorkplaceExecutionMode { separate, joint }
+
+WorkplaceExecutionMode parseWorkplaceExecutionMode(dynamic raw) {
+  final value = raw?.toString().trim().toLowerCase() ?? '';
+  if (value.contains('separate') || value.contains('отдель')) {
+    return WorkplaceExecutionMode.separate;
+  }
+  if (value.contains('joint') ||
+      value.contains('совмест') ||
+      value.contains('одиноч') ||
+      value.contains('solo') ||
+      value.contains('один')) {
+    return WorkplaceExecutionMode.joint;
+  }
+  return WorkplaceExecutionMode.joint;
 }

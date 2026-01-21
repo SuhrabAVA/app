@@ -134,6 +134,7 @@ class PersonnelProvider extends ChangeNotifier {
             'has_machine': r['has_machine'],
             'max_concurrent_workers': r['max_concurrent_workers'],
             'unit': r['unit'],
+            'execution_mode': r['execution_mode'],
           }, r['id'])));
     _safeNotify();
   }
@@ -237,6 +238,7 @@ class PersonnelProvider extends ChangeNotifier {
     int maxConcurrentWorkers = 1,
     List<String> positionIds = const [],
     String? unit,
+    WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
   }) async {
     final id = _genId();
     // В тестах можем использовать DocDB как заглушку, чтобы не дергать Supabase.
@@ -249,6 +251,7 @@ class PersonnelProvider extends ChangeNotifier {
         maxConcurrentWorkers: maxConcurrentWorkers,
         positionIds: positionIds,
         unit: unit,
+        executionMode: executionMode,
       );
 
       await _docDb!.insert('workplaces', workplace.toMap(), explicitId: id);
@@ -263,6 +266,7 @@ class PersonnelProvider extends ChangeNotifier {
         maxConcurrentWorkers: maxConcurrentWorkers,
         positionIds: positionIds,
         unit: unit,
+        executionMode: executionMode,
       );
       await _loadWorkplacesFromSql();
     }
@@ -276,6 +280,7 @@ class PersonnelProvider extends ChangeNotifier {
     int? maxConcurrentWorkers,
     List<String>? positionIds,
     String? unit,
+    WorkplaceExecutionMode? executionMode,
   }) async {
     await _db.updateWorkplace(
       id: id,
@@ -285,6 +290,7 @@ class PersonnelProvider extends ChangeNotifier {
       maxConcurrentWorkers: maxConcurrentWorkers,
       positionIds: positionIds,
       unit: unit,
+      executionMode: executionMode,
     );
     await _loadWorkplacesFromSql();
   }

@@ -94,10 +94,10 @@ class OrderTimelineDialog extends StatelessWidget {
         return 'Присоединился(лась) к этапу';
       case 'exec_mode':
         final normalised = text.toLowerCase();
-        if (normalised.contains('joint') || normalised.contains('совмест')) {
-          return 'Режим: совместное исполнение';
+        if (normalised.contains('separ') || normalised.contains('отдель')) {
+          return 'Режим: отдельный исполнитель';
         }
-        return 'Режим: отдельный исполнитель';
+        return 'Режим: одиночная или совместная работа';
       case 'msg':
         return text.isEmpty ? 'Комментарий' : text;
       default:

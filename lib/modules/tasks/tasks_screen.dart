@@ -45,17 +45,17 @@ enum ExecutionMode { solo, separate, joint }
 
 ExecutionMode? _parseExecutionModeLabel(String raw) {
   final t = raw.toLowerCase();
-  if (t.contains('solo') || t.contains('один') || t.contains('одиноч')) {
-    return ExecutionMode.solo;
-  }
-  if (t.contains('совмест') && t.contains('работ')) {
-    return ExecutionMode.separate;
-  }
   if (t.contains('joint') || t.contains('помощ')) {
     return ExecutionMode.joint;
   }
   if (t.contains('separ') || t.contains('отдель')) {
     return ExecutionMode.separate;
+  }
+  if (t.contains('solo') ||
+      t.contains('один') ||
+      t.contains('одиноч') ||
+      t.contains('совмест')) {
+    return ExecutionMode.joint;
   }
   return null;
 }
@@ -96,7 +96,7 @@ ExecutionMode _execModeForUser(TaskModel task, String userId) {
       return ExecutionMode.joint;
     }
     if (stageMode == ExecutionMode.solo) {
-      return ExecutionMode.solo;
+      return ExecutionMode.joint;
     }
     // separate stage
     return ExecutionMode.separate;
@@ -106,9 +106,6 @@ ExecutionMode _execModeForUser(TaskModel task, String userId) {
       task.comments.where((c) => c.type == 'exec_mode' && c.userId == userId);
   if (cm.isNotEmpty) {
     final t = cm.last.text.toLowerCase();
-    if (t.contains('solo') || t.contains('один') || t.contains('одиноч')) {
-      return ExecutionMode.solo;
-    }
     if (t.contains('separ') || t.contains('отдель')) {
       return ExecutionMode.separate;
     }
@@ -121,12 +118,18 @@ ExecutionMode _execModeForUser(TaskModel task, String userId) {
 String _executionModeCode(ExecutionMode mode) {
   switch (mode) {
     case ExecutionMode.solo:
-      return 'solo';
+      return 'joint';
     case ExecutionMode.separate:
       return 'separate';
     case ExecutionMode.joint:
       return 'joint';
   }
+}
+
+ExecutionMode _workplaceDefaultMode(WorkplaceModel stage) {
+  return stage.executionMode == WorkplaceExecutionMode.separate
+      ? ExecutionMode.separate
+      : ExecutionMode.joint;
 }
 
 bool _needsExecModeRecord(
@@ -582,57 +585,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   return _groupKey(task.stageId) == firstPendingStageId;
 }
 
-Future<ExecutionMode?> _askExecMode(BuildContext context,
-    {ExecutionMode initial = ExecutionMode.separate,
-    bool allowSolo = false,
-    bool allowJoint = true,
-    bool allowSeparate = true}) async {
-  ExecutionMode? mode = initial;
-  final res = await showDialog<ExecutionMode?>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Режим исполнения'),
-      content: StatefulBuilder(
-        builder: (ctx, setState) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (allowSolo)
-              RadioListTile<ExecutionMode>(
-                title: const Text('Одиночное выполнение'),
-                value: ExecutionMode.solo,
-                groupValue: mode,
-                onChanged: (v) => setState(() => mode = v),
-              ),
-            if (allowJoint)
-              RadioListTile<ExecutionMode>(
-                title: const Text('С помощником'),
-                value: ExecutionMode.joint,
-                groupValue: mode,
-                onChanged: (v) => setState(() => mode = v),
-              ),
-            if (allowSeparate)
-              RadioListTile<ExecutionMode>(
-                title: const Text('Совместная работа'),
-                value: ExecutionMode.separate,
-                groupValue: mode,
-                onChanged: (v) => setState(() => mode = v),
-              ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(ctx, null),
-            child: const Text('Отмена')),
-        FilledButton(
-            onPressed: () => Navigator.pop(ctx, mode),
-            child: const Text('Выбрать')),
-      ],
-    ),
-  );
-  return res;
-}
-
 class _StageComment {
   final TaskComment comment;
   final String stageId;
@@ -923,16 +875,11 @@ class _TasksScreenState extends State<TasksScreen>
         return 'Присоединился(лась) к этапу';
       case 'exec_mode':
       case 'exec_mode_stage':
-        final normalized = comment.text.toLowerCase();
-        if (normalized.contains('solo') ||
-            normalized.contains('один') ||
-            normalized.contains('одиноч')) {
-          return 'Режим: одиночное выполнение';
+        final parsed = _parseExecutionModeLabel(comment.text);
+        if (parsed == ExecutionMode.separate) {
+          return 'Режим: отдельный исполнитель';
         }
-        if (normalized.contains('joint') || normalized.contains('совмест')) {
-          return 'Режим: с помощником';
-        }
-        return 'Режим: совместная работа';
+        return 'Режим: одиночная или совместная работа';
       case 'shift_pause':
         return comment.text.isNotEmpty
             ? comment.text
@@ -954,19 +901,20 @@ class _TasksScreenState extends State<TasksScreen>
       TaskModel task, TaskProvider provider, String userId) async {
     final alreadyAssigned = task.assignees.contains(userId);
     ExecutionMode? stageMode = _stageExecutionMode(task);
+    final personnel = context.read<PersonnelProvider>();
+    final stage = personnel.workplaces.firstWhere(
+      (w) => w.id == task.stageId,
+      orElse: () =>
+          WorkplaceModel(id: task.stageId, name: task.stageId, positionIds: const []),
+    );
+    final defaultMode = _workplaceDefaultMode(stage);
     final bool isOwner = task.assignees.isNotEmpty && task.assignees.first == userId;
 
-    if (stageMode == ExecutionMode.solo &&
-        !alreadyAssigned &&
-        task.assignees.isNotEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Этап выполняется одним сотрудником. Присоединиться нельзя.')));
-      }
-      return;
-    }
+    final resolvedStageMode = stageMode ?? defaultMode;
 
-    if (stageMode == ExecutionMode.joint && task.assignees.isNotEmpty && !isOwner) {
+    if (resolvedStageMode == ExecutionMode.joint &&
+        task.assignees.isNotEmpty &&
+        !isOwner) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Добавлять помощников может только основной исполнитель.')));
@@ -975,17 +923,11 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     if (stageMode == null) {
-      final mode = await _askExecMode(context,
-          initial: ExecutionMode.separate,
-          allowSolo: task.assignees.isEmpty,
-          allowJoint: isOwner,
-          allowSeparate: true);
-      if (mode == null) return;
-      stageMode = mode;
+      stageMode = defaultMode;
       await provider.addComment(
         taskId: task.id,
         type: 'exec_mode_stage',
-        text: _executionModeCode(mode),
+        text: _executionModeCode(stageMode),
         userId: userId,
       );
     }
@@ -1015,7 +957,7 @@ class _TasksScreenState extends State<TasksScreen>
         userIdOverride: userId,
       );
     } else {
-      // solo or separate performer immediately starts; write a 'start' comment
+      // separate performer immediately starts; write a 'start' comment
       await provider.addCommentAutoUser(
         taskId: task.id,
         type: 'start',
@@ -2743,14 +2685,14 @@ class _TasksScreenState extends State<TasksScreen>
   bool _allPerformersFinished(TaskModel task) {
     if (task.assignees.isEmpty) return false;
     final mode = _stageExecutionMode(task);
-    if (mode == ExecutionMode.joint) {
+    if (mode == ExecutionMode.joint || mode == ExecutionMode.solo) {
       final ownerId = task.assignees.first;
       return _userRunState(task, ownerId) == UserRunState.finished;
     }
 
     final performers = task.assignees.where((id) {
       final execMode = _execModeForUser(task, id);
-      return execMode == ExecutionMode.separate || execMode == ExecutionMode.solo;
+      return execMode == ExecutionMode.separate;
     }).toList();
     if (performers.isEmpty) return false;
 
@@ -2794,7 +2736,9 @@ class _TasksScreenState extends State<TasksScreen>
     final dynamic _rawCap = (stage as dynamic).maxConcurrentWorkers;
     final int capacity = (_rawCap is num ? _rawCap.toInt() : 1);
     final int effCap = capacity <= 0 ? 1 : capacity;
-    final ExecutionMode? stageMode = _stageExecutionMode(task);
+    final ExecutionMode? explicitStageMode = _stageExecutionMode(task);
+    final ExecutionMode stageMode =
+        explicitStageMode ?? _workplaceDefaultMode(stage);
     final ExecutionMode myExecMode = _execModeForUser(task, widget.employeeId);
     final bool groupLocked = _isStageGroupLocked(provider, task);
     // Consider a user an assignee only if they are explicitly assigned AND executing in
@@ -2802,7 +2746,9 @@ class _TasksScreenState extends State<TasksScreen>
     final bool isAssignee = task.assignees.isEmpty ||
         (task.assignees.contains(widget.employeeId) &&
             (myExecMode == ExecutionMode.separate ||
-                myExecMode == ExecutionMode.solo));
+                (stageMode == ExecutionMode.joint &&
+                    task.assignees.isNotEmpty &&
+                    task.assignees.first == widget.employeeId)));
 
     // Старт возможен, если задача ждёт/на паузе/с проблемой
     double scaled(double value) => value * scale;
@@ -2830,9 +2776,9 @@ class _TasksScreenState extends State<TasksScreen>
     final bool canAutoAssign = !alreadyAssigned &&
         !isFirstAssignee &&
         _slotAvailable() &&
-        stageMode != ExecutionMode.solo;
+        stageMode == ExecutionMode.separate;
     final bool stageModeAllowsJoin =
-        stageMode != ExecutionMode.solo || alreadyAssigned || isFirstAssignee;
+        stageMode != ExecutionMode.joint || alreadyAssigned || isFirstAssignee;
     final bool canStart = (((isFirstAssignee ||
                 alreadyAssigned ||
                 canAutoAssign)) &&
@@ -2946,17 +2892,16 @@ class _TasksScreenState extends State<TasksScreen>
               // ==== Управление исполнением ===
               Builder(
                 builder: (context) {
-                  final ExecutionMode? stageExecMode = stageMode;
+                  final ExecutionMode stageExecMode = stageMode;
                   final separateUsers = task.assignees
                       .where((id) {
                         final mode = _execModeForUser(task, id);
-                        return mode == ExecutionMode.separate ||
-                            mode == ExecutionMode.solo;
+                        return mode == ExecutionMode.separate;
                       })
                       .toList();
                   final jointUsers = task.assignees
                       .where((id) =>
-                          _execModeForUser(task, id) == ExecutionMode.joint)
+                          _execModeForUser(task, id) != ExecutionMode.separate)
                       .toList();
 
                   Widget buildControlsFor(String? label,
@@ -3124,43 +3069,11 @@ class _TasksScreenState extends State<TasksScreen>
                       ExecutionMode? selectedMode = stageExecMode;
                       final alreadyAssigned =
                           task.assignees.contains(widget.employeeId);
-                      if (selectedMode == ExecutionMode.solo &&
-                          !alreadyAssigned &&
-                          task.assignees.isNotEmpty) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text(
-                                  'Этап выполняется одним сотрудником. Присоединиться нельзя.')));
-                        }
-                        return;
-                      }
-
-                      if (task.assignees.isEmpty) {
-                        final mode = await _askExecMode(context,
-                            initial: ExecutionMode.solo,
-                            allowSolo: true,
-                            allowJoint: true,
-                            allowSeparate: true);
-                        if (mode == null) return;
-                        selectedMode = mode;
+                      if (explicitStageMode == null) {
                         await context.read<TaskProvider>().addComment(
                               taskId: task.id,
                               type: 'exec_mode_stage',
-                              text: _executionModeCode(mode),
-                              userId: widget.employeeId,
-                            );
-                      } else if (selectedMode == null) {
-                        final mode = await _askExecMode(context,
-                            initial: ExecutionMode.separate,
-                            allowSolo: false,
-                            allowJoint: true,
-                            allowSeparate: true);
-                        if (mode == null) return;
-                        selectedMode = mode;
-                        await context.read<TaskProvider>().addComment(
-                              taskId: task.id,
-                              type: 'exec_mode_stage',
-                              text: _executionModeCode(mode),
+                              text: _executionModeCode(stageExecMode),
                               userId: widget.employeeId,
                             );
                       }
@@ -3278,8 +3191,7 @@ class _TasksScreenState extends State<TasksScreen>
                         final separateIds = latestTask.assignees
                             .where((id) {
                               final mode = _execModeForUser(latestTask, id);
-                              return mode == ExecutionMode.separate ||
-                                  mode == ExecutionMode.solo;
+                              return mode == ExecutionMode.separate;
                             })
                             .toList();
                         // Ensure current user is included (in case he wasn't listed yet)
@@ -3515,7 +3427,7 @@ class _TasksScreenState extends State<TasksScreen>
                   if (jointUsers.isNotEmpty) {
                     final labels = jointUsers.map(nameFor).toList();
                     final label = labels.isEmpty
-                        ? 'С помощником'
+                        ? 'Одиночная или совместная работа'
                         : 'Помощники: ' + labels.join(', ');
                     if (separateUsers.isEmpty) {
                       rows.add(buildControlsFor(label, jointGroup: jointUsers));
@@ -3530,7 +3442,7 @@ class _TasksScreenState extends State<TasksScreen>
                       ));
                     }
                   } else if (task.assignees.isEmpty) {
-                    rows.add(buildControlsFor('С помощником',
+                    rows.add(buildControlsFor('Одиночная или совместная работа',
                         jointGroup: jointUsers));
                   }
                   if (!task.assignees.contains(widget.employeeId) && canStart) {
@@ -3549,7 +3461,7 @@ class _TasksScreenState extends State<TasksScreen>
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
-              if (activeCount <= 1)
+              if (task.assignees.isNotEmpty)
                 Align(
                   alignment: Alignment.centerRight,
                   child: ElevatedButton.icon(
@@ -3576,7 +3488,8 @@ class _TasksScreenState extends State<TasksScreen>
     // capacity (maxConcurrentWorkers) has been reached. Joining presents a choice
     // between separate execution (individual performer) and helper (joint).
     final bool _joinEligible = task.assignees.isNotEmpty &&
-        !task.assignees.contains(widget.employeeId);
+        !task.assignees.contains(widget.employeeId) &&
+        stageMode == ExecutionMode.separate;
     final bool _joinCapacityAvailable = activeCount < effCap;
     if (_joinEligible) {
       return Column(
@@ -3954,24 +3867,6 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Future<String?> _askJoinMode(BuildContext context) {
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Режим участия'),
-        content: const Text('Выберите режим участия в этапе:'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(context).pop('joint'),
-              child: const Text('С помощником')),
-          ElevatedButton(
-              onPressed: () => Navigator.of(context).pop('separate'),
-              child: const Text('Совместная работа')),
-        ],
-      ),
-    );
-  }
-
   Future<void> _handlePause(TaskModel task, TaskProvider provider) async {
     final comment = await _askComment('Причина паузы');
     if (comment == null) return;
@@ -4336,10 +4231,20 @@ class _AssignedEmployeesRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.read<TaskProvider>();
-    final stageMode = _stageExecutionMode(task);
+    final stage = personnel.workplaces.firstWhere(
+      (w) => w.id == task.stageId,
+      orElse: () =>
+          WorkplaceModel(id: task.stageId, name: task.stageId, positionIds: const []),
+    );
+    final ExecutionMode? explicitStageMode = _stageExecutionMode(task);
+    final stageMode = explicitStageMode ?? _workplaceDefaultMode(stage);
     final bool isOwner =
         task.assignees.isNotEmpty && task.assignees.first == currentUserId;
-    final bool canAddHelper = isOwner && stageMode != ExecutionMode.solo;
+    final dynamic rawCap = (stage as dynamic).maxConcurrentWorkers;
+    final int cap = (rawCap is num ? rawCap.toInt() : 1);
+    final int effCap = cap <= 0 ? 1 : cap;
+    final bool canAddHelper =
+        isOwner && stageMode == ExecutionMode.joint && effCap > 1;
 
     double scaled(double value) => value * scale;
     final double spacing = scaled(compact ? 6 : 8);
@@ -4364,15 +4269,10 @@ class _AssignedEmployeesRow extends StatelessWidget {
     Future<void> _addHelper() async {
       if (!isOwner) return;
 
-      if (stageMode == ExecutionMode.solo) {
+      if (stageMode != ExecutionMode.joint) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Нельзя добавить помощника в одиночном режиме.')));
-        return;
-      }
-
-      if (stageMode != null && stageMode != ExecutionMode.joint) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Помощники доступны только в режиме "С помощником".')));
+            content: Text(
+                'Помощники доступны только в режиме "Одиночная или совместная работа".')));
         return;
       }
 
@@ -4386,41 +4286,82 @@ class _AssignedEmployeesRow extends StatelessWidget {
       }
 
       String? selectedId;
+      String password = '';
+      bool wrongPass = false;
       await showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Добавить помощника'),
-          content: DropdownButtonFormField<String>(
-            items: [
-              for (final e in available)
-                DropdownMenuItem(
-                  value: e.id,
-                  child: Text('${e.lastName} ${e.firstName}'),
+        barrierDismissible: false,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setStateDialog) => AlertDialog(
+            title: const Text('Добавить помощника'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: available.any((e) => e.id == selectedId)
+                      ? selectedId
+                      : null,
+                  items: [
+                    for (final e in available)
+                      DropdownMenuItem(
+                        value: e.id,
+                        child: Text('${e.lastName} ${e.firstName}'),
+                      ),
+                  ],
+                  onChanged: (val) => setStateDialog(() {
+                    selectedId = val;
+                    wrongPass = false;
+                  }),
                 ),
+                const SizedBox(height: 8),
+                TextField(
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: 'Пароль',
+                    errorText: wrongPass ? 'Неверный пароль' : null,
+                  ),
+                  onChanged: (val) => password = val,
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Отмена'),
+              ),
+              TextButton(
+                onPressed: () {
+                  if (selectedId == null) return;
+                  final emp = personnel.employees.firstWhere(
+                    (e) => e.id == selectedId,
+                    orElse: () => EmployeeModel(
+                      id: '',
+                      lastName: '',
+                      firstName: '',
+                      patronymic: '',
+                      iin: '',
+                      photoUrl: null,
+                      positionIds: const [],
+                      isFired: false,
+                      comments: '',
+                      login: '',
+                      password: '',
+                    ),
+                  );
+                  if (emp.password == password) {
+                    Navigator.pop(ctx);
+                  } else {
+                    setStateDialog(() => wrongPass = true);
+                  }
+                },
+                child: const Text('Добавить'),
+              ),
             ],
-            onChanged: (val) => selectedId = val,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Отмена'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Добавить'),
-            ),
-          ],
         ),
       );
 
       if (selectedId != null) {
-        final stage = personnel.workplaces.firstWhere(
-          (w) => w.id == task.stageId,
-          orElse: () => WorkplaceModel(id: '', name: '', positionIds: const []),
-        );
-        final dynamic rawCap = (stage as dynamic).maxConcurrentWorkers;
-        final int cap = (rawCap is num ? rawCap.toInt() : 1);
-        final int effCap = cap <= 0 ? 1 : cap;
         final int active = _activeExecutorsCountForStage(taskProvider, task);
         if (active + 1 > effCap) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -4429,7 +4370,7 @@ class _AssignedEmployeesRow extends StatelessWidget {
           return;
         }
 
-        if (stageMode != ExecutionMode.joint) {
+        if (explicitStageMode == null) {
           await taskProvider.addComment(
             taskId: task.id,
             type: 'exec_mode_stage',
