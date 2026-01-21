@@ -1460,8 +1460,8 @@ class _TasksScreenState extends State<TasksScreen>
       );
     }
 
-    Widget buildRightPanel({required bool scrollable}) {
-      final Widget content = Column(
+    Widget buildSummaryPanel() {
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
@@ -1471,10 +1471,31 @@ class _TasksScreenState extends State<TasksScreen>
               currentTask,
               scale,
             ),
-          if (currentTask != null)
+          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) _buildTimerStatusPanel(currentTask, scale),
+          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) _buildHistoryPanel(currentTask, scale),
+          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) _buildPerformersPanel(currentTask, scale, isTablet),
+          if (currentTask != null && selectedOrder != null)
             SizedBox(height: scaled(12)),
-          if (currentTask != null)
-            _buildTimerStatusPanel(currentTask, scale),
+          if (currentTask != null && selectedOrder != null)
+            _buildResultPanel(selectedOrder, currentTask, scale),
+        ],
+      );
+    }
+
+    Widget buildDetailsPanel() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
+            _buildDetailsPanel(
+              selectedOrder,
+              selectedWorkplace,
+              templateProvider.templates,
+              scale,
+            ),
           if (currentTask != null && selectedWorkplace != null)
             SizedBox(height: scaled(12)),
           if (currentTask != null && selectedWorkplace != null)
@@ -1485,31 +1506,19 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
               isTablet,
             ),
-          if (currentTask != null)
-            SizedBox(height: scaled(12)),
-          if (currentTask != null)
-            _buildPerformersPanel(currentTask, scale, isTablet),
-          if (currentTask != null && selectedOrder != null)
-            SizedBox(height: scaled(12)),
-          if (currentTask != null && selectedOrder != null)
-            _buildResultPanel(selectedOrder, currentTask, scale),
-          if (currentTask != null)
-            SizedBox(height: scaled(12)),
-          if (currentTask != null)
-            _buildCommentsPanel(currentTask, scale),
-          if (currentTask != null)
-            SizedBox(height: scaled(12)),
-          if (currentTask != null)
-            _buildHistoryPanel(currentTask, scale),
-          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
-            SizedBox(height: scaled(12)),
-          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
-            _buildDetailsPanel(
-              selectedOrder,
-              selectedWorkplace,
-              templateProvider.templates,
-              scale,
-            ),
+          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) _buildCommentsPanel(currentTask, scale),
+        ],
+      );
+    }
+
+    Widget buildRightPanel({required bool scrollable}) {
+      final Widget content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          buildSummaryPanel(),
+          if (currentTask != null) SizedBox(height: scaled(12)),
+          buildDetailsPanel(),
         ],
       );
 
@@ -1610,9 +1619,39 @@ class _TasksScreenState extends State<TasksScreen>
               );
             }
 
+            final Widget summaryPanel = buildSummaryPanel();
+            final Widget detailsPanel = buildDetailsPanel();
+
+            if (!isNarrow) {
+              return SingleChildScrollView(
+                padding: EdgeInsets.all(outerPadding),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: summaryPanel,
+                    ),
+                    SizedBox(width: columnGap),
+                    Expanded(
+                      flex: 3,
+                      child: detailsPanel,
+                    ),
+                  ],
+                ),
+              );
+            }
+
             return SingleChildScrollView(
               padding: EdgeInsets.all(outerPadding),
-              child: rightPanel,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  summaryPanel,
+                  SizedBox(height: scaled(16)),
+                  detailsPanel,
+                ],
+              ),
             );
           },
         ),
@@ -2389,6 +2428,13 @@ class _TasksScreenState extends State<TasksScreen>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(radius),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          )
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
