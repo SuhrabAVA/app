@@ -238,52 +238,86 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
         title: const Text('Рабочее пространство'),
         actions: [
           // Кнопка добавления сотрудника
-          IconButton(
-            iconSize: actionIconSize,
-            icon: const Icon(Icons.add),
-            tooltip: 'Добавить сотрудника',
-            onPressed: _addEmployeeTab,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE1E1E8)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                iconSize: actionIconSize,
+                icon: const Icon(Icons.add),
+                tooltip: 'Добавить сотрудника',
+                onPressed: _addEmployeeTab,
+              ),
+            ),
           ),
           // Кнопка выхода из рабочего места сотрудника
-          IconButton(
-            iconSize: actionIconSize,
-            icon: const Icon(Icons.logout),
-            tooltip: 'Выйти',
-            onPressed: () async {
-              final tabIndex = _employeeTabController.index;
-              final analytics = context.read<AnalyticsProvider>();
-              final userId = _employeeIds[tabIndex];
-              await analytics.logEvent(
-                orderId: '',
-                stageId: '',
-                userId: userId,
-                action: 'logout',
-                category: 'production',
-              );
-              if (_employeeIds.length > 1) {
-                // Если открыто несколько вкладок, закрываем текущую вкладку
-                final oldController = _employeeTabController;
-                setState(() {
-                  _employeeIds.removeAt(tabIndex);
-                  // Пересоздаём TabController для нового списка сотрудников
-                  _employeeTabController =
-                      TabController(length: _employeeIds.length, vsync: this);
-                  // Выставляем индекс на предыдущую вкладку, если она есть
-                  if (tabIndex > 0) {
-                    _employeeTabController.index = tabIndex - 1;
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE1E1E8)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                iconSize: actionIconSize,
+                icon: const Icon(Icons.logout),
+                tooltip: 'Выйти',
+                onPressed: () async {
+                  final tabIndex = _employeeTabController.index;
+                  final analytics = context.read<AnalyticsProvider>();
+                  final userId = _employeeIds[tabIndex];
+                  await analytics.logEvent(
+                    orderId: '',
+                    stageId: '',
+                    userId: userId,
+                    action: 'logout',
+                    category: 'production',
+                  );
+                  if (_employeeIds.length > 1) {
+                    // Если открыто несколько вкладок, закрываем текущую вкладку
+                    final oldController = _employeeTabController;
+                    setState(() {
+                      _employeeIds.removeAt(tabIndex);
+                      // Пересоздаём TabController для нового списка сотрудников
+                      _employeeTabController =
+                          TabController(length: _employeeIds.length, vsync: this);
+                      // Выставляем индекс на предыдущую вкладку, если она есть
+                      if (tabIndex > 0) {
+                        _employeeTabController.index = tabIndex - 1;
+                      }
+                    });
+                    oldController.dispose();
+                  } else {
+                    // Если это последняя вкладка, выходим на экран входа
+                    AuthHelper.clear();
+                    if (!mounted) return;
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (route) => false,
+                    );
                   }
-                });
-                oldController.dispose();
-              } else {
-                // Если это последняя вкладка, выходим на экран входа
-                AuthHelper.clear();
-                if (!mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  (route) => false,
-                );
-              }
-            },
+                },
+              ),
+            ),
           ),
         ],
         bottom: TabBar(
@@ -410,7 +444,9 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
         toolbarHeight: isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight),
       ),
     );
-    final double tabBarHeight = isCompactTablet ? 34 : (isTablet ? 36 : 38);
+    final double tabBarHeight = isCompactTablet ? 38 : (isTablet ? 42 : 44);
+    const Color tabBackground = Color(0xFFF1F1F5);
+    const Color tabBorder = Color(0xFFE1E1E8);
 
     return MediaQuery(
       data: mediaData,
@@ -420,27 +456,46 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
           length: 3,
           child: Scaffold(
             appBar: PreferredSize(
-              preferredSize: Size.fromHeight(tabBarHeight),
+              preferredSize: Size.fromHeight(tabBarHeight + 16),
               child: Container(
                 color: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: TabBar(
-                  indicatorSize: TabBarIndicatorSize.label,
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                  indicatorPadding: EdgeInsets.zero,
-                  labelStyle: Theme.of(context)
-                      .textTheme
-                      .labelLarge
-                      ?.copyWith(fontSize: isCompactTablet ? 11 : 12, fontWeight: FontWeight.w600),
-                  unselectedLabelStyle: Theme.of(context)
-                      .textTheme
-                      .labelMedium
-                      ?.copyWith(fontSize: isCompactTablet ? 10 : 11, fontWeight: FontWeight.w500),
-                  tabs: const [
-                    Tab(text: 'Список заданий'),
-                    Tab(text: 'Задание'),
-                    Tab(text: 'Чат'),
-                  ],
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: tabBackground,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: tabBorder),
+                  ),
+                  child: TabBar(
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    indicatorPadding: const EdgeInsets.all(2),
+                    labelColor: Colors.black,
+                    unselectedLabelColor: const Color(0xFF6F6F7B),
+                    labelStyle: Theme.of(context)
+                        .textTheme
+                        .labelLarge
+                        ?.copyWith(fontSize: isCompactTablet ? 11 : 12, fontWeight: FontWeight.w600),
+                    unselectedLabelStyle: Theme.of(context)
+                        .textTheme
+                        .labelMedium
+                        ?.copyWith(fontSize: isCompactTablet ? 10 : 11, fontWeight: FontWeight.w500),
+                    indicator: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    tabs: const [
+                      Tab(text: 'Список заданий'),
+                      Tab(text: 'Задание'),
+                      Tab(text: 'Чат'),
+                    ],
+                  ),
                 ),
               ),
             ),
