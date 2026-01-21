@@ -1471,14 +1471,14 @@ class _TasksScreenState extends State<TasksScreen>
               currentTask,
               scale,
             ),
-          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) SizedBox(height: scaled(10)),
           if (currentTask != null) _buildTimerStatusPanel(currentTask, scale),
-          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) SizedBox(height: scaled(10)),
           if (currentTask != null) _buildHistoryPanel(currentTask, scale),
-          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) SizedBox(height: scaled(10)),
           if (currentTask != null) _buildPerformersPanel(currentTask, scale, isTablet),
           if (currentTask != null && selectedOrder != null)
-            SizedBox(height: scaled(12)),
+            SizedBox(height: scaled(10)),
           if (currentTask != null && selectedOrder != null)
             _buildResultPanel(selectedOrder, currentTask, scale),
         ],
@@ -1497,7 +1497,7 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
             ),
           if (currentTask != null && selectedWorkplace != null)
-            SizedBox(height: scaled(12)),
+            SizedBox(height: scaled(10)),
           if (currentTask != null && selectedWorkplace != null)
             _buildControlPanel(
               currentTask,
@@ -1506,7 +1506,7 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
               isTablet,
             ),
-          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) SizedBox(height: scaled(10)),
           if (currentTask != null) _buildCommentsPanel(currentTask, scale),
         ],
       );
@@ -1517,7 +1517,7 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           buildSummaryPanel(),
-          if (currentTask != null) SizedBox(height: scaled(12)),
+          if (currentTask != null) SizedBox(height: scaled(10)),
           buildDetailsPanel(),
         ],
       );
@@ -1559,10 +1559,12 @@ class _TasksScreenState extends State<TasksScreen>
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(cardRadius),
-                boxShadow: [
+                border: Border.all(color: const Color(0xFFE6E7EC)),
+                boxShadow: const [
                   BoxShadow(
-                    color: Colors.grey.shade300,
-                    blurRadius: 6,
+                    color: Color(0x14000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
                   )
                 ],
               ),
@@ -1676,15 +1678,16 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _sectionCard(String title, Widget child, double scale) {
     double scaled(double value) => value * scale;
     return Container(
-      padding: EdgeInsets.all(scaled(14)),
+      padding: EdgeInsets.all(scaled(12)),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(scaled(12)),
+        border: Border.all(color: const Color(0xFFE6E7EC)),
         boxShadow: const [
           BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
+            color: Color(0x14000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
           )
         ],
       ),
@@ -1694,11 +1697,11 @@ class _TasksScreenState extends State<TasksScreen>
           Text(
             title,
             style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: scaled(14),
+              fontWeight: FontWeight.w700,
+              fontSize: scaled(13.5),
             ),
           ),
-          SizedBox(height: scaled(8)),
+          SizedBox(height: scaled(6)),
           child,
         ],
       ),
@@ -1734,10 +1737,14 @@ class _TasksScreenState extends State<TasksScreen>
               style: TextStyle(
                   fontSize: scale * 16, fontWeight: FontWeight.w600)),
           SizedBox(height: scale * 6),
-          Text('Статус: $status'),
-          Text('Рабочее место: $workplaceLabel'),
-          Text('Исполнитель(и): $executorLabel'),
-          Text('Помощник(и): $helperLabel'),
+          Text('Статус: $status',
+              style: TextStyle(fontSize: scale * 12.5)),
+          Text('Рабочее место: $workplaceLabel',
+              style: TextStyle(fontSize: scale * 12.5)),
+          Text('Исполнитель(и): $executorLabel',
+              style: TextStyle(fontSize: scale * 12.5)),
+          Text('Помощник(и): $helperLabel',
+              style: TextStyle(fontSize: scale * 12.5)),
         ],
       ),
       scale,
@@ -1761,9 +1768,11 @@ class _TasksScreenState extends State<TasksScreen>
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Текущий режим: $modeLabel'),
+              Text('Текущий режим: $modeLabel',
+                  style: TextStyle(fontSize: scale * 12.5)),
               SizedBox(height: scale * 6),
-              Text('Всего: ${_formatDuration(total)}'),
+              Text('Всего: ${_formatDuration(total)}',
+                  style: TextStyle(fontSize: scale * 12.5)),
               SizedBox(height: scale * 6),
               Wrap(
                 spacing: scale * 12,
@@ -1772,6 +1781,7 @@ class _TasksScreenState extends State<TasksScreen>
                   for (final type in TaskTimeType.values)
                     Text(
                       '${_timeTypeLabel(type)}: ${_formatDuration(totals[type] ?? Duration.zero)}',
+                      style: TextStyle(fontSize: scale * 12),
                     ),
                 ],
               ),
@@ -1808,7 +1818,9 @@ class _TasksScreenState extends State<TasksScreen>
           stateLabel = 'Ожидание';
           break;
       }
-      performerTiles.add(Text('$name — $stateLabel'));
+      performerTiles.add(
+        Text('$name — $stateLabel', style: TextStyle(fontSize: scale * 12.5)),
+      );
     }
 
     return _sectionCard(
@@ -1863,9 +1875,12 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Фактическое количество (заказ): '
-              '${order.actualQty?.toStringAsFixed(0) ?? '—'}'),
-          Text('Суммарно по исполнителям: ${totalQty > 0 ? totalQty : '—'}'),
-          Text('Последняя запись: $lastQty'),
+              '${order.actualQty?.toStringAsFixed(0) ?? '—'}',
+              style: TextStyle(fontSize: scale * 12.5)),
+          Text('Суммарно по исполнителям: ${totalQty > 0 ? totalQty : '—'}',
+              style: TextStyle(fontSize: scale * 12.5)),
+          Text('Последняя запись: $lastQty',
+              style: TextStyle(fontSize: scale * 12.5)),
         ],
       ),
       scale,
@@ -1982,6 +1997,7 @@ class _TasksScreenState extends State<TasksScreen>
       );
     }
 
+    final double inputRadius = scale * 12;
     return _sectionCard(
       'Комментарии',
       Column(
@@ -1996,16 +2012,33 @@ class _TasksScreenState extends State<TasksScreen>
                   controller: _chatController,
                   maxLines: 1,
                   readOnly: !isAssignee,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'Написать комментарий…',
-                    border: OutlineInputBorder(),
                     isDense: true,
+                    filled: true,
+                    fillColor: const Color(0xFFF4F5F7),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: scale * 12,
+                      vertical: scale * 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(inputRadius),
+                      borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(inputRadius),
+                      borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(inputRadius),
+                      borderSide: const BorderSide(color: Color(0xFF111827)),
+                    ),
                   ),
                 ),
               ),
               SizedBox(width: scale * 8),
-              ElevatedButton(
-                onPressed: isAssignee
+              InkResponse(
+                onTap: isAssignee
                     ? () async {
                         final txt = _chatController.text.trim();
                         if (txt.isEmpty) return;
@@ -2017,7 +2050,17 @@ class _TasksScreenState extends State<TasksScreen>
                         _chatController.clear();
                       }
                     : null,
-                child: const Text('Отправить'),
+                child: Container(
+                  width: scale * 40,
+                  height: scale * 40,
+                  decoration: BoxDecoration(
+                    color: isAssignee
+                        ? const Color(0xFF111827)
+                        : const Color(0xFF9CA3AF),
+                    borderRadius: BorderRadius.circular(scale * 12),
+                  ),
+                  child: const Icon(Icons.send, color: Colors.white, size: 18),
+                ),
               ),
             ],
           ),
@@ -2050,6 +2093,7 @@ class _TasksScreenState extends State<TasksScreen>
                 ' — ${event.endTime != null ? _formatTimestamp(event.endTime!.millisecondsSinceEpoch) : '…'}'
                 ' · ${_timeTypeLabel(event.type)}'
                 ' · ${_employeeDisplayName(personnel, event.subjectUserId)}',
+                style: TextStyle(fontSize: scale * 12.5),
               ),
             ),
         ],
@@ -2067,11 +2111,11 @@ class _TasksScreenState extends State<TasksScreen>
                 (templates.isEmpty ? 'загрузка...' : 'не найден'))
             : null;
     double scaled(double value) => value * scale;
-    final double panelPadding = scaled(16);
+    final double panelPadding = scaled(14);
     final double radius = scaled(12);
-    final double mediumSpacing = scaled(16);
+    final double mediumSpacing = scaled(12);
     final double smallSpacing = scaled(4);
-    final double infoSpacing = scaled(6);
+    final double infoSpacing = scaled(4);
     final orderNumber = orderDisplayId(order);
     final dateFormat = DateFormat('dd.MM.yyyy');
 
@@ -2123,17 +2167,17 @@ class _TasksScreenState extends State<TasksScreen>
           TextSpan(
             text: '$label: ',
             style: TextStyle(
-              fontSize: scaled(13),
+              fontSize: scaled(12.5),
               fontWeight: FontWeight.w600,
-              color: Colors.black87,
+              color: const Color(0xFF3B3E45),
             ),
             children: [
               TextSpan(
                 text: display,
                 style: TextStyle(
-                  fontSize: scaled(13),
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black87,
+                  fontSize: scaled(12.5),
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF111318),
                 ),
               ),
             ],
@@ -2152,15 +2196,18 @@ class _TasksScreenState extends State<TasksScreen>
             Text(
               label,
               style: TextStyle(
-                fontSize: scaled(13),
+                fontSize: scaled(12.5),
                 fontWeight: FontWeight.w600,
-                color: Colors.black87,
+                color: const Color(0xFF3B3E45),
               ),
             ),
             SizedBox(height: scaled(2)),
             Text(
               display,
-              style: TextStyle(fontSize: scaled(13), color: Colors.black87),
+              style: TextStyle(
+                fontSize: scaled(12.5),
+                color: const Color(0xFF111318),
+              ),
             ),
           ],
         ),
@@ -2177,8 +2224,8 @@ class _TasksScreenState extends State<TasksScreen>
             Text(
               title,
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: scaled(14),
+                fontWeight: FontWeight.w700,
+                fontSize: scaled(13.5),
               ),
             ),
             SizedBox(height: smallSpacing),
@@ -2330,8 +2377,8 @@ class _TasksScreenState extends State<TasksScreen>
             Text(
               'Форма',
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: scaled(14),
+                fontWeight: FontWeight.w700,
+                fontSize: scaled(13.5),
               ),
             ),
             SizedBox(height: smallSpacing),
@@ -2428,11 +2475,12 @@ class _TasksScreenState extends State<TasksScreen>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: const Color(0xFFE6E7EC)),
         boxShadow: const [
           BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
+            color: Color(0x14000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
           )
         ],
       ),
@@ -2448,12 +2496,15 @@ class _TasksScreenState extends State<TasksScreen>
                     Text(
                       orderNumber != '—' ? orderNumber : order.id,
                       style: TextStyle(
-                        fontSize: scaled(18),
-                        fontWeight: FontWeight.bold,
+                        fontSize: scaled(17),
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     SizedBox(height: smallSpacing),
-                    const Text('Детали производственного задания'),
+                    const Text(
+                      'Детали производственного задания',
+                      style: TextStyle(color: Color(0xFF6B7280)),
+                    ),
                   ],
                 ),
               ),
@@ -4166,12 +4217,12 @@ class _TaskCard extends StatelessWidget {
         : (name.isNotEmpty ? name : displayId);
     double scaled(double value) => value * scale;
     final EdgeInsets contentPadding = EdgeInsets.symmetric(
-      horizontal: scaled(compact ? 10 : 14),
-      vertical: scaled(compact ? 6 : 10),
+      horizontal: scaled(compact ? 10 : 12),
+      vertical: scaled(compact ? 6 : 8),
     );
-    final double titleSize = scaled(compact ? 13 : 15);
-    final double subtitleSize = scaled(compact ? 11.5 : 13);
-    final double statusSize = scaled(12);
+    final double titleSize = scaled(compact ? 13 : 14.5);
+    final double subtitleSize = scaled(compact ? 11.5 : 12.5);
+    final double statusSize = scaled(11.5);
     final String? stageHint = showStageHint
         ? (readyForStage
             ? 'Можно начинать: предыдущий этап завершён'
@@ -4182,16 +4233,18 @@ class _TaskCard extends StatelessWidget {
         readyForStage ? readyColor : Colors.grey.shade600;
 
     return Card(
-      margin: EdgeInsets.symmetric(vertical: scaled(compact ? 4 : 6)),
+      margin: EdgeInsets.symmetric(vertical: scaled(compact ? 3 : 5)),
+      elevation: 0.5,
+      shadowColor: const Color(0x14000000),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(scaled(10)),
+        borderRadius: BorderRadius.circular(scaled(12)),
         side: BorderSide(
           color: selected
-              ? Colors.blue
-              : (readyForStage ? readyColor : color.withOpacity(0.5)),
+              ? const Color(0xFF1D4ED8)
+              : (readyForStage ? readyColor : const Color(0xFFE2E4EA)),
         ),
       ),
-      color: readyForStage ? readyColor.withOpacity(0.06) : null,
+      color: readyForStage ? readyColor.withOpacity(0.05) : Colors.white,
       child: ListTile(
         onTap: onTap,
         dense: compact,
@@ -4251,14 +4304,14 @@ class _TaskCard extends StatelessWidget {
             vertical: scaled(compact ? 3 : 4),
           ),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
+            color: color.withOpacity(0.12),
             borderRadius: BorderRadius.circular(scaled(12)),
           ),
           child: Text(
             _statusText(task.status),
             style: TextStyle(
               color: color,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w700,
               fontSize: statusSize,
             ),
           ),
