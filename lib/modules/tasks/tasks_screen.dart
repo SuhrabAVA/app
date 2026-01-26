@@ -198,9 +198,54 @@ Map<TaskTimeType, Duration> _timeTotalsForUser(TaskModel task, String userId) {
   return totals;
 }
 
+Duration _timeForUser(
+    TaskModel task, String userId, Set<TaskTimeType> types) {
+  final now = DateTime.now().toUtc();
+  Duration total = Duration.zero;
+  for (final event in _timeEventsForUser(task, userId)) {
+    if (!types.contains(event.type)) continue;
+    final end = event.endTime ?? now;
+    total += end.difference(event.startTime);
+  }
+  return total;
+}
+
 Duration _totalTimeForUser(TaskModel task, String userId) {
-  final totals = _timeTotalsForUser(task, userId);
-  return totals.values.fold(Duration.zero, (acc, d) => acc + d);
+  return _timeForUser(task, userId, {TaskTimeType.production});
+}
+
+Duration _setupElapsedFromTimeEvents(TaskModel task) {
+  final events = _taskTimeEvents(task)
+      .where((event) => event.type == TaskTimeType.setup)
+      .toList();
+  if (events.isEmpty) return Duration.zero;
+  final now = DateTime.now().toUtc();
+  final intervals = events
+      .map((e) =>
+          MapEntry(e.startTime, e.endTime ?? now))
+      .toList()
+    ..sort((a, b) => a.key.compareTo(b.key));
+  Duration total = Duration.zero;
+  DateTime? openStart;
+  DateTime? openEnd;
+  for (final interval in intervals) {
+    if (openStart == null) {
+      openStart = interval.key;
+      openEnd = interval.value;
+      continue;
+    }
+    if (interval.key.isAfter(openEnd!)) {
+      total += openEnd.difference(openStart);
+      openStart = interval.key;
+      openEnd = interval.value;
+    } else if (interval.value.isAfter(openEnd)) {
+      openEnd = interval.value;
+    }
+  }
+  if (openStart != null && openEnd != null) {
+    total += openEnd.difference(openStart);
+  }
+  return total;
 }
 
 enum UserRunState { idle, active, paused, finished, problem }
@@ -1869,7 +1914,8 @@ class _TasksScreenState extends State<TasksScreen>
   int _sumQuantities(TaskModel task) {
     int total = 0;
     for (final comment in task.comments) {
-      if (comment.type == 'quantity_done') {
+      if (comment.type == 'quantity_done' ||
+          comment.type == 'quantity_team_total') {
         total += _parseQuantity(comment.text);
       }
     }
@@ -1878,7 +1924,8 @@ class _TasksScreenState extends State<TasksScreen>
 
   String _latestQuantityLabel(TaskModel task) {
     final items = task.comments
-        .where((c) => c.type == 'quantity_done')
+        .where((c) =>
+            c.type == 'quantity_done' || c.type == 'quantity_team_total')
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     if (items.isEmpty) return '—';
@@ -3208,7 +3255,7 @@ class _TasksScreenState extends State<TasksScreen>
                         for (final id in helperIds) {
                           await taskProvider.addComment(
                               taskId: task.id,
-                              type: 'quantity_done',
+                              type: 'quantity_share',
                               text: qtyText,
                               userId: id);
                           await taskProvider.addComment(
@@ -3219,7 +3266,7 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
-                            type: 'quantity_done',
+                            type: 'quantity_team_total',
                             text: qtyText,
                             userIdOverride: widget.employeeId);
                         await taskProvider.addCommentAutoUser(
@@ -3284,8 +3331,13 @@ class _TasksScreenState extends State<TasksScreen>
                       );
                       if (!_anyUserActive(latestTask)) {
                         final _secs = _elapsed(latestTask).inSeconds;
-                        await taskProvider.updateStatus(task.id, TaskStatus.paused,
-                            spentSeconds: _secs, startedAt: null);
+                        await taskProvider.updateStatus(
+                            task.id,
+                            jointGroup != null
+                                ? TaskStatus.completed
+                                : TaskStatus.paused,
+                            spentSeconds: _secs,
+                            startedAt: null);
                       }
                     }
 
@@ -3482,8 +3534,10 @@ class _TasksScreenState extends State<TasksScreen>
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
                                       ),
-                                      child:
-                                          const Text('✓ Завершить участие')),
+                                      child: Text(
+                                          stageExecMode == ExecutionMode.joint
+                                              ? '✓ Завершить'
+                                              : '✓ Завершить участие')),
                                   ElevatedButton(
                                       onPressed:
                                           canProblemRow ? onProblem : null,
@@ -3591,7 +3645,8 @@ class _TasksScreenState extends State<TasksScreen>
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
-              if (task.assignees.isNotEmpty)
+              if (task.assignees.isNotEmpty &&
+                  stageMode == ExecutionMode.separate)
                 Align(
                   alignment: Alignment.centerRight,
                   child: ElevatedButton.icon(
@@ -3814,10 +3869,14 @@ class _TasksScreenState extends State<TasksScreen>
     final related = tp.tasks
         .where((t) => t.orderId == task.orderId && t.stageId == task.stageId)
         .toList();
+    final hasSetupTimeEvents = related.any((t) =>
+        _taskTimeEvents(t).any((event) => event.type == TaskTimeType.setup));
     Duration maxDur = Duration.zero;
     for (final t in related) {
       // Получаем объединённую длительность настройки для каждой задачи
-      final d = _setupElapsedAgg(t);
+      final d = hasSetupTimeEvents
+          ? _setupElapsedFromTimeEvents(t)
+          : _setupElapsedAgg(t);
       if (d > maxDur) maxDur = d;
     }
     return maxDur;
@@ -4379,8 +4438,16 @@ class _AssignedEmployeesRow extends StatelessWidget {
     final dynamic rawCap = (stage as dynamic).maxConcurrentWorkers;
     final int cap = (rawCap is num ? rawCap.toInt() : 1);
     final int effCap = cap <= 0 ? 1 : cap;
-    final bool canAddHelper =
-        isOwner && stageMode == ExecutionMode.joint && effCap > 1;
+    final jointAssignees = task.assignees
+        .where((id) => _execModeForUser(task, id) != ExecutionMode.separate)
+        .toList();
+    final int helperCount =
+        jointAssignees.isNotEmpty ? jointAssignees.length - 1 : 0;
+    final int maxHelpers = effCap - 1;
+    final bool canAddHelper = isOwner &&
+        stageMode == ExecutionMode.joint &&
+        effCap > 1 &&
+        helperCount < maxHelpers;
 
     double scaled(double value) => value * scale;
     final double spacing = scaled(compact ? 6 : 8);
@@ -4499,9 +4566,16 @@ class _AssignedEmployeesRow extends StatelessWidget {
 
       if (selectedId != null) {
         final int active = _activeExecutorsCountForStage(taskProvider, task);
+        final currentHelpers = _helperIds(task).length;
         if (active + 1 > effCap) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Нет свободных мест на рабочем месте')),
+          );
+          return;
+        }
+        if (currentHelpers + 1 > maxHelpers) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Достигнут лимит помощников')),
           );
           return;
         }
