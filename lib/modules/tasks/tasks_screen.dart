@@ -1040,7 +1040,7 @@ class _TasksScreenState extends State<TasksScreen>
     // заданием» и «Детали производственного задания» помещались без
     // горизонтальной прокрутки. Более крупные экраны по-прежнему
     // получают лёгкое увеличение.
-    final double layoutScale = isTablet1280x800
+    final double baseLayoutScale = isTablet1280x800
         ? 0.78 // планшеты 1280x800 — уменьшаем элементы под макет
         : (isTablet1000x700
             ? 0.72 // планшеты 1000x700 — уменьшаем элементы под макет
@@ -1049,6 +1049,7 @@ class _TasksScreenState extends State<TasksScreen>
                 : (isTablet
                     ? 1.0 // обычные планшеты — без увеличения
                     : 1.08))); // десктопы/веб — умеренное увеличение
+    final double layoutScale = baseLayoutScale * 0.6;
 
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
@@ -1435,8 +1436,6 @@ class _TasksScreenState extends State<TasksScreen>
               currentTask,
               scale,
             ),
-          if (currentTask != null) SizedBox(height: scaled(6)),
-          if (currentTask != null) _buildTimerStatusPanel(currentTask, scale),
           if (currentTask != null) SizedBox(height: scaled(6)),
           if (currentTask != null) _buildHistoryPanel(currentTask, scale),
           if (currentTask != null) SizedBox(height: scaled(6)),
@@ -2875,68 +2874,6 @@ class _TasksScreenState extends State<TasksScreen>
           SizedBox(height: gapSmall),
           Column(
             children: [
-              if (_hasMachineForStage(stage))
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed:
-                          !_isSetupCompletedForUser(task, widget.employeeId)
-                              ? () => _startSetup(task, provider)
-                              : null,
-                      style: ElevatedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: scaled(12),
-                          vertical: scaled(10),
-                        ),
-                        minimumSize: Size(scaled(90), scaled(36)),
-                        visualDensity: isTablet
-                            ? const VisualDensity(horizontal: -1, vertical: -1)
-                            : null,
-                      ),
-                      icon: const Icon(Icons.build),
-                      label: const Text('Наладка'),
-                    ),
-                    SizedBox(width: buttonSpacing),
-                    ElevatedButton(
-                      onPressed:
-                          _isSetupCompletedForUser(task, widget.employeeId)
-                              ? null
-                              : () => _finishSetup(task, provider),
-                      style: ElevatedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: scaled(12),
-                          vertical: scaled(10),
-                        ),
-                        minimumSize: Size(scaled(90), scaled(36)),
-                        visualDensity: isTablet
-                            ? const VisualDensity(horizontal: -1, vertical: -1)
-                            : null,
-                      ),
-                      child: const Text('Завершить наладку'),
-                    ),
-                    SizedBox(width: gapMedium),
-                    StreamBuilder<DateTime>(
-                      stream: Stream<DateTime>.periodic(
-                          const Duration(seconds: 1), (_) => DateTime.now()),
-                      builder: (context, _) {
-                        // Use aggregated setup time across all related tasks to avoid
-                        // inconsistent timing when multiple users are involved.
-                        // Use per-task setup elapsed time to avoid aggregating
-                        // across unrelated tasks, which can lead to huge jumps.
-                        // Используем максимальное время настройки по каждой из
-                        // связанных задач (объединяя периоды настройки внутри
-                        // каждой) и берём максимум. Это устраняет двойной
-                        // учёт и длительные промежутки между настройками.
-                        final d = _setupElapsedStageMaxAgg(task);
-                        String two(int n) => n.toString().padLeft(2, '0');
-                        final s =
-                            '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                        return Text('Время настройки: $s',
-                            style: TextStyle(fontSize: scaled(13)));
-                      },
-                    ),
-                  ],
-                ),
               SizedBox(height: gapSmall),
               // ==== Управление исполнением ===
               Builder(
@@ -3153,6 +3090,11 @@ class _TasksScreenState extends State<TasksScreen>
                       // сохраняем начальное время. Если этап ещё не начинался,
                       // фиксируем текущий момент; иначе используем существующий
                       // startedAt, чтобы не обнулять таймер.
+                      if (_hasMachineForStage(stage) &&
+                          !_isSetupCompletedForUser(
+                              task, widget.employeeId)) {
+                        await _finishSetup(task, provider);
+                      }
                       final startedAtTs = task.startedAt ??
                           DateTime.now().millisecondsSinceEpoch;
                       await context.read<TaskProvider>().updateStatus(
@@ -3402,6 +3344,75 @@ class _TasksScreenState extends State<TasksScreen>
                                         child: Text(label,
                                             style: const TextStyle(
                                                 fontWeight: FontWeight.w600))),
+                                  if (_hasMachineForStage(stage) && isMyRow) ...[
+                                    ElevatedButton.icon(
+                                      onPressed:
+                                          !_isSetupCompletedForUser(
+                                                  task, widget.employeeId)
+                                              ? () => _startSetup(task, provider)
+                                              : null,
+                                      style: ElevatedButton.styleFrom(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: scaled(12),
+                                          vertical: scaled(10),
+                                        ),
+                                        minimumSize:
+                                            Size(scaled(90), scaled(36)),
+                                        visualDensity: isTablet
+                                            ? const VisualDensity(
+                                                horizontal: -1, vertical: -1)
+                                            : null,
+                                      ),
+                                      icon: const Icon(Icons.build),
+                                      label: const Text('Начать наладку'),
+                                    ),
+                                    SizedBox(width: buttonSpacing),
+                                    ElevatedButton(
+                                      onPressed:
+                                          _isSetupCompletedForUser(
+                                                  task, widget.employeeId)
+                                              ? null
+                                              : () =>
+                                                  _finishSetup(task, provider),
+                                      style: ElevatedButton.styleFrom(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: scaled(12),
+                                          vertical: scaled(10),
+                                        ),
+                                        minimumSize:
+                                            Size(scaled(90), scaled(36)),
+                                        visualDensity: isTablet
+                                            ? const VisualDensity(
+                                                horizontal: -1, vertical: -1)
+                                            : null,
+                                      ),
+                                      child: const Text('Завершить наладку'),
+                                    ),
+                                    SizedBox(width: buttonSpacing),
+                                    StreamBuilder<DateTime>(
+                                      stream: Stream<DateTime>.periodic(
+                                          const Duration(seconds: 1),
+                                          (_) => DateTime.now()),
+                                      builder: (context, _) {
+                                        // Use aggregated setup time across all related tasks to avoid
+                                        // inconsistent timing when multiple users are involved.
+                                        // Use per-task setup elapsed time to avoid aggregating
+                                        // across unrelated tasks, which can lead to huge jumps.
+                                        // Используем максимальное время настройки по каждой из
+                                        // связанных задач (объединяя периоды настройки внутри
+                                        // каждой) и берём максимум. Это устраняет двойной
+                                        // учёт и длительные промежутки между настройками.
+                                        final d = _setupElapsedStageMaxAgg(task);
+                                        String two(int n) =>
+                                            n.toString().padLeft(2, '0');
+                                        final s =
+                                            '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
+                                        return Text('Время настройки: $s',
+                                            style:
+                                                TextStyle(fontSize: scaled(13)));
+                                      },
+                                    ),
+                                  ],
                                   ElevatedButton(
                                       onPressed:
                                           canStartButtonRow ? onStart : null,
@@ -3478,7 +3489,9 @@ class _TasksScreenState extends State<TasksScreen>
                     final label = labels.isEmpty
                         ? 'Одиночная или совместная работа'
                         : 'Помощники: ' + labels.join(', ');
-                    if (separateUsers.isEmpty) {
+                    if (label == 'Одиночная или совместная работа') {
+                      // скрываем строку с кнопками для "одиночной/совместной" работы
+                    } else if (separateUsers.isEmpty) {
                       rows.add(buildControlsFor(label, jointGroup: jointUsers));
                     } else {
                       rows.add(Padding(
@@ -3490,9 +3503,6 @@ class _TasksScreenState extends State<TasksScreen>
                                 fontSize: scaled(13))),
                       ));
                     }
-                  } else if (task.assignees.isEmpty) {
-                    rows.add(buildControlsFor('Одиночная или совместная работа',
-                        jointGroup: jointUsers));
                   }
                   if (!task.assignees.contains(widget.employeeId) && canStart) {
                     rows.add(buildControlsFor('Вы', userId: widget.employeeId));
@@ -3785,7 +3795,7 @@ class _TasksScreenState extends State<TasksScreen>
     final dones = task.comments
         .where((c) => c.type == 'setup_done' && c.userId == userId)
         .toList();
-    if (starts.isEmpty) return false;
+    if (starts.isEmpty) return dones.isNotEmpty;
     final lastStartTs =
         starts.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
     final lastDoneTs = dones.isEmpty
@@ -3821,6 +3831,12 @@ class _TasksScreenState extends State<TasksScreen>
       text: 'Начал(а) настройку станка',
       userIdOverride: widget.employeeId,
     );
+    if (task.status != TaskStatus.inProgress) {
+      final startedAtTs =
+          task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
+      await provider.updateStatus(task.id, TaskStatus.inProgress,
+          startedAt: startedAtTs);
+    }
     final participants = _participantsSnapshot(task, widget.employeeId);
     final execMode = _stageExecutionMode(task);
     await provider.recordTimeEvent(
