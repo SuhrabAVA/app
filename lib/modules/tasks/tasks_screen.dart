@@ -1038,7 +1038,7 @@ class _TasksScreenState extends State<TasksScreen>
     // горизонтальной прокрутки. Более крупные экраны по-прежнему
     // получают лёгкое увеличение.
     final double layoutScale = isTablet1280x800
-        ? 0.82 // планшеты 1280x800 — уменьшаем элементы под макет
+        ? 0.78 // планшеты 1280x800 — уменьшаем элементы под макет
         : (isCompactTablet
             ? 0.88 // компактные планшеты — ещё аккуратнее базового масштаба
             : (isTablet
@@ -1047,22 +1047,22 @@ class _TasksScreenState extends State<TasksScreen>
 
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
-    final double textScaleFactor = math.max(
-      media.textScaleFactor,
-      isTablet1280x800
-          ? 1.0
-          : (isCompactTablet
-              ? 1.0
-              : (isTablet
-                  ? 1.05
-                  : 1.12)),
-    );
+    final double textScaleFactor = isTablet1280x800
+        ? media.textScaleFactor * 0.95
+        : math.max(
+            media.textScaleFactor,
+            isCompactTablet
+                ? 1.0
+                : (isTablet
+                    ? 1.05
+                    : 1.12),
+          );
 
     final double scale = layoutScale;
 
     double scaled(double value) => value * layoutScale;
     final double compactTightness = isTablet1280x800
-        ? 0.84
+        ? 0.8
         : (isCompactTablet
             ? 0.9
             : 1.0);

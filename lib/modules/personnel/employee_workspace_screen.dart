@@ -215,13 +215,13 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
         ((media.size.width == 1280 && media.size.height == 800) ||
             (media.size.width == 800 && media.size.height == 1280));
     final double toolbarHeight = isTablet1280x800
-        ? 36
+        ? 34
         : (isCompactTablet ? 40 : (isTablet ? 46 : 50));
     final double actionIconSize = isTablet1280x800
-        ? 16
+        ? 14
         : (isCompactTablet ? 18 : (isTablet ? 20 : 22));
     final double tabLabelSize = isTablet1280x800
-        ? 9.5
+        ? 9
         : (isCompactTablet ? 10 : (isTablet ? 12 : 13));
     final EdgeInsetsGeometry tabPadding = isTablet
         ? EdgeInsets.symmetric(
@@ -469,7 +469,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
             : (isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight)),
       ),
     );
-    final double tabBarHeight = isTablet1280x800 ? 34 : (isCompactTablet ? 38 : (isTablet ? 42 : 44));
+    final double tabBarHeight = isTablet1280x800 ? 30 : (isCompactTablet ? 38 : (isTablet ? 42 : 44));
     const Color tabBackground = Color(0xFFF1F1F5);
     const Color tabBorder = Color(0xFFE1E1E8);
 
@@ -500,14 +500,14 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                         .textTheme
                         .labelLarge
                         ?.copyWith(
-                          fontSize: isTablet1280x800 ? 10 : (isCompactTablet ? 11 : 12),
+                          fontSize: isTablet1280x800 ? 9 : (isCompactTablet ? 11 : 12),
                           fontWeight: FontWeight.w600,
                         ),
                     unselectedLabelStyle: Theme.of(context)
                         .textTheme
                         .labelMedium
                         ?.copyWith(
-                          fontSize: isTablet1280x800 ? 9 : (isCompactTablet ? 10 : 11),
+                          fontSize: isTablet1280x800 ? 8.5 : (isCompactTablet ? 10 : 11),
                           fontWeight: FontWeight.w500,
                         ),
                     indicator: BoxDecoration(
