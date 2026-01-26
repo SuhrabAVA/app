@@ -1049,7 +1049,7 @@ class _TasksScreenState extends State<TasksScreen>
                 : (isTablet
                     ? 1.0 // обычные планшеты — без увеличения
                     : 1.08))); // десктопы/веб — умеренное увеличение
-    final double layoutScale = baseLayoutScale * 0.6;
+    final double layoutScale = baseLayoutScale * 0.7;
 
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
@@ -1641,6 +1641,7 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _sectionCard(String title, Widget child, double scale) {
     double scaled(double value) => value * scale;
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.all(scaled(9)),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1915,7 +1916,7 @@ class _TasksScreenState extends State<TasksScreen>
                         icon = Icons.info_outline;
                         color = Colors.blueGrey;
                     }
-                    return Icon(icon, size: 18, color: color);
+                    return Icon(icon, size: scale * 16, color: color);
                   }),
                   SizedBox(width: scale * 3),
                   Expanded(
@@ -1941,12 +1942,14 @@ class _TasksScreenState extends State<TasksScreen>
                             if (header.isNotEmpty)
                               Text(
                                 header,
-                                style: const TextStyle(
-                                    fontSize: 9.5, color: Colors.grey),
+                                style: TextStyle(
+                                  fontSize: scale * 9.5,
+                                  color: Colors.grey,
+                                ),
                               ),
                             Text(
                               _describeComment(entry.comment),
-                              style: const TextStyle(fontSize: 12.5),
+                              style: TextStyle(fontSize: scale * 12.5),
                             ),
                           ],
                         );
@@ -1975,8 +1978,10 @@ class _TasksScreenState extends State<TasksScreen>
                   controller: _chatController,
                   maxLines: 1,
                   readOnly: !isAssignee,
+                  style: TextStyle(fontSize: scale * 12.5),
                   decoration: InputDecoration(
                     hintText: 'Написать комментарий…',
+                    hintStyle: TextStyle(fontSize: scale * 12.5),
                     isDense: true,
                     filled: true,
                     fillColor: const Color(0xFFF4F5F7),
@@ -2022,7 +2027,7 @@ class _TasksScreenState extends State<TasksScreen>
                         : const Color(0xFF9CA3AF),
                     borderRadius: BorderRadius.circular(scale * 12),
                   ),
-                  child: const Icon(Icons.send, color: Colors.white, size: 18),
+                  child: Icon(Icons.send, color: Colors.white, size: scale * 18),
                 ),
               ),
             ],
@@ -2039,7 +2044,12 @@ class _TasksScreenState extends State<TasksScreen>
     if (events.isEmpty) {
       return _sectionCard(
         '🧾 История событий',
-        const Text('История пока пуста'),
+        Center(
+          child: Text(
+            'История пока пуста',
+            style: TextStyle(fontSize: scale * 12),
+          ),
+        ),
         scale,
       );
     }
@@ -2077,6 +2087,7 @@ class _TasksScreenState extends State<TasksScreen>
     final double panelPadding = scaled(8);
     final double radius = scaled(10);
     final double mediumSpacing = scaled(6);
+    final double headerSpacing = scaled(3);
     final double smallSpacing = scaled(2);
     final double infoSpacing = scaled(2);
     final double infoItemWidth = scaled(210);
@@ -2509,7 +2520,7 @@ class _TasksScreenState extends State<TasksScreen>
             secondChild: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(height: mediumSpacing),
+                SizedBox(height: headerSpacing),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -3342,8 +3353,10 @@ class _TasksScreenState extends State<TasksScreen>
                                         padding:
                                             const EdgeInsets.only(right: 8),
                                         child: Text(label,
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.w600))),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: scaled(12),
+                                            ))),
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
                                       onPressed:
@@ -3352,6 +3365,8 @@ class _TasksScreenState extends State<TasksScreen>
                                               ? () => _startSetup(task, provider)
                                               : null,
                                       style: ElevatedButton.styleFrom(
+                                        textStyle:
+                                            TextStyle(fontSize: scaled(11.5)),
                                         padding: EdgeInsets.symmetric(
                                           horizontal: scaled(12),
                                           vertical: scaled(10),
@@ -3365,28 +3380,6 @@ class _TasksScreenState extends State<TasksScreen>
                                       ),
                                       icon: const Icon(Icons.build),
                                       label: const Text('Начать наладку'),
-                                    ),
-                                    SizedBox(width: buttonSpacing),
-                                    ElevatedButton(
-                                      onPressed:
-                                          _isSetupCompletedForUser(
-                                                  task, widget.employeeId)
-                                              ? null
-                                              : () =>
-                                                  _finishSetup(task, provider),
-                                      style: ElevatedButton.styleFrom(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: scaled(12),
-                                          vertical: scaled(10),
-                                        ),
-                                        minimumSize:
-                                            Size(scaled(90), scaled(36)),
-                                        visualDensity: isTablet
-                                            ? const VisualDensity(
-                                                horizontal: -1, vertical: -1)
-                                            : null,
-                                      ),
-                                      child: const Text('Завершить наладку'),
                                     ),
                                     SizedBox(width: buttonSpacing),
                                     StreamBuilder<DateTime>(
@@ -3409,24 +3402,40 @@ class _TasksScreenState extends State<TasksScreen>
                                             '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
                                         return Text('Время настройки: $s',
                                             style:
-                                                TextStyle(fontSize: scaled(13)));
+                                                TextStyle(fontSize: scaled(12)));
                                       },
                                     ),
                                   ],
                                   ElevatedButton(
                                       onPressed:
                                           canStartButtonRow ? onStart : null,
+                                      style: ElevatedButton.styleFrom(
+                                        textStyle:
+                                            TextStyle(fontSize: scaled(11.5)),
+                                      ),
                                       child: const Text('▶ Начать')),
                                   ElevatedButton(
                                       onPressed: canPauseRow ? onPause : null,
+                                      style: ElevatedButton.styleFrom(
+                                        textStyle:
+                                            TextStyle(fontSize: scaled(11.5)),
+                                      ),
                                       child: const Text('⏸ Пауза')),
                                   ElevatedButton(
                                       onPressed: canFinishRow ? onFinish : null,
+                                      style: ElevatedButton.styleFrom(
+                                        textStyle:
+                                            TextStyle(fontSize: scaled(11.5)),
+                                      ),
                                       child:
                                           const Text('✓ Завершить участие')),
                                   ElevatedButton(
                                       onPressed:
                                           canProblemRow ? onProblem : null,
+                                      style: ElevatedButton.styleFrom(
+                                        textStyle:
+                                            TextStyle(fontSize: scaled(11.5)),
+                                      ),
                                       child: const Text('⚠ Проблема')),
                                   SizedBox(width: gapMedium),
                                   // Обновляем отображение времени для каждой строки каждую секунду
@@ -3435,7 +3444,10 @@ class _TasksScreenState extends State<TasksScreen>
                                         const Duration(seconds: 1),
                                         (_) => DateTime.now()),
                                     builder: (context, _) {
-                                      return Text('Время: ' + timeText());
+                                      return Text(
+                                        'Время: ' + timeText(),
+                                        style: TextStyle(fontSize: scaled(12)),
+                                      );
                                     },
                                   ),
                                 ],
@@ -3445,6 +3457,10 @@ class _TasksScreenState extends State<TasksScreen>
                             ElevatedButton.icon(
                               onPressed: canShiftControl ? onShift : null,
                               icon: const Icon(Icons.autorenew),
+                              style: ElevatedButton.styleFrom(
+                                textStyle:
+                                    TextStyle(fontSize: scaled(11.5)),
+                              ),
                               label: Text(shiftPaused
                                   ? 'Продолжить пересмену'
                                   : 'Пересмена'),
