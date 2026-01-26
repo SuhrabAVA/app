@@ -1053,18 +1053,16 @@ class _TasksScreenState extends State<TasksScreen>
 
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
-    final double textScaleFactor = isTablet1280x800
-        ? media.textScaleFactor * 0.95
-        : (isTablet1000x700
-            ? media.textScaleFactor * 0.9
-            : math.max(
-                media.textScaleFactor,
-                isCompactTablet
-                    ? 1.0
-                    : (isTablet
-                        ? 1.05
-                        : 1.12),
-              ));
+    final double textScaleFactor = isTablet
+        ? (isTablet1280x800
+            ? media.textScaleFactor * 0.95
+            : (isTablet1000x700
+                ? media.textScaleFactor * 0.9
+                : math.max(
+                    media.textScaleFactor,
+                    isCompactTablet ? 1.0 : 1.05,
+                  )))
+        : 1.05;
 
     final double scale = layoutScale;
 
@@ -1551,12 +1549,12 @@ class _TasksScreenState extends State<TasksScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        flex: 1,
+                        flex: 4,
                         child: leftPanel,
                       ),
                       SizedBox(width: columnGap),
                       Expanded(
-                        flex: 2,
+                        flex: 11,
                         child: rightPanel,
                       ),
                     ],
@@ -1594,12 +1592,12 @@ class _TasksScreenState extends State<TasksScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      flex: 1,
+                      flex: 4,
                       child: summaryPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
-                      flex: 2,
+                      flex: 11,
                       child: detailsPanel,
                     ),
                   ],
@@ -1623,18 +1621,20 @@ class _TasksScreenState extends State<TasksScreen>
       ),
     );
 
-    if (!isTablet) return scaffold;
-
-    return MediaQuery(
+    final Widget scaledScaffold = MediaQuery(
       data: media.copyWith(
         textScaleFactor: media.textScaleFactor * textScaleFactor,
       ),
-      child: Theme(
-        data: Theme.of(context).copyWith(
-          visualDensity: const VisualDensity(horizontal: -1, vertical: -1),
-        ),
-        child: scaffold,
+      child: scaffold,
+    );
+
+    if (!isTablet) return scaledScaffold;
+
+    return Theme(
+      data: Theme.of(context).copyWith(
+        visualDensity: const VisualDensity(horizontal: -1, vertical: -1),
       ),
+      child: scaledScaffold,
     );
   }
 
