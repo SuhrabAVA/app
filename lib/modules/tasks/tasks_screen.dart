@@ -271,10 +271,10 @@ UserRunState _userRunState(TaskModel task, String userId) {
     if (doneEvents.isNotEmpty) {
       doneEvents.toList().sort((a, b) => a.timestamp.compareTo(b.timestamp));
       final lastDone = doneEvents.last.timestamp;
-      final lastEventTs = timeEvents
-          .map((e) => (e.endTime ?? e.startTime).millisecondsSinceEpoch)
+      final lastStartTs = timeEvents
+          .map((e) => e.startTime.millisecondsSinceEpoch)
           .fold<int>(0, (a, b) => a > b ? a : b);
-      if (lastDone >= lastEventTs) {
+      if (lastDone >= lastStartTs) {
         return UserRunState.finished;
       }
     }
@@ -2353,10 +2353,6 @@ class _TasksScreenState extends State<TasksScreen>
     if (order.comments.isNotEmpty) {
       generalSection.add(infoMultiline('💬 Комментарии', order.comments));
     }
-    generalSection
-        .add(infoLine('📄 Договор', order.contractSigned ? 'Да' : 'Нет'));
-    generalSection
-        .add(infoLine('💳 Оплата', order.paymentDone ? 'Проведена' : 'Нет'));
     if (order.actualQty != null) {
       generalSection
           .add(infoLine('📦 Готово', formatQty(order.actualQty)));
@@ -3145,9 +3141,12 @@ class _TasksScreenState extends State<TasksScreen>
                     }
 
                     Future<void> onStart() async {
+                      final taskProvider = context.read<TaskProvider>();
+                      final personnelProvider =
+                          context.read<PersonnelProvider>();
                       // Sequential stage guard
-                      if (!_isFirstPendingStage(context.read<TaskProvider>(),
-                          context.read<PersonnelProvider>(), task,
+                      if (!_isFirstPendingStage(
+                          taskProvider, personnelProvider, task,
                           groupResolver: _stageGroupKey)) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -3169,7 +3168,7 @@ class _TasksScreenState extends State<TasksScreen>
                       final alreadyAssigned =
                           task.assignees.contains(widget.employeeId);
                       if (explicitStageMode == null) {
-                        await context.read<TaskProvider>().addComment(
+                        await taskProvider.addComment(
                               taskId: task.id,
                               type: 'exec_mode_stage',
                               text: _executionModeCode(stageExecMode),
@@ -3180,15 +3179,13 @@ class _TasksScreenState extends State<TasksScreen>
                       if (!alreadyAssigned) {
                         final newAssignees = List<String>.from(task.assignees)
                           ..add(widget.employeeId);
-                        await context
-                            .read<TaskProvider>()
-                            .updateAssignees(task.id, newAssignees);
+                        await taskProvider.updateAssignees(task.id, newAssignees);
                       }
 
                       if (selectedMode != null &&
                           _needsExecModeRecord(
                               task, widget.employeeId, selectedMode)) {
-                        await context.read<TaskProvider>().addComment(
+                        await taskProvider.addComment(
                               taskId: task.id,
                               type: 'exec_mode',
                               text: _executionModeCode(selectedMode),
@@ -3210,12 +3207,12 @@ class _TasksScreenState extends State<TasksScreen>
                       }
                       final startedAtTs = task.startedAt ??
                           DateTime.now().millisecondsSinceEpoch;
-                      await context.read<TaskProvider>().updateStatus(
+                      await taskProvider.updateStatus(
                             task.id,
                             TaskStatus.inProgress,
                             startedAt: startedAtTs,
                           );
-                      await context.read<TaskProvider>().addCommentAutoUser(
+                      await taskProvider.addCommentAutoUser(
                           taskId: task.id,
                           type: 'start',
                           text: 'Начал(а) этап',
