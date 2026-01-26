@@ -1566,22 +1566,22 @@ class _TasksScreenState extends State<TasksScreen>
                 );
               }
 
-              return SingleChildScrollView(
-                padding: EdgeInsets.all(outerPadding),
-                scrollDirection: Axis.horizontal,
-                child: LayoutBuilder(
-                  builder: (context, scrollConstraints) {
-                    const double minLeftPanelWidth = 320;
-                    const double minRightPanelWidth = 640;
-                    final double totalMinWidth =
-                        minLeftPanelWidth + columnGap + minRightPanelWidth;
-                    final double contentWidth = math.max(
-                      scrollConstraints.maxWidth,
-                      totalMinWidth,
-                    );
-                    final double rightPanelWidth =
-                        contentWidth - minLeftPanelWidth - columnGap;
-                    return SizedBox(
+              return LayoutBuilder(
+                builder: (context, scrollConstraints) {
+                  const double minLeftPanelWidth = 320;
+                  const double minRightPanelWidth = 640;
+                  final double totalMinWidth =
+                      minLeftPanelWidth + columnGap + minRightPanelWidth;
+                  final double contentWidth = math.max(
+                    scrollConstraints.maxWidth,
+                    totalMinWidth,
+                  );
+                  final double rightPanelWidth =
+                      contentWidth - minLeftPanelWidth - columnGap;
+                  return SingleChildScrollView(
+                    padding: EdgeInsets.all(outerPadding),
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
                       width: contentWidth,
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1597,9 +1597,9 @@ class _TasksScreenState extends State<TasksScreen>
                           ),
                         ],
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
               );
             }
 
@@ -1635,22 +1635,22 @@ class _TasksScreenState extends State<TasksScreen>
               );
             }
 
-            return SingleChildScrollView(
-              padding: EdgeInsets.all(outerPadding),
-              scrollDirection: Axis.horizontal,
-              child: LayoutBuilder(
-                builder: (context, scrollConstraints) {
-                  const double minLeftPanelWidth = 320;
-                  const double minRightPanelWidth = 640;
-                  final double totalMinWidth =
-                      minLeftPanelWidth + columnGap + minRightPanelWidth;
-                  final double contentWidth = math.max(
-                    scrollConstraints.maxWidth,
-                    totalMinWidth,
-                  );
-                  final double rightPanelWidth =
-                      contentWidth - minLeftPanelWidth - columnGap;
-                  return SizedBox(
+            return LayoutBuilder(
+              builder: (context, scrollConstraints) {
+                const double minLeftPanelWidth = 320;
+                const double minRightPanelWidth = 640;
+                final double totalMinWidth =
+                    minLeftPanelWidth + columnGap + minRightPanelWidth;
+                final double contentWidth = math.max(
+                  scrollConstraints.maxWidth,
+                  totalMinWidth,
+                );
+                final double rightPanelWidth =
+                    contentWidth - minLeftPanelWidth - columnGap;
+                return SingleChildScrollView(
+                  padding: EdgeInsets.all(outerPadding),
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
                     width: contentWidth,
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1666,9 +1666,9 @@ class _TasksScreenState extends State<TasksScreen>
                         ),
                       ],
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             );
           },
         ),
