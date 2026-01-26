@@ -2060,6 +2060,7 @@ class _TasksScreenState extends State<TasksScreen>
     final double mediumSpacing = scaled(6);
     final double smallSpacing = scaled(2);
     final double infoSpacing = scaled(2);
+    final double infoItemWidth = scaled(210);
     final orderNumber = orderDisplayId(order);
     final dateFormat = DateFormat('dd.MM.yyyy');
 
@@ -2105,62 +2106,63 @@ class _TasksScreenState extends State<TasksScreen>
 
     Widget infoLine(String label, String value) {
       final display = value.isNotEmpty ? value : '—';
-      return Padding(
-        padding: EdgeInsets.only(bottom: infoSpacing),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                '$label:',
-                style: TextStyle(
-                  fontSize: scaled(11.5),
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF3B3E45),
+      return SizedBox(
+        width: infoItemWidth,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: infoSpacing),
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$label: ',
+                  style: TextStyle(
+                    fontSize: scaled(11.5),
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            ),
-            SizedBox(width: scaled(6)),
-            Expanded(
-              child: Text(
-                display,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: scaled(11.5),
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF111318),
+                TextSpan(
+                  text: display,
+                  style: TextStyle(
+                    fontSize: scaled(11.5),
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF111318),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       );
     }
 
     Widget infoMultiline(String label, String value) {
       final display = value.isNotEmpty ? value : '—';
-      return Padding(
-        padding: EdgeInsets.only(bottom: infoSpacing),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: scaled(11.5),
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF3B3E45),
+      return SizedBox(
+        width: double.infinity,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: infoSpacing),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: scaled(11.5),
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF6B7280),
+                ),
               ),
-            ),
-            SizedBox(height: scaled(1)),
-            Text(
-              display,
-              style: TextStyle(
-                fontSize: scaled(11.5),
-                color: const Color(0xFF111318),
+              SizedBox(height: scaled(2)),
+              Text(
+                display,
+                style: TextStyle(
+                  fontSize: scaled(11.5),
+                  color: const Color(0xFF111318),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }
@@ -2177,10 +2179,17 @@ class _TasksScreenState extends State<TasksScreen>
               style: TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: scaled(12),
+                color: const Color(0xFF111827),
               ),
             ),
             SizedBox(height: smallSpacing),
-            ...content,
+            Wrap(
+              spacing: scaled(12),
+              runSpacing: scaled(2),
+              children: content,
+            ),
+            SizedBox(height: smallSpacing),
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
           ],
         ),
       );
@@ -2200,27 +2209,28 @@ class _TasksScreenState extends State<TasksScreen>
 
     final List<Widget> generalSection = [];
     if (order.customer.isNotEmpty) {
-      generalSection.add(infoLine('Заказчик', order.customer));
+      generalSection.add(infoLine('👤 Заказчик', order.customer));
     }
     if (order.manager.isNotEmpty) {
-      generalSection.add(infoLine('Менеджер', order.manager));
+      generalSection.add(infoLine('🧑‍💼 Менеджер', order.manager));
     }
-    generalSection.add(infoLine('Дата заказа', formatDate(order.orderDate)));
-    generalSection.add(infoLine('Срок выполнения', formatDate(order.dueDate)));
-    generalSection.add(infoLine('Статус заказа', statusLabel(order)));
+    generalSection.add(infoLine('📅 Дата заказа', formatDate(order.orderDate)));
+    generalSection.add(infoLine('⏰ Срок', formatDate(order.dueDate)));
+    generalSection.add(infoLine('📊 Статус', statusLabel(order)));
+    generalSection.add(infoLine('🏭 Этап', stage.name));
     if (order.comments.isNotEmpty) {
-      generalSection.add(infoMultiline('Комментарии', order.comments));
+      generalSection.add(infoMultiline('💬 Комментарии', order.comments));
     }
     generalSection
-        .add(infoLine('Договор подписан', order.contractSigned ? 'Да' : 'Нет'));
+        .add(infoLine('📄 Договор', order.contractSigned ? 'Да' : 'Нет'));
     generalSection
-        .add(infoLine('Оплата', order.paymentDone ? 'Проведена' : 'Нет'));
+        .add(infoLine('💳 Оплата', order.paymentDone ? 'Проведена' : 'Нет'));
     if (order.actualQty != null) {
       generalSection
-          .add(infoLine('Фактическое количество', formatQty(order.actualQty)));
+          .add(infoLine('📦 Готово', formatQty(order.actualQty)));
     }
     if (templateLabel != null) {
-      generalSection.add(infoLine('Шаблон этапов', templateLabel));
+      generalSection.add(infoLine('🧭 Шаблон этапов', templateLabel));
     }
 
     final List<Widget> productSection = [];
@@ -2414,6 +2424,8 @@ class _TasksScreenState extends State<TasksScreen>
                 ),
               ],
             ),
+            SizedBox(height: smallSpacing),
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
           ],
         ),
       );
@@ -2479,67 +2491,51 @@ class _TasksScreenState extends State<TasksScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(height: mediumSpacing),
-                Row(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (generalSection.isNotEmpty)
-                            section('🧾 Основное', generalSection),
-                          if (productSection.isNotEmpty)
-                            section('📦 Продукт', productSection),
-                          if (materialSection.isNotEmpty)
-                            section('🧵 Материал', materialSection),
-                          if (equipmentSection.isNotEmpty)
-                            section('🧩 Комплектация', equipmentSection),
+                    if (generalSection.isNotEmpty)
+                      section('🧾 Основное', generalSection),
+                    if (productSection.isNotEmpty)
+                      section('📦 Продукт', productSection),
+                    if (materialSection.isNotEmpty)
+                      section('🧵 Материал', materialSection),
+                    if (equipmentSection.isNotEmpty)
+                      section('🧩 Комплектация', equipmentSection),
                     if (formSection.isNotEmpty) formSectionWidget(),
                     if (hasPdf)
                       section('📎 Файлы', [
-                              Row(
-                                children: [
-                                  const Icon(Icons.picture_as_pdf_outlined,
-                                      size: 16, color: Colors.redAccent),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      'PDF: ${order.pdfUrl!}',
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(fontSize: scaled(13)),
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed: () async {
-                                      final url = await getSignedUrl(order.pdfUrl!);
-                                      if (!context.mounted) return;
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => PdfViewScreen(
-                                              url: url, title: 'PDF заказа'),
-                                        ),
-                                      );
-                                    },
-                                    child: const Text('Открыть'),
-                                  ),
-                                ],
+                        SizedBox(
+                          width: double.infinity,
+                          child: Row(
+                            children: [
+                              const Icon(Icons.picture_as_pdf_outlined,
+                                  size: 16, color: Colors.redAccent),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'PDF: ${order.pdfUrl!}',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: scaled(13)),
+                                ),
                               ),
-                            ]),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(height: scaled(18)),
-                          const Text('🏭 Этап производства',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text(stage.name,
-                              style: TextStyle(fontSize: scaled(12.5))),
-                        ],
-                      ),
-                    ),
+                              TextButton(
+                                onPressed: () async {
+                                  final url = await getSignedUrl(order.pdfUrl!);
+                                  if (!context.mounted) return;
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => PdfViewScreen(
+                                          url: url, title: 'PDF заказа'),
+                                    ),
+                                  );
+                                },
+                                child: const Text('Открыть'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ]),
                   ],
                 ),
                 SizedBox(height: mediumSpacing),
