@@ -211,11 +211,23 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
     final media = MediaQuery.of(context);
     final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
     final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
-    final double toolbarHeight = isCompactTablet ? 40 : (isTablet ? 46 : 50);
-    final double actionIconSize = isCompactTablet ? 18 : (isTablet ? 20 : 22);
-    final double tabLabelSize = isCompactTablet ? 10 : (isTablet ? 12 : 13);
+    final bool isTablet1280x800 = isTablet &&
+        ((media.size.width == 1280 && media.size.height == 800) ||
+            (media.size.width == 800 && media.size.height == 1280));
+    final double toolbarHeight = isTablet1280x800
+        ? 36
+        : (isCompactTablet ? 40 : (isTablet ? 46 : 50));
+    final double actionIconSize = isTablet1280x800
+        ? 16
+        : (isCompactTablet ? 18 : (isTablet ? 20 : 22));
+    final double tabLabelSize = isTablet1280x800
+        ? 9.5
+        : (isCompactTablet ? 10 : (isTablet ? 12 : 13));
     final EdgeInsetsGeometry tabPadding = isTablet
-        ? const EdgeInsets.symmetric(horizontal: 8, vertical: 2)
+        ? EdgeInsets.symmetric(
+            horizontal: isTablet1280x800 ? 6 : 8,
+            vertical: isTablet1280x800 ? 1 : 2,
+          )
         : const EdgeInsets.symmetric(horizontal: 12, vertical: 4);
 
     final theme = Theme.of(context);
@@ -408,43 +420,56 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
     final media = MediaQuery.of(context);
     final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
     final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
+    final bool isTablet1280x800 = isTablet &&
+        ((media.size.width == 1280 && media.size.height == 800) ||
+            (media.size.width == 800 && media.size.height == 1280));
     final double targetTextScale = math.max(
       media.textScaleFactor,
-      isCompactTablet
-          ? 1.12
-          : (isTablet
-              ? 1.08
-              : 1.0),
+      isTablet1280x800
+          ? 1.0
+          : (isCompactTablet
+              ? 1.12
+              : (isTablet
+                  ? 1.08
+                  : 1.0)),
     );
     final mediaData = media.copyWith(textScaleFactor: targetTextScale);
     final theme = Theme.of(context);
     final TextStyle? baseTabLabel = theme.tabBarTheme.labelStyle ?? theme.textTheme.labelLarge;
     final TextStyle? baseTabUnselected = theme.tabBarTheme.unselectedLabelStyle ?? theme.textTheme.labelMedium;
     final ThemeData compactTheme = theme.copyWith(
-      visualDensity: isCompactTablet
-          ? const VisualDensity(horizontal: 0.5, vertical: 0.5)
-          : (isTablet
-              ? const VisualDensity(horizontal: 0.25, vertical: 0.25)
-              : theme.visualDensity),
+      visualDensity: isTablet1280x800
+          ? const VisualDensity(horizontal: -0.2, vertical: -0.2)
+          : (isCompactTablet
+              ? const VisualDensity(horizontal: 0.5, vertical: 0.5)
+              : (isTablet
+                  ? const VisualDensity(horizontal: 0.25, vertical: 0.25)
+                  : theme.visualDensity)),
       tabBarTheme: theme.tabBarTheme.copyWith(
         labelPadding: isTablet
             ? const EdgeInsets.symmetric(horizontal: 8)
             : theme.tabBarTheme.labelPadding,
         labelStyle: baseTabLabel?.copyWith(
-          fontSize: isCompactTablet ? 13 : (isTablet ? 14 : baseTabLabel?.fontSize),
+          fontSize: isTablet1280x800
+              ? 12
+              : (isCompactTablet ? 13 : (isTablet ? 14 : baseTabLabel?.fontSize)),
         ),
         unselectedLabelStyle: baseTabUnselected?.copyWith(
-          fontSize: isCompactTablet ? 13 : (isTablet ? 14 : baseTabUnselected?.fontSize),
+          fontSize: isTablet1280x800
+              ? 12
+              : (isCompactTablet ? 13 : (isTablet ? 14 : baseTabUnselected?.fontSize)),
         ),
       ),
       iconTheme: theme.iconTheme.copyWith(
-        size: isCompactTablet ? 22 : (isTablet ? 24 : theme.iconTheme.size),
+        size: isTablet1280x800 ? 20 : (isCompactTablet ? 22 : (isTablet ? 24 : theme.iconTheme.size)),
       ),
       appBarTheme: theme.appBarTheme.copyWith(
-        toolbarHeight: isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight),
+        toolbarHeight: isTablet1280x800
+            ? 48
+            : (isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight)),
       ),
     );
-    final double tabBarHeight = isCompactTablet ? 38 : (isTablet ? 42 : 44);
+    final double tabBarHeight = isTablet1280x800 ? 34 : (isCompactTablet ? 38 : (isTablet ? 42 : 44));
     const Color tabBackground = Color(0xFFF1F1F5);
     const Color tabBorder = Color(0xFFE1E1E8);
 
@@ -474,11 +499,17 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                     labelStyle: Theme.of(context)
                         .textTheme
                         .labelLarge
-                        ?.copyWith(fontSize: isCompactTablet ? 11 : 12, fontWeight: FontWeight.w600),
+                        ?.copyWith(
+                          fontSize: isTablet1280x800 ? 10 : (isCompactTablet ? 11 : 12),
+                          fontWeight: FontWeight.w600,
+                        ),
                     unselectedLabelStyle: Theme.of(context)
                         .textTheme
                         .labelMedium
-                        ?.copyWith(fontSize: isCompactTablet ? 10 : 11, fontWeight: FontWeight.w500),
+                        ?.copyWith(
+                          fontSize: isTablet1280x800 ? 9 : (isCompactTablet ? 10 : 11),
+                          fontWeight: FontWeight.w500,
+                        ),
                     indicator: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
