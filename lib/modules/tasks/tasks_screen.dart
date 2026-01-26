@@ -1055,18 +1055,20 @@ class _TasksScreenState extends State<TasksScreen>
 
     double scaled(double value) => value * layoutScale;
     final double compactTightness = isCompactTablet ? 0.9 : 1.0;
-    final double outerPadding = scaled(16 * compactTightness);
-    final double columnGap = scaled(isCompactTablet ? 12 : 16);
+    final double outerPadding = scaled(12 * compactTightness);
+    final double columnGap = scaled(isCompactTablet ? 10 : 12);
     final double cardPadding = scaled(widget.compactList
-        ? 8
+        ? 6
         : (isCompactTablet
-            ? 10
-            : 12));
+            ? 8
+            : 10));
     final double cardRadius = scaled(12);
-    final double sectionSpacing = scaled(widget.compactList ? 8 : (isCompactTablet ? 10 : 12));
+    final double sectionSpacing =
+        scaled(widget.compactList ? 6 : (isCompactTablet ? 8 : 10));
     final double smallSpacing = scaled(4);
-    final double largeSpacing = scaled(widget.compactList ? 12 : (isCompactTablet ? 18 : 24));
-    final double chipSpacing = scaled(isCompactTablet ? 6 : 8);
+    final double largeSpacing =
+        scaled(widget.compactList ? 10 : (isCompactTablet ? 14 : 18));
+    final double chipSpacing = scaled(isCompactTablet ? 4 : 6);
 
     final EmployeeModel employee = personnel.employees.firstWhere(
       (e) => e.id == widget.employeeId,
@@ -1226,7 +1228,7 @@ class _TasksScreenState extends State<TasksScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Рабочее место',
+                '🏷️ Рабочее место',
                 style: TextStyle(
                   fontSize: scaled(12),
                   fontWeight: FontWeight.w600,
@@ -1287,7 +1289,7 @@ class _TasksScreenState extends State<TasksScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Список заданий',
+                      '🗂️ Список заданий',
                       style: TextStyle(
                         fontSize: scaled(widget.compactList ? 14 : 15),
                         fontWeight: FontWeight.w700,
@@ -1413,14 +1415,14 @@ class _TasksScreenState extends State<TasksScreen>
               currentTask,
               scale,
             ),
-          if (currentTask != null) SizedBox(height: scaled(10)),
+          if (currentTask != null) SizedBox(height: scaled(8)),
           if (currentTask != null) _buildTimerStatusPanel(currentTask, scale),
-          if (currentTask != null) SizedBox(height: scaled(10)),
+          if (currentTask != null) SizedBox(height: scaled(8)),
           if (currentTask != null) _buildHistoryPanel(currentTask, scale),
-          if (currentTask != null) SizedBox(height: scaled(10)),
+          if (currentTask != null) SizedBox(height: scaled(8)),
           if (currentTask != null) _buildPerformersPanel(currentTask, scale, isTablet),
           if (currentTask != null && selectedOrder != null)
-            SizedBox(height: scaled(10)),
+            SizedBox(height: scaled(8)),
           if (currentTask != null && selectedOrder != null)
             _buildResultPanel(selectedOrder, currentTask, scale),
         ],
@@ -1439,7 +1441,7 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
             ),
           if (currentTask != null && selectedWorkplace != null)
-            SizedBox(height: scaled(10)),
+            SizedBox(height: scaled(8)),
           if (currentTask != null && selectedWorkplace != null)
             _buildControlPanel(
               currentTask,
@@ -1448,7 +1450,7 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
               isTablet,
             ),
-          if (currentTask != null) SizedBox(height: scaled(10)),
+          if (currentTask != null) SizedBox(height: scaled(8)),
           if (currentTask != null) _buildCommentsPanel(currentTask, scale),
         ],
       );
@@ -1459,7 +1461,7 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           buildSummaryPanel(),
-          if (currentTask != null) SizedBox(height: scaled(10)),
+          if (currentTask != null) SizedBox(height: scaled(8)),
           buildDetailsPanel(),
         ],
       );
@@ -1530,12 +1532,12 @@ class _TasksScreenState extends State<TasksScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        flex: 2,
+                        flex: 1,
                         child: leftPanel,
                       ),
                       SizedBox(width: columnGap),
                       Expanded(
-                        flex: 5,
+                        flex: 2,
                         child: rightPanel,
                       ),
                     ],
@@ -1573,12 +1575,12 @@ class _TasksScreenState extends State<TasksScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      flex: 2,
+                      flex: 1,
                       child: summaryPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
-                      flex: 3,
+                      flex: 2,
                       child: detailsPanel,
                     ),
                   ],
@@ -1620,10 +1622,10 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _sectionCard(String title, Widget child, double scale) {
     double scaled(double value) => value * scale;
     return Container(
-      padding: EdgeInsets.all(scaled(12)),
+      padding: EdgeInsets.all(scaled(10)),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(scaled(12)),
+        borderRadius: BorderRadius.circular(scaled(10)),
         border: Border.all(color: const Color(0xFFE6E7EC)),
         boxShadow: const [
           BoxShadow(
@@ -1640,10 +1642,10 @@ class _TasksScreenState extends State<TasksScreen>
             title,
             style: TextStyle(
               fontWeight: FontWeight.w700,
-              fontSize: scaled(13.5),
+              fontSize: scaled(13),
             ),
           ),
-          SizedBox(height: scaled(6)),
+          SizedBox(height: scaled(4)),
           child,
         ],
       ),
@@ -1671,7 +1673,7 @@ class _TasksScreenState extends State<TasksScreen>
         stage.name.isNotEmpty ? stage.name : _workplaceName(personnel, stage.id);
 
     return _sectionCard(
-      'Задание',
+      '📌 Задание',
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1700,7 +1702,7 @@ class _TasksScreenState extends State<TasksScreen>
       return task.status == TaskStatus.waiting ? 'Ожидание' : _statusText(task.status);
     }();
     return _sectionCard(
-      'Таймер и статус',
+      '⏱️ Таймер и статус',
       StreamBuilder<DateTime>(
         stream: Stream<DateTime>.periodic(
             const Duration(seconds: 1), (_) => DateTime.now()),
@@ -1766,7 +1768,7 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     return _sectionCard(
-      'Исполнители',
+      '👥 Исполнители',
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1812,7 +1814,7 @@ class _TasksScreenState extends State<TasksScreen>
     final totalQty = _sumQuantities(task);
     final lastQty = _latestQuantityLabel(task);
     return _sectionCard(
-      'Производственный результат',
+      '📊 Производственный результат',
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1941,7 +1943,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final double inputRadius = scale * 12;
     return _sectionCard(
-      'Комментарии',
+      '💬 Комментарии',
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2017,13 +2019,13 @@ class _TasksScreenState extends State<TasksScreen>
     final events = _taskTimeEvents(task);
     if (events.isEmpty) {
       return _sectionCard(
-        'История событий',
+        '🧾 История событий',
         const Text('История пока пуста'),
         scale,
       );
     }
     return _sectionCard(
-      'История событий',
+      '🧾 История событий',
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2053,11 +2055,11 @@ class _TasksScreenState extends State<TasksScreen>
                 (templates.isEmpty ? 'загрузка...' : 'не найден'))
             : null;
     double scaled(double value) => value * scale;
-    final double panelPadding = scaled(14);
-    final double radius = scaled(12);
-    final double mediumSpacing = scaled(12);
-    final double smallSpacing = scaled(4);
-    final double infoSpacing = scaled(4);
+    final double panelPadding = scaled(10);
+    final double radius = scaled(10);
+    final double mediumSpacing = scaled(8);
+    final double smallSpacing = scaled(2);
+    final double infoSpacing = scaled(2);
     final orderNumber = orderDisplayId(order);
     final dateFormat = DateFormat('dd.MM.yyyy');
 
@@ -2109,7 +2111,7 @@ class _TasksScreenState extends State<TasksScreen>
           TextSpan(
             text: '$label: ',
             style: TextStyle(
-              fontSize: scaled(12.5),
+              fontSize: scaled(11.5),
               fontWeight: FontWeight.w600,
               color: const Color(0xFF3B3E45),
             ),
@@ -2117,7 +2119,7 @@ class _TasksScreenState extends State<TasksScreen>
               TextSpan(
                 text: display,
                 style: TextStyle(
-                  fontSize: scaled(12.5),
+                  fontSize: scaled(11.5),
                   fontWeight: FontWeight.w500,
                   color: const Color(0xFF111318),
                 ),
@@ -2138,16 +2140,16 @@ class _TasksScreenState extends State<TasksScreen>
             Text(
               label,
               style: TextStyle(
-                fontSize: scaled(12.5),
+                fontSize: scaled(11.5),
                 fontWeight: FontWeight.w600,
                 color: const Color(0xFF3B3E45),
               ),
             ),
-            SizedBox(height: scaled(2)),
+            SizedBox(height: scaled(1)),
             Text(
               display,
               style: TextStyle(
-                fontSize: scaled(12.5),
+                fontSize: scaled(11.5),
                 color: const Color(0xFF111318),
               ),
             ),
@@ -2167,7 +2169,7 @@ class _TasksScreenState extends State<TasksScreen>
               title,
               style: TextStyle(
                 fontWeight: FontWeight.w700,
-                fontSize: scaled(13.5),
+                fontSize: scaled(12.5),
               ),
             ),
             SizedBox(height: smallSpacing),
@@ -2317,10 +2319,10 @@ class _TasksScreenState extends State<TasksScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Форма',
+              '🧷 Форма',
               style: TextStyle(
                 fontWeight: FontWeight.w700,
-                fontSize: scaled(13.5),
+                fontSize: scaled(12.5),
               ),
             ),
             SizedBox(height: smallSpacing),
@@ -2438,13 +2440,13 @@ class _TasksScreenState extends State<TasksScreen>
                     Text(
                       orderNumber != '—' ? orderNumber : order.id,
                       style: TextStyle(
-                        fontSize: scaled(17),
+                        fontSize: scaled(16),
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     SizedBox(height: smallSpacing),
                     const Text(
-                      'Детали производственного задания',
+                      '📋 Детали производственного задания',
                       style: TextStyle(color: Color(0xFF6B7280)),
                     ),
                   ],
@@ -2478,16 +2480,16 @@ class _TasksScreenState extends State<TasksScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (generalSection.isNotEmpty)
-                            section('Основное', generalSection),
+                            section('🧾 Основное', generalSection),
                           if (productSection.isNotEmpty)
-                            section('Продукт', productSection),
+                            section('📦 Продукт', productSection),
                           if (materialSection.isNotEmpty)
-                            section('Материал', materialSection),
+                            section('🧵 Материал', materialSection),
                           if (equipmentSection.isNotEmpty)
-                            section('Комплектация', equipmentSection),
+                            section('🧩 Комплектация', equipmentSection),
                           if (formSection.isNotEmpty) formSectionWidget(),
                           if (hasPdf)
-                            section('Файлы', [
+                            section('📎 Файлы', [
                               Row(
                                 children: [
                                   const Icon(Icons.picture_as_pdf_outlined,
@@ -2524,7 +2526,7 @@ class _TasksScreenState extends State<TasksScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           SizedBox(height: scaled(36)),
-                          const Text('Этап производства',
+                          const Text('🏭 Этап производства',
                               style: TextStyle(fontWeight: FontWeight.bold)),
                           Text(stage.name,
                               style: TextStyle(fontSize: scaled(14))),
@@ -2557,11 +2559,11 @@ class _TasksScreenState extends State<TasksScreen>
         taskProvider.tasks.where((t) => t.orderId == order.id).toList();
 
     double scaled(double value) => value * scale;
-    final double rowPadding = scaled(2);
-    final double iconSize = scaled(16);
+    final double rowPadding = scaled(1);
+    final double iconSize = scaled(14);
     final double horizontalGap = scaled(4);
-    final double verticalSpacing = scaled(6);
-    final TextStyle stageTextStyle = TextStyle(fontSize: scaled(14));
+    final double verticalSpacing = scaled(4);
+    final TextStyle stageTextStyle = TextStyle(fontSize: scaled(12.5));
 
     final taskStageIds = <String>{};
     for (final t in tasksForOrder) {
@@ -2633,9 +2635,9 @@ class _TasksScreenState extends State<TasksScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Этапы производства',
+        Text('🏁 Этапы производства',
             style:
-                TextStyle(fontWeight: FontWeight.bold, fontSize: scaled(14))),
+                TextStyle(fontWeight: FontWeight.bold, fontSize: scaled(13))),
         SizedBox(height: verticalSpacing),
         for (final key in orderedGroupKeys)
           Builder(
@@ -2752,7 +2754,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     // Старт возможен, если задача ждёт/на паузе/с проблемой
     double scaled(double value) => value * scale;
-    final double panelPadding = scaled(12);
+    final double panelPadding = scaled(10);
     final double gapSmall = scaled(6);
     final double gapMedium = scaled(12);
     final double buttonSpacing = scaled(8);
@@ -2820,7 +2822,7 @@ class _TasksScreenState extends State<TasksScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Управление заданием',
+          Text('🧭 Управление заданием',
               style:
                   TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
           SizedBox(height: gapSmall),
