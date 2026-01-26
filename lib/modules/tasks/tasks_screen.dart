@@ -1031,6 +1031,9 @@ class _TasksScreenState extends State<TasksScreen>
     final bool isTablet1280x800 = isTablet &&
         ((media.size.width == 1280 && media.size.height == 800) ||
             (media.size.width == 800 && media.size.height == 1280));
+    final bool isTablet1000x700 = isTablet &&
+        ((media.size.width == 1000 && media.size.height == 700) ||
+            (media.size.width == 700 && media.size.height == 1000));
 
     // Для компактных экранов 1280x800 дополнительно уменьшаем масштаб,
     // чтобы панели «Список заданий», «Рабочее место», «Управление
@@ -1039,33 +1042,39 @@ class _TasksScreenState extends State<TasksScreen>
     // получают лёгкое увеличение.
     final double layoutScale = isTablet1280x800
         ? 0.78 // планшеты 1280x800 — уменьшаем элементы под макет
-        : (isCompactTablet
-            ? 0.88 // компактные планшеты — ещё аккуратнее базового масштаба
-            : (isTablet
-                ? 1.0 // обычные планшеты — без увеличения
-                : 1.08)); // десктопы/веб — умеренное увеличение
+        : (isTablet1000x700
+            ? 0.72 // планшеты 1000x700 — уменьшаем элементы под макет
+            : (isCompactTablet
+                ? 0.88 // компактные планшеты — ещё аккуратнее базового масштаба
+                : (isTablet
+                    ? 1.0 // обычные планшеты — без увеличения
+                    : 1.08))); // десктопы/веб — умеренное увеличение
 
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
     final double textScaleFactor = isTablet1280x800
         ? media.textScaleFactor * 0.95
-        : math.max(
-            media.textScaleFactor,
-            isCompactTablet
-                ? 1.0
-                : (isTablet
-                    ? 1.05
-                    : 1.12),
-          );
+        : (isTablet1000x700
+            ? media.textScaleFactor * 0.9
+            : math.max(
+                media.textScaleFactor,
+                isCompactTablet
+                    ? 1.0
+                    : (isTablet
+                        ? 1.05
+                        : 1.12),
+              ));
 
     final double scale = layoutScale;
 
     double scaled(double value) => value * layoutScale;
     final double compactTightness = isTablet1280x800
         ? 0.8
-        : (isCompactTablet
-            ? 0.9
-            : 1.0);
+        : (isTablet1000x700
+            ? 0.72
+            : (isCompactTablet
+                ? 0.9
+                : 1.0));
     final double outerPadding = scaled(10 * compactTightness);
     final double columnGap = scaled(isCompactTablet ? 8 : 10);
     final double cardPadding = scaled(widget.compactList
