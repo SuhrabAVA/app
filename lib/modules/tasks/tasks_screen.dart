@@ -1534,7 +1534,7 @@ class _TasksScreenState extends State<TasksScreen>
               child: buildLeftPanel(scrollable: true),
             );
 
-            final Widget rightPanel = buildRightPanel(scrollable: !isNarrow);
+            final Widget rightPanel = buildRightPanel(scrollable: true);
 
             if (widget.showListOnly && showList) {
               return SingleChildScrollView(
@@ -1593,6 +1593,7 @@ class _TasksScreenState extends State<TasksScreen>
                           SizedBox(width: columnGap),
                           SizedBox(
                             width: rightPanelWidth,
+                            height: scrollConstraints.maxHeight,
                             child: rightPanel,
                           ),
                         ],
@@ -1657,12 +1658,14 @@ class _TasksScreenState extends State<TasksScreen>
                       children: [
                         SizedBox(
                           width: minLeftPanelWidth,
-                          child: summaryPanel,
+                          height: scrollConstraints.maxHeight,
+                          child: SingleChildScrollView(child: summaryPanel),
                         ),
                         SizedBox(width: columnGap),
                         SizedBox(
                           width: rightPanelWidth,
-                          child: detailsPanel,
+                          height: scrollConstraints.maxHeight,
+                          child: SingleChildScrollView(child: detailsPanel),
                         ),
                       ],
                     ),
