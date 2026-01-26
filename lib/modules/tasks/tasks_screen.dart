@@ -1568,13 +1568,37 @@ class _TasksScreenState extends State<TasksScreen>
 
               return SingleChildScrollView(
                 padding: EdgeInsets.all(outerPadding),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    leftPanel,
-                    SizedBox(height: scaled(12)),
-                    rightPanel,
-                  ],
+                scrollDirection: Axis.horizontal,
+                child: LayoutBuilder(
+                  builder: (context, scrollConstraints) {
+                    const double minLeftPanelWidth = 320;
+                    const double minRightPanelWidth = 640;
+                    final double totalMinWidth =
+                        minLeftPanelWidth + columnGap + minRightPanelWidth;
+                    final double contentWidth = math.max(
+                      scrollConstraints.maxWidth,
+                      totalMinWidth,
+                    );
+                    final double rightPanelWidth =
+                        contentWidth - minLeftPanelWidth - columnGap;
+                    return SizedBox(
+                      width: contentWidth,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: minLeftPanelWidth,
+                            child: leftPanel,
+                          ),
+                          SizedBox(width: columnGap),
+                          SizedBox(
+                            width: rightPanelWidth,
+                            child: rightPanel,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               );
             }
@@ -1613,13 +1637,37 @@ class _TasksScreenState extends State<TasksScreen>
 
             return SingleChildScrollView(
               padding: EdgeInsets.all(outerPadding),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  summaryPanel,
-                  SizedBox(height: scaled(12)),
-                  detailsPanel,
-                ],
+              scrollDirection: Axis.horizontal,
+              child: LayoutBuilder(
+                builder: (context, scrollConstraints) {
+                  const double minLeftPanelWidth = 320;
+                  const double minRightPanelWidth = 640;
+                  final double totalMinWidth =
+                      minLeftPanelWidth + columnGap + minRightPanelWidth;
+                  final double contentWidth = math.max(
+                    scrollConstraints.maxWidth,
+                    totalMinWidth,
+                  );
+                  final double rightPanelWidth =
+                      contentWidth - minLeftPanelWidth - columnGap;
+                  return SizedBox(
+                    width: contentWidth,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: minLeftPanelWidth,
+                          child: summaryPanel,
+                        ),
+                        SizedBox(width: columnGap),
+                        SizedBox(
+                          width: rightPanelWidth,
+                          child: detailsPanel,
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             );
           },
