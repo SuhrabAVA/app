@@ -405,12 +405,6 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
                   labelText: 'Фамилия',
                   border: OutlineInputBorder(),
                 ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Введите фамилию';
-                  }
-                  return null;
-                },
               ),
               const SizedBox(height: 6),
               TextFormField(
