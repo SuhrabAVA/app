@@ -1054,16 +1054,16 @@ class _TasksScreenState extends State<TasksScreen>
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
     final double textScaleFactor = isTablet1280x800
-        ? media.textScaleFactor * 0.95
+        ? media.textScaleFactor * 0.98
         : (isTablet1000x700
-            ? media.textScaleFactor * 0.9
+            ? media.textScaleFactor * 0.94
             : math.max(
                 media.textScaleFactor,
                 isCompactTablet
-                    ? 1.0
+                    ? 1.03
                     : (isTablet
-                        ? 1.05
-                        : 1.12),
+                        ? 1.1
+                        : 1.18),
               ));
 
     final double scale = layoutScale;
@@ -1545,18 +1545,20 @@ class _TasksScreenState extends State<TasksScreen>
 
             if (showList && showDetails) {
               if (!isNarrow) {
+                const int leftPanelFlex = 8;
+                const int rightPanelFlex = 24;
                 return Padding(
                   padding: EdgeInsets.all(outerPadding),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        flex: 1,
+                        flex: leftPanelFlex,
                         child: leftPanel,
                       ),
                       SizedBox(width: columnGap),
                       Expanded(
-                        flex: 2,
+                        flex: rightPanelFlex,
                         child: rightPanel,
                       ),
                     ],
@@ -1588,18 +1590,20 @@ class _TasksScreenState extends State<TasksScreen>
             final Widget detailsPanel = buildDetailsPanel();
 
             if (!isNarrow) {
+              const int leftPanelFlex = 8;
+              const int rightPanelFlex = 24;
               return SingleChildScrollView(
                 padding: EdgeInsets.all(outerPadding),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      flex: 1,
+                      flex: leftPanelFlex,
                       child: summaryPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
-                      flex: 2,
+                      flex: rightPanelFlex,
                       child: detailsPanel,
                     ),
                   ],
