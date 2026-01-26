@@ -1575,10 +1575,12 @@ class _TasksScreenState extends State<TasksScreen>
                     const double minRightPanelWidth = 640;
                     final double totalMinWidth =
                         minLeftPanelWidth + columnGap + minRightPanelWidth;
-                    final double contentWidth = math.max(
-                      scrollConstraints.maxWidth,
-                      totalMinWidth,
-                    );
+                    final double availableWidth =
+                        scrollConstraints.hasBoundedWidth
+                            ? scrollConstraints.maxWidth
+                            : totalMinWidth;
+                    final double contentWidth =
+                        math.max(availableWidth, totalMinWidth);
                     final double rightPanelWidth =
                         contentWidth - minLeftPanelWidth - columnGap;
                     return SizedBox(
@@ -1644,10 +1646,12 @@ class _TasksScreenState extends State<TasksScreen>
                   const double minRightPanelWidth = 640;
                   final double totalMinWidth =
                       minLeftPanelWidth + columnGap + minRightPanelWidth;
-                  final double contentWidth = math.max(
-                    scrollConstraints.maxWidth,
-                    totalMinWidth,
-                  );
+                  final double availableWidth =
+                      scrollConstraints.hasBoundedWidth
+                          ? scrollConstraints.maxWidth
+                          : totalMinWidth;
+                  final double contentWidth =
+                      math.max(availableWidth, totalMinWidth);
                   final double rightPanelWidth =
                       contentWidth - minLeftPanelWidth - columnGap;
                   return SizedBox(
