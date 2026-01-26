@@ -124,8 +124,31 @@ class PersonnelDB {
 
   // Workplaces
   Future<List<Map<String, dynamic>>> listWorkplacesView() async {
-    final data = await s.from('workplaces_view').select('*').order('name');
-    return List<Map<String, dynamic>>.from(data as List);
+    final workplacesData = await s.from('workplaces').select('*').order('name');
+    final positionsData = await s
+        .from('workplace_positions')
+        .select('workplace_id,position_id');
+
+    final positionsByWorkplace = <String, List<String>>{};
+    for (final row in List<Map<String, dynamic>>.from(positionsData as List)) {
+      final workplaceId = row['workplace_id']?.toString();
+      final positionId = row['position_id']?.toString();
+      if (workplaceId == null || positionId == null) continue;
+      positionsByWorkplace
+          .putIfAbsent(workplaceId, () => <String>[])
+          .add(positionId);
+    }
+
+    return List<Map<String, dynamic>>.from(workplacesData as List)
+        .map((row) {
+      final id = row['id']?.toString();
+      return <String, dynamic>{
+        ...row,
+        'position_ids': id == null
+            ? const <String>[]
+            : positionsByWorkplace[id] ?? const <String>[],
+      };
+    }).toList();
   }
 
   Future<void> insertWorkplace({
