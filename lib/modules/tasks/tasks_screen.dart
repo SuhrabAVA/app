@@ -211,7 +211,8 @@ Duration _timeForUser(
 }
 
 Duration _totalTimeForUser(TaskModel task, String userId) {
-  return _timeForUser(task, userId, {TaskTimeType.production});
+  return _timeForUser(
+      task, userId, {TaskTimeType.production, TaskTimeType.setup});
 }
 
 Duration _setupElapsedFromTimeEvents(TaskModel task) {
@@ -403,6 +404,24 @@ bool _containsBobbin(String text) {
       lower.contains('bobbin');
 }
 
+bool _isEffectivelyCompleted(TaskModel task) {
+  if (task.status == TaskStatus.completed) return true;
+  if (task.assignees.isEmpty) return false;
+
+  final mode = _stageExecutionMode(task);
+  if (mode == ExecutionMode.joint || mode == ExecutionMode.solo) {
+    final ownerId = task.assignees.first;
+    return _userRunState(task, ownerId) == UserRunState.finished;
+  }
+
+  final performers = task.assignees
+      .where((id) => _execModeForUser(task, id) == ExecutionMode.separate)
+      .toList();
+  if (performers.isEmpty) return false;
+  return performers
+      .every((uid) => _userRunState(task, uid) == UserRunState.finished);
+}
+
 String _workplaceName(PersonnelProvider personnel, String stageId,
     {TaskProvider? tasks, String? orderId}) {
   try {
@@ -568,8 +587,8 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   // альтернатив завершена.
   final stages = <String, Map<String, bool>>{}; // stageId -> {pending, completed}
   for (final t in all) {
-    final pending = t.status != TaskStatus.completed;
-    final completed = t.status == TaskStatus.completed;
+    final completed = _isEffectivelyCompleted(t);
+    final pending = !completed;
     final key = _groupKey(t.stageId);
     final current = stages[key] ?? {'pending': false, 'completed': false};
     stages[key] = {
@@ -3486,29 +3505,31 @@ class _TasksScreenState extends State<TasksScreen>
                                       label: const Text('Начать наладку'),
                                     ),
                                     SizedBox(width: buttonSpacing),
-                                    StreamBuilder<DateTime>(
-                                      stream: Stream<DateTime>.periodic(
-                                          const Duration(seconds: 1),
-                                          (_) => DateTime.now()),
-                                      builder: (context, _) {
-                                        // Use aggregated setup time across all related tasks to avoid
-                                        // inconsistent timing when multiple users are involved.
-                                        // Use per-task setup elapsed time to avoid aggregating
-                                        // across unrelated tasks, which can lead to huge jumps.
-                                        // Используем максимальное время настройки по каждой из
-                                        // связанных задач (объединяя периоды настройки внутри
-                                        // каждой) и берём максимум. Это устраняет двойной
-                                        // учёт и длительные промежутки между настройками.
-                                        final d = _setupElapsedStageMaxAgg(task);
-                                        String two(int n) =>
-                                            n.toString().padLeft(2, '0');
-                                        final s =
-                                            '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                                        return Text('Время настройки: $s',
-                                            style:
-                                                TextStyle(fontSize: scaled(12)));
-                                      },
-                                    ),
+                                    if (_isSetupInProgressForUser(
+                                        task, currentRowUserId))
+                                      StreamBuilder<DateTime>(
+                                        stream: Stream<DateTime>.periodic(
+                                            const Duration(seconds: 1),
+                                            (_) => DateTime.now()),
+                                        builder: (context, _) {
+                                          // Use aggregated setup time across all related tasks to avoid
+                                          // inconsistent timing when multiple users are involved.
+                                          // Use per-task setup elapsed time to avoid aggregating
+                                          // across unrelated tasks, which can lead to huge jumps.
+                                          // Используем максимальное время настройки по каждой из
+                                          // связанных задач (объединяя периоды настройки внутри
+                                          // каждой) и берём максимум. Это устраняет двойной
+                                          // учёт и длительные промежутки между настройками.
+                                          final d = _setupElapsedStageMaxAgg(task);
+                                          String two(int n) =>
+                                              n.toString().padLeft(2, '0');
+                                          final s =
+                                              '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
+                                          return Text('Время настройки: $s',
+                                              style: TextStyle(
+                                                  fontSize: scaled(12)));
+                                        },
+                                      ),
                                   ],
                                   ElevatedButton(
                                       onPressed:
@@ -3929,6 +3950,26 @@ class _TasksScreenState extends State<TasksScreen>
         ? 0
         : dones.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
     return lastDoneTs > lastStartTs;
+  }
+
+  bool _isSetupInProgressForUser(TaskModel task, String userId) {
+    final openEvent = _openEventForUser(task, userId);
+    if (openEvent != null) {
+      return openEvent.type == TaskTimeType.setup;
+    }
+    final starts = task.comments
+        .where((c) => c.type == 'setup_start' && c.userId == userId)
+        .toList();
+    if (starts.isEmpty) return false;
+    final dones = task.comments
+        .where((c) => c.type == 'setup_done' && c.userId == userId)
+        .toList();
+    final lastStartTs =
+        starts.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
+    final lastDoneTs = dones.isEmpty
+        ? 0
+        : dones.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
+    return lastStartTs > lastDoneTs;
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
