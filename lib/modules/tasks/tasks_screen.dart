@@ -3069,6 +3069,9 @@ class _TasksScreenState extends State<TasksScreen>
                     }
                     final UserRunState stateRowUser =
                         _userRunState(task, currentRowUserId);
+                    final bool isSetupActiveForRow =
+                        _openEventForUser(task, currentRowUserId)?.type ==
+                            TaskTimeType.setup;
                     // Disable buttons for other users' rows
                     // Кнопка "Начать" доступна для своей строки, если
                     // пользователь может стартовать, и он либо ещё не
@@ -3081,7 +3084,9 @@ class _TasksScreenState extends State<TasksScreen>
                         (stateRowUser == UserRunState.idle ||
                             stateRowUser == UserRunState.paused ||
                             stateRowUser == UserRunState.problem ||
-                            stateRowUser == UserRunState.finished);
+                            stateRowUser == UserRunState.finished ||
+                            (stateRowUser == UserRunState.active &&
+                                isSetupActiveForRow));
                     final bool canPauseRow = isMyRow &&
                         canPause &&
                         stateRowUser == UserRunState.active;
@@ -3505,31 +3510,6 @@ class _TasksScreenState extends State<TasksScreen>
                                       label: const Text('Начать наладку'),
                                     ),
                                     SizedBox(width: buttonSpacing),
-                                    if (_isSetupInProgressForUser(
-                                        task, currentRowUserId))
-                                      StreamBuilder<DateTime>(
-                                        stream: Stream<DateTime>.periodic(
-                                            const Duration(seconds: 1),
-                                            (_) => DateTime.now()),
-                                        builder: (context, _) {
-                                          // Use aggregated setup time across all related tasks to avoid
-                                          // inconsistent timing when multiple users are involved.
-                                          // Use per-task setup elapsed time to avoid aggregating
-                                          // across unrelated tasks, which can lead to huge jumps.
-                                          // Используем максимальное время настройки по каждой из
-                                          // связанных задач (объединяя периоды настройки внутри
-                                          // каждой) и берём максимум. Это устраняет двойной
-                                          // учёт и длительные промежутки между настройками.
-                                          final d = _setupElapsedStageMaxAgg(task);
-                                          String two(int n) =>
-                                              n.toString().padLeft(2, '0');
-                                          final s =
-                                              '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                                          return Text('Время настройки: $s',
-                                              style: TextStyle(
-                                                  fontSize: scaled(12)));
-                                        },
-                                      ),
                                   ],
                                   ElevatedButton(
                                       onPressed:
