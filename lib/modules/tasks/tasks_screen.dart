@@ -691,6 +691,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   final TextEditingController _chatController = TextEditingController();
   late final _TaskSelectionState _selection;
+  bool _selectionUpdateScheduled = false;
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
     final normalized = value?.trim();
@@ -740,6 +741,16 @@ class _TasksScreenState extends State<TasksScreen>
     _selection.removeListener(_onSelectionChanged);
     _chatController.dispose();
     super.dispose();
+  }
+
+  void _scheduleSelectionUpdate(VoidCallback update) {
+    if (_selectionUpdateScheduled) return;
+    _selectionUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _selectionUpdateScheduled = false;
+      if (!mounted) return;
+      update();
+    });
   }
 
   /// Aggregated setup duration across all tasks belonging to the same order and
@@ -1176,10 +1187,15 @@ class _TasksScreenState extends State<TasksScreen>
         : filteredWorkplaces;
 
     if (_selectedWorkplaceId == null && workplaces.isNotEmpty) {
-      _selection.workplaceId = savedWid ?? _selectedWorkplaceId;
-      _selection.workplaceId = _selectedWorkplaceId ?? workplaces.first.id;
-      _persistWorkplace(_selectedWorkplaceId);
-      _selection.notifyListeners();
+      final desiredWorkplaceId =
+          (savedWid?.trim().isNotEmpty == true ? savedWid : workplaces.first.id)
+              ?.trim();
+      _scheduleSelectionUpdate(() {
+        if (_selectedWorkplaceId != null) return;
+        _selection.workplaceId = desiredWorkplaceId;
+        _persistWorkplace(desiredWorkplaceId);
+        _selection.notifyListeners();
+      });
     }
 
     OrderModel? findOrder(String id) {
@@ -1229,14 +1245,27 @@ class _TasksScreenState extends State<TasksScreen>
         .toList();
 
     if (_selectedTask == null && savedTid != null) {
+      TaskModel? restoredTask;
       try {
-        _selectedTask = tasksForWorkplace.firstWhere((t) => t.id == savedTid);
-        _selectedStatus = _sectionForTask(_selectedTask!);
+        restoredTask = tasksForWorkplace.firstWhere((t) => t.id == savedTid);
       } catch (_) {}
+      if (restoredTask != null) {
+        _scheduleSelectionUpdate(() {
+          if (_selectedTask != null) return;
+          _selection.task = restoredTask;
+          _selection.status = _sectionForTask(restoredTask!);
+          _persistTask(restoredTask!.id);
+          _selection.notifyListeners();
+        });
+      }
     } else if (_selectedTask != null &&
         !tasksForWorkplace.any((t) => t.id == _selectedTask!.id)) {
-      _selectedTask = null;
-      _persistTask(null);
+      _scheduleSelectionUpdate(() {
+        if (_selectedTask == null) return;
+        _selection.task = null;
+        _persistTask(null);
+        _selection.notifyListeners();
+      });
     }
 
     if (_selectedTask != null) {
@@ -2803,9 +2832,10 @@ class _TasksScreenState extends State<TasksScreen>
                       final stageTasks = tasksForOrder
                           .where((t) => groupIds.contains(t.stageId))
                           .toList();
-                      final completed = stageTasks.isNotEmpty &&
-                          stageTasks
-                              .every((t) => t.status == TaskStatus.completed);
+                      final bool completed = stageTasks.isNotEmpty &&
+                          (groupIds.length > 1
+                              ? stageTasks.any(_isEffectivelyCompleted)
+                              : stageTasks.every(_isEffectivelyCompleted));
                       final label = _stageLabelForOrder(personnel, templates,
                           ordersProvider, taskProvider, order.id, repId);
                       return Container(
@@ -2835,15 +2865,9 @@ class _TasksScreenState extends State<TasksScreen>
                               ),
                             ),
                             SizedBox(width: scaled(4)),
-                            ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: scaled(180),
-                              ),
-                              child: Text(
-                                label,
-                                style: stageTextStyle,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                            Text(
+                              label,
+                              style: stageTextStyle,
                             ),
                           ],
                         ),
