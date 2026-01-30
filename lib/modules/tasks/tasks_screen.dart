@@ -1530,8 +1530,6 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
             ),
           if (currentTask != null) SizedBox(height: scaled(6)),
-          if (currentTask != null) _buildHistoryPanel(currentTask, scale),
-          if (currentTask != null) SizedBox(height: scaled(6)),
           if (currentTask != null) _buildPerformersPanel(currentTask, scale, isTablet),
           if (currentTask != null && selectedOrder != null)
             SizedBox(height: scaled(6)),
