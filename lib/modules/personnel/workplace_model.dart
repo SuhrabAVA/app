@@ -1,3 +1,5 @@
+const int kUnlimitedConcurrentWorkers = 1000000;
+
 class WorkplaceModel {
   final String id;
   final String name;
@@ -14,7 +16,7 @@ class WorkplaceModel {
     this.description,
     required this.positionIds,
     this.hasMachine = false,
-    this.maxConcurrentWorkers = 1,
+    this.maxConcurrentWorkers = kUnlimitedConcurrentWorkers,
     this.unit,
     this.executionMode = WorkplaceExecutionMode.joint,
   });
@@ -58,9 +60,7 @@ class WorkplaceModel {
         positionIds: List<String>.from(map['positionIds'] ?? []),
         hasMachine:
             map['has_machine'] as bool? ?? map['hasMachine'] as bool? ?? false,
-        maxConcurrentWorkers: (map['max_concurrent_workers'] as int?) ??
-            (map['maxConcurrentWorkers'] as int?) ??
-            1,
+        maxConcurrentWorkers: kUnlimitedConcurrentWorkers,
         unit: map['unit'] as String?,
         executionMode:
             parseWorkplaceExecutionMode(map['execution_mode'] ?? map['executionMode']),
