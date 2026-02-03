@@ -3128,7 +3128,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 stateRowUser == UserRunState.problem));
 
                     Future<void> recordTimeEventForUser(TaskTimeType type,
-                        {String? note}) async {
+                        {String? note, bool includeHelpers = true}) async {
                       final participants =
                           _participantsSnapshot(task, widget.employeeId);
                       final execMode = stageExecMode ??
@@ -3144,7 +3144,7 @@ class _TasksScreenState extends State<TasksScreen>
                         note: note,
                       );
 
-                      if (jointGroup != null && isMyRow) {
+                      if (includeHelpers && jointGroup != null && isMyRow) {
                         final helpers = jointGroup
                             .where((id) => id != task.assignees.first)
                             .toList();
@@ -3431,6 +3431,44 @@ class _TasksScreenState extends State<TasksScreen>
                       final analytics = context.read<AnalyticsProvider>();
 
                       if (!shiftPaused) {
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final helperIds = jointGroup != null && isMyRow
+                            ? jointGroup
+                                .where((id) => id != latestTask.assignees.first)
+                                .toList()
+                            : const <String>[];
+
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'user_done',
+                            text: 'done',
+                            userIdOverride: widget.employeeId);
+
+                        for (final helperId in helperIds) {
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'user_done',
+                              text: 'done',
+                              userIdOverride: helperId);
+                          await taskProvider.closeOpenTimeEvent(
+                            task: task,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: helperId,
+                            note: 'shift_change',
+                          );
+                        }
+
+                        if (helperIds.isNotEmpty) {
+                          final updatedAssignees = latestTask.assignees
+                              .where((id) => !helperIds.contains(id))
+                              .toList();
+                          await taskProvider.updateAssignees(
+                              task.id, updatedAssignees);
+                        }
+
                         final related = _relatedTasks(taskProvider, task);
                         for (final rel in related) {
                           if (rel.status == TaskStatus.inProgress) {
@@ -3439,7 +3477,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 startedAt: null);
                           }
                         }
-                        await recordTimeEventForUser(TaskTimeType.shiftChange);
+                        await recordTimeEventForUser(TaskTimeType.shiftChange,
+                            includeHelpers: false);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'shift_pause',
