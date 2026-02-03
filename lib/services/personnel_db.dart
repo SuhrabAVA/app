@@ -156,7 +156,7 @@ class PersonnelDB {
     required String name,
     String? description,
     bool hasMachine = false,
-    int maxConcurrentWorkers = 1,
+    int maxConcurrentWorkers = kUnlimitedConcurrentWorkers,
     List<String> positionIds = const [],
     String? unit,
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
