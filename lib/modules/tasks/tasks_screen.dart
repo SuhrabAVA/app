@@ -2929,11 +2929,7 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
       TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
-    final int activeCount = _activeExecutorsCountForStage(provider, task);
     final bool shiftPaused = _isShiftPausedForStage(provider, task);
-    final dynamic _rawCap = (stage as dynamic).maxConcurrentWorkers;
-    final int capacity = (_rawCap is num ? _rawCap.toInt() : 1);
-    final int effCap = capacity <= 0 ? 1 : capacity;
     final ExecutionMode? explicitStageMode = _stageExecutionMode(task);
     final ExecutionMode stageMode =
         explicitStageMode ?? _workplaceDefaultMode(stage);
@@ -2957,17 +2953,10 @@ class _TasksScreenState extends State<TasksScreen>
     final double mediumSpacing = scaled(12);
     final double radius = scaled(12);
 
-    // Старт возможен, если задача ждёт/на паузе/с проблемой
-    // ИЛИ уже в работе, но есть свободная вместимость по рабочему месту.
     // Старт возможен, если задача ждёт/на паузе/с проблемой,
-    // или уже в работе, но есть свободная вместимость по месту;
-    // при этом соблюдаем последовательность этапов.
+    // или уже в работе; при этом соблюдаем последовательность этапов.
 
-    bool _slotAvailable() {
-      final tp = context.read<TaskProvider>();
-      final int activeNow = _activeExecutorsCountForStage(tp, task);
-      return activeNow < effCap;
-    }
+    bool _slotAvailable() => true;
 
     final bool alreadyAssigned = task.assignees.contains(widget.employeeId);
     final bool isFirstAssignee = task.assignees.isEmpty;
@@ -3043,16 +3032,6 @@ class _TasksScreenState extends State<TasksScreen>
                   Widget buildControlsFor(String? label,
                       {List<String>? jointGroup, String? userId}) {
                     final tp = context.read<TaskProvider>();
-                    final activeCount = _activeExecutorsCountForStage(tp, task);
-                    final personnel = context.read<PersonnelProvider>();
-                    final stage =
-                        personnel.workplaces.firstWhere(
-                          (w) => w.id == task.stageId,
-                          orElse: () => WorkplaceModel(
-                              id: '', name: '', positionIds: const []),
-                        );
-                    final rawCap = (stage as dynamic).maxConcurrentWorkers;
-                    final effCap = (rawCap is num ? rawCap.toInt() : 1);
 
                     UserRunState state;
                     if (jointGroup != null) {
@@ -3728,13 +3707,11 @@ class _TasksScreenState extends State<TasksScreen>
     // should appear only when the task has at least one assignee (someone started
     // the stage) and the current user is not yet in the assignees list. Helpers and
     // unassigned users should not have control buttons or the ability to add
-    // comments until they join. The join button is disabled when the stage’s
-    // capacity (maxConcurrentWorkers) has been reached. Joining presents a choice
-    // between separate execution (individual performer) and helper (joint).
+    // comments until they join. Joining presents a choice between separate
+    // execution (individual performer) and helper (joint).
     final bool _joinEligible = task.assignees.isNotEmpty &&
         !task.assignees.contains(widget.employeeId) &&
         stageMode == ExecutionMode.separate;
-    final bool _joinCapacityAvailable = activeCount < effCap;
     if (_joinEligible) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3742,13 +3719,9 @@ class _TasksScreenState extends State<TasksScreen>
           panel,
           SizedBox(height: mediumSpacing),
           ElevatedButton.icon(
-            onPressed: _joinCapacityAvailable
-                ? () => _joinTask(task, provider, widget.employeeId)
-                : null,
+            onPressed: () => _joinTask(task, provider, widget.employeeId),
             icon: const Icon(Icons.group_add),
-            label: Text(_joinCapacityAvailable
-                ? 'Присоединиться к заказу'
-                : 'Нет свободных мест'),
+            label: const Text('Присоединиться к заказу'),
           ),
         ],
       );
@@ -4014,26 +3987,6 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
-    // Проверяем вместимость рабочего места перед началом настройки
-    final stage = context.read<PersonnelProvider>().workplaces.firstWhere(
-          (w) => w.id == task.stageId,
-          orElse: () => WorkplaceModel(id: '', name: '', positionIds: const []),
-        );
-    final int active = _activeExecutorsCountForStage(provider, task);
-    final int cap = ((stage as dynamic).maxConcurrentWorkers is num)
-        ? ((stage as dynamic).maxConcurrentWorkers as num).toInt()
-        : 1;
-    final int effCap = cap <= 0 ? 1 : cap;
-    final bool isAssignee = task.assignees.contains(widget.employeeId);
-    if (active >= effCap && !isAssignee) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Нет свободных мест на рабочем месте')),
-        );
-      }
-      return;
-    }
-
     await provider.addCommentAutoUser(
       taskId: task.id,
       type: 'setup_start',
@@ -4514,19 +4467,8 @@ class _AssignedEmployeesRow extends StatelessWidget {
     final stageMode = explicitStageMode ?? _workplaceDefaultMode(stage);
     final bool isOwner =
         task.assignees.isNotEmpty && task.assignees.first == currentUserId;
-    final dynamic rawCap = (stage as dynamic).maxConcurrentWorkers;
-    final int cap = (rawCap is num ? rawCap.toInt() : 1);
-    final int effCap = cap <= 0 ? 1 : cap;
-    final jointAssignees = task.assignees
-        .where((id) => _execModeForUser(task, id) != ExecutionMode.separate)
-        .toList();
-    final int helperCount =
-        jointAssignees.isNotEmpty ? jointAssignees.length - 1 : 0;
-    final int maxHelpers = effCap - 1;
     final bool canAddHelper = isOwner &&
-        stageMode == ExecutionMode.joint &&
-        effCap > 1 &&
-        helperCount < maxHelpers;
+        stageMode == ExecutionMode.joint;
 
     double scaled(double value) => value * scale;
     final double spacing = scaled(compact ? 6 : 8);
@@ -4644,21 +4586,6 @@ class _AssignedEmployeesRow extends StatelessWidget {
       );
 
       if (selectedId != null) {
-        final int active = _activeExecutorsCountForStage(taskProvider, task);
-        final currentHelpers = _helperIds(task).length;
-        if (active + 1 > effCap) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Нет свободных мест на рабочем месте')),
-          );
-          return;
-        }
-        if (currentHelpers + 1 > maxHelpers) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Достигнут лимит помощников')),
-          );
-          return;
-        }
-
         if (explicitStageMode == null) {
           await taskProvider.addComment(
             taskId: task.id,
