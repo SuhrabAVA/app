@@ -3449,6 +3449,10 @@ class _TasksScreenState extends State<TasksScreen>
                               task.id, updatedAssignees);
                         }
 
+                        // Clear assignees on shift change so the next operator
+                        // becomes the main performer instead of a helper.
+                        await taskProvider.updateAssignees(task.id, const []);
+
                         final related = _relatedTasks(taskProvider, task);
                         for (final rel in related) {
                           if (rel.status == TaskStatus.inProgress) {
@@ -3649,9 +3653,14 @@ class _TasksScreenState extends State<TasksScreen>
                     }
                   }
                   if (jointUsers.isNotEmpty) {
-                    final labels = jointUsers.map(nameFor).toList();
+                    final helperIds = _helperIds(task);
+                    final ownerId =
+                        task.assignees.isNotEmpty ? task.assignees.first : null;
+                    final labels = helperIds.map(nameFor).toList();
                     final label = labels.isEmpty
-                        ? 'Одиночная или совместная работа'
+                        ? (ownerId != null
+                            ? 'Исполнитель: ' + nameFor(ownerId)
+                            : 'Одиночная или совместная работа')
                         : 'Помощники: ' + labels.join(', ');
                     if (label == 'Одиночная или совместная работа') {
                       // скрываем строку с кнопками для "одиночной/совместной" работы
