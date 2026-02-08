@@ -3415,6 +3415,12 @@ class _TasksScreenState extends State<TasksScreen>
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
+                        final unitLabel =
+                            _workplaceUnit(personnel, task.stageId);
+                        final qtyInput =
+                            await _askQuantity(context, unit: unitLabel);
+                        if (qtyInput == null) return;
+                        final qtyText = qtyInput.displayText;
                         final helperIds = jointGroup != null && isMyRow
                             ? jointGroup
                                 .where((id) => id != latestTask.assignees.first)
@@ -3423,11 +3429,22 @@ class _TasksScreenState extends State<TasksScreen>
 
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
+                            type: 'quantity_share',
+                            text: qtyText,
+                            userIdOverride: widget.employeeId);
+
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
                             type: 'user_done',
                             text: 'done',
                             userIdOverride: widget.employeeId);
 
                         for (final helperId in helperIds) {
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'quantity_share',
+                              text: qtyText,
+                              userIdOverride: helperId);
                           await taskProvider.addCommentAutoUser(
                               taskId: task.id,
                               type: 'user_done',
@@ -3457,8 +3474,7 @@ class _TasksScreenState extends State<TasksScreen>
                         for (final rel in related) {
                           if (rel.status == TaskStatus.inProgress) {
                             await taskProvider.updateStatus(
-                                rel.id, TaskStatus.paused,
-                                startedAt: null);
+                                rel.id, TaskStatus.paused);
                           }
                         }
                         await recordTimeEventForUser(TaskTimeType.shiftChange,
@@ -3477,12 +3493,38 @@ class _TasksScreenState extends State<TasksScreen>
                           details: 'Этап остановлен для пересмены',
                         );
                       } else {
-                        await onStart();
-                        final latest = taskProvider.tasks.firstWhere(
+                        final latestTask = taskProvider.tasks.firstWhere(
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
-                        if (latest.status == TaskStatus.inProgress) {
+                        final assignees = latestTask.assignees;
+                        if (assignees.length != 1 ||
+                            assignees.first != widget.employeeId) {
+                          await taskProvider.updateAssignees(
+                              task.id, [widget.employeeId]);
+                        }
+                        final related = _relatedTasks(taskProvider, latestTask);
+                        for (final rel in related) {
+                          final openShiftEvents = _taskTimeEvents(rel)
+                              .where((e) =>
+                                  e.type == TaskTimeType.shiftChange &&
+                                  e.endTime == null)
+                              .toList();
+                          for (final event in openShiftEvents) {
+                            await taskProvider.closeOpenTimeEvent(
+                              task: rel,
+                              initiatedBy: widget.employeeId,
+                              subjectUserId: event.subjectUserId,
+                              note: 'shift_resume',
+                            );
+                          }
+                        }
+                        await onStart();
+                        final updated = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        if (updated.status == TaskStatus.inProgress) {
                           await taskProvider.addCommentAutoUser(
                               taskId: task.id,
                               type: 'shift_resume',
@@ -3677,7 +3719,10 @@ class _TasksScreenState extends State<TasksScreen>
                       ));
                     }
                   }
-                  if (!task.assignees.contains(widget.employeeId) && canStart) {
+                  final shouldShowCurrentUserRow =
+                      !task.assignees.contains(widget.employeeId) &&
+                          (canStart || shiftPaused);
+                  if (shouldShowCurrentUserRow) {
                     rows.add(buildControlsFor('Вы', userId: widget.employeeId));
                   }
               return Column(
