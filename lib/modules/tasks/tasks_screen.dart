@@ -676,7 +676,7 @@ class _TaskSelectionState extends ChangeNotifier {
   _TaskSelectionState({
     this.workplaceId,
     this.task,
-    this.status = TaskStatus.waiting,
+    this.status = TaskStatus.inProgress,
   });
 }
 
@@ -712,9 +712,7 @@ class _TasksScreenState extends State<TasksScreen>
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
   static const Map<TaskStatus, String> _statusLabels = {
-    TaskStatus.waiting: 'В ожидании',
-    TaskStatus.inProgress: 'В работе',
-    TaskStatus.paused: 'На паузе',
+    TaskStatus.inProgress: 'Активные',
     TaskStatus.completed: 'Завершенные',
   };
   TaskStatus get _selectedStatus => _selection.status;
@@ -1062,13 +1060,10 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   TaskStatus _sectionForTask(TaskModel task) {
-    if (task.status == TaskStatus.problem) {
-      return TaskStatus.inProgress;
+    if (task.status == TaskStatus.completed) {
+      return TaskStatus.completed;
     }
-    if (_statusLabels.containsKey(task.status)) {
-      return task.status;
-    }
-    return TaskStatus.waiting;
+    return TaskStatus.inProgress;
   }
 
   String? _resolveTemplateName(
@@ -1482,6 +1477,7 @@ class _TasksScreenState extends State<TasksScreen>
                           task,
                           groupResolver: _stageGroupKey,
                         ),
+                    shiftPaused: _isShiftPausedForStage(taskProvider, task),
                     selected: _selectedTask?.id == task.id,
                     scale: scale,
                     compact: isCompactTablet || widget.compactList,
@@ -4363,6 +4359,7 @@ class _TaskCard extends StatelessWidget {
   final OrderModel? order;
   final bool selected;
   final bool readyForStage;
+  final bool shiftPaused;
   final bool showStageHint;
   final VoidCallback onTap;
   final bool compact;
@@ -4374,6 +4371,7 @@ class _TaskCard extends StatelessWidget {
     required this.onTap,
     this.selected = false,
     this.readyForStage = false,
+    this.shiftPaused = false,
     this.showStageHint = false,
     this.compact = false,
     this.scale = 1.0,
@@ -4381,7 +4379,11 @@ class _TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _statusColor(task.status);
+    final badge = _taskListBadge(
+      task: task,
+      readyForStage: readyForStage,
+      shiftPaused: shiftPaused,
+    );
     final name = order?.product.type ?? '';
     final displayId = () {
       if (order == null) return task.orderId;
@@ -4481,13 +4483,13 @@ class _TaskCard extends StatelessWidget {
             vertical: scaled(compact ? 3 : 4),
           ),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.12),
+            color: badge.color.withOpacity(0.12),
             borderRadius: BorderRadius.circular(scaled(12)),
           ),
           child: Text(
-            _statusText(task.status),
+            badge.label,
             style: TextStyle(
-              color: color,
+              color: badge.color,
               fontWeight: FontWeight.w700,
               fontSize: statusSize,
             ),
@@ -4496,6 +4498,38 @@ class _TaskCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TaskListBadge {
+  final String label;
+  final Color color;
+  const _TaskListBadge(this.label, this.color);
+}
+
+_TaskListBadge _taskListBadge({
+  required TaskModel task,
+  required bool readyForStage,
+  required bool shiftPaused,
+}) {
+  if (task.status == TaskStatus.completed) {
+    return _TaskListBadge('Завершено', Colors.green);
+  }
+  if (task.status == TaskStatus.problem) {
+    return _TaskListBadge('Проблема', Colors.redAccent);
+  }
+  if (shiftPaused) {
+    return _TaskListBadge('Пересмена', Colors.deepPurple);
+  }
+  if (task.status == TaskStatus.paused) {
+    return _TaskListBadge('Пауза', Colors.grey);
+  }
+  if (task.status == TaskStatus.inProgress) {
+    return _TaskListBadge('В работе', Colors.blue);
+  }
+  if (readyForStage) {
+    return _TaskListBadge('Можно начинать', Colors.green.shade700);
+  }
+  return _TaskListBadge('Ожидает этап', Colors.orange.shade700);
 }
 
 class _AssignedEmployeesRow extends StatelessWidget {
@@ -4729,21 +4763,6 @@ class _AssignedEmployeesRow extends StatelessWidget {
           ),
       ],
     );
-  }
-}
-
-Color _statusColor(TaskStatus status) {
-  switch (status) {
-    case TaskStatus.waiting:
-      return Colors.amber;
-    case TaskStatus.inProgress:
-      return Colors.blue;
-    case TaskStatus.paused:
-      return Colors.grey;
-    case TaskStatus.completed:
-      return Colors.green;
-    case TaskStatus.problem:
-      return Colors.redAccent;
   }
 }
 
