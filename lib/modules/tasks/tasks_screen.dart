@@ -3619,6 +3619,7 @@ class _TasksScreenState extends State<TasksScreen>
                     );
                   }
 
+                  final personnel = context.read<PersonnelProvider>();
                   final nameFor = (String uid) {
                     final emp = personnel.employees.firstWhere(
                       (e) => e.id == uid,
