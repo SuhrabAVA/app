@@ -3165,10 +3165,11 @@ class _TasksScreenState extends State<TasksScreen>
                       }
                     }
 
+                    final personnel = context.read<PersonnelProvider>();
+
                     Future<void> onStart() async {
                       final taskProvider = context.read<TaskProvider>();
-                      final personnelProvider =
-                          context.read<PersonnelProvider>();
+                      final personnelProvider = personnel;
                       // Sequential stage guard
                       if (!_isFirstPendingStage(
                           taskProvider, personnelProvider, task,
@@ -3618,7 +3619,6 @@ class _TasksScreenState extends State<TasksScreen>
                     );
                   }
 
-                  final personnel = context.read<PersonnelProvider>();
                   final nameFor = (String uid) {
                     final emp = personnel.employees.firstWhere(
                       (e) => e.id == uid,
