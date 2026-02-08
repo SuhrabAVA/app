@@ -53,7 +53,7 @@ class WorkplacesScreen extends StatelessWidget {
                     final roles =
                         names.isEmpty ? w.positionIds.join(', ') : names;
                     final unit = (w.unit ?? '').isNotEmpty ? w.unit : '—';
-                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}, макс.: ${w.maxConcurrentWorkers}\nРежим: ${modeLabel(w.executionMode)}";
+                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}\nРежим: ${modeLabel(w.executionMode)}";
                   }(),
                 ),
                 trailing: Row(
@@ -84,7 +84,6 @@ class WorkplacesScreen extends StatelessWidget {
     await context.read<PersonnelProvider>().fetchPositions();
 
     final nameC = TextEditingController();
-    final maxWorkersC = TextEditingController(text: '1');
     final unitC = TextEditingController();
     bool hasMachine = false;
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint;
@@ -106,20 +105,6 @@ class WorkplacesScreen extends StatelessWidget {
                     TextField(
                       controller: nameC,
                       decoration: const InputDecoration(labelText: 'Название'),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: maxWorkersC,
-                            decoration: const InputDecoration(
-                              labelText: 'Макс. сотрудников',
-                            ),
-                            keyboardType: TextInputType.number,
-                          ),
-                        ),
-                      ],
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -233,17 +218,16 @@ class WorkplacesScreen extends StatelessWidget {
     );
 
     if (ok == true && nameC.text.trim().isNotEmpty) {
-      final int? maxWorkers = int.tryParse(maxWorkersC.text.trim());
-              try {
-                await context.read<PersonnelProvider>().addWorkplace(
-                  name: nameC.text.trim(),
-                  positionIds: selectedPositions.toList(),
-                  hasMachine: hasMachine,
-                  maxConcurrentWorkers: maxWorkers ?? 1,
-                  unit: unitC.text.trim(),
-                  executionMode: executionMode,
-                );
-              } catch (e) {
+      try {
+        await context.read<PersonnelProvider>().addWorkplace(
+          name: nameC.text.trim(),
+          positionIds: selectedPositions.toList(),
+          hasMachine: hasMachine,
+          maxConcurrentWorkers: 0,
+          unit: unitC.text.trim(),
+          executionMode: executionMode,
+        );
+      } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Ошибка сохранения: $e')),
@@ -304,8 +288,6 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   late final TextEditingController _name =
       TextEditingController(text: widget.workplace.name);
   final TextEditingController _desc = TextEditingController();
-  late final TextEditingController _maxWorkers = TextEditingController(
-      text: widget.workplace.maxConcurrentWorkers.toString());
   late final TextEditingController _unit =
       TextEditingController(text: widget.workplace.unit ?? '');
   bool _hasMachine = false;
@@ -323,13 +305,12 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   }
 
   Future<void> _submit() async {
-    final int? mw = int.tryParse(_maxWorkers.text.trim());
     await context.read<PersonnelProvider>().updateWorkplace(
           id: widget.workplace.id,
           name: _name.text.trim(),
           description: _desc.text.trim(),
           hasMachine: _hasMachine,
-          maxConcurrentWorkers: mw,
+          maxConcurrentWorkers: 0,
           positionIds: _selectedPositions.toList(),
           unit: _unit.text.trim(),
           executionMode: _executionMode,
@@ -359,12 +340,6 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
               controller: _desc,
               decoration: const InputDecoration(labelText: 'Описание'),
               maxLines: 2,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _maxWorkers,
-              decoration: const InputDecoration(labelText: 'Макс. сотрудников'),
-              keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 8),
             TextField(
