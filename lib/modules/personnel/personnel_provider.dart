@@ -235,7 +235,7 @@ class PersonnelProvider extends ChangeNotifier {
     required String name,
     String? description,
     bool hasMachine = false,
-    int maxConcurrentWorkers = 1,
+    int maxConcurrentWorkers = 0,
     List<String> positionIds = const [],
     String? unit,
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,

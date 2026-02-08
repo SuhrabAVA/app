@@ -14,7 +14,7 @@ class WorkplaceModel {
     this.description,
     required this.positionIds,
     this.hasMachine = false,
-    this.maxConcurrentWorkers = 1,
+    this.maxConcurrentWorkers = 0,
     this.unit,
     this.executionMode = WorkplaceExecutionMode.joint,
   });
@@ -60,7 +60,7 @@ class WorkplaceModel {
             map['has_machine'] as bool? ?? map['hasMachine'] as bool? ?? false,
         maxConcurrentWorkers: (map['max_concurrent_workers'] as int?) ??
             (map['maxConcurrentWorkers'] as int?) ??
-            1,
+            0,
         unit: map['unit'] as String?,
         executionMode:
             parseWorkplaceExecutionMode(map['execution_mode'] ?? map['executionMode']),
