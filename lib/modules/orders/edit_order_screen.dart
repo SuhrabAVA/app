@@ -3821,7 +3821,103 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           child: stackVertically
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                  children: [return LayoutBuilder(
+  builder: (context, constraints) {
+    // Если прям совсем узко — тогда да, складываем вертикально.
+    // Но порог делаем адекватным, чтобы не срабатывало постоянно в узких колонках.
+    final bool stackVertically = constraints.maxWidth < 220;
+
+    final labelWidget = Text(
+      '$label:',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      softWrap: false,
+      style: const TextStyle(fontWeight: FontWeight.w600),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: stackVertically
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                labelWidget,
+                const SizedBox(height: 6),
+                // чтобы поле не прилипало и не выглядело сжатым
+                SizedBox(width: double.infinity, child: child),
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Вместо фиксированной ширины — гибко.
+                // Лейбл занимает свою долю и не ломает всю строку.
+                Flexible(
+                  flex: 4,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: labelWidget,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 6,
+                  child: child,
+                ),
+              ],
+            ),
+    );
+  },
+);
+return LayoutBuilder(
+  builder: (context, constraints) {
+    // Если прям совсем узко — тогда да, складываем вертикально.
+    // Но порог делаем адекватным, чтобы не срабатывало постоянно в узких колонках.
+    final bool stackVertically = constraints.maxWidth < 220;
+
+    final labelWidget = Text(
+      '$label:',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      softWrap: false,
+      style: const TextStyle(fontWeight: FontWeight.w600),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: stackVertically
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                labelWidget,
+                const SizedBox(height: 6),
+                // чтобы поле не прилипало и не выглядело сжатым
+                SizedBox(width: double.infinity, child: child),
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Вместо фиксированной ширины — гибко.
+                // Лейбл занимает свою долю и не ломает всю строку.
+                Flexible(
+                  flex: 4,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: labelWidget,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 6,
+                  child: child,
+                ),
+              ],
+            ),
+    );
+  },
+      
+)
                     Text(
                       '$label:',
                       style: const TextStyle(fontWeight: FontWeight.w600),
