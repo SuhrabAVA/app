@@ -3051,22 +3051,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         const spacing = 16.0;
-        final maxWidth = constraints.maxWidth;
-        final columns = maxWidth >= 980
-            ? 3
-            : maxWidth >= 720
-                ? 2
-                : 1;
-        final sectionWidth = columns == 1
-            ? maxWidth
-            : (maxWidth - spacing * (columns - 1)) / columns;
 
-        return Wrap(
-          spacing: spacing,
-          runSpacing: spacing,
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: sectionWidth,
+            Expanded(
               child: _buildOrderSectionCard(
                 title: 'Основная информация',
                 icon: Icons.description_outlined,
@@ -3129,8 +3118,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
               ),
             ),
-            SizedBox(
-              width: sectionWidth,
+            const SizedBox(width: spacing),
+            Expanded(
               child: _buildOrderSectionCard(
                 title: 'Печать',
                 icon: Icons.print_outlined,
@@ -3161,8 +3150,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
               ),
             ),
-            SizedBox(
-              width: sectionWidth,
+            const SizedBox(width: spacing),
+            Expanded(
               child: _buildOrderSectionCard(
                 title: 'Бобинорезка',
                 icon: Icons.content_cut,
