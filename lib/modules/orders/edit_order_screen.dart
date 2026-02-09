@@ -3812,24 +3812,41 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required Widget child,
     double labelWidth = 150,
   }) {
-    return Padding(
-      // Reduce vertical padding to make rows even more compact.
-      padding: const EdgeInsets.symmetric(vertical: 1.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: labelWidth,
-            child: Text(
-              '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          // Narrow the gap between label and field.
-          const SizedBox(width: 6),
-          Expanded(child: child),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool stackVertically = constraints.maxWidth < labelWidth + 80;
+        return Padding(
+          // Reduce vertical padding to make rows even more compact.
+          padding: const EdgeInsets.symmetric(vertical: 1.0),
+          child: stackVertically
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$label:',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    child,
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: labelWidth,
+                      child: Text(
+                        '$label:',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    // Narrow the gap between label and field.
+                    const SizedBox(width: 6),
+                    Expanded(child: child),
+                  ],
+                ),
+        );
+      },
     );
   }
 
