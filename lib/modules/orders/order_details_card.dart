@@ -80,191 +80,295 @@ class OrderDetailsCard extends StatelessWidget {
     final o = order;
     final p = o.product;
     final additionalDimensions = _additionalDimensions();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildLabelRow(
-          label: 'Дата',
-          child: Row(
-            children: [
-              Expanded(child: _valueBlock('Дата заказа', _fmtDate(o.orderDate))),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _valueBlock('Срок выполнения', _fmtDate(o.dueDate)),
-              ),
-            ],
-          ),
-        ),
-        _buildLabelRow(label: 'Заказчик', child: Text(o.customer)),
-        _buildLabelRow(
-            label: 'Тип', child: Text(p.type.isEmpty ? '—' : p.type)),
-        _buildLabelRow(
-            label: 'Тираж',
-            child: Text(p.quantity > 0 ? p.quantity.toString() : '—')),
-        _buildLabelRow(label: 'Размеры', child: Text(_dimensionsSummary())),
-        _buildLabelRow(
-          label: 'Ручки и картон',
-          child: Column(
+    final paintsWidget = paints.isEmpty
+        ? const Text('—')
+        : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Ручки: ${o.handle}'),
-              Text('Картон: ${o.cardboard}'),
-            ],
-          ),
-        ),
-        const Divider(height: 3),
-        _buildLabelRow(
-          label: 'Краски',
-          child: paints.isEmpty
-              ? const Text('—')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: paints.map((e) {
-                    final name = (e['name'] ?? '').toString();
-                    final qty = e['qty_kg'];
-                    final memo = (e['info'] ?? '').toString();
-                    double? grams;
-                    if (qty is num) {
-                      grams = qty.toDouble() * 1000;
-                    } else if (qty is String && qty.trim().isNotEmpty) {
-                      final parsed = double.tryParse(qty.replaceAll(',', '.'));
-                      if (parsed != null) {
-                        grams = parsed * 1000;
-                      }
-                    }
-                    final v = (grams == null)
-                        ? (memo.isEmpty ? '—' : memo)
-                        : '${_formatGrams(grams)}${memo.isNotEmpty ? ' ($memo)' : ''}';
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2.0),
-                      child: Text('$name: $v'),
-                    );
-                  }).toList(),
-                ),
-        ),
-        const Divider(height: 3),
-        _buildLabelRow(
-          label: 'Форма',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Код формы: ${o.formCode ?? '—'}'),
-              Text('Серия: ${o.formSeries ?? '—'}'),
-              Text('Номер: ${o.newFormNo?.toString() ?? '—'}'),
-              Text('Старая форма: ${o.isOldForm ? 'Да' : 'Нет'}'),
-            ],
-          ),
-        ),
-        const Divider(height: 3),
-        _buildLabelRow(
-          label: 'Склад и материалы',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(_materialSummary()),
-              if (p.parameters.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2.0),
-                  child: Text('Параметры: ${p.parameters}'),
-                ),
-              if (p.leftover != null) Text('Лишнее: ${_fmtNum(p.leftover)}'),
-            ],
-          ),
-        ),
-        if (additionalDimensions.isNotEmpty)
-          _buildLabelRow(
-            label: 'Доп. размеры',
-            child: Text(additionalDimensions),
-          ),
-        const Divider(height: 3),
-        _buildLabelRow(
-          label: 'Приладка',
-          child: Text(o.makeready > 0 ? _fmtNum(o.makeready) : '—'),
-        ),
-        _buildLabelRow(
-          label: 'Комментарий',
-          child: Text(o.comments.isEmpty ? '—' : o.comments),
-        ),
-        _buildLabelRow(
-          label: 'Очередь',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Статус: ${o.status}'),
-              Text(
-                'Шаблон этапов: ${stageTemplateName ?? o.stageTemplateId ?? '—'}',
-              ),
-            ],
-          ),
-        ),
-        _buildLabelRow(
-          label: 'Договоры',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Договор подписан: ${o.contractSigned ? 'Да' : 'Нет'}'),
-              Text('Оплата: ${o.paymentDone ? 'Проведена' : 'Нет'}'),
-            ],
-          ),
-        ),
-        _buildLabelRow(
-          label: 'Менеджер',
-          child: Text(o.manager.isEmpty ? '—' : o.manager),
-        ),
-        const Divider(height: 3),
-        _buildLabelRow(
-          label: 'Файлы',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (loadingFiles) const LinearProgressIndicator(),
-              if (!loadingFiles && files.isEmpty)
-                const Text('Нет приложенных файлов'),
-              ...files.map((f) => _fileTile(context, f)).toList(),
-            ],
-          ),
-        ),
-        if (extraSections.isNotEmpty) ...[
-          const Divider(height: 3),
-          ...extraSections,
-        ],
-      ],
-    );
-  }
-
-  Widget _valueBlock(String title, String value) {
-    return Column(
+            children: paints.map((e) {
+              final name = (e['name'] ?? '').toString();
+              final qty = e['qty_kg'];
+              final memo = (e['info'] ?? '').toString();
+              double? grams;
+              if (qty is num) {
+                grams = qty.toDouble() * 1000;
+              } else if (qty is String && qty.trim().isNotEmpty) {
+                final parsed = double.tryParse(qty.replaceAll(',', '.'));
+                if (parsed != null) {
+                  grams = parsed * 1000;
+                }
+              }
+              final v = (grams == null)
+                  ? (memo.isEmpty ? '—' : memo)
+                  : '${_formatGrams(grams)}${memo.isNotEmpty ? ' ($memo)' : ''}';
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2.0),
+                child: Text('$name: $v'),
+              );
+            }).toList(),
+          );
+    final materialWidget = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: const TextStyle(fontSize: 12, color: Colors.black54),
-        ),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        Text(_materialSummary()),
+        if (p.parameters.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2.0),
+            child: Text('Параметры: ${p.parameters}'),
+          ),
+        if (p.leftover != null) Text('Лишнее: ${_fmtNum(p.leftover)}'),
       ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 16.0;
+        final maxWidth = constraints.maxWidth;
+        final columns = maxWidth >= 1100
+            ? 3
+            : maxWidth >= 760
+                ? 2
+                : 1;
+        final sectionWidth = columns == 1
+            ? maxWidth
+            : (maxWidth - spacing * (columns - 1)) / columns;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: [
+                SizedBox(
+                  width: sectionWidth,
+                  child: _buildSectionCard(
+                    title: 'Основная информация',
+                    icon: Icons.description_outlined,
+                    backgroundColor: const Color(0xFFE7FBF3),
+                    accentColor: const Color(0xFF21B37B),
+                    child: Column(
+                      children: [
+                        _buildInfoRow('Дата заказа', _fmtDate(o.orderDate)),
+                        _buildInfoRow(
+                            'Срок выполнения', _fmtDate(o.dueDate)),
+                        _buildInfoRow(
+                            'Заказчик', o.customer.isEmpty ? '—' : o.customer),
+                        _buildInfoRow('Тип продукта',
+                            p.type.isEmpty ? '—' : p.type),
+                        _buildInfoRow('Тираж',
+                            p.quantity > 0 ? p.quantity.toString() : '—'),
+                        _buildInfoRow('Размеры', _dimensionsSummary()),
+                        _buildInfoRow(
+                            'Ручки', o.handle.isEmpty ? '—' : o.handle),
+                        _buildInfoRow(
+                            'Картон', o.cardboard.isEmpty ? '—' : o.cardboard),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: sectionWidth,
+                  child: _buildSectionCard(
+                    title: 'Печать',
+                    icon: Icons.print_outlined,
+                    backgroundColor: const Color(0xFFFFF4DE),
+                    accentColor: const Color(0xFFF4A12F),
+                    child: Column(
+                      children: [
+                        _buildInfoRowWidget('Краски', paintsWidget),
+                        _buildInfoRowWidget(
+                          'Форма',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Код формы: ${o.formCode ?? '—'}'),
+                              Text('Серия: ${o.formSeries ?? '—'}'),
+                              Text('Номер: ${o.newFormNo?.toString() ?? '—'}'),
+                              Text(
+                                  'Старая форма: ${o.isOldForm ? 'Да' : 'Нет'}'),
+                            ],
+                          ),
+                        ),
+                        _buildInfoRowWidget(
+                          'Файлы',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (loadingFiles)
+                                const Padding(
+                                  padding: EdgeInsets.only(bottom: 8.0),
+                                  child: LinearProgressIndicator(),
+                                ),
+                              if (!loadingFiles && files.isEmpty)
+                                const Text('Нет приложенных файлов'),
+                              ...files.map((f) => _fileTile(context, f)).toList(),
+                            ],
+                          ),
+                          alignEnd: false,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: sectionWidth,
+                  child: _buildSectionCard(
+                    title: 'Бобинорезка',
+                    icon: Icons.content_cut,
+                    backgroundColor: const Color(0xFFEFEAFF),
+                    accentColor: const Color(0xFF7A4CF0),
+                    child: Column(
+                      children: [
+                        _buildInfoRowWidget('Материал', materialWidget),
+                        if (additionalDimensions.isNotEmpty)
+                          _buildInfoRow(
+                              'Доп. размеры', additionalDimensions),
+                        _buildInfoRow('Приладка',
+                            o.makeready > 0 ? _fmtNum(o.makeready) : '—'),
+                        _buildInfoRow(
+                            'Комментарий',
+                            o.comments.isEmpty ? '—' : o.comments),
+                        _buildInfoRowWidget(
+                          'Очередь',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Статус: ${o.status}'),
+                              Text(
+                                'Шаблон этапов: ${stageTemplateName ?? o.stageTemplateId ?? '—'}',
+                              ),
+                            ],
+                          ),
+                        ),
+                        _buildInfoRowWidget(
+                          'Договоры',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                  'Договор подписан: ${o.contractSigned ? 'Да' : 'Нет'}'),
+                              Text(
+                                  'Оплата: ${o.paymentDone ? 'Проведена' : 'Нет'}'),
+                            ],
+                          ),
+                        ),
+                        _buildInfoRow(
+                            'Менеджер',
+                            o.manager.isEmpty ? '—' : o.manager),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (extraSections.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildSectionCard(
+                title: 'Дополнительно',
+                icon: Icons.info_outline,
+                backgroundColor: const Color(0xFFF6F7FB),
+                accentColor: const Color(0xFF5B6B8A),
+                child: Column(children: extraSections),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 
-  Widget _buildLabelRow({
-    required String label,
-    required Widget child,
-    double labelWidth = 150,
-  }) {
+  Widget _buildInfoRow(String label, String value) {
+    return _buildInfoRowWidget(
+      label,
+      Text(value, textAlign: TextAlign.right),
+    );
+  }
+
+  Widget _buildInfoRowWidget(String label, Widget child,
+      {bool alignEnd = true}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: labelWidth,
+          Expanded(
             child: Text(
               label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1F2A37),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(child: child),
+          const SizedBox(width: 12),
+          Expanded(
+            child: DefaultTextStyle(
+              style: const TextStyle(color: Color(0xFF111827)),
+              child: alignEnd
+                  ? Align(
+                      alignment: Alignment.centerRight,
+                      child: SizedBox(width: double.infinity, child: child),
+                    )
+                  : child,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required Color backgroundColor,
+    required Color accentColor,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accentColor.withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withOpacity(0.12),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: accentColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor.withOpacity(0.95),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Divider(height: 1),
+          ),
+          child,
         ],
       ),
     );

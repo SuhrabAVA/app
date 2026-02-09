@@ -3013,7 +3013,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 children: [
                   Expanded(
                     // Split evenly between the form and the warehouse preview.
-                    flex: 1,
+                    flex: 3,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: formList,
@@ -3022,7 +3022,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   // Reduce the horizontal gap between panels by 20%.
                   const SizedBox(width: 12),
                   Expanded(
-                    flex: 1,
+                    flex: 2,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: _buildWarehousePreviewPanel(),
@@ -3046,122 +3046,170 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool paintsAvailable,
   }) {
     const labelWidth = 150.0;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 16.0;
+        final maxWidth = constraints.maxWidth;
+        final columns = maxWidth >= 1100
+            ? 3
+            : maxWidth >= 760
+                ? 2
+                : 1;
+        final sectionWidth = columns == 1
+            ? maxWidth
+            : (maxWidth - spacing * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
           children: [
-            _buildLabelRow(
-              label: 'Дата',
-              labelWidth: labelWidth,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _buildDatePickerField(
-                      label: 'Дата заказа',
-                      value: _orderDate,
-                      onTap: _pickOrderDate,
-                      emptyError: 'Укажите дату заказа',
+            SizedBox(
+              width: sectionWidth,
+              child: _buildOrderSectionCard(
+                title: 'Основная информация',
+                icon: Icons.description_outlined,
+                backgroundColor: const Color(0xFFE7FBF3),
+                accentColor: const Color(0xFF21B37B),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildLabelRow(
+                      label: 'Дата',
+                      labelWidth: labelWidth,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _buildDatePickerField(
+                              label: 'Дата заказа',
+                              value: _orderDate,
+                              onTap: _pickOrderDate,
+                              emptyError: 'Укажите дату заказа',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildDatePickerField(
+                              label: 'Срок выполнения',
+                              value: _dueDate,
+                              onTap: _pickDueDate,
+                              emptyError: 'Укажите срок',
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildDatePickerField(
-                      label: 'Срок выполнения',
-                      value: _dueDate,
-                      onTap: _pickDueDate,
-                      emptyError: 'Укажите срок',
+                    _buildLabelRow(
+                      label: 'Заказчик',
+                      labelWidth: labelWidth,
+                      child: _buildCustomerField(),
                     ),
-                  ),
-                ],
+                    _buildLabelRow(
+                      label: 'Тип',
+                      labelWidth: labelWidth,
+                      child: _buildProductTypeField(),
+                    ),
+                    _buildLabelRow(
+                      label: 'Тираж',
+                      labelWidth: labelWidth,
+                      child: _buildQuantityField(),
+                    ),
+                    _buildLabelRow(
+                      label: 'Размеры',
+                      labelWidth: labelWidth,
+                      child: _buildDimensionsField(),
+                    ),
+                    _buildLabelRow(
+                      label: 'Ручки и картон',
+                      labelWidth: labelWidth,
+                      child: _buildHandlesSection(context, wrapWithCard: false),
+                    ),
+                  ],
+                ),
               ),
             ),
-            _buildLabelRow(
-              label: 'Заказчик',
-              labelWidth: labelWidth,
-              child: _buildCustomerField(),
-            ),
-            _buildLabelRow(
-              label: 'Тип',
-              labelWidth: labelWidth,
-              child: _buildProductTypeField(),
-            ),
-            _buildLabelRow(
-              label: 'Тираж',
-              labelWidth: labelWidth,
-              child: _buildQuantityField(),
-            ),
-            _buildLabelRow(
-              label: 'Размеры',
-              labelWidth: labelWidth,
-              child: _buildDimensionsField(),
-            ),
-            _buildLabelRow(
-              label: 'Ручки и картон',
-              labelWidth: labelWidth,
-              child: _buildHandlesSection(context, wrapWithCard: false),
-            ),
-            const Divider(height: 3),
-            _buildLabelRow(
-              label: 'Краски',
-              labelWidth: labelWidth,
-              child: _buildPaintsSection(wrapWithCard: false),
-            ),
-            const Divider(height: 3),
-            _buildLabelRow(
-              label: 'Форма',
-              labelWidth: labelWidth,
-              child: _buildFormSection(
-                context: context,
-                showFormSummary: showFormSummary,
-                showFormEditor: showFormEditor,
-                isEditing: isEditing,
-                hasAssignedForm: hasAssignedForm,
-                paintsAvailable: paintsAvailable,
-                wrapWithCard: false,
+            SizedBox(
+              width: sectionWidth,
+              child: _buildOrderSectionCard(
+                title: 'Печать',
+                icon: Icons.print_outlined,
+                backgroundColor: const Color(0xFFFFF4DE),
+                accentColor: const Color(0xFFF4A12F),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildLabelRow(
+                      label: 'Краски',
+                      labelWidth: labelWidth,
+                      child: _buildPaintsSection(wrapWithCard: false),
+                    ),
+                    _buildLabelRow(
+                      label: 'Форма',
+                      labelWidth: labelWidth,
+                      child: _buildFormSection(
+                        context: context,
+                        showFormSummary: showFormSummary,
+                        showFormEditor: showFormEditor,
+                        isEditing: isEditing,
+                        hasAssignedForm: hasAssignedForm,
+                        paintsAvailable: paintsAvailable,
+                        wrapWithCard: false,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const Divider(height: 3),
-            _buildLabelRow(
-              label: 'Склад и материалы',
-              labelWidth: labelWidth,
-              child: _buildProductMaterialAndExtras(_product),
-            ),
-            const Divider(height: 3),
-            _buildLabelRow(
-              label: 'Приладка',
-              labelWidth: labelWidth,
-              child: _buildMakereadyFields(),
-            ),
-            _buildLabelRow(
-              label: 'Комментарий',
-              labelWidth: labelWidth,
-              child: _buildCommentsSection(context, wrapWithCard: false),
-            ),
-            _buildLabelRow(
-              label: 'Очередь',
-              labelWidth: labelWidth,
-              child: _buildProductionSection(
-                context,
-                wrapWithCard: false,
-                includeMakeready: false,
+            SizedBox(
+              width: sectionWidth,
+              child: _buildOrderSectionCard(
+                title: 'Бобинорезка',
+                icon: Icons.content_cut,
+                backgroundColor: const Color(0xFFEFEAFF),
+                accentColor: const Color(0xFF7A4CF0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildLabelRow(
+                      label: 'Склад и материалы',
+                      labelWidth: labelWidth,
+                      child: _buildProductMaterialAndExtras(_product),
+                    ),
+                    _buildLabelRow(
+                      label: 'Приладка',
+                      labelWidth: labelWidth,
+                      child: _buildMakereadyFields(),
+                    ),
+                    _buildLabelRow(
+                      label: 'Комментарий',
+                      labelWidth: labelWidth,
+                      child: _buildCommentsSection(context, wrapWithCard: false),
+                    ),
+                    _buildLabelRow(
+                      label: 'Очередь',
+                      labelWidth: labelWidth,
+                      child: _buildProductionSection(
+                        context,
+                        wrapWithCard: false,
+                        includeMakeready: false,
+                      ),
+                    ),
+                    _buildLabelRow(
+                      label: 'Договоры',
+                      labelWidth: labelWidth,
+                      child: _buildContractsRow(),
+                    ),
+                    _buildLabelRow(
+                      label: 'Менеджер',
+                      labelWidth: labelWidth,
+                      child: _buildManagerField(),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            _buildLabelRow(
-              label: 'Договоры',
-              labelWidth: labelWidth,
-              child: _buildContractsRow(),
-            ),
-            _buildLabelRow(
-              label: 'Менеджер',
-              labelWidth: labelWidth,
-              child: _buildManagerField(),
             ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -3708,6 +3756,63 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Card(
       margin: EdgeInsets.zero,
       child: content,
+    );
+  }
+
+  Widget _buildOrderSectionCard({
+    required String title,
+    required IconData icon,
+    required Color backgroundColor,
+    required Color accentColor,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accentColor.withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withOpacity(0.12),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: accentColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor.withOpacity(0.95),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Divider(height: 1),
+          ),
+          child,
+        ],
+      ),
     );
   }
 
