@@ -2967,9 +2967,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   final maxWrapWidth = availableWidth >= 800
                       ? math.min(availableWidth, 1400.0)
                       : availableWidth;
-                  final columns = maxWrapWidth >= 1200
+                  final columns = maxWrapWidth >= 980
                       ? 3
-                      : maxWrapWidth >= 760
+                      : maxWrapWidth >= 720
                           ? 2
                           : 1;
                   final sectionWidth = columns == 1
@@ -3014,15 +3014,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    // Split evenly between the form and the warehouse preview.
-                    flex: 5,
+                    // Give more space to the form area for multi-column rows.
+                    flex: 6,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: formList,
                     ),
                   ),
-                  // Reduce the horizontal gap between panels by 20%.
-                  const SizedBox(width: 12),
+                  // Slightly reduce the warehouse panel width for better balance.
+                  const SizedBox(width: 8),
                   Expanded(
                     flex: 2,
                     child: SizedBox(
@@ -3052,9 +3052,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       builder: (context, constraints) {
         const spacing = 16.0;
         final maxWidth = constraints.maxWidth;
-        final columns = maxWidth >= 1100
+        final columns = maxWidth >= 980
             ? 3
-            : maxWidth >= 760
+            : maxWidth >= 720
                 ? 2
                 : 1;
         final sectionWidth = columns == 1
@@ -5269,7 +5269,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         controller: _formSearchCtl,
         focusNode: _formSearchFocusNode,
         decoration: const InputDecoration(
-          hintText: 'Поиск формы (название или номер)',
+          hintText: 'Поиск формы (название или код)',
           prefixIcon: Icon(Icons.search),
           border: OutlineInputBorder(),
         ),
