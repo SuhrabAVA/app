@@ -147,9 +147,73 @@ class OrderDetailsCard extends StatelessWidget {
             : maxWidth >= 760
                 ? 2
                 : 1;
-        final sectionWidth = columns == 1
-            ? maxWidth
-            : (maxWidth - spacing * (columns - 1)) / columns;
+        double leftSectionWidth = maxWidth;
+        double middleSectionWidth = maxWidth;
+        double rightSectionWidth = maxWidth;
+        if (columns == 1) {
+          leftSectionWidth = maxWidth;
+          middleSectionWidth = maxWidth;
+          rightSectionWidth = maxWidth;
+        } else if (columns == 2) {
+          final sectionWidth =
+              (maxWidth - spacing * (columns - 1)) / columns;
+          leftSectionWidth = sectionWidth;
+          middleSectionWidth = sectionWidth;
+          rightSectionWidth = sectionWidth;
+        } else {
+          final totalWidth = maxWidth - spacing * 2;
+          const leftWeight = 1.05;
+          const middleWeight = 1.05;
+          const rightWeight = 0.9;
+          final unit = totalWidth / (leftWeight + middleWeight + rightWeight);
+          leftSectionWidth = unit * leftWeight;
+          middleSectionWidth = unit * middleWeight;
+          rightSectionWidth = unit * rightWeight;
+        }
+
+        final basicInfoRows = [
+          _buildInfoRow('Дата заказа', _fmtDate(o.orderDate)),
+          _buildInfoRow('Срок выполнения', _fmtDate(o.dueDate)),
+          _buildInfoRow(
+            'Заказчик',
+            o.customer.isEmpty ? '—' : o.customer,
+          ),
+          _buildInfoRow('Тип продукта', p.type.isEmpty ? '—' : p.type),
+          _buildInfoRow(
+            'Тираж',
+            p.quantity > 0 ? p.quantity.toString() : '—',
+          ),
+          _buildInfoRow('Размеры', _dimensionsSummary()),
+          _buildInfoRow('Ручки', o.handle.isEmpty ? '—' : o.handle),
+          _buildInfoRow('Картон', o.cardboard.isEmpty ? '—' : o.cardboard),
+          _buildInfoRow(
+            'Подрезка',
+            o.additionalParams.contains('Подрезка') ? 'Да' : 'Нет',
+          ),
+        ];
+
+        final basicInfoContent = columns > 1
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      children: basicInfoRows
+                          .take((basicInfoRows.length / 2).ceil())
+                          .toList(),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      children: basicInfoRows
+                          .skip((basicInfoRows.length / 2).ceil())
+                          .toList(),
+                    ),
+                  ),
+                ],
+              )
+            : Column(children: basicInfoRows);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -159,38 +223,17 @@ class OrderDetailsCard extends StatelessWidget {
               runSpacing: spacing,
               children: [
                 SizedBox(
-                  width: sectionWidth,
+                  width: leftSectionWidth,
                   child: _buildSectionCard(
                     title: 'Основная информация',
                     icon: Icons.description_outlined,
                     backgroundColor: const Color(0xFFE7FBF3),
                     accentColor: const Color(0xFF21B37B),
-                    child: Column(
-                      children: [
-                        _buildInfoRow('Дата заказа', _fmtDate(o.orderDate)),
-                        _buildInfoRow(
-                            'Срок выполнения', _fmtDate(o.dueDate)),
-                        _buildInfoRow(
-                            'Заказчик', o.customer.isEmpty ? '—' : o.customer),
-                        _buildInfoRow('Тип продукта',
-                            p.type.isEmpty ? '—' : p.type),
-                        _buildInfoRow('Тираж',
-                            p.quantity > 0 ? p.quantity.toString() : '—'),
-                        _buildInfoRow('Размеры', _dimensionsSummary()),
-                        _buildInfoRow(
-                            'Ручки', o.handle.isEmpty ? '—' : o.handle),
-                        _buildInfoRow(
-                            'Картон', o.cardboard.isEmpty ? '—' : o.cardboard),
-                        _buildInfoRow(
-                          'Подрезка',
-                          o.additionalParams.contains('Подрезка') ? 'Да' : 'Нет',
-                        ),
-                      ],
-                    ),
+                    child: basicInfoContent,
                   ),
                 ),
                 SizedBox(
-                  width: sectionWidth,
+                  width: middleSectionWidth,
                   child: _buildSectionCard(
                     title: 'Печать',
                     icon: Icons.print_outlined,
@@ -234,7 +277,7 @@ class OrderDetailsCard extends StatelessWidget {
                   ),
                 ),
                 SizedBox(
-                  width: sectionWidth,
+                  width: rightSectionWidth,
                   child: _buildSectionCard(
                     title: 'Бобинорезка',
                     icon: Icons.content_cut,
