@@ -53,11 +53,17 @@ class OrderDetailsCard extends StatelessWidget {
   String _additionalDimensions() {
     final p = order.product;
     final parts = <String>[];
-    if (p.widthB != null) parts.add('Ширина b: ${_fmtNum(p.widthB)}');
-    if (p.blQuantity != null && p.blQuantity!.isNotEmpty) {
+    if (p.widthB != null) parts.add('Ширина Б: ${_fmtNum(p.widthB)}');
+    final hasQty = p.blQuantity != null && p.blQuantity!.isNotEmpty;
+    if (p.length != null) {
+      parts.add(
+        hasQty
+            ? 'Длина: ${p.blQuantity}*${_fmtNum(p.length)}'
+            : 'Длина: ${_fmtNum(p.length)}',
+      );
+    } else if (hasQty) {
       parts.add('Количество: ${p.blQuantity}');
     }
-    if (p.length != null) parts.add('Длина L: ${_fmtNum(p.length)}');
     return parts.join(', ');
   }
 
@@ -71,8 +77,21 @@ class OrderDetailsCard extends StatelessWidget {
       parts.add('Грамаж: ${m.grammage}');
     }
     if (m.unit != null && m.unit!.isNotEmpty) parts.add('Ед.: ${m.unit}');
-    if (m.quantity != null) parts.add('Кол-во: ${_fmtNum(m.quantity)}');
     return parts.isEmpty ? '—' : parts.join(', ');
+  }
+
+  String _statusLabel(String? status) {
+    final normalized = (status ?? '').trim();
+    switch (normalized) {
+      case 'newOrder':
+        return 'Новый';
+      case 'inWork':
+        return 'В работе';
+      case 'completed':
+        return 'Завершен';
+      default:
+        return normalized.isEmpty ? '—' : normalized;
+    }
   }
 
   @override
@@ -123,7 +142,7 @@ class OrderDetailsCard extends StatelessWidget {
       builder: (context, constraints) {
         const spacing = 16.0;
         final maxWidth = constraints.maxWidth;
-        final columns = maxWidth >= 1100
+        final columns = maxWidth >= 900
             ? 3
             : maxWidth >= 760
                 ? 2
@@ -162,6 +181,10 @@ class OrderDetailsCard extends StatelessWidget {
                             'Ручки', o.handle.isEmpty ? '—' : o.handle),
                         _buildInfoRow(
                             'Картон', o.cardboard.isEmpty ? '—' : o.cardboard),
+                        _buildInfoRow(
+                          'Подрезка',
+                          o.additionalParams.contains('Подрезка') ? 'Да' : 'Нет',
+                        ),
                       ],
                     ),
                   ),
@@ -233,22 +256,10 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Статус: ${o.status}'),
+                              Text('Статус: ${_statusLabel(o.status)}'),
                               Text(
                                 'Шаблон этапов: ${stageTemplateName ?? o.stageTemplateId ?? '—'}',
                               ),
-                            ],
-                          ),
-                        ),
-                        _buildInfoRowWidget(
-                          'Договоры',
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  'Договор подписан: ${o.contractSigned ? 'Да' : 'Нет'}'),
-                              Text(
-                                  'Оплата: ${o.paymentDone ? 'Проведена' : 'Нет'}'),
                             ],
                           ),
                         ),

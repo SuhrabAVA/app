@@ -2962,13 +2962,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               final formList = LayoutBuilder(
                 builder: (context, innerConstraints) {
                   final availableWidth = innerConstraints.maxWidth;
-                  // Limit the maximum width to roughly 45% of the available
-                  // space to encourage even more compact layouts and reduce the need
-                  // to scroll.
+                  // Limit the maximum width to roughly 60% of the available
+                  // space to keep rows visible while staying compact.
                   final maxWrapWidth = availableWidth >= 800
-                      ? math.min(availableWidth * 0.45, 720.0)
+                      ? math.min(availableWidth * 0.6, 980.0)
                       : availableWidth;
-                  final useTwoColumns = maxWrapWidth >= 1024;
+                  final useTwoColumns = maxWrapWidth >= 720;
                   final sectionWidth =
                       useTwoColumns ? (maxWrapWidth - 16) / 2 : maxWrapWidth;
                   return Scrollbar(
@@ -3013,7 +3012,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 children: [
                   Expanded(
                     // Split evenly between the form and the warehouse preview.
-                    flex: 3,
+                    flex: 4,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: formList,
@@ -4980,7 +4979,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     controls.add(
       InputDecorator(
         decoration: const InputDecoration(
-          labelText: 'Номер формы',
+          labelText: 'Код формы',
           border: OutlineInputBorder(),
         ),
         child: Text(_formDisplayPreview()),
@@ -5326,11 +5325,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Widget _buildFormSummary(BuildContext context) {
     final items = <Widget>[];
-    if (_orderFormDisplay != null &&
-        _orderFormDisplay!.isNotEmpty &&
-        _orderFormDisplay! != '-') {
-      items.add(Text('Код формы: ${_orderFormDisplay!}'));
-    }
     if (_orderFormIsOld != null) {
       items.add(Text(_orderFormIsOld! ? 'Старая форма' : 'Новая форма'));
     }
@@ -5347,9 +5341,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_orderFormProductType != null &&
         _orderFormProductType!.trim().isNotEmpty) {
       items.add(Text('Тип продукта: ${_orderFormProductType!}'));
-    }
-    if (_orderFormColors != null && _orderFormColors!.trim().isNotEmpty) {
-      items.add(Text('Цвета: ${_orderFormColors!}'));
     }
     if (_orderFormImageUrl != null && _orderFormImageUrl!.isNotEmpty) {
       items.add(Padding(
