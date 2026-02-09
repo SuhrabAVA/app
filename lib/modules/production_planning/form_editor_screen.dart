@@ -2022,10 +2022,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         ? '$series ${n > 0 ? n.toString() : ''}'
                         : (n > 0 ? n.toString() : '?');
                     final size = (f['title'] ?? '').toString();
-                    final colors = (f['description'] ?? '').toString();
                     final subtitle = <String>[];
                     if (size.isNotEmpty) subtitle.add(size);
-                    if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
                     return DropdownMenuItem<Map<String, dynamic>>(
                       value: f,
                       child: Text(subtitle.isEmpty
@@ -2105,9 +2103,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   if (_orderFormSize != null &&
                       _orderFormSize!.trim().isNotEmpty)
                     Text('Размер, Тип продукта: ${_orderFormSize!}'),
-                  if (_orderFormColors != null &&
-                      _orderFormColors!.trim().isNotEmpty)
-                    Text('Цвета: ${_orderFormColors!}'),
                   if (_orderFormImageUrl != null &&
                       _orderFormImageUrl!.isNotEmpty)
                     Padding(
@@ -2125,7 +2120,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 // Всегда показываем отображаемый номер формы (предпросмотр при создании, сохранённый при редактировании)
             InputDecorator(
               decoration: const InputDecoration(
-                labelText: 'Номер формы',
+                labelText: 'Код формы',
                 border: OutlineInputBorder(),
               ),
               child: Text(_formDisplayPreview()),

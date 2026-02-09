@@ -2962,14 +2962,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               final formList = LayoutBuilder(
                 builder: (context, innerConstraints) {
                   final availableWidth = innerConstraints.maxWidth;
-                  // Limit the maximum width to roughly 60% of the available
-                  // space to keep rows visible while staying compact.
+                  // Keep the form wide enough for multi-column rows on desktop.
+                  const spacing = 12.0;
                   final maxWrapWidth = availableWidth >= 800
-                      ? math.min(availableWidth * 0.6, 980.0)
+                      ? math.min(availableWidth, 1400.0)
                       : availableWidth;
-                  final useTwoColumns = maxWrapWidth >= 720;
-                  final sectionWidth =
-                      useTwoColumns ? (maxWrapWidth - 16) / 2 : maxWrapWidth;
+                  final columns = maxWrapWidth >= 1200
+                      ? 3
+                      : maxWrapWidth >= 760
+                          ? 2
+                          : 1;
+                  final sectionWidth = columns == 1
+                      ? maxWrapWidth
+                      : (maxWrapWidth - spacing * (columns - 1)) / columns;
                   return Scrollbar(
                     controller: _formScrollController,
                     thumbVisibility: true,
@@ -2983,14 +2988,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         child: ConstrainedBox(
                           constraints: BoxConstraints(maxWidth: maxWrapWidth),
                           child: Wrap(
-                            spacing: 4,
-                            runSpacing: 4,
+                            spacing: spacing,
+                            runSpacing: spacing,
                             children: formSections
                                 .map(
                                   (section) => SizedBox(
-                                    width: useTwoColumns
-                                        ? sectionWidth
-                                        : maxWrapWidth,
+                                    width: sectionWidth,
                                     child: section,
                                   ),
                                 )
@@ -3012,7 +3015,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 children: [
                   Expanded(
                     // Split evenly between the form and the warehouse preview.
-                    flex: 4,
+                    flex: 5,
                     child: SizedBox(
                       height: constraints.maxHeight,
                       child: formList,
@@ -5467,12 +5470,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     (form['size'] ?? form['title'] ?? '').toString())
                 ?.trim();
             final productType = (form['product_type'] ?? '').toString().trim();
-            final colors =
-                (form['colors'] ?? form['description'] ?? '').toString().trim();
             final subtitle = <String>[];
             if (size != null && size.isNotEmpty) subtitle.add('Размер: $size');
             if (productType.isNotEmpty) subtitle.add('Тип: $productType');
-            if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
             final primaryTitle = () {
               if (series.isNotEmpty && number > 0) {
                 return '$series $number';
