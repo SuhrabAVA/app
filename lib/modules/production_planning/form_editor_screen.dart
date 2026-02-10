@@ -2769,8 +2769,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     ),
                     if (paperQty != null) ...[
                       const SizedBox(height: 8),
-                      Text(
-                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
+                          textAlign: TextAlign.left,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
                     ],
                   ],
                 );
@@ -2913,27 +2919,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _buildPaintsSection(),
             const SizedBox(height: 12),
             // PDF вложение
-            Row(
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _pickPdf,
-                  icon: const Icon(Icons.attach_file),
-                  label: Text(
-                    _pickedPdf?.name ??
-                        (widget.order?.pdfUrl != null
-                            ? widget.order!.pdfUrl!.split('/').last
-                            : 'Прикрепить PDF'),
-                  ),
-                ),
-                if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: _openPdf,
-                  ),
-                ]
-              ],
-            ),
+            _buildPdfAttachmentRow(),
             const SizedBox(height: 8),
             // Параметры продукта (свободный текст)
             TextFormField(
@@ -2962,81 +2948,87 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final row = _paints[i];
           return Padding(
             padding: const EdgeInsets.only(bottom: 8.0),
-            child: Row(
-              children: [
-                // Выбор краски
-                Expanded(
-                  flex: 5,
-                  child: Autocomplete<TmcModel>(
-                    optionsBuilder: (TextEditingValue text) {
-                      final provider = Provider.of<WarehouseProvider>(context,
-                          listen: false);
-                      final list = provider.getTmcByType('Краска');
-                      final query = text.text.toLowerCase();
-                      if (query.isEmpty) return list;
-                      return list.where(
-                          (t) => t.description.toLowerCase().contains(query));
-                    },
-                    displayStringForOption: (tmc) => tmc.description,
-                    fieldViewBuilder:
-                        (context, controller, focusNode, onFieldSubmitted) {
-                      if (row.tmc != null &&
-                          controller.text != row.tmc!.description) {
-                        controller.text = row.tmc!.description;
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 640;
+                final paintField = Autocomplete<TmcModel>(
+                  optionsBuilder: (TextEditingValue text) {
+                    final provider = Provider.of<WarehouseProvider>(context,
+                        listen: false);
+                    final list = provider.getTmcByType('Краска');
+                    final query = text.text.toLowerCase();
+                    if (query.isEmpty) return list;
+                    return list.where(
+                        (t) => t.description.toLowerCase().contains(query));
+                  },
+                  displayStringForOption: (tmc) => tmc.description,
+                  fieldViewBuilder:
+                      (context, controller, focusNode, onFieldSubmitted) {
+                    if (row.tmc != null &&
+                        controller.text != row.tmc!.description) {
+                      controller.text = row.tmc!.description;
+                    }
+                    return TextFormField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: const InputDecoration(
+                        labelText: 'Краска (необязательно)',
+                        border: OutlineInputBorder(),
+                      ),
+                    );
+                  },
+                  onSelected: (tmc) {
+                    setState(() {
+                      row.tmc = tmc;
+                      if (row.qtyGrams != null) {
+                        final need = _gramsToStockUnit(row.qtyGrams!, tmc);
+                        row.exceeded = need > tmc.quantity;
+                      } else {
+                        row.exceeded = false;
                       }
-                      return TextFormField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        decoration: const InputDecoration(
-                          labelText: 'Краска (необязательно)',
-                          border: OutlineInputBorder(),
-                        ),
-                      );
-                    },
-                    onSelected: (tmc) {
-                      setState(() {
-                        row.tmc = tmc;
-                        if (row.qtyGrams != null) {
-                          final need =
-                              _gramsToStockUnit(row.qtyGrams!, tmc);
-                          row.exceeded = need > tmc.quantity;
-                        } else {
-                          row.exceeded = false;
-                        }
-                      });
-                    },
-                    optionsViewBuilder: (context, onSelected, options) {
-                      return Align(
-                        alignment: Alignment.topLeft,
-                        child: Material(
-                          elevation: 4,
-                          child: SizedBox(
-                            width: 400,
-                            height: 240,
-                            child: ListView.builder(
-                              itemCount: options.length,
-                              itemBuilder: (context, index) {
-                                final tmc = options.elementAt(index);
-                                return ListTile(
-                                  title: Text(tmc.description),
-                                  subtitle: Text(
-                                      'Кол-во: ${tmc.quantity.toString()}'),
-                                  onTap: () => onSelected(tmc),
-                                );
-                              },
-                            ),
+                    });
+                  },
+                  optionsViewBuilder: (context, onSelected, options) {
+                    return Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        elevation: 6,
+                        borderRadius: BorderRadius.circular(10),
+                        clipBehavior: Clip.antiAlias,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minWidth: 280,
+                            maxWidth: 520,
+                            maxHeight: 260,
+                          ),
+                          child: ListView.builder(
+                            padding: EdgeInsets.zero,
+                            itemCount: options.length,
+                            itemBuilder: (context, index) {
+                              final tmc = options.elementAt(index);
+                              return ListTile(
+                                dense: true,
+                                title: Text(
+                                  tmc.description,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle:
+                                    Text('Кол-во: ${tmc.quantity.toString()}'),
+                                onTap: () => onSelected(tmc),
+                              );
+                            },
                           ),
                         ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Мелкая ячейка для пометок (напр. "1*2 4*0")
-                SizedBox(
+                      ),
+                    );
+                  },
+                );
+
+                final memoField = SizedBox(
                   width: 100,
                   child: TextFormField(
-                    key: ValueKey('memo_\${i}'),
+                    key: ValueKey('memo_${i}'),
                     initialValue: row.memo,
                     decoration: const InputDecoration(
                       labelText: 'Инфо',
@@ -3044,13 +3036,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     ),
                     onChanged: (v) => setState(() => row.memo = v.trim()),
                   ),
-                ),
-                const SizedBox(width: 12),
-                // Кол-во (г)
-                SizedBox(
+                );
+
+                final qtyField = SizedBox(
                   width: 130,
                   child: TextFormField(
-                    key: ValueKey('qty_\${i}'),
+                    key: ValueKey('qty_${i}'),
                     decoration: InputDecoration(
                       labelText: 'Кол-во (г)',
                       border: const OutlineInputBorder(),
@@ -3071,16 +3062,44 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       });
                     },
                   ),
-                ),
-                const SizedBox(width: 8),
-                // Удаление строки
-                if (_paints.length > 1)
-                  IconButton(
-                    tooltip: 'Удалить краску',
-                    onPressed: () => setState(() => _paints.removeAt(i)),
-                    icon: const Icon(Icons.remove_circle_outline),
-                  ),
-              ],
+                );
+
+                final removeButton = _paints.length > 1
+                    ? IconButton(
+                        tooltip: 'Удалить краску',
+                        onPressed: () => setState(() => _paints.removeAt(i)),
+                        icon: const Icon(Icons.remove_circle_outline),
+                      )
+                    : const SizedBox.shrink();
+
+                if (isCompact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      paintField,
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [memoField, qtyField, removeButton],
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    Expanded(flex: 7, child: paintField),
+                    const SizedBox(width: 8),
+                    memoField,
+                    const SizedBox(width: 12),
+                    qtyField,
+                    const SizedBox(width: 8),
+                    removeButton,
+                  ],
+                );
+              },
             ),
           );
         }),
@@ -3092,6 +3111,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             label: const Text('Добавить краску'),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildPdfAttachmentRow() {
+    return Row(
+      children: [
+        ElevatedButton.icon(
+          onPressed: _pickPdf,
+          icon: const Icon(Icons.attach_file),
+          label: Text(
+            _pickedPdf?.name ??
+                (widget.order?.pdfUrl != null
+                    ? widget.order!.pdfUrl!.split('/').last
+                    : 'Прикрепить PDF'),
+          ),
+        ),
+        if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.open_in_new),
+            onPressed: _openPdf,
+          ),
+        ]
       ],
     );
   }

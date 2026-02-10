@@ -3146,6 +3146,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         wrapWithCard: false,
                       ),
                     ),
+                    _buildLabelRow(
+                      label: 'PDF',
+                      labelWidth: labelWidth,
+                      child: _buildPdfAttachmentRow(),
+                    ),
                   ],
                 ),
               ),
@@ -3493,8 +3498,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
                 if (paperQty != null) ...[
                   const SizedBox(height: 4),
-                  Text(
-                      'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
+                      textAlign: TextAlign.left,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
                 ],
               ],
             );
@@ -3660,27 +3671,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ], breakpoint: 680, minItemWidth: 200),
         const SizedBox(height: 3),
-        Row(
-          children: [
-            ElevatedButton.icon(
-              onPressed: _pickPdf,
-              icon: const Icon(Icons.attach_file),
-              label: Text(
-                _pickedPdf?.name ??
-                    (widget.order?.pdfUrl != null
-                        ? widget.order!.pdfUrl!.split('/').last
-                        : 'Прикрепить PDF'),
-              ),
-            ),
-            if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.open_in_new),
-                onPressed: _openPdf,
-              ),
-            ]
-          ],
-        ),
       ],
     );
   }
@@ -5033,8 +5023,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildFormDisabledNotice(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      width: double.infinity,
-      // Reduce padding for a more compact notice.
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
@@ -5043,7 +5031,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
       child: const Text(
         'Добавьте хотя бы одну краску, чтобы выбрать форму.',
-        style: TextStyle(fontWeight: FontWeight.w600),
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          height: 1.2,
+        ),
       ),
     );
   }
@@ -5074,12 +5067,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final row = _paints[i];
           return Padding(
             padding: const EdgeInsets.only(bottom: 8.0),
-            child: Row(
-              children: [
-                // Выбор краски
-                Expanded(
-                  flex: 5,
-                  child: Autocomplete<TmcModel>(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 520;
+                final paintField = Autocomplete<TmcModel>(
                     optionsBuilder: (TextEditingValue text) {
                       final provider = Provider.of<WarehouseProvider>(context,
                           listen: false);
@@ -5144,16 +5135,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       return Align(
                         alignment: Alignment.topLeft,
                         child: Material(
-                          elevation: 4,
-                          child: SizedBox(
-                            width: 400,
-                            height: 240,
+                          elevation: 6,
+                          borderRadius: BorderRadius.circular(10),
+                          clipBehavior: Clip.antiAlias,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              minWidth: 280,
+                              maxWidth: 520,
+                              maxHeight: 260,
+                            ),
                             child: ListView.builder(
+                              padding: EdgeInsets.zero,
                               itemCount: options.length,
                               itemBuilder: (context, index) {
                                 final tmc = options.elementAt(index);
                                 return ListTile(
-                                  title: Text(tmc.description),
+                                  dense: true,
+                                  title: Text(
+                                    tmc.description,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                   subtitle: Text(
                                       'Кол-во: ${tmc.quantity.toString()}'),
                                   onTap: () => onSelected(tmc),
@@ -5164,11 +5166,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         ),
                       );
                     },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Кол-во (г)
-                SizedBox(
+                  );
+                final qtyField = SizedBox(
                   width: 130,
                   child: TextFormField(
                     key: ValueKey('qty_\${i}'),
@@ -5192,19 +5191,45 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       });
                     },
                   ),
-                ),
-                const SizedBox(width: 8),
-                // Удаление строки
-                if (_paints.length > 1)
-                  IconButton(
-                    tooltip: 'Удалить краску',
-                    onPressed: () {
-                      setState(() => _paints.removeAt(i));
-                      _handlePaintsChanged();
-                    },
-                    icon: const Icon(Icons.remove_circle_outline),
-                  ),
-              ],
+                );
+                final removeButton = _paints.length > 1
+                    ? IconButton(
+                        tooltip: 'Удалить краску',
+                        onPressed: () {
+                          setState(() => _paints.removeAt(i));
+                          _handlePaintsChanged();
+                        },
+                        icon: const Icon(Icons.remove_circle_outline),
+                      )
+                    : const SizedBox.shrink();
+
+                if (isCompact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      paintField,
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          qtyField,
+                          const SizedBox(width: 8),
+                          removeButton,
+                        ],
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    Expanded(flex: 7, child: paintField),
+                    const SizedBox(width: 12),
+                    qtyField,
+                    const SizedBox(width: 8),
+                    removeButton,
+                  ],
+                );
+              },
             ),
           );
         }),
@@ -5232,6 +5257,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       context: context,
       title: 'Краски',
       children: content,
+    );
+  }
+
+  Widget _buildPdfAttachmentRow() {
+    return Row(
+      children: [
+        ElevatedButton.icon(
+          onPressed: _pickPdf,
+          icon: const Icon(Icons.attach_file),
+          label: Text(
+            _pickedPdf?.name ??
+                (widget.order?.pdfUrl != null
+                    ? widget.order!.pdfUrl!.split('/').last
+                    : 'Прикрепить PDF'),
+          ),
+        ),
+        if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.open_in_new),
+            onPressed: _openPdf,
+          ),
+        ]
+      ],
     );
   }
 
