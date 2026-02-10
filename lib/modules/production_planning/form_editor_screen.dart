@@ -2774,7 +2774,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         child: Text(
                           'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
                           textAlign: TextAlign.left,
-                          style: Theme.of(context).textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(fontSize: 11, height: 1.1),
                         ),
                       ),
                     ],
