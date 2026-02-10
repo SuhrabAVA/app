@@ -2964,14 +2964,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   final availableWidth = innerConstraints.maxWidth;
                   // Keep the form wide enough for multi-column rows on desktop.
                   const spacing = 12.0;
-                  final maxWrapWidth = availableWidth >= 800
-                      ? math.min(availableWidth, 1400.0)
-                      : availableWidth;
-                  final columns = maxWrapWidth >= 980
+                  final maxWrapWidth = availableWidth;
+                  final desiredColumns = maxWrapWidth >= 980
+                  
                       ? 3
                       : maxWrapWidth >= 720
                           ? 2
                           : 1;
+                  final columns =
+                      math.min(desiredColumns, math.max(1, formSections.length));
                   final sectionWidth = columns == 1
                       ? maxWrapWidth
                       : (maxWrapWidth - spacing * (columns - 1)) / columns;
@@ -2984,21 +2985,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         horizontal: 4,
                         vertical: 4,
                       ),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(maxWidth: maxWrapWidth),
-                          child: Wrap(
-                            spacing: spacing,
-                            runSpacing: spacing,
-                            children: formSections
-                                .map(
-                                  (section) => SizedBox(
-                                    width: sectionWidth,
-                                    child: section,
-                                  ),
-                                )
-                                .toList(),
-                          ),
+                      child: SizedBox(
+                        width: maxWrapWidth,
+                        child: Wrap(
+                          spacing: spacing,
+                          runSpacing: spacing,
+                          children: formSections
+                              .map(
+                                (section) => SizedBox(
+                                  width: sectionWidth,
+                                  child: section,
+                                ),
+                              )
+                              .toList(),
                         ),
                       ),
                     ),
@@ -3812,24 +3811,41 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required Widget child,
     double labelWidth = 150,
   }) {
-    return Padding(
-      // Reduce vertical padding to make rows even more compact.
-      padding: const EdgeInsets.symmetric(vertical: 1.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: labelWidth,
-            child: Text(
-              '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          // Narrow the gap between label and field.
-          const SizedBox(width: 6),
-          Expanded(child: child),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool stackVertically = constraints.maxWidth < labelWidth + 80;
+        return Padding(
+          // Reduce vertical padding to make rows even more compact.
+          padding: const EdgeInsets.symmetric(vertical: 1.0),
+          child: stackVertically
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$label:',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    child,
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: labelWidth,
+                      child: Text(
+                        '$label:',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    // Narrow the gap between label and field.
+                    const SizedBox(width: 6),
+                    Expanded(child: child),
+                  ],
+                ),
+        );
+      },
     );
   }
 
