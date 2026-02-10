@@ -393,9 +393,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     }
 
-    add(_product.depth);
     add(_product.width);
     add(_product.height);
+    add(_product.depth);
     return parts.join(' ');
   }
 
@@ -407,9 +407,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         .whereType<double>()
         .toList();
     setState(() {
-      _product.depth = values.isNotEmpty ? values[0] : 0;
-      _product.width = values.length > 1 ? values[1] : 0;
-      _product.height = values.length > 2 ? values[2] : 0;
+      // Размеры сохраняются в порядке: 1) длина, 2) ширина, 3) глубина.
+      _product.width = values.isNotEmpty ? values[0] : 0;
+      _product.height = values.length > 1 ? values[1] : 0;
+      _product.depth = values.length > 2 ? values[2] : 0;
     });
     _scheduleStagePreviewUpdate();
   }
