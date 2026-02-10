@@ -2768,13 +2768,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       },
                     ),
                     if (paperQty != null) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 2),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
+                          'Остаток по материалу: ${paperQty.toStringAsFixed(2)}',
                           textAlign: TextAlign.left,
-                          style: Theme.of(context).textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(fontSize: 11, height: 1.1),
                         ),
                       ),
                     ],
