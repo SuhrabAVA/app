@@ -22,6 +22,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
   List<Map<String, dynamic>> _files = const [];
   List<Map<String, dynamic>> _paints = const [];
   String? _stageTemplateName;
+  String? _formImageUrl;
 
   @override
   void initState() {
@@ -41,6 +42,21 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       final repo = OrdersRepository();
       final paints = await repo.getPaints(widget.order.id);
       final files = await storage.listOrderFiles(widget.order.id);
+      String? formImageUrl;
+      final formSeries = widget.order.formSeries;
+      final formNo = widget.order.newFormNo;
+      if (formSeries != null && formSeries.isNotEmpty && formNo != null) {
+        final form = await Supabase.instance.client
+            .from('forms')
+            .select('image_url')
+            .eq('series', formSeries)
+            .eq('number', formNo)
+            .maybeSingle();
+        final imageUrl = (form?['image_url'] ?? '').toString().trim();
+        if (imageUrl.isNotEmpty) {
+          formImageUrl = imageUrl;
+        }
+      }
       String? stageTemplateName;
       final tplId = widget.order.stageTemplateId;
       if (tplId != null && tplId.isNotEmpty) {
@@ -55,6 +71,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       setState(() {
         _paints = paints;
         _files = files;
+        _formImageUrl = formImageUrl;
         _stageTemplateName = stageTemplateName;
       });
     } catch (_) {
@@ -127,6 +144,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
                         files: _files,
                         loadingFiles: _loadingFiles,
                         stageTemplateName: _stageTemplateName,
+                        formImageUrl: _formImageUrl,
                       ),
                     ),
                   ),

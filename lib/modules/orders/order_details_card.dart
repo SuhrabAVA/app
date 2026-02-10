@@ -13,6 +13,7 @@ class OrderDetailsCard extends StatelessWidget {
     required this.files,
     required this.loadingFiles,
     required this.stageTemplateName,
+    this.formImageUrl,
     this.extraSections = const <Widget>[],
   });
 
@@ -21,6 +22,7 @@ class OrderDetailsCard extends StatelessWidget {
   final List<Map<String, dynamic>> files;
   final bool loadingFiles;
   final String? stageTemplateName;
+  final String? formImageUrl;
   final List<Widget> extraSections;
 
   String _fmtDate(DateTime? d) =>
@@ -40,13 +42,9 @@ class OrderDetailsCard extends StatelessWidget {
   String _dimensionsSummary() {
     final p = order.product;
     final parts = <String>[];
-    if (p.width != null || p.height != null || p.depth != null) {
-      final dims = [p.width, p.height, p.depth]
-          .where((v) => v != null)
-          .map((v) => _fmtNum(v))
-          .join(' × ');
-      if (dims.isNotEmpty) parts.add(dims);
-    }
+    if (p.height != null) parts.add('Д: ${_fmtNum(p.height)}');
+    if (p.width != null) parts.add('Ш: ${_fmtNum(p.width)}');
+    if (p.depth != null) parts.add('Г: ${_fmtNum(p.depth)}');
     return parts.isEmpty ? '—' : parts.join(', ');
   }
 
@@ -72,26 +70,11 @@ class OrderDetailsCard extends StatelessWidget {
     if (m == null) return '—';
     final parts = <String>[];
     if (m.name.isNotEmpty) parts.add(m.name);
-    if (m.format != null && m.format!.isNotEmpty) parts.add('Формат: ${m.format}');
+    if (m.format != null && m.format!.isNotEmpty) parts.add('(${m.format})Ф');
     if (m.grammage != null && m.grammage!.isNotEmpty) {
-      parts.add('Грамаж: ${m.grammage}');
+      parts.add('(${m.grammage})Гр');
     }
-    if (m.unit != null && m.unit!.isNotEmpty) parts.add('Ед.: ${m.unit}');
-    return parts.isEmpty ? '—' : parts.join(', ');
-  }
-
-  String _statusLabel(String? status) {
-    final normalized = (status ?? '').trim();
-    switch (normalized) {
-      case 'newOrder':
-        return 'Новый';
-      case 'inWork':
-        return 'В работе';
-      case 'completed':
-        return 'Завершен';
-      default:
-        return normalized.isEmpty ? '—' : normalized;
-    }
+    return parts.isEmpty ? '—' : parts.join(' ');
   }
 
   @override
@@ -99,44 +82,43 @@ class OrderDetailsCard extends StatelessWidget {
     final o = order;
     final p = o.product;
     final additionalDimensions = _additionalDimensions();
+    final paintInfo = paints
+        .map((e) => (e['info'] ?? '').toString().trim())
+        .where((v) => v.isNotEmpty)
+        .toSet()
+        .join(', ');
     final paintsWidget = paints.isEmpty
         ? const Text('—')
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: paints.map((e) {
-              final name = (e['name'] ?? '').toString();
-              final qty = e['qty_kg'];
-              final memo = (e['info'] ?? '').toString();
-              double? grams;
-              if (qty is num) {
-                grams = qty.toDouble() * 1000;
-              } else if (qty is String && qty.trim().isNotEmpty) {
-                final parsed = double.tryParse(qty.replaceAll(',', '.'));
-                if (parsed != null) {
-                  grams = parsed * 1000;
+            children: [
+              if (paintInfo.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('Информация: $paintInfo'),
+                ),
+              ...paints.asMap().entries.map((entry) {
+                final index = entry.key;
+                final e = entry.value;
+                final name = (e['name'] ?? '').toString();
+                final qty = e['qty_kg'];
+                double? grams;
+                if (qty is num) {
+                  grams = qty.toDouble() * 1000;
+                } else if (qty is String && qty.trim().isNotEmpty) {
+                  final parsed = double.tryParse(qty.replaceAll(',', '.'));
+                  if (parsed != null) {
+                    grams = parsed * 1000;
+                  }
                 }
-              }
-              final v = (grams == null)
-                  ? (memo.isEmpty ? '—' : memo)
-                  : '${_formatGrams(grams)}${memo.isNotEmpty ? ' ($memo)' : ''}';
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2.0),
-                child: Text('$name: $v'),
-              );
-            }).toList(),
+                final v = grams == null ? '—' : _formatGrams(grams);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.0),
+                  child: Text('${index + 1}. $name — $v'),
+                );
+              }),
+            ],
           );
-    final materialWidget = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(_materialSummary()),
-        if (p.parameters.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2.0),
-            child: Text('Параметры: ${p.parameters}'),
-          ),
-        if (p.leftover != null) Text('Лишнее: ${_fmtNum(p.leftover)}'),
-      ],
-    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -167,9 +149,10 @@ class OrderDetailsCard extends StatelessWidget {
                     accentColor: const Color(0xFF21B37B),
                     child: Column(
                       children: [
-                        _buildInfoRow('Дата заказа', _fmtDate(o.orderDate)),
                         _buildInfoRow(
-                            'Срок выполнения', _fmtDate(o.dueDate)),
+                          'Дата заказа',
+                          '${_fmtDate(o.orderDate)} - ${_fmtDate(o.dueDate)}',
+                        ),
                         _buildInfoRow(
                             'Заказчик', o.customer.isEmpty ? '—' : o.customer),
                         _buildInfoRow('Тип продукта',
@@ -180,10 +163,8 @@ class OrderDetailsCard extends StatelessWidget {
                         _buildInfoRow(
                             'Ручки', o.handle.isEmpty ? '—' : o.handle),
                         _buildInfoRow(
-                            'Картон', o.cardboard.isEmpty ? '—' : o.cardboard),
-                        _buildInfoRow(
-                          'Подрезка',
-                          o.additionalParams.contains('Подрезка') ? 'Да' : 'Нет',
+                          'Картон / Подрезка',
+                          "${o.cardboard.isEmpty ? '—' : o.cardboard} / ${o.additionalParams.contains('Подрезка') ? 'Да' : 'Нет'}",
                         ),
                       ],
                     ),
@@ -204,11 +185,24 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Код формы: ${o.formCode ?? '—'}'),
-                              Text('Серия: ${o.formSeries ?? '—'}'),
-                              Text('Номер: ${o.newFormNo?.toString() ?? '—'}'),
                               Text(
-                                  'Старая форма: ${o.isOldForm ? 'Да' : 'Нет'}'),
+                                '${o.isOldForm ? 'Старая форма' : 'Новая форма'}: ${o.newFormNo?.toString() ?? '—'}',
+                              ),
+                              if (formImageUrl != null &&
+                                  formImageUrl!.trim().isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.network(
+                                      formImageUrl!,
+                                      height: 90,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Text('Изображение формы недоступно'),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -242,27 +236,16 @@ class OrderDetailsCard extends StatelessWidget {
                     accentColor: const Color(0xFF7A4CF0),
                     child: Column(
                       children: [
-                        _buildInfoRowWidget('Материал', materialWidget),
+                        _buildInfoRow('Материал', _materialSummary()),
                         if (additionalDimensions.isNotEmpty)
                           _buildInfoRow(
                               'Доп. размеры', additionalDimensions),
+                        _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—'),
                         _buildInfoRow('Приладка',
                             o.makeready > 0 ? _fmtNum(o.makeready) : '—'),
                         _buildInfoRow(
                             'Комментарий',
                             o.comments.isEmpty ? '—' : o.comments),
-                        _buildInfoRowWidget(
-                          'Очередь',
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Статус: ${_statusLabel(o.status)}'),
-                              Text(
-                                'Шаблон этапов: ${stageTemplateName ?? o.stageTemplateId ?? '—'}',
-                              ),
-                            ],
-                          ),
-                        ),
                         _buildInfoRow(
                             'Менеджер',
                             o.manager.isEmpty ? '—' : o.manager),
