@@ -104,6 +104,13 @@ class _LoginScreenState extends State<LoginScreen> {
               'Нет прав на запись в positions (ensureWarehouseHeadPosition): $e',
             );
           }
+          try {
+            await pr.ensureCmmSpecialistPosition();
+          } catch (e) {
+            debugPrint(
+              'Нет прав на запись в positions (ensureCmmSpecialistPosition): $e',
+            );
+          }
         }
 
         // Всегда пробуем получить сотрудников (для чтения обычно есть политика)

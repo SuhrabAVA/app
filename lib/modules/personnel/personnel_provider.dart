@@ -50,7 +50,8 @@ class PersonnelProvider extends ChangeNotifier {
       .where((p) =>
           p.id != kManagerId &&
           p.id != kWarehouseHeadId &&
-          p.id != kTechLeaderId)
+          p.id != kTechLeaderId &&
+          p.id != kCmmSpecialistId)
       .toList(growable: false);
 
   String _genId() => _uuid.v4();
@@ -381,6 +382,14 @@ class PersonnelProvider extends ChangeNotifier {
     }
   }
 
+  PositionModel? findCmmSpecialistPosition() {
+    try {
+      return _positions.firstWhere((p) => p.id == kCmmSpecialistId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> ensureManagerPosition() async {
     final exists = _positions.any((p) => p.id == kManagerId);
     if (!exists) {
@@ -393,6 +402,14 @@ class PersonnelProvider extends ChangeNotifier {
     final exists = _positions.any((p) => p.id == kWarehouseHeadId);
     if (!exists) {
       await _db.insertPosition(id: kWarehouseHeadId, name: 'Warehouse Head');
+      await _loadPositionsFromSql();
+    }
+  }
+
+  Future<void> ensureCmmSpecialistPosition() async {
+    final exists = _positions.any((p) => p.id == kCmmSpecialistId);
+    if (!exists) {
+      await _db.insertPosition(id: kCmmSpecialistId, name: 'CMM специалист');
       await _loadPositionsFromSql();
     }
   }
