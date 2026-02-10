@@ -1727,7 +1727,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       case 'Форма':
         return Column(
           children: [
-            _buildField('name', 'Номер формы'),
+            _buildField('name', 'Код формы'),
             _buildField(
               'quantity',
               'Количество',
