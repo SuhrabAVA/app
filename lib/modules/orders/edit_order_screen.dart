@@ -3503,7 +3503,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     child: Text(
                       'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
                       textAlign: TextAlign.left,
-                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(fontSize: 11, height: 1.1),
                     ),
                   ),
                 ],
@@ -5022,20 +5027,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Widget _buildFormDisabledNotice(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.dividerColor),
-      ),
-      child: const Text(
-        'Добавьте хотя бы одну краску, чтобы выбрать форму.',
-        textAlign: TextAlign.left,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          height: 1.2,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceVariant.withOpacity(0.35),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: theme.dividerColor),
+        ),
+        child: const Text(
+          'Добавьте хотя бы одну краску, чтобы выбрать форму.',
+          textAlign: TextAlign.left,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+            height: 1.15,
+          ),
         ),
       ),
     );
