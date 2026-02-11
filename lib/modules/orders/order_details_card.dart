@@ -39,13 +39,53 @@ class OrderDetailsCard extends StatelessWidget {
     return '$trimmed г';
   }
 
-  String _dimensionsSummary() {
+  Widget _buildDimensionsValue() {
     final p = order.product;
-    final parts = <String>[];
-    if (p.height != null) parts.add('Д: ${_fmtNum(p.height)}');
-    if (p.width != null) parts.add('Ш: ${_fmtNum(p.width)}');
-    if (p.depth != null) parts.add('Г: ${_fmtNum(p.depth)}');
-    return parts.isEmpty ? '—' : parts.join(', ');
+    final dimensions = <({String label, String value})>[
+      if (p.height != null) (label: 'Д', value: _fmtNum(p.height)),
+      if (p.width != null) (label: 'Ш', value: _fmtNum(p.width)),
+      if (p.depth != null) (label: 'Г', value: _fmtNum(p.depth)),
+    ];
+
+    if (dimensions.isEmpty) {
+      return const Text('—', textAlign: TextAlign.right);
+    }
+
+    return Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 18,
+      runSpacing: 8,
+      children: dimensions
+          .map(
+            (d) => SizedBox(
+              width: 30,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    d.label,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      height: 1.1,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF9CA3AF),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    d.value,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      height: 1,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+    );
   }
 
   String _additionalDimensions() {
@@ -159,12 +199,18 @@ class OrderDetailsCard extends StatelessWidget {
                             p.type.isEmpty ? '—' : p.type),
                         _buildInfoRow('Тираж',
                             p.quantity > 0 ? p.quantity.toString() : '—'),
-                        _buildInfoRow('Размеры', _dimensionsSummary()),
+                        _buildInfoRowWidget('Размеры', _buildDimensionsValue()),
                         _buildInfoRow(
                             'Ручки', o.handle.isEmpty ? '—' : o.handle),
                         _buildInfoRow(
-                          'Картон / Подрезка',
-                          "${o.cardboard.isEmpty ? '—' : o.cardboard} / ${o.additionalParams.contains('Подрезка') ? 'Да' : 'Нет'}",
+                          'Картон',
+                          o.cardboard.isEmpty ? '—' : o.cardboard,
+                        ),
+                        _buildInfoRow(
+                          'Подрезка',
+                          o.additionalParams.contains('Подрезка')
+                              ? 'есть'
+                              : 'нет',
                         ),
                       ],
                     ),
@@ -369,7 +415,10 @@ class OrderDetailsCard extends StatelessWidget {
   }
 
   Widget _fileTile(BuildContext context, Map<String, dynamic> f) {
-    final fileName = (f['filename'] ?? f['name'] ?? 'Файл.pdf').toString();
+    final fileName = (f['filename'] ?? f['name'] ?? 'Файл.pdf')
+        .toString()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
     final objectPath = (f['objectPath'] ?? f['path'] ?? '').toString();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -377,7 +426,13 @@ class OrderDetailsCard extends StatelessWidget {
         children: [
           const Icon(Icons.picture_as_pdf, size: 18),
           const SizedBox(width: 8),
-          Expanded(child: Text(fileName)),
+          Expanded(
+            child: Text(
+              fileName.isEmpty ? 'Файл.pdf' : fileName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           TextButton.icon(
             onPressed: objectPath.isEmpty
                 ? null
