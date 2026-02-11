@@ -54,11 +54,14 @@ class OrderDetailsCard extends StatelessWidget {
     return Wrap(
       alignment: WrapAlignment.end,
       spacing: 18,
-      runSpacing: 8,
+      // Reduce vertical run spacing since the numbers are smaller now.
+      runSpacing: 4,
       children: dimensions
           .map(
             (d) => SizedBox(
-              width: 30,
+              // Slightly wider container so that smaller numbers still feel
+              // balanced within the available space.
+              width: 35,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -72,10 +75,14 @@ class OrderDetailsCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 2),
+                  // Use a smaller font size for the dimension values to better
+                  // match the updated design where the dimension numbers are
+                  // less visually dominating. Keep a bold weight so they
+                  // remain legible.
                   Text(
                     d.value,
                     style: const TextStyle(
-                      fontSize: 28,
+                      fontSize: 20,
                       height: 1,
                       fontWeight: FontWeight.w600,
                     ),
@@ -85,6 +92,74 @@ class OrderDetailsCard extends StatelessWidget {
             ),
           )
           .toList(),
+    );
+  }
+
+  /// Builds a combined row for the "Картон" and "Подрезка" properties. In the
+  /// updated design these two fields should appear on one line, separated
+  /// evenly across the width of the card. Each side includes its own label
+  /// and value. When a value is not provided it falls back to an em dash.
+  Widget _buildCardboardTrimRow() {
+    final cardboardValue = order.cardboard.isEmpty ? '—' : order.cardboard;
+    final trimValue = order.additionalParams.contains('Подрезка') ? 'есть' : 'нет';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // First half: cardboard
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Картон',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1F2A37),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    cardboardValue,
+                    style: const TextStyle(
+                      color: Color(0xFF111827),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Second half: trimming
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Подрезка',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1F2A37),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    trimValue,
+                    style: const TextStyle(
+                      color: Color(0xFF111827),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -202,16 +277,10 @@ class OrderDetailsCard extends StatelessWidget {
                         _buildInfoRowWidget('Размеры', _buildDimensionsValue()),
                         _buildInfoRow(
                             'Ручки', o.handle.isEmpty ? '—' : o.handle),
-                        _buildInfoRow(
-                          'Картон',
-                          o.cardboard.isEmpty ? '—' : o.cardboard,
-                        ),
-                        _buildInfoRow(
-                          'Подрезка',
-                          o.additionalParams.contains('Подрезка')
-                              ? 'есть'
-                              : 'нет',
-                        ),
+                        // Use a combined row for "Картон" and "Подрезка" to align them on one
+                        // line with their own labels and values. This replaces two separate
+                        // rows in the old design.
+                        _buildCardboardTrimRow(),
                       ],
                     ),
                   ),
@@ -343,7 +412,13 @@ class OrderDetailsCard extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: DefaultTextStyle(
-              style: const TextStyle(color: Color(0xFF111827)),
+              // Apply a bold style to the value portion. According to the
+              // updated design, all content following the colon (i.e. the
+              // values) should be emphasized with a heavier font weight.
+              style: const TextStyle(
+                color: Color(0xFF111827),
+                fontWeight: FontWeight.w600,
+              ),
               child: alignEnd
                   ? Align(
                       alignment: Alignment.centerRight,
