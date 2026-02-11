@@ -53,15 +53,12 @@ class OrderDetailsCard extends StatelessWidget {
 
     return Wrap(
       alignment: WrapAlignment.end,
-      spacing: 18,
-      // Reduce vertical run spacing since the numbers are smaller now.
+      spacing: 12,
       runSpacing: 4,
       children: dimensions
           .map(
             (d) => SizedBox(
-              // Slightly wider container so that smaller numbers still feel
-              // balanced within the available space.
-              width: 35,
+              width: 30,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -75,14 +72,10 @@ class OrderDetailsCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  // Use a smaller font size for the dimension values to better
-                  // match the updated design where the dimension numbers are
-                  // less visually dominating. Keep a bold weight so they
-                  // remain legible.
                   Text(
                     d.value,
                     style: const TextStyle(
-                      fontSize: 20,
+                      fontSize: 16,
                       height: 1,
                       fontWeight: FontWeight.w600,
                     ),
@@ -115,8 +108,8 @@ class OrderDetailsCard extends StatelessWidget {
                 Text(
                   'Картон',
                   style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF1F2A37),
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF9CA3AF),
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -141,8 +134,8 @@ class OrderDetailsCard extends StatelessWidget {
                 Text(
                   'Подрезка',
                   style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF1F2A37),
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF9CA3AF),
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -165,19 +158,19 @@ class OrderDetailsCard extends StatelessWidget {
 
   String _additionalDimensions() {
     final p = order.product;
-    final parts = <String>[];
-    if (p.widthB != null) parts.add('Ширина Б: ${_fmtNum(p.widthB)}');
+    if (p.widthB == null) return '';
+    return _fmtNum(p.widthB);
+  }
+
+  String _lengthValue() {
+    final p = order.product;
     final hasQty = p.blQuantity != null && p.blQuantity!.isNotEmpty;
-    if (p.length != null) {
-      parts.add(
-        hasQty
-            ? 'Длина: ${p.blQuantity}*${_fmtNum(p.length)}'
-            : 'Длина: ${_fmtNum(p.length)}',
-      );
-    } else if (hasQty) {
-      parts.add('Количество: ${p.blQuantity}');
+    if (p.length != null && hasQty) {
+      return '${p.blQuantity}*${_fmtNum(p.length)}';
     }
-    return parts.join(', ');
+    if (p.length != null) return _fmtNum(p.length);
+    if (hasQty) return p.blQuantity!;
+    return '';
   }
 
   String _materialSummary() {
@@ -196,7 +189,8 @@ class OrderDetailsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final o = order;
     final p = o.product;
-    final additionalDimensions = _additionalDimensions();
+    final widthBValue = _additionalDimensions();
+    final lengthValue = _lengthValue();
     final paintInfo = paints
         .map((e) => (e['info'] ?? '').toString().trim())
         .where((v) => v.isNotEmpty)
@@ -352,12 +346,13 @@ class OrderDetailsCard extends StatelessWidget {
                     child: Column(
                       children: [
                         _buildInfoRow('Материал', _materialSummary()),
-                        if (additionalDimensions.isNotEmpty)
-                          _buildInfoRow(
-                              'Доп. размеры', additionalDimensions),
-                        _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—'),
+                        if (widthBValue.isNotEmpty)
+                          _buildInfoRow('Ширина B', widthBValue),
+                        if (lengthValue.isNotEmpty)
+                          _buildInfoRow('Длина L', lengthValue),
                         _buildInfoRow('Приладка',
                             o.makeready > 0 ? _fmtNum(o.makeready) : '—'),
+                        _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—'),
                         _buildInfoRow(
                             'Комментарий',
                             o.comments.isEmpty ? '—' : o.comments),
@@ -404,8 +399,8 @@ class OrderDetailsCard extends StatelessWidget {
             child: Text(
               label,
               style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1F2A37),
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF9CA3AF),
               ),
             ),
           ),
