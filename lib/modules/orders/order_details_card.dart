@@ -201,11 +201,6 @@ class OrderDetailsCard extends StatelessWidget {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (paintInfo.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text('Информация: $paintInfo'),
-                ),
               ...paints.asMap().entries.map((entry) {
                 final index = entry.key;
                 final e = entry.value;
@@ -332,6 +327,8 @@ class OrderDetailsCard extends StatelessWidget {
                           ),
                           alignEnd: false,
                         ),
+                        if (paintInfo.isNotEmpty)
+                          _buildInfoRow('Комментарий', paintInfo),
                       ],
                     ),
                   ),
