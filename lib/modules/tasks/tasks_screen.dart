@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
+import '../orders/order_details_card.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
 import '../personnel/employee_model.dart';
@@ -1546,31 +1546,12 @@ class _TasksScreenState extends State<TasksScreen>
               templateProvider.templates,
               scale,
             ),
-          if (currentTask != null && selectedWorkplace != null)
-            SizedBox(height: scaled(6)),
-          if (currentTask != null && selectedWorkplace != null)
-            _buildControlPanel(
-              currentTask,
-              selectedWorkplace,
-              taskProvider,
-              scale,
-              isTablet,
-            ),
-          if (currentTask != null) SizedBox(height: scaled(6)),
-          if (currentTask != null) _buildCommentsPanel(currentTask, scale),
         ],
       );
     }
 
     Widget buildRightPanel({required bool scrollable}) {
-      final Widget content = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          buildSummaryPanel(),
-          if (currentTask != null) SizedBox(height: scaled(6)),
-          buildDetailsPanel(),
-        ],
-      );
+      final Widget content = buildDetailsPanel();
 
       if (!scrollable) return content;
 
@@ -1698,8 +1679,22 @@ class _TasksScreenState extends State<TasksScreen>
               );
             }
 
-            final Widget summaryPanel = buildSummaryPanel();
             final Widget detailsPanel = buildDetailsPanel();
+            final Widget controlCommentsPanel = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (currentTask != null && selectedWorkplace != null)
+                  _buildControlPanel(
+                    currentTask,
+                    selectedWorkplace,
+                    taskProvider,
+                    scale,
+                    isTablet,
+                  ),
+                if (currentTask != null) SizedBox(height: scaled(6)),
+                if (currentTask != null) _buildCommentsPanel(currentTask, scale),
+              ],
+            );
 
             if (!isNarrow) {
               const int leftPanelFlex = 8;
@@ -1711,7 +1706,7 @@ class _TasksScreenState extends State<TasksScreen>
                   children: [
                     Expanded(
                       flex: leftPanelFlex,
-                      child: summaryPanel,
+                      child: controlCommentsPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
@@ -1746,7 +1741,8 @@ class _TasksScreenState extends State<TasksScreen>
                         SizedBox(
                           width: minLeftPanelWidth,
                           height: scrollConstraints.maxHeight,
-                          child: SingleChildScrollView(child: summaryPanel),
+                          child: SingleChildScrollView(
+                              child: controlCommentsPanel),
                         ),
                         SizedBox(width: columnGap),
                         SizedBox(
@@ -2219,395 +2215,18 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Widget _buildDetailsPanel(OrderModel order, WorkplaceModel stage,
+  Widget _buildDetailsPanel(OrderModel order, WorkplaceModel _,
       List<TemplateModel> templates, double scale) {
-    final product = order.product;
-    final templateLabel =
-        (order.stageTemplateId != null && order.stageTemplateId!.isNotEmpty)
-            ? (_resolveTemplateName(order.stageTemplateId, templates) ??
-                (templates.isEmpty ? 'загрузка...' : 'не найден'))
-            : null;
-    double scaled(double value) => value * scale;
-    final double panelPadding = scaled(8);
-    final double radius = scaled(10);
-    final double mediumSpacing = scaled(6);
-    final double headerSpacing = scaled(3);
-    final double smallSpacing = scaled(2);
-    final double infoSpacing = scaled(2);
-    final double infoItemWidth = scaled(210);
-    final orderNumber = orderDisplayId(order);
-    final dateFormat = DateFormat('dd.MM.yyyy');
-
-    String formatDate(DateTime? date) {
-      if (date == null) return '—';
-      try {
-        return dateFormat.format(date);
-      } catch (_) {
-        return date.toIso8601String();
-      }
-    }
-
-    String formatNum(num? value, {String? unit}) {
-      if (value == null) return '—';
-      final doubleValue = value.toDouble();
-      final bool isInt = (doubleValue - doubleValue.round()).abs() < 0.0001;
-      final String formatted = isInt
-          ? doubleValue.round().toString()
-          : doubleValue.toStringAsFixed(2);
-      if (unit == null) return formatted;
-      final trimmed = unit.trim();
-      return trimmed.isEmpty ? formatted : '$formatted $trimmed';
-    }
-
-    String formatQty(num? value) {
-      if (value == null) return '—';
-      final doubleValue = value.toDouble();
-      final bool isInt = (doubleValue - doubleValue.round()).abs() < 0.0001;
-      return isInt
-          ? '${doubleValue.round()} шт.'
-          : '${doubleValue.toStringAsFixed(2)} шт.';
-    }
-
-    String formatDimension(double value) {
-      if (value <= 0) return '—';
-      return formatNum(value, unit: 'мм');
-    }
-
-    String formatOptionalDouble(double? value, {String? unit}) {
-      if (value == null) return '—';
-      return formatNum(value, unit: unit);
-    }
-
-    Widget infoLine(String label, String value) {
-      final display = value.isNotEmpty ? value : '—';
-      return SizedBox(
-        width: infoItemWidth,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: infoSpacing),
-          child: Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: '$label: ',
-                  style: TextStyle(
-                    fontSize: scaled(11.5),
-                    fontWeight: FontWeight.w500,
-                    color: const Color(0xFF6B7280),
-                  ),
-                ),
-                TextSpan(
-                  text: display,
-                  style: TextStyle(
-                    fontSize: scaled(11.5),
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF111318),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    Widget infoMultiline(String label, String value) {
-      final display = value.isNotEmpty ? value : '—';
-      return SizedBox(
-        width: double.infinity,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: infoSpacing),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: scaled(11.5),
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF6B7280),
-                ),
-              ),
-              SizedBox(height: scaled(2)),
-              Text(
-                display,
-                style: TextStyle(
-                  fontSize: scaled(11.5),
-                  color: const Color(0xFF111318),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    Widget section(String title, List<Widget> content) {
-      if (content.isEmpty) return const SizedBox.shrink();
-      return Padding(
-        padding: EdgeInsets.only(bottom: mediumSpacing),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: scaled(12),
-                color: const Color(0xFF111827),
-              ),
-            ),
-            SizedBox(height: smallSpacing),
-            Wrap(
-              spacing: scaled(12),
-              runSpacing: scaled(2),
-              children: content,
-            ),
-            SizedBox(height: smallSpacing),
-            const Divider(height: 1, color: Color(0xFFE5E7EB)),
-          ],
-        ),
-      );
-    }
-
-    String statusLabel(OrderModel o) {
-      switch (o.statusEnum) {
-        case OrderStatus.completed:
-          return 'Завершён';
-        case OrderStatus.inWork:
-          return 'В работе';
-        case OrderStatus.newOrder:
-        default:
-          return 'Новый';
-      }
-    }
-
-    final List<Widget> generalSection = [];
-    if (order.customer.isNotEmpty) {
-      generalSection.add(infoLine('👤 Заказчик', order.customer));
-    }
-    if (order.manager.isNotEmpty) {
-      generalSection.add(infoLine('🧑‍💼 Менеджер', order.manager));
-    }
-    generalSection.add(infoLine('📅 Дата заказа', formatDate(order.orderDate)));
-    generalSection.add(infoLine('⏰ Срок', formatDate(order.dueDate)));
-    generalSection.add(infoLine('📊 Статус', statusLabel(order)));
-    generalSection.add(infoLine('🏭 Этап', stage.name));
-    if (order.comments.isNotEmpty) {
-      generalSection.add(infoMultiline('💬 Комментарии', order.comments));
-    }
-    if (order.actualQty != null) {
-      generalSection
-          .add(infoLine('📦 Готово', formatQty(order.actualQty)));
-    }
-    if (templateLabel != null) {
-      generalSection.add(infoLine('🧭 Шаблон этапов', templateLabel));
-    }
-
-    final List<Widget> productSection = [];
-    if (product.type.isNotEmpty) {
-      productSection.add(infoLine('Наименование', product.type));
-    }
-    productSection.add(infoLine('Тираж', formatQty(product.quantity)));
-    if (product.parameters.isNotEmpty) {
-      productSection.add(infoMultiline('Параметры', product.parameters));
-    }
-    if (product.width > 0) {
-      productSection.add(infoLine('Ширина', formatDimension(product.width)));
-    }
-    if (product.height > 0) {
-      productSection.add(infoLine('Высота', formatDimension(product.height)));
-    }
-    if (product.depth > 0) {
-      productSection.add(infoLine('Глубина', formatDimension(product.depth)));
-    }
-    if (product.widthB != null) {
-      productSection.add(infoLine(
-          'Ширина B', formatOptionalDouble(product.widthB, unit: 'мм')));
-    }
-    if (product.blQuantity != null && product.blQuantity!.isNotEmpty) {
-      productSection.add(infoLine('Количество', product.blQuantity!));
-    }
-    if (product.length != null) {
-      productSection.add(
-          infoLine('Длина L', formatOptionalDouble(product.length, unit: 'м')));
-    }
-    if (product.roll != null) {
-      productSection.add(
-          infoLine('Рулон', formatOptionalDouble(product.roll, unit: 'мм')));
-    }
-    if (product.leftover != null) {
-      productSection.add(infoLine(
-          'Остаток', formatOptionalDouble(product.leftover, unit: 'шт.')));
-    }
-
-    final material = order.material;
-    final List<Widget> materialSection = [];
-    if (material != null) {
-      materialSection.add(infoLine('Наименование', material.name));
-      if (material.format != null && material.format!.trim().isNotEmpty) {
-        materialSection.add(infoLine('Формат', material.format!.trim()));
-      }
-      if (material.grammage != null && material.grammage!.trim().isNotEmpty) {
-        materialSection.add(infoLine('Грамаж', material.grammage!.trim()));
-      }
-      materialSection.add(infoLine(
-          'Количество',
-          formatNum(material.quantity,
-              unit: material.unit.isNotEmpty ? material.unit : null)));
-      if (material.weight != null && material.weight! > 0) {
-        materialSection
-            .add(infoLine('Вес', formatNum(material.weight, unit: 'кг')));
-      }
-    }
-
-    final List<Widget> equipmentSection = [];
-    if (order.handle.isNotEmpty) {
-      equipmentSection.add(infoLine('Ручки', order.handle));
-    }
-    if (order.cardboard.isNotEmpty) {
-      equipmentSection.add(infoLine('Картон', order.cardboard));
-    }
-    if (order.additionalParams.isNotEmpty) {
-      equipmentSection.add(
-          infoMultiline('Доп. параметры', order.additionalParams.join(', ')));
-    }
-    if (order.makeready > 0) {
-      equipmentSection.add(infoLine('Приладка', formatNum(order.makeready)));
-    }
-    if (order.val > 0) {
-      equipmentSection.add(infoLine('Стоимость', formatNum(order.val)));
-    }
-
-    final List<Widget> formSection = [];
-    formSection
-        .add(infoLine('Тип формы', order.isOldForm ? 'Старая' : 'Новая'));
-    if (order.formCode != null && order.formCode!.trim().isNotEmpty) {
-      formSection.add(infoLine('Код формы', order.formCode!.trim()));
-    }
-    if (order.formSeries != null && order.formSeries!.trim().isNotEmpty) {
-      formSection.add(infoLine('Серия', order.formSeries!.trim()));
-    }
-    if (order.newFormNo != null) {
-      formSection.add(infoLine('Номер формы', order.newFormNo.toString()));
-    }
-
-    Widget formSectionWidget() {
-      if (formSection.isEmpty) return const SizedBox.shrink();
-      final double previewSize = scaled(88);
-      final borderRadius = BorderRadius.circular(scaled(8));
-      final boxDecoration = BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: borderRadius,
-        color: Colors.grey.shade100,
-      );
-      return Padding(
-        padding: EdgeInsets.only(bottom: mediumSpacing),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '🧷 Форма',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: scaled(12),
-              ),
-            ),
-            SizedBox(height: smallSpacing),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: formSection,
-                  ),
-                ),
-                SizedBox(width: scaled(12)),
-                FutureBuilder<String?>(
-                  future: _getFormImageFuture(order),
-                  builder: (context, snapshot) {
-                    final url = snapshot.data;
-                    final bool waiting =
-                        snapshot.connectionState == ConnectionState.waiting &&
-                            !snapshot.hasData;
-                    Widget child;
-                    if (waiting) {
-                      child = const Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      );
-                    } else if (url == null || url.isEmpty) {
-                      child = Center(
-                        child: Text('Нет фото',
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: scaled(11),
-                            )),
-                      );
-                    } else {
-                      child = GestureDetector(
-                        onTap: () => _openFormImage(url),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            ClipRRect(
-                              borderRadius: borderRadius,
-                              child: Image.network(
-                                url,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Center(
-                                  child: Icon(Icons.broken_image,
-                                      color: Colors.red.shade300,
-                                      size: scaled(28)),
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              right: 6,
-                              bottom: 6,
-                              child: Container(
-                                padding: EdgeInsets.all(scaled(4)),
-                                decoration: BoxDecoration(
-                                  color: Colors.black54,
-                                  borderRadius:
-                                      BorderRadius.circular(scaled(12)),
-                                ),
-                                child: Icon(Icons.fullscreen,
-                                    size: scaled(14), color: Colors.white),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                    return Container(
-                      width: previewSize,
-                      height: previewSize,
-                      decoration: boxDecoration,
-                      child: child,
-                    );
-                  },
-                ),
-              ],
-            ),
-            SizedBox(height: smallSpacing),
-            const Divider(height: 1, color: Color(0xFFE5E7EB)),
-          ],
-        ),
-      );
-    }
-
-    final bool hasPdf = order.pdfUrl != null && order.pdfUrl!.isNotEmpty;
+    final templateName = (order.stageTemplateId != null &&
+            order.stageTemplateId!.isNotEmpty)
+        ? _resolveTemplateName(order.stageTemplateId, templates)
+        : null;
 
     return Container(
-      padding: EdgeInsets.all(panelPadding),
+      padding: EdgeInsets.all(10 * scale),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(radius),
+        borderRadius: BorderRadius.circular(10 * scale),
         border: Border.all(color: const Color(0xFFE6E7EC)),
         boxShadow: const [
           BoxShadow(
@@ -2617,107 +2236,21 @@ class _TasksScreenState extends State<TasksScreen>
           )
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      orderNumber != '—' ? orderNumber : order.id,
-                      style: TextStyle(
-                        fontSize: scaled(16),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(height: smallSpacing),
-                    const Text(
-                      '📋 Детали производственного задания',
-                      style: TextStyle(color: Color(0xFF6B7280)),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: () => setState(() {
-                  _detailsExpanded = !_detailsExpanded;
-                }),
-                icon: Icon(
-                    _detailsExpanded
-                        ? Icons.expand_less
-                        : Icons.expand_more,
-                    color: Colors.black87),
-                tooltip:
-                    _detailsExpanded ? 'Свернуть детали' : 'Развернуть детали',
-              ),
+      child: FutureBuilder<String?>(
+        future: _getFormImageFuture(order),
+        builder: (context, snapshot) {
+          return OrderDetailsCard(
+            order: order,
+            paints: const [],
+            files: const [],
+            loadingFiles: false,
+            stageTemplateName: templateName,
+            formImageUrl: snapshot.data,
+            extraSections: [
+              _buildStageList(order, scale),
             ],
-          ),
-          AnimatedCrossFade(
-            firstChild: const SizedBox.shrink(),
-            secondChild: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(height: headerSpacing),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (generalSection.isNotEmpty)
-                      section('🧾 Основное', generalSection),
-                    if (productSection.isNotEmpty)
-                      section('📦 Продукт', productSection),
-                    if (materialSection.isNotEmpty)
-                      section('🧵 Материал', materialSection),
-                    if (equipmentSection.isNotEmpty)
-                      section('🧩 Комплектация', equipmentSection),
-                    if (formSection.isNotEmpty) formSectionWidget(),
-                    if (hasPdf)
-                      section('📎 Файлы', [
-                        SizedBox(
-                          width: double.infinity,
-                          child: Row(
-                            children: [
-                              const Icon(Icons.picture_as_pdf_outlined,
-                                  size: 16, color: Colors.redAccent),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  'PDF: ${order.pdfUrl!}',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: scaled(13)),
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: () async {
-                                  final url = await getSignedUrl(order.pdfUrl!);
-                                  if (!context.mounted) return;
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => PdfViewScreen(
-                                          url: url, title: 'PDF заказа'),
-                                    ),
-                                  );
-                                },
-                                child: const Text('Открыть'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ]),
-                  ],
-                ),
-                SizedBox(height: mediumSpacing),
-                _buildStageList(order, scale),
-              ],
-            ),
-            crossFadeState: _detailsExpanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 200),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
