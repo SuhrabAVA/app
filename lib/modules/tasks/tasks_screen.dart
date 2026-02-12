@@ -1697,8 +1697,8 @@ class _TasksScreenState extends State<TasksScreen>
             );
 
             if (!isNarrow) {
-              const int leftPanelFlex = 8;
-              const int rightPanelFlex = 24;
+              const int leftPanelFlex = 11;
+              const int rightPanelFlex = 13;
               return SingleChildScrollView(
                 padding: EdgeInsets.all(outerPadding),
                 child: Row(
@@ -1706,12 +1706,12 @@ class _TasksScreenState extends State<TasksScreen>
                   children: [
                     Expanded(
                       flex: leftPanelFlex,
-                      child: controlCommentsPanel,
+                      child: detailsPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
                       flex: rightPanelFlex,
-                      child: detailsPanel,
+                      child: controlCommentsPanel,
                     ),
                   ],
                 ),
@@ -1720,8 +1720,8 @@ class _TasksScreenState extends State<TasksScreen>
 
             return LayoutBuilder(
               builder: (context, scrollConstraints) {
-                const double minLeftPanelWidth = 320;
-                const double minRightPanelWidth = 640;
+                const double minLeftPanelWidth = 560;
+                const double minRightPanelWidth = 620;
                 final double totalMinWidth =
                     minLeftPanelWidth + columnGap + minRightPanelWidth;
                 final double contentWidth = math.max(
@@ -1741,14 +1741,14 @@ class _TasksScreenState extends State<TasksScreen>
                         SizedBox(
                           width: minLeftPanelWidth,
                           height: scrollConstraints.maxHeight,
-                          child: SingleChildScrollView(
-                              child: controlCommentsPanel),
+                          child: SingleChildScrollView(child: detailsPanel),
                         ),
                         SizedBox(width: columnGap),
                         SizedBox(
                           width: rightPanelWidth,
                           height: scrollConstraints.maxHeight,
-                          child: SingleChildScrollView(child: detailsPanel),
+                          child:
+                              SingleChildScrollView(child: controlCommentsPanel),
                         ),
                       ],
                     ),
