@@ -1706,12 +1706,12 @@ class _TasksScreenState extends State<TasksScreen>
                   children: [
                     Expanded(
                       flex: leftPanelFlex,
-                      child: controlCommentsPanel,
+                      child: detailsPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
                       flex: rightPanelFlex,
-                      child: detailsPanel,
+                      child: controlCommentsPanel,
                     ),
                   ],
                 ),
@@ -1742,13 +1742,14 @@ class _TasksScreenState extends State<TasksScreen>
                           width: minLeftPanelWidth,
                           height: scrollConstraints.maxHeight,
                           child: SingleChildScrollView(
-                              child: controlCommentsPanel),
+                              child: detailsPanel),
                         ),
                         SizedBox(width: columnGap),
                         SizedBox(
                           width: rightPanelWidth,
                           height: scrollConstraints.maxHeight,
-                          child: SingleChildScrollView(child: detailsPanel),
+                          child:
+                              SingleChildScrollView(child: controlCommentsPanel),
                         ),
                       ],
                     ),
