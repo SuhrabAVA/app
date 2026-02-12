@@ -1697,20 +1697,20 @@ class _TasksScreenState extends State<TasksScreen>
             );
 
             if (!isNarrow) {
-              const int leftPanelFlex = 8;
-              const int rightPanelFlex = 24;
+              const int detailsPanelFlex = 2;
+              const int controlPanelFlex = 1;
               return SingleChildScrollView(
                 padding: EdgeInsets.all(outerPadding),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      flex: leftPanelFlex,
+                      flex: detailsPanelFlex,
                       child: detailsPanel,
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
-                      flex: rightPanelFlex,
+                      flex: controlPanelFlex,
                       child: controlCommentsPanel,
                     ),
                   ],
@@ -1720,16 +1720,16 @@ class _TasksScreenState extends State<TasksScreen>
 
             return LayoutBuilder(
               builder: (context, scrollConstraints) {
-                const double minLeftPanelWidth = 320;
-                const double minRightPanelWidth = 640;
+                const double minDetailsPanelWidth = 640;
+                const double minControlPanelWidth = 320;
                 final double totalMinWidth =
-                    minLeftPanelWidth + columnGap + minRightPanelWidth;
+                    minDetailsPanelWidth + columnGap + minControlPanelWidth;
                 final double contentWidth = math.max(
                   scrollConstraints.maxWidth,
                   totalMinWidth,
                 );
-                final double rightPanelWidth =
-                    contentWidth - minLeftPanelWidth - columnGap;
+                final double controlPanelWidth =
+                    contentWidth - minDetailsPanelWidth - columnGap;
                 return SingleChildScrollView(
                   padding: EdgeInsets.all(outerPadding),
                   scrollDirection: Axis.horizontal,
@@ -1739,14 +1739,14 @@ class _TasksScreenState extends State<TasksScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
-                          width: minLeftPanelWidth,
+                          width: minDetailsPanelWidth,
                           height: scrollConstraints.maxHeight,
                           child: SingleChildScrollView(
                               child: detailsPanel),
                         ),
                         SizedBox(width: columnGap),
                         SizedBox(
-                          width: rightPanelWidth,
+                          width: controlPanelWidth,
                           height: scrollConstraints.maxHeight,
                           child:
                               SingleChildScrollView(child: controlCommentsPanel),
