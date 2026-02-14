@@ -2636,6 +2636,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 stateRowUser == UserRunState.paused ||
                                 stateRowUser == UserRunState.problem));
 
+                    final personnel = context.read<PersonnelProvider>();
+
                     Future<void> recordTimeEventForUser(TaskTimeType type,
                         {String? note, bool includeHelpers = true}) async {
                       final participants =
@@ -3195,7 +3197,6 @@ class _TasksScreenState extends State<TasksScreen>
                     );
                   }
 
-                  final personnel = context.read<PersonnelProvider>();
                   final nameFor = (String uid) {
                     final emp = personnel.employees.firstWhere(
                       (e) => e.id == uid,
