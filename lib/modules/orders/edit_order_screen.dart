@@ -4280,7 +4280,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildStockExtraLayout(Widget searchColumn, Widget writeOffSwitch) {
+  Widget _buildStockExtraLayout(
+    Widget searchColumn, [
+    Widget? writeOffSwitch,
+  ]) {
     // Показываем остаток и подбор лишнего по категории.
     return searchColumn;
   }
