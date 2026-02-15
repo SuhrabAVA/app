@@ -218,7 +218,10 @@ class OrderDetailsCard extends StatelessWidget {
                 final v = grams == null ? '—' : _formatGrams(grams);
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2.0),
-                  child: Text('${index + 1}. $name — $v'),
+                  child: Text(
+                    '${index + 1}. $name — $v',
+                    style: const TextStyle(fontSize: 10),
+                  ),
                 );
               }),
             ],
@@ -264,8 +267,10 @@ class OrderDetailsCard extends StatelessWidget {
                         _buildInfoRow('Тираж',
                             p.quantity > 0 ? p.quantity.toString() : '—'),
                         _buildInfoRowWidget('Размеры', _buildDimensionsValue()),
-                        _buildInfoRow(
-                            'Ручки', o.handle.isEmpty ? '—' : o.handle),
+                        _buildInfoRowWidget(
+                          'Ручки',
+                          _buildSingleLineValue(o.handle.isEmpty ? '—' : o.handle),
+                        ),
                         // Use a combined row for "Картон" and "Подрезка" to align them on one
                         // line with their own labels and values. This replaces two separate
                         // rows in the old design.
@@ -375,6 +380,22 @@ class OrderDetailsCard extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+
+  Widget _buildSingleLineValue(String value) {
+    return SizedBox(
+      width: double.infinity,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerRight,
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.visible,
+        ),
+      ),
     );
   }
 
