@@ -3527,6 +3527,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               _buildStockExtraResults(),
             ],
           ),
+          const SizedBox.shrink(),
         ),
         const SizedBox(height: 3),
         TextFormField(
