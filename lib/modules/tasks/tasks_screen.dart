@@ -712,8 +712,7 @@ class _TasksScreenState extends State<TasksScreen>
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
   static const Map<TaskStatus, String> _statusLabels = {
-    TaskStatus.inProgress: 'Активные',
-    TaskStatus.completed: 'Завершенные',
+    TaskStatus.inProgress: 'Задания',
   };
   TaskStatus get _selectedStatus => _selection.status;
   set _selectedStatus(TaskStatus value) {
@@ -1060,9 +1059,6 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   TaskStatus _sectionForTask(TaskModel task) {
-    if (task.status == TaskStatus.completed) {
-      return TaskStatus.completed;
-    }
     return TaskStatus.inProgress;
   }
 
@@ -1227,6 +1223,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final tasksForWorkplace = taskProvider.tasks
         .where((t) => t.stageId == _selectedWorkplaceId)
+        .where((t) => !_isEffectivelyCompleted(t))
         .where((task) {
           final groupKey = taskGroupKey(task);
           final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
@@ -1292,9 +1289,7 @@ class _TasksScreenState extends State<TasksScreen>
       );
     });
 
-    final sectionedTasks = tasksForWorkplace
-        .where((t) => _sectionForTask(t) == _selectedStatus)
-        .toList();
+    final sectionedTasks = tasksForWorkplace.toList();
     sectionedTasks.sort((a, b) =>
         queue
             .priorityOf(a.orderId, groupId: queueGroupId)
@@ -1420,44 +1415,11 @@ class _TasksScreenState extends State<TasksScreen>
             ],
           ),
           SizedBox(height: sectionSpacing * 0.6),
-          Wrap(
-            spacing: chipSpacing,
-            runSpacing: chipSpacing,
-            children: [
-              for (final entry in _statusLabels.entries)
-                ChoiceChip(
-                  label: Text(
-                    entry.value,
-                    style: TextStyle(fontSize: scaled(10.5), fontWeight: FontWeight.w600),
-                  ),
-                  selected: _selectedStatus == entry.key,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: isTablet
-                      ? const VisualDensity(horizontal: -2, vertical: -2)
-                      : const VisualDensity(horizontal: -1, vertical: -1),
-                  labelPadding: EdgeInsets.symmetric(
-                    horizontal: scaled(5),
-                    vertical: scaled(2.5),
-                  ),
-                  onSelected: (selected) {
-                    if (!selected) return;
-                    setState(() {
-                      _selectedStatus = entry.key;
-                      if (_selectedTask != null &&
-                          _sectionForTask(_selectedTask!) != _selectedStatus) {
-                        _selectedTask = null;
-                        _persistTask(null);
-                      }
-                    });
-                  },
-                ),
-            ],
-          ),
           SizedBox(height: sectionSpacing),
           if (sectionedTasks.isEmpty)
             const Center(
               child: Text(
-                'Нет заданий в этой категории',
+                'Нет доступных заданий для этого рабочего места',
                 textAlign: TextAlign.center,
               ),
             )
@@ -1466,31 +1428,39 @@ class _TasksScreenState extends State<TasksScreen>
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               children: [
-                for (final task in sectionedTasks)
-                  _TaskCard(
-                    task: task,
-                    order: findOrder(task.orderId),
-                    readyForStage: task.status == TaskStatus.waiting &&
+                for (int i = 0; i < sectionedTasks.length; i++)
+                  Builder(builder: (context) {
+                    final task = sectionedTasks[i];
+                    final readyForStage = task.status == TaskStatus.waiting &&
                         _isFirstPendingStage(
                           taskProvider,
                           personnel,
                           task,
                           groupResolver: _stageGroupKey,
-                        ),
-                    shiftPaused: _isShiftPausedForStage(taskProvider, task),
-                    selected: _selectedTask?.id == task.id,
-                    scale: scale,
-                    compact: isCompactTablet || widget.compactList,
-                    showStageHint: task.status == TaskStatus.waiting,
-                    onTap: () {
-                      _persistTask(task.id);
-                      setState(() {
-                        _selectedTask = task;
-                        _selectedStatus = _sectionForTask(task);
-                      });
-                      DefaultTabController.of(context)?.animateTo(1);
-                    },
-                  ),
+                        );
+                    final canOpen = task.status != TaskStatus.waiting || readyForStage;
+                    return _TaskCard(
+                      task: task,
+                      order: findOrder(task.orderId),
+                      readyForStage: readyForStage,
+                      shiftPaused: _isShiftPausedForStage(taskProvider, task),
+                      selected: _selectedTask?.id == task.id,
+                      scale: scale,
+                      compact: isCompactTablet || widget.compactList,
+                      showStageHint: task.status == TaskStatus.waiting,
+                      sequenceNumber: i + 1,
+                      enabled: canOpen,
+                      onTap: () {
+                        if (!canOpen) return;
+                        _persistTask(task.id);
+                        setState(() {
+                          _selectedTask = task;
+                          _selectedStatus = _sectionForTask(task);
+                        });
+                        DefaultTabController.of(context)?.animateTo(1);
+                      },
+                    );
+                  }),
               ],
             ),
         ],
@@ -2456,6 +2426,20 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
+
+  bool _hasBlockingActiveOrder(TaskProvider provider, TaskModel currentTask) {
+    return provider.tasks.any((task) {
+      if (task.id == currentTask.id) return false;
+      if (task.assignees.contains(widget.employeeId) == false) return false;
+      if (task.orderId == currentTask.orderId) return false;
+      if (_isEffectivelyCompleted(task)) return false;
+      final state = _userRunState(task, widget.employeeId);
+      return state == UserRunState.active ||
+          state == UserRunState.paused ||
+          state == UserRunState.problem;
+    });
+  }
+
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
       TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
@@ -2508,7 +2492,8 @@ class _TasksScreenState extends State<TasksScreen>
             groupResolver: _stageGroupKey) &&
         stageModeAllowsJoin &&
         !shiftPaused &&
-        !groupLocked;
+        !groupLocked &&
+        !_hasBlockingActiveOrder(provider, task);
 
     // Пауза/Завершить/Проблема доступны только своим исполнителям
     final bool canPause =
@@ -2708,6 +2693,15 @@ class _TasksScreenState extends State<TasksScreen>
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
                                   'Сначала выполните предыдущий этап заказа')));
+                        }
+                        return;
+                      }
+
+
+                      if (_hasBlockingActiveOrder(taskProvider, task)) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text('Сначала завершите текущий активный заказ')));
                         }
                         return;
                       }
@@ -3104,11 +3098,12 @@ class _TasksScreenState extends State<TasksScreen>
                                             ))),
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
-                                      onPressed:
-                                          !_isSetupCompletedForUser(
-                                                  task, widget.employeeId)
-                                              ? () => _startSetup(task, provider)
-                                              : null,
+                                      onPressed: (!_isSetupCompletedForUser(
+                                                  task, widget.employeeId) &&
+                                              !_isSetupInProgressForUser(
+                                                  task, widget.employeeId))
+                                          ? () => _startSetup(task, provider)
+                                          : null,
                                       style: ElevatedButton.styleFrom(
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
@@ -3898,6 +3893,8 @@ class _TaskCard extends StatelessWidget {
   final VoidCallback onTap;
   final bool compact;
   final double scale;
+  final int sequenceNumber;
+  final bool enabled;
 
   const _TaskCard({
     required this.task,
@@ -3909,15 +3906,12 @@ class _TaskCard extends StatelessWidget {
     this.showStageHint = false,
     this.compact = false,
     this.scale = 1.0,
+    this.sequenceNumber = 0,
+    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    final badge = _taskListBadge(
-      task: task,
-      readyForStage: readyForStage,
-      shiftPaused: shiftPaused,
-    );
     final name = order?.product.type ?? '';
     final displayId = () {
       if (order == null) return task.orderId;
@@ -3944,6 +3938,7 @@ class _TaskCard extends StatelessWidget {
     final Color readyColor = Colors.green.shade600;
     final Color stageHintColor =
         readyForStage ? readyColor : Colors.grey.shade600;
+    final Color disabledColor = const Color(0xFF9CA3AF);
 
     return Card(
       margin: EdgeInsets.symmetric(vertical: scaled(compact ? 3 : 5)),
@@ -3957,9 +3952,11 @@ class _TaskCard extends StatelessWidget {
               : (readyForStage ? readyColor : const Color(0xFFE2E4EA)),
         ),
       ),
-      color: readyForStage ? readyColor.withOpacity(0.05) : Colors.white,
+      color: !enabled
+          ? const Color(0xFFF3F4F6)
+          : (readyForStage ? readyColor.withOpacity(0.05) : Colors.white),
       child: ListTile(
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         dense: compact,
         visualDensity: compact
             ? const VisualDensity(horizontal: -2, vertical: -2)
@@ -3973,7 +3970,7 @@ class _TaskCard extends StatelessWidget {
           style: TextStyle(
             fontSize: titleSize,
             fontWeight: FontWeight.w600,
-            color: Colors.black87,
+            color: enabled ? Colors.black87 : disabledColor,
           ),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
@@ -4012,18 +4009,17 @@ class _TaskCard extends StatelessWidget {
               )
             : null,
         trailing: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: scaled(10),
-            vertical: scaled(compact ? 3 : 4),
-          ),
+          width: scaled(28),
+          height: scaled(28),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: badge.color.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(scaled(12)),
+            color: enabled ? const Color(0xFFDBEAFE) : const Color(0xFFE5E7EB),
+            shape: BoxShape.circle,
           ),
           child: Text(
-            badge.label,
+            sequenceNumber > 0 ? sequenceNumber.toString() : '•',
             style: TextStyle(
-              color: badge.color,
+              color: enabled ? const Color(0xFF1D4ED8) : const Color(0xFF6B7280),
               fontWeight: FontWeight.w700,
               fontSize: statusSize,
             ),

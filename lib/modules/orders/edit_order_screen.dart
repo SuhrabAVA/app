@@ -2499,73 +2499,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _paperWriteoffBaselineByItem[itemId] = need;
     }
 
-    // Повторная выборка позиций из динамической категории перед списанием - чтобы не зависеть от состояния UI.
-    if (_writeOffStockExtra) {
-      await AppAuth.ensureSignedIn();
-
-      try {
-        final String typeTitle = _product.type.trim();
-        final selectedExtra = _selectedStockExtraRow;
-        final String? sizeLabel = _productSizeLabel();
-        final double selectedQty =
-            (_stockExtraSelectedQty != null && _stockExtraSelectedQty! > 0)
-                ? _stockExtraSelectedQty!
-                : 0;
-        if (selectedExtra != null && typeTitle.isNotEmpty && selectedQty > 0) {
-          final cat = await _sb
-              .from('warehouse_categories')
-              .select('id, title, code')
-              .or('title.eq.' + typeTitle + ',code.eq.' + typeTitle)
-              .maybeSingle();
-          if (cat != null) {
-            final itemId = selectedExtra['id']?.toString();
-            if (itemId != null) {
-              final row = await _sb
-                  .from('warehouse_category_items')
-                  .select('quantity, category_id')
-                  .eq('id', itemId)
-                  .maybeSingle();
-              if (row != null &&
-                  row['category_id']?.toString() == cat['id']?.toString()) {
-                final qv = row['quantity'];
-                final double q = (qv is num)
-                    ? qv.toDouble()
-                    : double.tryParse('${qv ?? ''}') ?? 0.0;
-                final double qtyToWriteOff =
-                    math.max(0, math.min(selectedQty, q));
-                if (qtyToWriteOff > 0) {
-                  final writeoffPayload = {
-                    'item_id': itemId,
-                    'qty': qtyToWriteOff,
-                    'reason': _customerController.text.trim(),
-                    'by_name': AuthHelper.currentUserName ?? '',
-                  };
-                  if (sizeLabel != null && sizeLabel.isNotEmpty) {
-                    writeoffPayload['size'] = sizeLabel;
-                  }
-                  await _sb
-                      .from('warehouse_category_writeoffs')
-                      .insert(writeoffPayload);
-                  await _sb.from('warehouse_category_items').update({
-                    'quantity': math.max(0, q - qtyToWriteOff),
-                    if (sizeLabel != null && sizeLabel.isNotEmpty)
-                      'size': sizeLabel,
-                  }).match({'id': itemId});
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text('Ошибка списания лишнего: ${e.toString()}'),
-            ),
-          );
-        }
-      }
-    }
+    // Списание лишнего выполняется на этапе отгрузки.
 
 // Независимо от создания/редактирования - синхронизируем список красок
 // c полем product.parameters и таблицей order_paints.
@@ -3047,7 +2981,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool hasAssignedForm,
     required bool paintsAvailable,
   }) {
-    const labelWidth = 150.0;
+    const labelWidth = 128.0;
     return LayoutBuilder(
       builder: (context, constraints) {
         const spacing = 16.0;
@@ -3593,77 +3527,77 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               _buildStockExtraResults(),
             ],
           ),
-                    _buildCompactSwitchTile(
-            label: 'Списать лишнее при сохранении',
-            value: _writeOffStockExtra,
-            onChanged: (_selectedStockExtraRow != null &&
-                    (_stockExtraSelectedQty ?? 0) > 0)
-                ? (v) => setState(() => _writeOffStockExtra = v)
-                : null,
-          )
         ),
         const SizedBox(height: 3),
-        _buildFieldGrid([
-          TextFormField(
-            initialValue: product.widthB?.toString() ?? '',
-            decoration: const InputDecoration(
-              labelText: 'Ширина b',
-              border: OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              product.widthB = double.tryParse(normalized);
-              _scheduleStagePreviewUpdate();
-            },
+        TextFormField(
+          initialValue: product.widthB?.toString() ?? '',
+          decoration: const InputDecoration(
+            labelText: 'Ширина b',
+            border: OutlineInputBorder(),
           ),
-          TextFormField(
-            initialValue: product.blQuantity?.toString() ?? '',
-            decoration: const InputDecoration(
-              labelText: 'Количество',
-              border: OutlineInputBorder(),
+          keyboardType: TextInputType.number,
+          onChanged: (val) {
+            final normalized = val.replaceAll(',', '.');
+            product.widthB = double.tryParse(normalized);
+            _scheduleStagePreviewUpdate();
+          },
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                initialValue: product.blQuantity?.toString() ?? '',
+                decoration: const InputDecoration(
+                  labelText: 'Количество',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.text,
+                onChanged: (val) {
+                  final trimmed = val.trim();
+                  product.blQuantity = trimmed.isEmpty ? null : trimmed;
+                  _scheduleStagePreviewUpdate();
+                },
+              ),
             ),
-            keyboardType: TextInputType.text,
-            onChanged: (val) {
-              final trimmed = val.trim();
-              product.blQuantity = trimmed.isEmpty ? null : trimmed;
-              _scheduleStagePreviewUpdate();
-            },
-          ),
-          TextFormField(
-            initialValue: product.length?.toString() ?? '',
-            decoration: InputDecoration(
-              labelText: 'Длина L',
-              border: const OutlineInputBorder(),
-              errorText: _lengthExceeded ? 'Недостаточно' : null,
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextFormField(
+                initialValue: product.length?.toString() ?? '',
+                decoration: InputDecoration(
+                  labelText: 'Длина L',
+                  border: const OutlineInputBorder(),
+                  errorText: _lengthExceeded ? 'Недостаточно' : null,
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (val) {
+                  final normalized = val.replaceAll(',', '.');
+                  final d = double.tryParse(normalized);
+                  setState(() {
+                    product.length = d;
+                    final materialTmc =
+                        _selectedMaterialTmc ?? _resolvePaperByText();
+                    if (materialTmc != null && d != null) {
+                      _lengthExceeded = () {
+                        final current =
+                            Provider.of<WarehouseProvider>(context, listen: false)
+                                .allTmc
+                                .where((t) => t.id == materialTmc.id)
+                                .toList();
+                        final available = current.isNotEmpty
+                            ? current.first.quantity
+                            : materialTmc.quantity;
+                        return d > available;
+                      }();
+                    } else {
+                      _lengthExceeded = false;
+                    }
+                  });
+                },
+              ),
             ),
-            keyboardType: TextInputType.number,
-            onChanged: (val) {
-              final normalized = val.replaceAll(',', '.');
-              final d = double.tryParse(normalized);
-              setState(() {
-                product.length = d;
-                final materialTmc =
-                    _selectedMaterialTmc ?? _resolvePaperByText();
-                if (materialTmc != null && d != null) {
-                  _lengthExceeded = () {
-                    final current =
-                        Provider.of<WarehouseProvider>(context, listen: false)
-                            .allTmc
-                            .where((t) => t.id == materialTmc.id)
-                            .toList();
-                    final available = current.isNotEmpty
-                        ? current.first.quantity
-                        : materialTmc.quantity;
-                    return d > available;
-                  }();
-                } else {
-                  _lengthExceeded = false;
-                }
-              });
-            },
-          ),
-        ], breakpoint: 680, minItemWidth: 200),
+          ],
+        ),
         const SizedBox(height: 3),
       ],
     );
@@ -4346,10 +4280,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Widget _buildStockExtraLayout(Widget searchColumn, Widget writeOffSwitch) {
-    // Hide the stock extra search and results entirely to further reduce
-    // the height of the materials section. Only the switch to write off
-    // leftovers is shown.
-    return writeOffSwitch;
+    // Показываем остаток и подбор лишнего по категории.
+    return searchColumn;
   }
 
   Widget _buildWarehousePreviewPanel() {
@@ -4799,17 +4731,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
     );
 
-    children.add(const SizedBox(height: 16));
-    children.add(
-      TextFormField(
-        initialValue: _actualQuantity,
-        decoration: const InputDecoration(
-          labelText: 'Фактическое количество',
-          border: OutlineInputBorder(),
-        ),
-        readOnly: true,
-      ),
-    );
 
     if (wrapWithCard) {
       return _buildSectionCard(
