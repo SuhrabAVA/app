@@ -3168,6 +3168,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     _buildLabelRow(
                       label: 'Склад и материалы',
                       labelWidth: labelWidth,
+                      labelNote: () {
+                        final paperQty = _currentAvailablePaperQty();
+                        if (paperQty == null) return null;
+                        return 'Остаток бумаги по выбранному материалу: '
+                            '${paperQty.toStringAsFixed(2)}';
+                      }(),
                       child: _buildProductMaterialAndExtras(_product),
                     ),
                     _buildLabelRow(
@@ -3226,7 +3232,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   /// Дополнительные параметры продукта: материал, складские остатки и вложения
   Widget _buildProductMaterialAndExtras(ProductModel product) {
-    final paperQty = _currentAvailablePaperQty();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -3496,23 +3501,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     });
                   },
                 ),
-                if (paperQty != null) ...[
-                  const SizedBox(height: 4),
-                  SizedBox(
-                    width: double.infinity,
-                    child: Text(
-                      'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
-                      textAlign: TextAlign.left,
-                      softWrap: true,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(fontSize: 11, height: 1.1),
-                    ),
-                  ),
-                ],
               ],
             );
           },
@@ -3807,7 +3795,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required String label,
     required Widget child,
     double labelWidth = 150,
+    String? labelNote,
   }) {
+    final labelWidget = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$label:',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        if (labelNote != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            labelNote,
+            softWrap: true,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(fontSize: 11, height: 1.1),
+          ),
+        ],
+      ],
+    );
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final bool stackVertically = constraints.maxWidth < labelWidth + 80;
@@ -3818,10 +3831,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '$label:',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
+                    labelWidget,
                     const SizedBox(height: 4),
                     child,
                   ],
@@ -3831,10 +3841,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   children: [
                     SizedBox(
                       width: labelWidth,
-                      child: Text(
-                        '$label:',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                      child: labelWidget,
                     ),
                     // Narrow the gap between label and field.
                     const SizedBox(width: 6),
