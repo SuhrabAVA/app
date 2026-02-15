@@ -3498,12 +3498,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
                 if (paperQty != null) ...[
                   const SizedBox(height: 4),
-                  Align(
-                    alignment: Alignment.centerLeft,
+                  SizedBox(
+                    width: double.infinity,
                     child: Text(
                       'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
                       textAlign: TextAlign.left,
-                      maxLines: 1,
+                      softWrap: true,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context)
                           .textTheme
