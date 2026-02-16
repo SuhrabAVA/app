@@ -349,7 +349,7 @@ class _LoginScreenState extends State<LoginScreen> {
       barrierDismissible: false,
       builder: (ctx) {
         return StatefulBuilder(
-          builder: (context, setState) {
+          builder: (dialogContext, setState) {
             return AlertDialog(
               title: Text('Введите пароль для ${user.name}'),
               content: Column(
@@ -376,6 +376,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
+                    final rootNavigator = Navigator.of(context);
+                    final dialogNavigator = Navigator.of(ctx);
+                    final personnel = dialogContext.read<PersonnelProvider>();
                     final password = controller.text.trim();
                     if (password == user.password) {
                       // Запоминаем пользователя
@@ -386,13 +389,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       }
 
                       // Логируем вход
-                      final analytics = context.read<AnalyticsProvider>();
+                      final analytics =
+                          dialogContext.read<AnalyticsProvider>();
                       String category;
                       if (user.isTechLeader) {
                         category = 'manager';
                       } else {
-                        final pr = context.read<PersonnelProvider>();
-                        final emp = pr.employees.firstWhere(
+                        final emp = personnel.employees.firstWhere(
                           (e) => e.id == user.id,
                           orElse: () => EmployeeModel(
                             id: user.id,
@@ -408,9 +411,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             password: '',
                           ),
                         );
-                        if (isManagerUser(emp, pr)) {
+                        if (isManagerUser(emp, personnel)) {
                           category = 'manager';
-                        } else if (isWarehouseHeadUser(emp, pr)) {
+                        } else if (isWarehouseHeadUser(emp, personnel)) {
                           category = 'warehouse';
                         } else {
                           category = 'production';
@@ -425,19 +428,21 @@ class _LoginScreenState extends State<LoginScreen> {
                         category: category,
                       );
 
-                      Navigator.pop(ctx);
+                      if (!mounted) {
+                        return;
+                      }
+
+                      dialogNavigator.pop();
 
                       // Навигация
                       if (user.isTechLeader) {
-                        Navigator.pushReplacement(
-                          context,
+                        rootNavigator.pushReplacement(
                           MaterialPageRoute(
                             builder: (_) => const AdminPanelScreen(),
                           ),
                         );
                       } else {
-                        final pr = context.read<PersonnelProvider>();
-                        final emp = pr.employees.firstWhere(
+                        final emp = personnel.employees.firstWhere(
                           (e) => e.id == user.id,
                           orElse: () => EmployeeModel(
                             id: user.id,
@@ -454,15 +459,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         );
 
-                        final screen = isManagerUser(emp, pr)
+                        final screen = isManagerUser(emp, personnel)
                             ? ManagerWorkspaceScreen(employeeId: user.id)
-                            : isWarehouseHeadUser(emp, pr)
+                            : isWarehouseHeadUser(emp, personnel)
                                 ? WarehouseManagerWorkspaceScreen(
                                     employeeId: user.id)
                                 : EmployeeWorkspaceScreen(employeeId: user.id);
 
-                        Navigator.pushReplacement(
-                          context,
+                        rootNavigator.pushReplacement(
                           MaterialPageRoute(builder: (_) => screen),
                         );
                       }
