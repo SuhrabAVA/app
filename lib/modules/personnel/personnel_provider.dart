@@ -1,6 +1,7 @@
 // lib/modules/personnel/personnel_provider.dart
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' show ClientException;
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -95,60 +96,92 @@ class PersonnelProvider extends ChangeNotifier {
 
   // ---------- loaders -----------
   Future<void> _loadPositionsFromSql() async {
-    final rows = await _db.listPositions();
-    _positions
-      ..clear()
-      ..addAll(rows.map((r) => PositionModel.fromMap(r, r['id'].toString())));
-    _safeNotify();
+    try {
+      final rows = await _db.listPositions();
+      _positions
+        ..clear()
+        ..addAll(rows.map((r) => PositionModel.fromMap(r, r['id'].toString())));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Positions load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected positions load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   Future<void> _loadEmployeesFromSql() async {
-    final rows = await _db.listEmployeesView();
-    _employees
-      ..clear()
-      ..addAll(rows.map((r) => EmployeeModel(
-            id: r['id'],
-            lastName: r['last_name'] ?? '',
-            firstName: r['first_name'] ?? '',
-            patronymic: r['patronymic'] ?? '',
-            iin: r['iin'] ?? '',
-            photoUrl: r['photo_url'],
-            positionIds: List<String>.from(r['position_ids'] ?? const []),
-            isFired: (r['is_fired'] as bool?) ?? false,
-            comments: r['comments'] ?? '',
-            login: r['login'] ?? '',
-            password: r['password'] ?? '',
-          )));
-    _safeNotify();
+    try {
+      final rows = await _db.listEmployeesView();
+      _employees
+        ..clear()
+        ..addAll(rows.map((r) => EmployeeModel(
+              id: r['id'],
+              lastName: r['last_name'] ?? '',
+              firstName: r['first_name'] ?? '',
+              patronymic: r['patronymic'] ?? '',
+              iin: r['iin'] ?? '',
+              photoUrl: r['photo_url'],
+              positionIds: List<String>.from(r['position_ids'] ?? const []),
+              isFired: (r['is_fired'] as bool?) ?? false,
+              comments: r['comments'] ?? '',
+              login: r['login'] ?? '',
+              password: r['password'] ?? '',
+            )));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Employees load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected employees load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   Future<void> _loadWorkplacesFromSql() async {
-    final rows = await _db.listWorkplacesView();
-    _workplaces
-      ..clear()
-      ..addAll(rows.map((r) => WorkplaceModel.fromMap({
-            'name': r['name'],
-            'title': r['title'],
-            'short_name': r['short_name'],
-            'code': r['code'],
-            'positionIds': r['position_ids'] ?? const [],
-            'has_machine': r['has_machine'],
-            'max_concurrent_workers': r['max_concurrent_workers'],
-            'unit': r['unit'],
-            'execution_mode': r['execution_mode'],
-          }, r['id'])));
-    _safeNotify();
+    try {
+      final rows = await _db.listWorkplacesView();
+      _workplaces
+        ..clear()
+        ..addAll(rows.map((r) => WorkplaceModel.fromMap({
+              'name': r['name'],
+              'title': r['title'],
+              'short_name': r['short_name'],
+              'code': r['code'],
+              'positionIds': r['position_ids'] ?? const [],
+              'has_machine': r['has_machine'],
+              'max_concurrent_workers': r['max_concurrent_workers'],
+              'unit': r['unit'],
+              'execution_mode': r['execution_mode'],
+            }, r['id'])));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Workplaces load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected workplaces load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   Future<void> _loadTerminalsFromSql() async {
-    final rows = await _db.listTerminalsView();
-    _terminals
-      ..clear()
-      ..addAll(rows.map((r) => TerminalModel.fromMap({
-            'name': r['name'],
-            'workplaceIds': r['workplace_ids'] ?? const [],
-          }, r['id'])));
-    _safeNotify();
+    try {
+      final rows = await _db.listTerminalsView();
+      _terminals
+        ..clear()
+        ..addAll(rows.map((r) => TerminalModel.fromMap({
+              'name': r['name'],
+              'workplaceIds': r['workplace_ids'] ?? const [],
+            }, r['id'])));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Terminals load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected terminals load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   // ---------- positions CRUD -----------

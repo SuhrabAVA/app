@@ -5204,14 +5204,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildPdfAttachmentRow() {
     return Row(
       children: [
-        ElevatedButton.icon(
-          onPressed: _pickPdf,
-          icon: const Icon(Icons.attach_file),
-          label: Text(
-            _pickedPdf?.name ??
-                (widget.order?.pdfUrl != null
-                    ? widget.order!.pdfUrl!.split('/').last
-                    : 'Прикрепить PDF'),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _pickPdf,
+            icon: const Icon(Icons.attach_file),
+            label: Text(
+              _pickedPdf?.name ??
+                  (widget.order?.pdfUrl != null
+                      ? widget.order!.pdfUrl!.split('/').last
+                      : 'Прикрепить PDF'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
         if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[

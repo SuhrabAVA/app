@@ -140,6 +140,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 action: 'logout',
                 category: 'manager',
               );
+              if (!mounted) return;
               // Очищаем авторизацию и переходим на экран входа
               AuthHelper.clear();
               Navigator.of(context).pushAndRemoveUntil(

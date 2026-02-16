@@ -1326,6 +1326,14 @@ class _TasksScreenState extends State<TasksScreen>
               ).name}';
 
       Widget buildWorkplaceSelector() {
+        final uniqueWorkplacesById = <String, WorkplaceModel>{
+          for (final workplace in workplaces) workplace.id: workplace,
+        };
+        final uniqueWorkplaces = uniqueWorkplacesById.values.toList(growable: false);
+        final selectedWorkplaceId = uniqueWorkplacesById.containsKey(_selectedWorkplaceId)
+            ? _selectedWorkplaceId
+            : null;
+
         return ConstrainedBox(
           constraints: BoxConstraints(maxWidth: scaled(isCompactTablet ? 220 : 260)),
           child: Column(
@@ -1340,7 +1348,7 @@ class _TasksScreenState extends State<TasksScreen>
               ),
               SizedBox(height: scaled(4)),
               DropdownButton<String>(
-                value: _selectedWorkplaceId,
+                value: selectedWorkplaceId,
                 isDense: true,
                 isExpanded: true,
                 style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
@@ -1349,7 +1357,7 @@ class _TasksScreenState extends State<TasksScreen>
                   kMinInteractiveDimension,
                 ),
                 items: [
-                  for (final w in workplaces)
+                  for (final w in uniqueWorkplaces)
                     DropdownMenuItem(
                       value: w.id,
                       child: Text(
@@ -1361,7 +1369,7 @@ class _TasksScreenState extends State<TasksScreen>
                     ),
                 ],
                 selectedItemBuilder: (context) => [
-                  for (final w in workplaces)
+                  for (final w in uniqueWorkplaces)
                     Text(
                       w.name,
                       style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
