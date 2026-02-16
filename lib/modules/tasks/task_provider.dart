@@ -48,7 +48,9 @@ class TaskProvider with ChangeNotifier {
     }
 
     data['orderId'] = _normalizeId(row['order_id']);
-    data['stageId'] = _normalizeId(row['stage_id']);
+    data['stageId'] = _normalizeId(
+      row['stage_id'] ?? row['stageId'] ?? row['workplace_id'] ?? row['workplaceId'],
+    );
     data['status'] = (row['status'] ?? 'waiting').toString();
     data['spentSeconds'] = (row['spent_seconds'] as int?) ?? 0;
     final startedAt = row['started_at'];

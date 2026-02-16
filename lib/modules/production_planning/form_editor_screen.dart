@@ -1374,22 +1374,60 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       debugPrint('💾 production_plans saved with ' + stageMaps.length.toString() +
           ' stages');
 
+      String _normalizeText(dynamic value) =>
+          (value?.toString() ?? '').trim();
+
+      final workplaceLookup = <String, String>{};
+      try {
+        final workplaceRows =
+            await _sb.from('workplaces').select('id, name, title, workplace_name, stage_name');
+        for (final row in (workplaceRows as List)) {
+          final map = Map<String, dynamic>.from(row as Map);
+          final id = _normalizeText(map['id']);
+          if (id.isEmpty) continue;
+          final probes = [
+            map['id'],
+            map['name'],
+            map['title'],
+            map['workplace_name'],
+            map['stage_name'],
+          ];
+          for (final probe in probes) {
+            final key = _normalizeText(probe).toLowerCase();
+            if (key.isEmpty) continue;
+            workplaceLookup.putIfAbsent(key, () => id);
+          }
+        }
+      } catch (_) {}
+
+      String? _resolveStageId(dynamic raw) {
+        final normalized = _normalizeText(raw);
+        if (normalized.isEmpty) return null;
+        return workplaceLookup[normalized.toLowerCase()] ?? normalized;
+      }
+
       List<String> _extractStageIds(Map<String, dynamic> sm) {
         final ids = <String>{};
-        final stageId = (sm['stageId'] as String?) ??
-            (sm['stageid'] as String?) ??
-            (sm['stage_id'] as String?) ??
-            (sm['workplaceId'] as String?) ??
-            (sm['workplace_id'] as String?) ??
-            (sm['id'] as String?);
-        if (stageId != null && stageId.isNotEmpty) {
-          ids.add(stageId);
+        final primary = _resolveStageId(
+          sm['stageId'] ??
+              sm['stageid'] ??
+              sm['stage_id'] ??
+              sm['workplaceId'] ??
+              sm['workplace_id'] ??
+              sm['id'] ??
+              sm['stageName'] ??
+              sm['stage_name'] ??
+              sm['workplaceName'] ??
+              sm['workplace_name'],
+        );
+        if (primary != null && primary.isNotEmpty) {
+          ids.add(primary);
         }
         final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
         if (rawAlt is List) {
           for (final entry in rawAlt) {
-            final id = entry?.toString() ?? '';
-            if (id.trim().isNotEmpty) ids.add(id);
+            final id = _resolveStageId(entry);
+            if (id != null && id.isNotEmpty) ids.add(id);
           }
         }
         return ids.toList();
@@ -1401,14 +1439,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         final stageIds = _extractStageIds(sm);
         for (final sid in stageIds) {
           if (sid.isEmpty) continue;
-          try {
-            final exists = await _sb
-                .from('workplaces')
-                .select('id')
-                .eq('id', sid)
-                .maybeSingle();
-            if (exists != null) __validStageIds.add(sid);
-          } catch (_) {}
+          final resolved = workplaceLookup[sid.toLowerCase()] ?? sid;
+          if (workplaceLookup.containsValue(resolved)) {
+            __validStageIds.add(resolved);
+          }
         }
       }
       if (__validStageIds.isNotEmpty) {
@@ -1428,21 +1462,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         for (final stageId in stageIds) {
           if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
           try {
-            final exists = await _sb
-                .from('workplaces')
-                .select('id')
-                .eq('id', stageId)
-                .maybeSingle();
-            if (exists == null)
+            final resolvedStageId = workplaceLookup[stageId.toLowerCase()] ?? stageId;
+            if (!workplaceLookup.containsValue(resolvedStageId)) {
               continue; // skip invalid stageId to avoid FK/insert errors
+            }
             await _sb.from('tasks').insert({
               'order_id': createdOrUpdatedOrder.id,
-              'stage_id': stageId,
+              'stage_id': resolvedStageId,
               'status': 'waiting',
               'assignees': [],
               'comments': [],
             });
-            createdStageIds.add(stageId);
+            createdStageIds.add(resolvedStageId);
           } catch (e) {
             // ignore problematic stage ids to avoid breaking whole save
           }

@@ -313,7 +313,9 @@ class TaskModel {
   }
 
   final orderId = _normalizeId(pick(['orderId', 'order_id', 'orderid']));
-  final stageId = _normalizeId(pick(['stageId', 'stage_id', 'stageid']));
+  final stageId = _normalizeId(
+    pick(['stageId', 'stage_id', 'stageid', 'workplaceId', 'workplace_id']),
+  );
 
   final statusStr = (map['status'] as String?) ?? 'waiting';
   TaskStatus status;
