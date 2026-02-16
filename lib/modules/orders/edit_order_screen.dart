@@ -2284,17 +2284,50 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return sid;
         }
 
+        String _normalizeText(dynamic value) =>
+            (value?.toString() ?? '').trim();
+
+        final workplaceLookup = <String, String>{};
+        try {
+          final workplaceRows = await _sb
+              .from('workplaces')
+              .select('id, name, title, workplace_name, stage_name');
+          for (final row in (workplaceRows as List)) {
+            final map = Map<String, dynamic>.from(row as Map);
+            final id = _normalizeText(map['id']);
+            if (id.isEmpty) continue;
+            final probes = [
+              map['id'],
+              map['name'],
+              map['title'],
+              map['workplace_name'],
+              map['stage_name'],
+            ];
+            for (final probe in probes) {
+              final key = _normalizeText(probe).toLowerCase();
+              if (key.isEmpty) continue;
+              workplaceLookup.putIfAbsent(key, () => id);
+            }
+          }
+        } catch (_) {}
+
+        String? _resolveStageValue(dynamic raw) {
+          final normalized = _normalizeText(raw);
+          if (normalized.isEmpty) return null;
+          return workplaceLookup[normalized.toLowerCase()] ?? normalized;
+        }
+
         List<String> _extractStageIds(Map<String, dynamic> sm) {
           final ids = <String>{};
-          final primary = _resolveStageId(sm);
+          final primary = _resolveStageValue(_resolveStageId(sm));
           if (primary != null && primary.isNotEmpty) {
             ids.add(primary);
           }
           final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
           if (rawAlt is List) {
             for (final entry in rawAlt) {
-              final id = entry?.toString() ?? '';
-              if (id.trim().isNotEmpty) ids.add(id);
+              final id = _resolveStageValue(entry);
+              if (id != null && id.isNotEmpty) ids.add(id);
             }
           }
           return ids.toList();
@@ -2306,16 +2339,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final stageIds = _extractStageIds(sm);
           for (final sid in stageIds) {
             if (sid.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', sid)
-                  .maybeSingle();
-              if (exists != null || _looksLikeBobbin(sm)) {
-                __validStageIds.add(sid);
-              }
-            } catch (_) {}
+            final resolved = workplaceLookup[sid.toLowerCase()] ?? sid;
+            if (workplaceLookup.containsValue(resolved) || _looksLikeBobbin(sm)) {
+              __validStageIds.add(resolved);
+            }
           }
         }
         if (__validStageIds.isNotEmpty) {
@@ -2335,22 +2362,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           for (final stageId in stageIds) {
             if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
             try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', stageId)
-                  .maybeSingle();
-              if (exists == null && !_looksLikeBobbin(sm)) {
+              final resolvedStageId = workplaceLookup[stageId.toLowerCase()] ?? stageId;
+              if (!workplaceLookup.containsValue(resolvedStageId) &&
+                  !_looksLikeBobbin(sm)) {
                 continue; // skip invalid stageId to avoid FK/insert errors
               }
               await _sb.from('tasks').insert({
                 'order_id': createdOrUpdatedOrder.id,
-                'stage_id': stageId,
+                'stage_id': resolvedStageId,
                 'status': 'waiting',
                 'assignees': [],
                 'comments': [],
               });
-              createdStageIds.add(stageId);
+              createdStageIds.add(resolvedStageId);
             } catch (e) {
               // ignore problematic stage ids to avoid breaking whole save
             }
