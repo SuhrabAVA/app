@@ -2319,17 +2319,39 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
         List<String> _extractStageIds(Map<String, dynamic> sm) {
           final ids = <String>{};
+
+          void addResolved(dynamic raw) {
+            final id = _resolveStageValue(raw);
+            if (id != null && id.isNotEmpty) ids.add(id);
+          }
+
           final primary = _resolveStageValue(_resolveStageId(sm));
           if (primary != null && primary.isNotEmpty) {
             ids.add(primary);
+          } else {
+            addResolved(sm['stageName']);
+            addResolved(sm['stage_name']);
+            addResolved(sm['workplaceName']);
+            addResolved(sm['workplace_name']);
+            addResolved(sm['title']);
+            addResolved(sm['name']);
           }
+
           final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
           if (rawAlt is List) {
             for (final entry in rawAlt) {
-              final id = _resolveStageValue(entry);
-              if (id != null && id.isNotEmpty) ids.add(id);
+              addResolved(entry);
             }
           }
+
+          final rawAltNames =
+              sm['alternativeStageNames'] ?? sm['alternative_stage_names'];
+          if (rawAltNames is List) {
+            for (final entry in rawAltNames) {
+              addResolved(entry);
+            }
+          }
+
           return ids.toList();
         }
 
