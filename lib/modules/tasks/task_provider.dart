@@ -21,6 +21,7 @@ class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TaskModel> _tasks = [];
+  final Map<String, String> _workplaceAliasToId = <String, String>{};
   final Map<String, List<String>> _orderStageSequences = {};
   final Map<String, Map<String, String>> _orderStageNames = {};
   RealtimeChannel? _channel;
@@ -48,9 +49,9 @@ class TaskProvider with ChangeNotifier {
     }
 
     data['orderId'] = _normalizeId(row['order_id']);
-    data['stageId'] = _normalizeId(
-      row['stage_id'] ?? row['stageId'] ?? row['workplace_id'] ?? row['workplaceId'],
-    );
+    final rawStageId =
+        row['stage_id'] ?? row['stageId'] ?? row['workplace_id'] ?? row['workplaceId'];
+    data['stageId'] = _resolveWorkplaceId(_normalizeId(rawStageId));
     data['status'] = (row['status'] ?? 'waiting').toString();
     data['spentSeconds'] = (row['spent_seconds'] as int?) ?? 0;
     final startedAt = row['started_at'];
@@ -85,6 +86,59 @@ class TaskProvider with ChangeNotifier {
     return TaskModel.fromMap(data, id);
   }
 
+  String _resolveWorkplaceId(String rawStageId) {
+    final normalized = rawStageId.trim();
+    if (normalized.isEmpty) return '';
+    return _workplaceAliasToId[normalized.toLowerCase()] ?? normalized;
+  }
+
+  Future<void> _loadWorkplaceAliases() async {
+    Future<List<Map<String, dynamic>>> _readRows(String select) async {
+      final rows = await _supabase.from('workplaces').select(select);
+      if (rows is! List) return const <Map<String, dynamic>>[];
+      return rows
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+    }
+
+    List<Map<String, dynamic>> rows = const <Map<String, dynamic>>[];
+    try {
+      rows = await _readRows(
+        'id, name, title, short_name, workplace_name, stage_name',
+      );
+    } catch (_) {
+      try {
+        rows = await _readRows('id, name');
+      } catch (_) {
+        rows = const <Map<String, dynamic>>[];
+      }
+    }
+
+    final aliases = <String, String>{};
+    for (final row in rows) {
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      final probes = [
+        row['id'],
+        row['name'],
+        row['title'],
+        row['short_name'],
+        row['workplace_name'],
+        row['stage_name'],
+      ];
+      for (final probe in probes) {
+        final alias = probe?.toString().trim() ?? '';
+        if (alias.isEmpty) continue;
+        aliases.putIfAbsent(alias.toLowerCase(), () => id);
+      }
+    }
+
+    _workplaceAliasToId
+      ..clear()
+      ..addAll(aliases);
+  }
+
   String? stageNameForOrder(String orderId, String stageId) {
     if (orderId.isNotEmpty) {
       final names = _orderStageNames[orderId];
@@ -103,6 +157,7 @@ class TaskProvider with ChangeNotifier {
   Future<void> refresh() async {
     await _ensureAuthed();
     try {
+      await _loadWorkplaceAliases();
       final rows =
           await _supabase.from('tasks').select('*').order('created_at');
       _tasks
