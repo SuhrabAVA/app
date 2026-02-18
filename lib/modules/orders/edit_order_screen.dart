@@ -2415,8 +2415,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final stageIds = _extractStageIds(sm);
           for (final stageId in stageIds) {
             if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
+            final resolvedStageId =
+                workplaceLookup[stageId.toLowerCase()] ?? stageId;
             try {
-              final resolvedStageId = workplaceLookup[stageId.toLowerCase()] ?? stageId;
               if (!_looksLikeUuid(resolvedStageId) &&
                   !workplaceLookup.containsValue(resolvedStageId) &&
                   !_looksLikeBobbin(sm)) {
