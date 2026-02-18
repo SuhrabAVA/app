@@ -1378,28 +1378,52 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           (value?.toString() ?? '').trim();
 
       final workplaceLookup = <String, String>{};
-      try {
-        final workplaceRows =
-            await _sb.from('workplaces').select('id, code, name, title, workplace_name, stage_name');
-        for (final row in (workplaceRows as List)) {
-          final map = Map<String, dynamic>.from(row as Map);
-          final id = _normalizeText(map['id']);
-          if (id.isEmpty) continue;
-          final probes = [
-            map['id'],
-            map['code'],
-            map['name'],
-            map['title'],
-            map['workplace_name'],
-            map['stage_name'],
-          ];
-          for (final probe in probes) {
-            final key = _normalizeText(probe).toLowerCase();
-            if (key.isEmpty) continue;
-            workplaceLookup.putIfAbsent(key, () => id);
+      Future<List<Map<String, dynamic>>> _loadWorkplaceRows() async {
+        Future<List<Map<String, dynamic>>> readRows(String select) async {
+          final rows = await _sb.from('workplaces').select(select);
+          if (rows is! List) return const <Map<String, dynamic>>[];
+          return rows
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+        }
+
+        try {
+          return await readRows(
+            'id, code, name, title, short_name, workplace_name, stage_name',
+          );
+        } catch (_) {
+          try {
+            return await readRows('id, name, code, title, short_name');
+          } catch (_) {
+            try {
+              return await readRows('id, name');
+            } catch (_) {
+              return const <Map<String, dynamic>>[];
+            }
           }
         }
-      } catch (_) {}
+      }
+
+      final workplaceRows = await _loadWorkplaceRows();
+      for (final map in workplaceRows) {
+        final id = _normalizeText(map['id']);
+        if (id.isEmpty) continue;
+        final probes = [
+          map['id'],
+          map['code'],
+          map['name'],
+          map['title'],
+          map['short_name'],
+          map['workplace_name'],
+          map['stage_name'],
+        ];
+        for (final probe in probes) {
+          final key = _normalizeText(probe).toLowerCase();
+          if (key.isEmpty) continue;
+          workplaceLookup.putIfAbsent(key, () => id);
+        }
+      }
 
       String? _resolveStageId(dynamic raw) {
         final normalized = _normalizeText(raw);
