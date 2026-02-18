@@ -1380,13 +1380,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final workplaceLookup = <String, String>{};
       try {
         final workplaceRows =
-            await _sb.from('workplaces').select('id, name, title, workplace_name, stage_name');
+            await _sb.from('workplaces').select('id, code, name, title, workplace_name, stage_name');
         for (final row in (workplaceRows as List)) {
           final map = Map<String, dynamic>.from(row as Map);
           final id = _normalizeText(map['id']);
           if (id.isEmpty) continue;
           final probes = [
             map['id'],
+            map['code'],
             map['name'],
             map['title'],
             map['workplace_name'],
@@ -1406,8 +1407,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         return workplaceLookup[normalized.toLowerCase()] ?? normalized;
       }
 
+      bool _looksLikeUuid(String value) {
+        final v = value.trim();
+        return RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+            .hasMatch(v);
+      }
+
       List<String> _extractStageIds(Map<String, dynamic> sm) {
         final ids = <String>{};
+
+        void addComposite(dynamic raw) {
+          final normalized = _normalizeText(raw);
+          if (normalized.isEmpty) return;
+          final chunks = normalized
+              .split(RegExp(r'\s*/\s*|\s*[,;]\s*'))
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toSet();
+          for (final chunk in chunks) {
+            final resolved = _resolveStageId(chunk);
+            if (resolved != null && resolved.isNotEmpty) {
+              ids.add(resolved);
+            }
+          }
+        }
+
         final primary = _resolveStageId(
           sm['stageId'] ??
               sm['stageid'] ??
@@ -1423,24 +1447,46 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (primary != null && primary.isNotEmpty) {
           ids.add(primary);
         }
+
+        addComposite(sm['stageName']);
+        addComposite(sm['stage_name']);
+        addComposite(sm['workplaceName']);
+        addComposite(sm['workplace_name']);
+        addComposite(sm['title']);
+        addComposite(sm['name']);
+
         final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
         if (rawAlt is List) {
           for (final entry in rawAlt) {
             final id = _resolveStageId(entry);
             if (id != null && id.isNotEmpty) ids.add(id);
+            addComposite(entry);
           }
         }
+
+        final rawAltNames =
+            sm['alternativeStageNames'] ?? sm['alternative_stage_names'];
+        if (rawAltNames is List) {
+          for (final entry in rawAltNames) {
+            final id = _resolveStageId(entry);
+            if (id != null && id.isNotEmpty) ids.add(id);
+            addComposite(entry);
+          }
+        }
+
         return ids.toList();
       }
 
-      // Build a list of valid stage IDs (must exist in 'workplaces')
+      // Build a list of resolved stage IDs.
+      // При неполном workplaceLookup (например, из-за RLS) не теряем валидные UUID,
+      // но и не пытаемся вставлять невалидные идентификаторы этапов.
       final List<String> __validStageIds = [];
       for (final sm in stageMaps) {
         final stageIds = _extractStageIds(sm);
         for (final sid in stageIds) {
           if (sid.isEmpty) continue;
           final resolved = workplaceLookup[sid.toLowerCase()] ?? sid;
-          if (workplaceLookup.containsValue(resolved)) {
+          if (_looksLikeUuid(resolved) || workplaceLookup.containsValue(resolved)) {
             __validStageIds.add(resolved);
           }
         }
@@ -1463,8 +1509,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
           try {
             final resolvedStageId = workplaceLookup[stageId.toLowerCase()] ?? stageId;
-            if (!workplaceLookup.containsValue(resolvedStageId)) {
-              continue; // skip invalid stageId to avoid FK/insert errors
+            if (!_looksLikeUuid(resolvedStageId) &&
+                !workplaceLookup.containsValue(resolvedStageId)) {
+              debugPrint(
+                '⚠️ skip task insert: unresolved non-uuid stage id=$stageId, resolved=$resolvedStageId',
+              );
+              continue;
             }
             await _sb.from('tasks').insert({
               'order_id': createdOrUpdatedOrder.id,
@@ -1474,8 +1524,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               'comments': [],
             });
             createdStageIds.add(resolvedStageId);
-          } catch (e) {
-            // ignore problematic stage ids to avoid breaking whole save
+          } catch (e, st) {
+            debugPrint(
+              '❌ tasks insert failed for stage=$stageId, resolved=$resolvedStageId: $e\n$st',
+            );
           }
         }
       }
