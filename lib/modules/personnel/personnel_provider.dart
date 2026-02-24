@@ -13,6 +13,8 @@ import 'employee_model.dart';
 import 'workplace_model.dart';
 import 'terminal_model.dart';
 
+const Set<String> _protectedWorkplaceIds = {'w_bobiner', 'w_flexoprint'};
+
 class PersonnelProvider extends ChangeNotifier {
   PersonnelProvider({PersonnelDB? db, DocDB? docDb, bool bootstrap = true})
       : _db = db ?? PersonnelDB(),
@@ -330,6 +332,9 @@ class PersonnelProvider extends ChangeNotifier {
   }
 
   Future<void> deleteWorkplace(String id) async {
+    if (_protectedWorkplaceIds.contains(id)) {
+      throw StateError('Это рабочее место защищено от удаления');
+    }
     await _db.deleteWorkplace(id);
     await _loadWorkplacesFromSql();
   }

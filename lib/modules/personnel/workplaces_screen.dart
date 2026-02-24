@@ -7,6 +7,8 @@ import 'workplace_model.dart';
 import 'position_model.dart'; // <-- ВАЖНО: нужен для типов PositionModel
 import 'dialog_utils.dart'; // showDialogWithFreshPositions
 
+const Set<String> _protectedWorkplaceIds = {'w_bobiner', 'w_flexoprint'};
+
 class WorkplacesScreen extends StatelessWidget {
   const WorkplacesScreen({super.key});
 
@@ -65,9 +67,18 @@ class WorkplacesScreen extends StatelessWidget {
                       onPressed: () => _openEditDialog(context, w),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_forever),
-                      tooltip: 'Удалить',
-                      onPressed: () => _confirmDelete(context, w.id),
+                      icon: Icon(
+                        Icons.delete_forever,
+                        color: _protectedWorkplaceIds.contains(w.id)
+                            ? Colors.grey
+                            : null,
+                      ),
+                      tooltip: _protectedWorkplaceIds.contains(w.id)
+                          ? 'Системное рабочее место нельзя удалить'
+                          : 'Удалить',
+                      onPressed: _protectedWorkplaceIds.contains(w.id)
+                          ? null
+                          : () => _confirmDelete(context, w.id),
                     ),
                   ],
                 ),
@@ -267,6 +278,13 @@ class WorkplacesScreen extends StatelessWidget {
       ),
     );
     if (ok == true) {
+      if (_protectedWorkplaceIds.contains(id)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Системные рабочие места удалять нельзя')));
+        }
+        return;
+      }
       await context.read<PersonnelProvider>().deleteWorkplace(id);
       if (context.mounted) {
         ScaffoldMessenger.of(context)

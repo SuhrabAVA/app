@@ -1,6 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sheet_clone/modules/personnel/personnel_provider.dart';
 import 'package:sheet_clone/services/doc_db.dart';
+import 'package:sheet_clone/services/personnel_db.dart';
+
+class FakePersonnelDB extends PersonnelDB {
+  bool deleteCalled = false;
+
+  @override
+  Future<void> deleteWorkplace(String id) async {
+    deleteCalled = true;
+  }
+}
 
 class FakeDocDB extends DocDB {
   bool insertCalled = false;
@@ -8,7 +18,8 @@ class FakeDocDB extends DocDB {
   Map<String, dynamic>? capturedData;
 
   @override
-  Future<Map<String, dynamic>> insert(String collection, Map<String, dynamic> data, {String? explicitId}) async {
+  Future<Map<String, dynamic>> insert(String collection, Map<String, dynamic> data,
+      {String? explicitId}) async {
     insertCalled = true;
     capturedCollection = collection;
     capturedData = data;
@@ -29,5 +40,16 @@ void main() {
     expect(fakeDb.capturedCollection, 'workplaces');
     expect(fakeDb.capturedData?['name'], 'Test place');
     expect(provider.workplaces.any((w) => w.name == 'Test place'), isTrue);
+  });
+
+  test('deleteWorkplace blocks protected workplace ids', () async {
+    final fakeDb = FakePersonnelDB();
+    final provider = PersonnelProvider(db: fakeDb, bootstrap: false);
+
+    expect(
+      () => provider.deleteWorkplace('w_bobiner'),
+      throwsA(isA<StateError>()),
+    );
+    expect(fakeDb.deleteCalled, isFalse);
   });
 }
