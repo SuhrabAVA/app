@@ -694,6 +694,7 @@ class _TasksScreenState extends State<TasksScreen>
   bool get takenByAnother => false;
 
   final TextEditingController _chatController = TextEditingController();
+  final ScrollController _commentsScrollController = ScrollController();
   late final _TaskSelectionState _selection;
   bool _selectionUpdateScheduled = false;
   String? get _selectedWorkplaceId => _selection.workplaceId;
@@ -741,6 +742,7 @@ class _TasksScreenState extends State<TasksScreen>
   void dispose() {
     _selection.removeListener(_onSelectionChanged);
     _chatController.dispose();
+    _commentsScrollController.dispose();
     super.dispose();
   }
 
@@ -2095,8 +2097,10 @@ class _TasksScreenState extends State<TasksScreen>
           ConstrainedBox(
             constraints: BoxConstraints(maxHeight: scale * 220),
             child: Scrollbar(
+              controller: _commentsScrollController,
               thumbVisibility: aggregated.length > 4,
               child: SingleChildScrollView(
+                controller: _commentsScrollController,
                 child: commentList(),
               ),
             ),
