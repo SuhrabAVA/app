@@ -624,6 +624,9 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
       if (ib != null) return 1;
       return a.compareTo(b);
     });
+    // Для печати/бобинорезки приоритет должен оставаться у бобинорезки,
+    // даже если порядок в шаблоне/очереди пришёл в старом виде.
+    _ensureFlexoOrdering(pendingStageIds, personnel);
   } else {
     // Отсортировать по названию рабочего места (fallback к id)
     int byName(String a, String b) {
