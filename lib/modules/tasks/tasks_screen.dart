@@ -2328,6 +2328,24 @@ class _TasksScreenState extends State<TasksScreen>
         ..addAll(repIds.map((id) => repToKey[id] ?? id));
     }
 
+    // Некоторые источники плана этапов возвращают дублированную
+    // "зеркальную" последовательность (A→B→C→C→B→A). Для отображения
+    // оставляем только исходный прямой проход.
+    if (orderedGroupKeys.length >= 4 && orderedGroupKeys.length.isEven) {
+      final half = orderedGroupKeys.length ~/ 2;
+      var isMirroredDuplicate = true;
+      for (var i = 0; i < half; i++) {
+        final mirroredIndex = orderedGroupKeys.length - 1 - i;
+        if (orderedGroupKeys[i] != orderedGroupKeys[mirroredIndex]) {
+          isMirroredDuplicate = false;
+          break;
+        }
+      }
+      if (isMirroredDuplicate) {
+        orderedGroupKeys.removeRange(half, orderedGroupKeys.length);
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
