@@ -2316,6 +2316,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
 
         final workplaceRows = await _loadWorkplaceRows();
+        bool _containsBobbinWord(String value) {
+          final text = value.toLowerCase();
+          return text.contains('бобин') ||
+              text.contains('бабин') ||
+              text.contains('bobin') ||
+              text.contains('bobbin');
+        }
+
+        bool _containsFlexoWord(String value) {
+          final text = value.toLowerCase();
+          return text.contains('флекс') || text.contains('flexo');
+        }
+
+        final legacyStageLookup = <String, String>{};
         for (final map in workplaceRows) {
           final id = _normalizeText(map['id']);
           if (id.isEmpty) continue;
@@ -2328,6 +2342,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             map['workplace_name'],
             map['stage_name'],
           ];
+          final joined = probes.map(_normalizeText).join(' ').toLowerCase();
+          if (_containsBobbinWord(joined)) {
+            legacyStageLookup['w_bobiner'] = id;
+            legacyStageLookup['w_bobbin'] = id;
+          }
+          if (_containsFlexoWord(joined)) {
+            legacyStageLookup['w_flexoprint'] = id;
+            legacyStageLookup['w_flexo'] = id;
+          }
           for (final probe in probes) {
             final key = _normalizeText(probe).toLowerCase();
             if (key.isEmpty) continue;
@@ -2338,7 +2361,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         String? _resolveStageValue(dynamic raw) {
           final normalized = _normalizeText(raw);
           if (normalized.isEmpty) return null;
-          return workplaceLookup[normalized.toLowerCase()] ?? normalized;
+          final key = normalized.toLowerCase();
+          return workplaceLookup[key] ?? legacyStageLookup[key] ?? normalized;
         }
 
         bool _looksLikeUuid(String value) {
@@ -2414,9 +2438,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final stageIds = _extractStageIds(sm);
           for (final sid in stageIds) {
             if (sid.isEmpty) continue;
-            final resolved = workplaceLookup[sid.toLowerCase()] ?? sid;
+            final resolved = workplaceLookup[sid.toLowerCase()] ??
+                legacyStageLookup[sid.toLowerCase()] ??
+                sid;
             if (_looksLikeUuid(resolved) ||
                 workplaceLookup.containsValue(resolved) ||
+                legacyStageLookup.containsValue(resolved) ||
                 _looksLikeBobbin(sm)) {
               __validStageIds.add(resolved);
             }
@@ -2440,9 +2467,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
             var resolvedStageId = stageId;
             try {
-              resolvedStageId = workplaceLookup[stageId.toLowerCase()] ?? stageId;
+              resolvedStageId = workplaceLookup[stageId.toLowerCase()] ??
+                  legacyStageLookup[stageId.toLowerCase()] ??
+                  stageId;
               if (!_looksLikeUuid(resolvedStageId) &&
                   !workplaceLookup.containsValue(resolvedStageId) &&
+                  !legacyStageLookup.containsValue(resolvedStageId) &&
                   !_looksLikeBobbin(sm)) {
                 debugPrint(
                   '⚠️ skip task insert: unresolved non-uuid stage id=$stageId, resolved=$resolvedStageId',
