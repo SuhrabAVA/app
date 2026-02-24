@@ -418,8 +418,9 @@ bool _isEffectivelyCompleted(TaskModel task) {
       .where((id) => _execModeForUser(task, id) == ExecutionMode.separate)
       .toList();
   if (performers.isEmpty) return false;
-  return performers
-      .every((uid) => _userRunState(task, uid) == UserRunState.finished);
+  // Для отдельных исполнителей считаем этап завершённым только после
+  // явного подтверждения кнопкой "Завершить задание".
+  return false;
 }
 
 String _workplaceName(PersonnelProvider personnel, String stageId,
@@ -2088,7 +2089,15 @@ class _TasksScreenState extends State<TasksScreen>
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          commentList(),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: scale * 220),
+            child: Scrollbar(
+              thumbVisibility: aggregated.length > 4,
+              child: SingleChildScrollView(
+                child: commentList(),
+              ),
+            ),
+          ),
           SizedBox(height: scale * 6),
           Row(
             children: [
@@ -2914,6 +2923,96 @@ class _TasksScreenState extends State<TasksScreen>
                       }
                     }
 
+                    Future<void> onAddHelper() async {
+                      final bool isOwner = task.assignees.isNotEmpty &&
+                          task.assignees.first == widget.employeeId;
+                      if (!isOwner || stageExecMode != ExecutionMode.joint) {
+                        return;
+                      }
+
+                      final available = personnel.employees
+                          .where((e) => !task.assignees.contains(e.id))
+                          .toList();
+                      if (available.isEmpty) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text('Нет свободных сотрудников для помощи.')));
+                        }
+                        return;
+                      }
+
+                      String? selectedId;
+                      final approved = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => StatefulBuilder(
+                          builder: (ctx, setState) => AlertDialog(
+                            title: const Text('Добавить помощника'),
+                            content: DropdownButtonFormField<String>(
+                              value: selectedId,
+                              decoration: const InputDecoration(
+                                labelText: 'Сотрудник',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: available
+                                  .map((e) => DropdownMenuItem(
+                                        value: e.id,
+                                        child: Text(
+                                          '${e.firstName} ${e.lastName}'.trim(),
+                                        ),
+                                      ))
+                                  .toList(),
+                              onChanged: (value) => setState(() => selectedId = value),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Отмена'),
+                              ),
+                              FilledButton(
+                                onPressed: selectedId == null
+                                    ? null
+                                    : () => Navigator.pop(ctx, true),
+                                child: const Text('Добавить'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+
+                      if (approved != true || selectedId == null) return;
+
+                      if (_needsExecModeRecord(
+                          task, widget.employeeId, ExecutionMode.joint)) {
+                        await taskProvider.addComment(
+                          taskId: task.id,
+                          type: 'exec_mode',
+                          text: _executionModeCode(ExecutionMode.joint),
+                          userId: widget.employeeId,
+                        );
+                      }
+
+                      final newAssignees = List<String>.from(task.assignees)
+                        ..add(selectedId!);
+                      await taskProvider.updateAssignees(task.id, newAssignees);
+
+                      if (_needsExecModeRecord(
+                          task, selectedId!, ExecutionMode.joint)) {
+                        await taskProvider.addComment(
+                          taskId: task.id,
+                          type: 'exec_mode',
+                          text: _executionModeCode(ExecutionMode.joint),
+                          userId: selectedId!,
+                        );
+                      }
+
+                      await taskProvider.addCommentAutoUser(
+                        taskId: task.id,
+                        type: 'joined',
+                        text: 'Присоединился(лась) к этапу',
+                        userIdOverride: selectedId!,
+                      );
+                    }
+
                     Future<void> onShift() async {
                       final confirmed = await showDialog<bool>(
                             context: context,
@@ -3164,6 +3263,18 @@ class _TasksScreenState extends State<TasksScreen>
                                             TextStyle(fontSize: scaled(11.5)),
                                       ),
                                       child: const Text('⚠ Проблема')),
+                                  if (stageExecMode == ExecutionMode.joint &&
+                                      task.assignees.isNotEmpty &&
+                                      task.assignees.first == widget.employeeId)
+                                    ElevatedButton.icon(
+                                      onPressed: onAddHelper,
+                                      style: ElevatedButton.styleFrom(
+                                        textStyle:
+                                            TextStyle(fontSize: scaled(11.5)),
+                                      ),
+                                      icon: const Icon(Icons.person_add_alt_1),
+                                      label: const Text('Добавить помощника'),
+                                    ),
                                   SizedBox(width: gapMedium),
                                   // Обновляем отображение времени для каждой строки каждую секунду
                                   StreamBuilder<DateTime>(

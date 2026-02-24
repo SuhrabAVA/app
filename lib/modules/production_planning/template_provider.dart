@@ -214,9 +214,15 @@ class TemplateProvider with ChangeNotifier {
     if (hard) {
       await _supabase.from('plan_templates').delete().eq('id', id);
     } else {
-      await _supabase
-          .from('plan_templates')
-          .update({'is_archived': true}).eq('id', id);
+      try {
+        await _supabase
+            .from('plan_templates')
+            .update({'is_archived': true}).eq('id', id);
+      } catch (_) {
+        // На старых инсталляциях/политиках update может быть недоступен.
+        // В таком случае удаляем запись физически.
+        await _supabase.from('plan_templates').delete().eq('id', id);
+      }
     }
     await _fetchAndSetTemplates(includeArchived: false);
   }
