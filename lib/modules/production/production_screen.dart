@@ -630,6 +630,30 @@ class _ProductionTab extends StatelessWidget {
     List<TaskModel> orderTasks,
   ) {
     final groups = <String, _StageGroupInfo>{};
+
+    void addGroup(List<String> sourceIds, {String? explicitLabel}) {
+      final ids = sourceIds
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      if (ids.isEmpty) return;
+
+      final key = ids.join('|');
+      final labels = <String>{};
+      final explicit = explicitLabel?.trim();
+      if (explicit != null && explicit.isNotEmpty) {
+        labels.add(explicit);
+      }
+      for (final id in ids) {
+        final resolved = _stageLabel(id, taskProvider, personnelProvider, order.id).trim();
+        if (resolved.isNotEmpty) labels.add(resolved);
+      }
+      final label = labels.join(' / ');
+      groups[key] = _StageGroupInfo(key: key, stageIds: ids, label: label.isEmpty ? key : label);
+    }
+
     final templateId = order.stageTemplateId;
     if (templateId != null && templateId.isNotEmpty) {
       final tpl = templateProvider.templates.firstWhere(
@@ -639,36 +663,30 @@ class _ProductionTab extends StatelessWidget {
       );
       if (tpl.id.isNotEmpty) {
         for (final stage in tpl.stages) {
-          final ids = stage.allStageIds.where((id) => id.trim().isNotEmpty).toList();
-          if (ids.isEmpty) continue;
-          final sortedIds = List<String>.from(ids)..sort();
-          final key = sortedIds.join('|');
-          final labels = <String>{};
-          for (final name in stage.allStageNames) {
-            final trimmed = name.trim();
-            if (trimmed.isNotEmpty) labels.add(trimmed);
-          }
-          if (labels.isEmpty) {
-            for (final id in sortedIds) {
-              labels.add(_stageLabel(id, taskProvider, personnelProvider, order.id));
-            }
-          }
-          final label = labels.join(' / ');
-          groups[key] = _StageGroupInfo(key: key, stageIds: sortedIds, label: label);
+          final labels = stage.allStageNames
+              .map((name) => name.trim())
+              .where((name) => name.isNotEmpty)
+              .toSet()
+              .toList();
+          addGroup(
+            stage.allStageIds,
+            explicitLabel: labels.isEmpty ? null : labels.join(' / '),
+          );
         }
       }
     }
 
-    if (groups.isNotEmpty) return groups;
-
     final uniqueStageIds = orderTasks
-        .map((t) => t.stageId)
-        .where((id) => id.trim().isNotEmpty)
+        .map((t) => t.stageId.trim())
+        .where((id) => id.isNotEmpty)
         .toSet();
     for (final id in uniqueStageIds) {
-      final label = _stageLabel(id, taskProvider, personnelProvider, order.id);
-      groups[id] = _StageGroupInfo(key: id, stageIds: [id], label: label);
+      final existsInGroup = groups.values.any((group) => group.stageIds.contains(id));
+      if (!existsInGroup) {
+        addGroup([id]);
+      }
     }
+
     return groups;
   }
 
