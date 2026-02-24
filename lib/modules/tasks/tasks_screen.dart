@@ -2924,6 +2924,7 @@ class _TasksScreenState extends State<TasksScreen>
                     }
 
                     Future<void> onAddHelper() async {
+                      final taskProvider = context.read<TaskProvider>();
                       final bool isOwner = task.assignees.isNotEmpty &&
                           task.assignees.first == widget.employeeId;
                       if (!isOwner || stageExecMode != ExecutionMode.joint) {
