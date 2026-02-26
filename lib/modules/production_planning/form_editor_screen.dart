@@ -1063,7 +1063,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             stageMaps.add(Map<String, dynamic>.from(item));
           }
         } else if (stagesData is Map) {
-          final entries = stagesData.entries.toList();
+          final entries = stagesData.entries.toList()
+            ..sort((a, b) {
+              final ak = int.tryParse(a.key.toString());
+              final bk = int.tryParse(b.key.toString());
+              if (ak != null && bk != null) return ak.compareTo(bk);
+              if (ak != null) return -1;
+              if (bk != null) return 1;
+              return a.key.toString().compareTo(b.key.toString());
+            });
           for (final entry in entries) {
             if (entry.value is! Map) continue;
             final map = Map<String, dynamic>.from(entry.value as Map);

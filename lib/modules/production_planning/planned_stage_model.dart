@@ -68,12 +68,22 @@ List<PlannedStage> decodePlannedStages(dynamic stagesData) {
           PlannedStage.fromMap(Map<String, dynamic>.from(item as Map)));
     }
   } else if (stagesData is Map) {
-    stagesData.forEach((_, value) {
+    final entries = stagesData.entries.toList()
+      ..sort((a, b) {
+        final ak = int.tryParse(a.key.toString());
+        final bk = int.tryParse(b.key.toString());
+        if (ak != null && bk != null) return ak.compareTo(bk);
+        if (ak != null) return -1;
+        if (bk != null) return 1;
+        return a.key.toString().compareTo(b.key.toString());
+      });
+    for (final entry in entries) {
+      final value = entry.value;
       if (value is Map) {
         result.add(
             PlannedStage.fromMap(Map<String, dynamic>.from(value as Map)));
       }
-    });
+    }
   }
   return result;
 }
