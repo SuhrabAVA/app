@@ -5,6 +5,7 @@ import 'dart:async';
 import '../../services/app_auth.dart';
 
 import '../orders/order_model.dart';
+import 'stage_sequence_utils.dart';
 import 'task_model.dart';
 
 class _StageSequenceData {
@@ -33,7 +34,7 @@ class TaskProvider with ChangeNotifier {
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
   List<String>? stageSequenceForOrder(String orderId) {
     final seq = _orderStageSequences[orderId];
-    return seq == null ? null : List.unmodifiable(seq);
+    return seq == null ? null : List.unmodifiable(normalizeStageSequence(seq));
   }
 
   Future<void> _ensureAuthed() async {
@@ -463,8 +464,9 @@ class TaskProvider with ChangeNotifier {
           filteredRows.add(Map<String, dynamic>.from(m));
         }
       }
-      if (result.isEmpty) return const _StageSequenceData.empty();
-      final meta = await _workplaceMeta(result);
+      final normalizedIds = normalizeStageSequence(result);
+      if (normalizedIds.isEmpty) return const _StageSequenceData.empty();
+      final meta = await _workplaceMeta(normalizedIds);
       for (var i = 0; i < filteredRows.length; i++) {
         final id = result[i];
         final extras = meta[id];
@@ -479,7 +481,7 @@ class TaskProvider with ChangeNotifier {
         names[id] = Map<String, dynamic>.from(row);
       }
 
-      return _StageSequenceData(ids: result, meta: names);
+      return _StageSequenceData(ids: normalizedIds, meta: names);
     }
 
     // Try public view that already contains auto-added stages (flexo/bobbin,
