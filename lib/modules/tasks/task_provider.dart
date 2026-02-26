@@ -458,10 +458,13 @@ class TaskProvider with ChangeNotifier {
       final result = <String>[];
       final filteredRows = <Map<String, dynamic>>[];
       for (final m in list) {
-        final id = _readStageId(m);
+        final id = _resolveWorkplaceId(_readStageId(m));
         if (id.isNotEmpty && !result.contains(id)) {
           result.add(id);
-          filteredRows.add(Map<String, dynamic>.from(m));
+          final normalizedRow = Map<String, dynamic>.from(m);
+          normalizedRow['stage_id'] = id;
+          normalizedRow['stageId'] = id;
+          filteredRows.add(normalizedRow);
         }
       }
       final normalizedIds = normalizeStageSequence(result);
@@ -476,7 +479,7 @@ class TaskProvider with ChangeNotifier {
       }
       final names = <String, Map<String, dynamic>>{};
       for (final row in filteredRows) {
-        final id = _readStageId(row);
+        final id = _resolveWorkplaceId(_readStageId(row));
         if (id.isEmpty) continue;
         names[id] = Map<String, dynamic>.from(row);
       }
