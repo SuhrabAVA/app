@@ -29,6 +29,8 @@ class ProductionQueueProvider with ChangeNotifier {
     return trimmed.isEmpty ? _defaultGroup : trimmed;
   }
 
+  String _normalizeOrderId(String orderId) => orderId.trim();
+
   List<String> _sequenceForGroup(String groupId) {
     final key = _normalizeGroup(groupId);
     return _orderSequences.putIfAbsent(key, () => <String>[]);
@@ -111,12 +113,37 @@ class ProductionQueueProvider with ChangeNotifier {
 
   /// Добавляем недостающие id и удаляем отсутствующие в [ids].
   void syncOrders(Iterable<String> ids, {String groupId = _defaultGroup}) {
-    final set = ids.where((e) => e.trim().isNotEmpty).toSet();
+    final normalizedIds = <String>[];
+    final seen = <String>{};
+    for (final raw in ids) {
+      final id = _normalizeOrderId(raw);
+      if (id.isEmpty || !seen.add(id)) continue;
+      normalizedIds.add(id);
+    }
+    final set = normalizedIds.toSet();
     final sequence = _sequenceForGroup(groupId);
     final hidden = _hiddenForGroup(groupId);
     bool changed = false;
 
-    for (final id in set) {
+    // Keep stored sequence canonical to avoid duplicates caused by whitespace
+    // variants from different data sources.
+    final canonicalSequence = <String>[];
+    final canonicalSeen = <String>{};
+    for (final raw in sequence) {
+      final id = _normalizeOrderId(raw);
+      if (id.isEmpty || !canonicalSeen.add(id)) {
+        changed = true;
+        continue;
+      }
+      canonicalSequence.add(id);
+    }
+    if (canonicalSequence.length != sequence.length) {
+      sequence
+        ..clear()
+        ..addAll(canonicalSequence);
+    }
+
+    for (final id in normalizedIds) {
       if (!sequence.contains(id)) {
         sequence.add(id);
         changed = true;
@@ -139,10 +166,14 @@ class ProductionQueueProvider with ChangeNotifier {
   /// Возвращает приоритет (индекс) заказа. Новые id получают самый низкий
   /// приоритет (в конец списка).
   int priorityOf(String orderId, {String groupId = _defaultGroup}) {
+    final normalizedOrderId = _normalizeOrderId(orderId);
+    if (normalizedOrderId.isEmpty) {
+      return 1 << 30;
+    }
     final sequence = _sequenceForGroup(groupId);
-    final idx = sequence.indexOf(orderId);
+    final idx = sequence.indexOf(normalizedOrderId);
     if (idx != -1) return idx;
-    sequence.add(orderId);
+    sequence.add(normalizedOrderId);
     _persist();
     return sequence.length - 1;
   }
@@ -159,10 +190,19 @@ class ProductionQueueProvider with ChangeNotifier {
   /// Переставляет видимые заказы, сохраняя положение остальных.
   void applyVisibleReorder(List<String> orderedIds, {String groupId = _defaultGroup}) {
     if (orderedIds.isEmpty) return;
-    final sequence = _sequenceForGroup(groupId);
-    final set = orderedIds.toSet();
+    final normalizedOrderedIds = <String>[];
+    final seen = <String>{};
+    for (final raw in orderedIds) {
+      final id = _normalizeOrderId(raw);
+      if (id.isEmpty || !seen.add(id)) continue;
+      normalizedOrderedIds.add(id);
+    }
+    if (normalizedOrderedIds.isEmpty) return;
 
-    for (final id in orderedIds) {
+    final sequence = _sequenceForGroup(groupId);
+    final set = normalizedOrderedIds.toSet();
+
+    for (final id in normalizedOrderedIds) {
       if (!sequence.contains(id)) {
         sequence.add(id);
       }
@@ -172,24 +212,26 @@ class ProductionQueueProvider with ChangeNotifier {
     final insertPosition = anchor == -1 ? sequence.length : anchor;
 
     sequence.removeWhere(set.contains);
-    sequence.insertAll(insertPosition, orderedIds);
+    sequence.insertAll(insertPosition, normalizedOrderedIds);
 
     _persist();
     notifyListeners();
   }
 
   bool isHidden(String orderId, {String groupId = _defaultGroup}) =>
-      _hiddenForGroup(groupId).contains(orderId);
+      _hiddenForGroup(groupId).contains(_normalizeOrderId(orderId));
 
   void hideOrder(String orderId, {String groupId = _defaultGroup}) {
-    if (_hiddenForGroup(groupId).add(orderId)) {
+    final normalizedOrderId = _normalizeOrderId(orderId);
+    if (normalizedOrderId.isEmpty) return;
+    if (_hiddenForGroup(groupId).add(normalizedOrderId)) {
       _persist();
       notifyListeners();
     }
   }
 
   void restoreOrder(String orderId, {String groupId = _defaultGroup}) {
-    if (_hiddenForGroup(groupId).remove(orderId)) {
+    if (_hiddenForGroup(groupId).remove(_normalizeOrderId(orderId))) {
       _persist();
       notifyListeners();
     }
