@@ -2371,63 +2371,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .hasMatch(v);
         }
 
-        List<String> _extractStageIds(Map<String, dynamic> sm) {
-          final ids = <String>{};
+        String? _resolvePrimaryStageId(Map<String, dynamic> sm) {
+          final direct = _resolveStageValue(_resolveStageId(sm));
+          if (direct != null && direct.isNotEmpty) return direct;
 
-          void addResolved(dynamic raw) {
-            final id = _resolveStageValue(raw);
-            if (id != null && id.isNotEmpty) ids.add(id);
-          }
-
-          void addComposite(dynamic raw) {
-            final normalized = _normalizeText(raw);
-            if (normalized.isEmpty) return;
-            final chunks = normalized
-                .split(RegExp(r'\s*/\s*|\s*[,;]\s*'))
-                .map((e) => e.trim())
-                .where((e) => e.isNotEmpty)
-                .toSet();
-            for (final chunk in chunks) {
-              addResolved(chunk);
+          final probes = <dynamic>[
+            sm['stageName'],
+            sm['stage_name'],
+            sm['workplaceName'],
+            sm['workplace_name'],
+            sm['title'],
+            sm['name'],
+          ];
+          for (final probe in probes) {
+            final resolved = _resolveStageValue(probe);
+            if (resolved != null && resolved.isNotEmpty) {
+              return resolved;
             }
           }
 
-          final primary = _resolveStageValue(_resolveStageId(sm));
-          if (primary != null && primary.isNotEmpty) {
-            ids.add(primary);
-          } else {
-            addResolved(sm['stageName']);
-            addResolved(sm['stage_name']);
-            addResolved(sm['workplaceName']);
-            addResolved(sm['workplace_name']);
-            addResolved(sm['title']);
-            addResolved(sm['name']);
-          }
-
-          addComposite(sm['stageName']);
-          addComposite(sm['stage_name']);
-          addComposite(sm['workplaceName']);
-          addComposite(sm['workplace_name']);
-          addComposite(sm['title']);
-          addComposite(sm['name']);
-
-          final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
-          if (rawAlt is List) {
-            for (final entry in rawAlt) {
-              addResolved(entry);
+          final altIds = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
+          if (altIds is List) {
+            for (final raw in altIds) {
+              final resolved = _resolveStageValue(raw);
+              if (resolved != null && resolved.isNotEmpty) {
+                return resolved;
+              }
             }
           }
 
-          final rawAltNames =
-              sm['alternativeStageNames'] ?? sm['alternative_stage_names'];
-          if (rawAltNames is List) {
-            for (final entry in rawAltNames) {
-              addResolved(entry);
-              addComposite(entry);
-            }
-          }
-
-          return ids.toList();
+          return null;
         }
 
         // Build a list of resolved stage IDs.
@@ -2435,7 +2408,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         // но и не пытаемся вставлять невалидные идентификаторы этапов.
         final List<String> __validStageIds = [];
         for (final sm in stageMaps) {
-          final stageIds = _extractStageIds(sm);
+          final primary = _resolvePrimaryStageId(sm);
+          final stageIds = <String>[
+            if (primary != null && primary.isNotEmpty) primary,
+          ];
+          if (stageIds.isEmpty && _looksLikeBobbin(sm) && __bobbinId != null) {
+            stageIds.add(__bobbinId!);
+          }
           for (final sid in stageIds) {
             if (sid.isEmpty) continue;
             final resolved = workplaceLookup[sid.toLowerCase()] ??
@@ -2462,7 +2441,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         // create new tasks for each stage (only if stage exists)
         final createdStageIds = <String>{};
         for (final sm in stageMaps) {
-          final stageIds = _extractStageIds(sm);
+          final primary = _resolvePrimaryStageId(sm);
+          final stageIds = <String>[
+            if (primary != null && primary.isNotEmpty) primary,
+          ];
+          if (stageIds.isEmpty && _looksLikeBobbin(sm) && __bobbinId != null) {
+            stageIds.add(__bobbinId!);
+          }
           for (final stageId in stageIds) {
             if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
             var resolvedStageId = stageId;
@@ -2521,8 +2506,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
           int step = 1;
           for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
+            final stageId = _resolvePrimaryStageId(sm) ??
+                (sm['stageId'] as String?) ??
+                (sm['stage_id'] as String?);
             if (stageId == null || stageId.isEmpty) continue;
             await _sb.from('prod_plan_stages').insert({
               'plan_id': planId,
