@@ -325,50 +325,6 @@ class TaskProvider with ChangeNotifier {
     return false;
   }
 
-  String _normalizedStageLabel(String id, Map<String, Map<String, dynamic>> meta) {
-    final row = meta[id] ?? const <String, dynamic>{};
-    final name = _readStageName(row).trim();
-    final base = name.isNotEmpty ? name : id;
-    return base.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
-  }
-
-  List<String> _dedupeSequenceByLabel(
-    List<String> stageIds,
-    Map<String, Map<String, dynamic>> meta,
-  ) {
-    if (stageIds.isEmpty) return const <String>[];
-
-    final normalized = List<String>.from(stageIds);
-    if (normalized.length >= 4 && normalized.length.isEven) {
-      final half = normalized.length ~/ 2;
-      var isMirrored = true;
-      for (var i = 0; i < half; i++) {
-        final leftLabel = _normalizedStageLabel(normalized[i], meta);
-        final rightLabel =
-            _normalizedStageLabel(normalized[normalized.length - 1 - i], meta);
-        if (leftLabel != rightLabel) {
-          isMirrored = false;
-          break;
-        }
-      }
-      if (isMirrored) {
-        normalized.removeRange(half, normalized.length);
-      }
-    }
-
-    final uniqueByLabel = <String>{};
-    final result = <String>[];
-    for (final id in normalized) {
-      final labelKey = _normalizedStageLabel(id, meta);
-      final dedupeKey = labelKey.isNotEmpty ? 'label:$labelKey' : 'id:$id';
-      if (uniqueByLabel.contains(dedupeKey)) continue;
-      uniqueByLabel.add(dedupeKey);
-      result.add(id);
-    }
-
-    return result;
-  }
-
   Future<Map<String, Map<String, dynamic>>> _workplaceMeta(
       List<String> stageIds) async {
     if (stageIds.isEmpty) return const {};
@@ -535,18 +491,41 @@ class TaskProvider with ChangeNotifier {
         names[id] = Map<String, dynamic>.from(row);
       }
 
-      final labelDedupeMeta = <String, Map<String, dynamic>>{
-        ...meta,
-        ...names,
-      };
-      final sanitizedIds = _dedupeSequenceByLabel(normalizedIds, labelDedupeMeta);
-      if (sanitizedIds.isEmpty) return const _StageSequenceData.empty();
-
-      return _StageSequenceData(ids: sanitizedIds, meta: names);
+      return _StageSequenceData(ids: normalizedIds, meta: names);
     }
 
-    // Try public view that already contains auto-added stages (flexo/bobbin,
-    // etc.) and respects the step order for the order or its external code.
+    // The queue must match exactly what was saved on order creation.
+    // Prefer the persisted plan payload first.
+    try {
+      final plan = await _supabase
+          .from('production_plans')
+          .select('stages')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['stages'] != null) {
+        final seq = await fromRows(plan['stages']);
+        if (seq.ids.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Try normalized plan tables if available.
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['id'] != null) {
+        final rows = await _supabase
+            .from('prod_plan_stages')
+            .select('stage_id, order, position, idx, step_no, seq, step')
+            .eq('plan_id', plan['id'].toString());
+        final seq = await fromRows(rows);
+        if (seq.ids.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Try public view as a fallback only.
     try {
       final filters = <String>[
         'order_id.eq.$orderId',
@@ -603,19 +582,6 @@ class TaskProvider with ChangeNotifier {
     } catch (_) {}
 
 
-    // Try legacy json-based production_plans used by production module UI.
-    try {
-      final plan = await _supabase
-          .from('production_plans')
-          .select('stages')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['stages'] != null) {
-        final seq = await fromRows(plan['stages']);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
     // Try the stage template attached to the order (plan_templates).
 
     if (stageTemplateId != null && stageTemplateId!.isNotEmpty) {
@@ -645,22 +611,6 @@ class TaskProvider with ChangeNotifier {
           .eq('order_id', orderId);
       final seq = await fromRows(rows);
       if (seq.ids.isNotEmpty) return seq;
-    } catch (_) {}
-
-    try {
-      final plan = await _supabase
-          .from('prod_plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('prod_plan_stages')
-            .select('stage_id, order, position, idx, step_no, seq')
-            .eq('plan_id', plan['id'].toString());
-        final seq = await fromRows(rows);
-        if (seq.ids.isNotEmpty) return seq;
-      }
     } catch (_) {}
 
     return const _StageSequenceData.empty();
