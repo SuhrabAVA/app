@@ -545,8 +545,70 @@ class TaskProvider with ChangeNotifier {
       return _StageSequenceData(ids: sanitizedIds, meta: names);
     }
 
-    // Try public view that already contains auto-added stages (flexo/bobbin,
-    // etc.) and respects the step order for the order or its external code.
+    // Priority: preserve the exact queue saved during order creation/edit.
+    // This source is written by the order form and must stay authoritative
+    // for tasks/start-order gating.
+    try {
+      final plan = await _supabase
+          .from('production_plans')
+          .select('stages')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['stages'] != null) {
+        final seq = await fromRows(plan['stages']);
+        if (seq.ids.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Try normalized production.* plan tables.
+    try {
+      final plan = await _supabase
+          .from('production.plans')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['id'] != null) {
+        final rows = await _supabase
+            .from('production.plan_stages')
+            .select('stage_id, order, position, idx, step_no')
+            .eq('plan_id', plan['id'].toString());
+        final seq = await fromRows(rows);
+        if (seq.ids.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Try normalized legacy public tables.
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      if (plan != null && plan is Map && plan['id'] != null) {
+        final rows = await _supabase
+            .from('prod_plan_stages')
+            .select('stage_id, order, position, idx, step_no, seq')
+            .eq('plan_id', plan['id'].toString());
+        final seq = await fromRows(rows);
+        if (seq.ids.isNotEmpty) return seq;
+      }
+    } catch (_) {}
+
+    // Try the stage template attached to the order (plan_templates).
+    if (stageTemplateId != null && stageTemplateId!.isNotEmpty) {
+      try {
+        final tpl = await _supabase
+            .from('plan_templates')
+            .select('stages')
+            .eq('id', stageTemplateId!)
+            .maybeSingle();
+        final seq = await fromRows(tpl?['stages']);
+        if (seq.ids.isNotEmpty) return seq;
+      } catch (_) {}
+    }
+
+    // Fallback: derived/public views. They can contain auto-added or repeated
+    // stages, so they are intentionally lower priority.
     try {
       final filters = <String>[
         'order_id.eq.$orderId',
@@ -565,8 +627,6 @@ class TaskProvider with ChangeNotifier {
       if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
 
-    // Try production view that already contains proper step numbering/order for
-    // the plan.
     try {
       final filters = <String>[
         'order_id.eq.$orderId',
@@ -585,57 +645,13 @@ class TaskProvider with ChangeNotifier {
       if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
 
-    // Try new schema production.*
+    // Last fallback for old deployments.
     try {
       final plan = await _supabase
-          .from('production.plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('production.plan_stages')
-            .select('stage_id, order, position, idx, step_no')
-            .eq('plan_id', plan['id'].toString());
-        final seq = await fromRows(rows);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
-
-    // Try legacy json-based production_plans used by production module UI.
-    try {
-      final plan = await _supabase
-          .from('production_plans')
-          .select('stages')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['stages'] != null) {
-        final seq = await fromRows(plan['stages']);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
-    // Try the stage template attached to the order (plan_templates).
-
-    if (stageTemplateId != null && stageTemplateId!.isNotEmpty) {
-      try {
-        final tpl = await _supabase
-            .from('plan_templates')
-            .select('stages')
-            .eq('id', stageTemplateId!)
-            .maybeSingle();
-        final seq = await fromRows(tpl?['stages']);
-        if (seq.ids.isNotEmpty) return seq;
-      } catch (_) {}
-    }
-    // Fallback to legacy public.* tables
-    try {
-      final rows = await _supabase
           .from('workplace_stages')
           .select('stage_id, order')
           .eq('order_id', orderId);
-      final seq = await fromRows(rows);
+      final seq = await fromRows(plan);
       if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
     try {
@@ -649,16 +665,12 @@ class TaskProvider with ChangeNotifier {
 
     try {
       final plan = await _supabase
-          .from('prod_plans')
-          .select('id')
+          .from('production_plans')
+          .select('stages')
           .eq('order_id', orderId)
           .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('prod_plan_stages')
-            .select('stage_id, order, position, idx, step_no, seq')
-            .eq('plan_id', plan['id'].toString());
-        final seq = await fromRows(rows);
+      if (plan != null && plan is Map && plan['stages'] != null) {
+        final seq = await fromRows(plan['stages']);
         if (seq.ids.isNotEmpty) return seq;
       }
     } catch (_) {}
