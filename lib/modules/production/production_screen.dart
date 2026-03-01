@@ -631,16 +631,25 @@ class _ProductionTab extends StatelessWidget {
   ) {
     final groups = <String, _StageGroupInfo>{};
 
+    String normalizeStageId(String id) => id.trim();
+
+    String groupKeyForIds(List<String> ids) {
+      final canonical = ids.toSet().toList()..sort();
+      return canonical.join('|');
+    }
+
     void addGroup(List<String> sourceIds, {String? explicitLabel}) {
       final ids = sourceIds
-          .map((id) => id.trim())
+          .map(normalizeStageId)
           .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
+          .fold<List<String>>(<String>[], (acc, id) {
+        if (!acc.contains(id)) acc.add(id);
+        return acc;
+      });
       if (ids.isEmpty) return;
 
-      final key = ids.join('|');
+      final key = groupKeyForIds(ids);
+      if (groups.containsKey(key)) return;
       final labels = <String>{};
       final explicit = explicitLabel?.trim();
       if (explicit != null && explicit.isNotEmpty) {
@@ -676,11 +685,20 @@ class _ProductionTab extends StatelessWidget {
       }
     }
 
-    final uniqueStageIds = orderTasks
-        .map((t) => t.stageId.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet();
-    for (final id in uniqueStageIds) {
+    final orderedFallbackIds = <String>[];
+    final plannedSequence = taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
+    for (final id in plannedSequence.map(normalizeStageId)) {
+      if (id.isNotEmpty && !orderedFallbackIds.contains(id)) {
+        orderedFallbackIds.add(id);
+      }
+    }
+    for (final id in orderTasks.map((t) => normalizeStageId(t.stageId))) {
+      if (id.isNotEmpty && !orderedFallbackIds.contains(id)) {
+        orderedFallbackIds.add(id);
+      }
+    }
+
+    for (final id in orderedFallbackIds) {
       final existsInGroup = groups.values.any((group) => group.stageIds.contains(id));
       if (!existsInGroup) {
         addGroup([id]);
@@ -706,7 +724,8 @@ class _ProductionTab extends StatelessWidget {
   ) {
     final byGroup = <String, List<TaskModel>>{};
     for (final task in orderTasks) {
-      final groupKey = lookup[task.stageId] ?? task.stageId;
+      final normalizedStageId = task.stageId.trim();
+      final groupKey = lookup[normalizedStageId] ?? normalizedStageId;
       byGroup.putIfAbsent(groupKey, () => []).add(task);
     }
     return byGroup;
@@ -721,11 +740,12 @@ class _ProductionTab extends StatelessWidget {
     final tasksByGroup = _tasksByGroup(orderTasks, lookup);
     final visibleWorkplaceIds = <String>{};
     for (final task in orderTasks) {
-      final groupKey = lookup[task.stageId] ?? task.stageId;
+      final normalizedStageId = task.stageId.trim();
+      final groupKey = lookup[normalizedStageId] ?? normalizedStageId;
       final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
       final groupHasActive = groupTasks.any((t) => t.status != TaskStatus.waiting);
       if (!groupHasActive || task.status != TaskStatus.waiting) {
-        visibleWorkplaceIds.add(task.stageId);
+        visibleWorkplaceIds.add(normalizedStageId);
       }
     }
     final completed = _orderCompletedByGroups(stageGroups, tasksByGroup);
