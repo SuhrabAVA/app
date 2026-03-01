@@ -743,6 +743,7 @@ class _TasksScreenState extends State<TasksScreen>
     _selection.removeListener(_onSelectionChanged);
     _commentsScrollController.dispose();
     _chatController.dispose();
+    _commentsScrollController.dispose();
     super.dispose();
   }
 
