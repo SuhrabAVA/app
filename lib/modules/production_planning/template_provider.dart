@@ -248,7 +248,7 @@ class TemplateProvider with ChangeNotifier {
         } on PostgrestException catch (e) {
           // На старых инсталляциях update недоступен, либо нет колонки.
           // Тогда пытаемся удалить запись физически.
-          if (e.code == '42703' || e.code == '42501' || e.code == 'PGRST204') {
+          if (e.code == '42703' || e.code == 'PGRST204') {
             affected = await hardDelete();
           } else {
             rethrow;
@@ -272,7 +272,8 @@ class TemplateProvider with ChangeNotifier {
       if (e.code == '42501') {
         throw TemplateDeleteException(
           'Недостаточно прав для удаления шаблона (RLS/policy). '
-          'Нужно разрешить UPDATE/DELETE для plan_templates.',
+          'Нужно разрешить UPDATE/DELETE для plan_templates '
+          'и применить миграцию supabase/migrations/20260301_fix_plan_templates_delete.sql.',
         );
       }
 
