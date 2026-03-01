@@ -2457,12 +2457,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             stageIds.add(__bobbinId!);
           }
           for (final stageId in stageIds) {
-            if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
+            if (stageId.isEmpty) continue;
             var resolvedStageId = stageId;
             try {
               resolvedStageId = workplaceLookup[stageId.toLowerCase()] ??
                   legacyStageLookup[stageId.toLowerCase()] ??
                   stageId;
+              if (createdStageIds.contains(resolvedStageId)) {
+                continue;
+              }
               if (!_looksLikeUuid(resolvedStageId) &&
                   !workplaceLookup.containsValue(resolvedStageId) &&
                   !legacyStageLookup.containsValue(resolvedStageId) &&
