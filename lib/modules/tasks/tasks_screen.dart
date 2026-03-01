@@ -574,12 +574,17 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     };
   }
 
-  // Отфильтровать только pending этапы
-  final pendingStageIds = stages.entries
-      .where((e) => e.value['pending'] == true && e.value['completed'] != true)
-      .map((e) => e.key)
-      .toList();
-  if (pendingStageIds.isEmpty) return true;
+  // Для поэтапного старта: текущий этап можно запускать, если запущен
+  // предыдущий этап в очереди (или этап первый). Это позволяет сотруднику B
+  // начать следующий этап, когда сотрудник A уже начал предыдущий.
+  bool stageHasActivity(String groupKey) {
+    return all.any((t) {
+      if (_groupKey(t.stageId) != groupKey) return false;
+      if (t.status != TaskStatus.waiting) return true;
+      return t.comments.any((c) =>
+          c.type == 'start' || c.type == 'resume' || c.type == 'user_done');
+    });
+  }
 
   final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
   if (orderedStages.isNotEmpty) {
@@ -592,31 +597,48 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     for (var i = 0; i < orderedKeys.length; i++) {
       indexMap.putIfAbsent(orderedKeys[i], () => i);
     }
-    pendingStageIds.sort((a, b) {
-      final ia = indexMap[a];
-      final ib = indexMap[b];
-      if (ia != null && ib != null) return ia.compareTo(ib);
-      if (ia != null) return -1;
-      if (ib != null) return 1;
-      return a.compareTo(b);
-    });
-  } else {
-    // Отсортировать по названию рабочего места (fallback к id)
-    int byName(String a, String b) {
-      String name(String id) {
-        try {
-          final w = personnel.workplaces.firstWhere((w) => w.id == id);
-          return (w.name.isNotEmpty ? w.name : id).toLowerCase();
-        } catch (_) {
-          return id.toLowerCase();
-        }
-      }
 
-      return name(a).compareTo(name(b));
+    final currentKey = _groupKey(task.stageId);
+    final currentIndex = indexMap[currentKey];
+    if (currentIndex == null || currentIndex <= 0) return true;
+
+    for (var i = currentIndex - 1; i >= 0; i--) {
+      final prevKey = orderedKeys[i];
+      final prevState = stages[prevKey];
+      if (prevState == null) continue;
+
+      // Ищем ближайший реально существующий предыдущий этап.
+      final hasPending = prevState['pending'] == true;
+      if (!hasPending && prevState['completed'] == true) {
+        continue;
+      }
+      return stageHasActivity(prevKey) || prevState['completed'] == true;
+    }
+    return true;
+  }
+
+  // В fallback-режиме сохраняем старое правило: только первый незавершённый.
+  final pendingStageIds = stages.entries
+      .where((e) => e.value['pending'] == true && e.value['completed'] != true)
+      .map((e) => e.key)
+      .toList();
+  if (pendingStageIds.isEmpty) return true;
+
+  // Отсортировать по названию рабочего места (fallback к id)
+  int byName(String a, String b) {
+    String name(String id) {
+      try {
+        final w = personnel.workplaces.firstWhere((w) => w.id == id);
+        return (w.name.isNotEmpty ? w.name : id).toLowerCase();
+      } catch (_) {
+        return id.toLowerCase();
+      }
     }
 
-    pendingStageIds.sort(byName);
+    return name(a).compareTo(name(b));
   }
+
+  pendingStageIds.sort(byName);
 
   // Первый незавершённый этап
   final firstPendingStageId = pendingStageIds.first;
