@@ -492,11 +492,15 @@ Map<String, String> _stageGroupMapForOrder(
 
   final map = <String, String>{};
   for (final stage in tpl.stages) {
-    final ids = stage.allStageIds.where((id) => id.trim().isNotEmpty).toList();
+    final ids = <String>[];
+    for (final id in stage.allStageIds) {
+      final normalized = id.trim();
+      if (normalized.isEmpty || ids.contains(normalized)) continue;
+      ids.add(normalized);
+    }
     if (ids.isEmpty) continue;
-    final sortedIds = List<String>.from(ids)..sort();
-    final key = sortedIds.join('|');
-    for (final id in sortedIds) {
+    final key = ids.join('|');
+    for (final id in ids) {
       map[id] = key;
     }
   }
@@ -875,8 +879,13 @@ class _TasksScreenState extends State<TasksScreen>
       if (tpl.id != templateId) continue;
       for (final stage in tpl.stages) {
         if (stage.allStageIds.contains(stageId)) {
-          final ids = [...stage.allStageIds]..sort();
-          return ids;
+          final ids = <String>[];
+          for (final id in stage.allStageIds) {
+            final normalized = id.trim();
+            if (normalized.isEmpty || ids.contains(normalized)) continue;
+            ids.add(normalized);
+          }
+          if (ids.isNotEmpty) return ids;
         }
       }
     }
