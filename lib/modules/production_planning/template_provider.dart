@@ -220,27 +220,46 @@ class TemplateProvider with ChangeNotifier {
   /// Удаление шаблона.
   /// По умолчанию — мягкое (архивация). Для полного удаления укажи hard: true.
   Future<void> deleteTemplate(String id, {bool hard = false}) async {
-    Future<void> hardDelete() async {
-      await _supabase.from('plan_templates').delete().eq('id', id);
+    Future<bool> hardDelete() async {
+      final deleted = await _supabase
+          .from('plan_templates')
+          .delete()
+          .eq('id', id)
+          .select('id');
+      return (deleted as List).isNotEmpty;
+    }
+
+    Future<bool> archiveTemplate() async {
+      final updated = await _supabase
+          .from('plan_templates')
+          .update({'is_archived': true})
+          .eq('id', id)
+          .select('id');
+      return (updated as List).isNotEmpty;
     }
 
     try {
+      bool affected = false;
       if (hard) {
-        await hardDelete();
+        affected = await hardDelete();
       } else {
         try {
-          await _supabase
-              .from('plan_templates')
-              .update({'is_archived': true}).eq('id', id);
+          affected = await archiveTemplate();
         } on PostgrestException catch (e) {
           // На старых инсталляциях update недоступен, либо нет колонки.
           // Тогда пытаемся удалить запись физически.
           if (e.code == '42703' || e.code == '42501' || e.code == 'PGRST204') {
-            await hardDelete();
+            affected = await hardDelete();
           } else {
             rethrow;
           }
         }
+      }
+
+      if (!affected) {
+        throw TemplateDeleteException(
+          'Шаблон не был удалён: недостаточно прав или шаблон уже удалён.',
+        );
       }
     } on PostgrestException catch (e) {
       if (e.code == '23503') {
