@@ -28,6 +28,42 @@ class _ProductionStagesWidgetState extends State<ProductionStagesWidget> {
   RealtimeChannel? _chanPlans;
   bool _loading = true;
 
+
+  int _readOrder(Map<String, dynamic> row) {
+    const keys = ['step_no', 'step', 'seq', 'order', 'position', 'idx'];
+    for (final key in keys) {
+      final value = row[key];
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) {
+        final parsed = int.tryParse(value.trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    return 0;
+  }
+
+  List<Map<String, dynamic>> _normalizeRows(List<Map<String, dynamic>> rows) {
+    final indexed = rows.asMap().entries.toList()
+      ..sort((a, b) {
+        final ao = _readOrder(a.value);
+        final bo = _readOrder(b.value);
+        if (ao != bo) return ao.compareTo(bo);
+        return a.key.compareTo(b.key);
+      });
+
+    final result = <Map<String, dynamic>>[];
+    final seenStageIds = <String>{};
+    for (final entry in indexed) {
+      final row = entry.value;
+      final stageId = (row['stage_id'] ?? row['id'] ?? '').toString().trim();
+      if (stageId.isEmpty || seenStageIds.contains(stageId)) continue;
+      seenStageIds.add(stageId);
+      result.add(row);
+    }
+    return result;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +83,11 @@ class _ProductionStagesWidgetState extends State<ProductionStagesWidget> {
         .select('*')
         .eq('order_id', widget.orderId)
         .order('step_no', ascending: true);
-    final list = (res as List).cast<Map<String, dynamic>>();
+    final rawList = (res as List)
+        .whereType<Map>()
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList();
+    final list = _normalizeRows(rawList);
     setState(() {
       _rows = list;
       _planId = list.isNotEmpty ? list.first['plan_id'] as String? : null;

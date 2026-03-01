@@ -91,6 +91,53 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return 0;
   }
 
+
+  List<pcompat.PlannedStage> _stagesFromRows(List<Map<String, dynamic>> rows) {
+    final indexed = rows.asMap().entries.toList()
+      ..sort((a, b) {
+        final ao = _readStageOrder(a.value);
+        final bo = _readStageOrder(b.value);
+        if (ao != bo) return ao.compareTo(bo);
+        return a.key.compareTo(b.key);
+      });
+
+    final ordered = <pcompat.PlannedStage>[];
+    final seenIds = <String>{};
+    for (final entry in indexed) {
+      final row = entry.value;
+      final stageId =
+          (row['stage_id'] ?? row['id'] ?? row['workplace_id'] ?? '').toString().trim();
+      if (stageId.isEmpty || seenIds.contains(stageId)) continue;
+      seenIds.add(stageId);
+      final stageName =
+          (row['stage_name'] ?? row['workplace_name'] ?? row['name'] ?? 'Этап')
+              .toString()
+              .trim();
+      ordered.add(
+        pcompat.PlannedStage(
+          stageId: stageId,
+          stageName: stageName.isEmpty ? 'Этап' : stageName,
+        ),
+      );
+    }
+
+    return ordered;
+  }
+
+  List<pcompat.PlannedStage> _normalizeLoadedStages(
+      List<pcompat.PlannedStage> stages) {
+    final normalized = <pcompat.PlannedStage>[];
+    final seenIds = <String>{};
+    for (final stage in stages) {
+      final id = stage.stageId.trim();
+      if (id.isEmpty || seenIds.contains(id)) continue;
+      seenIds.add(id);
+      final name = stage.stageName.trim().isEmpty ? 'Этап' : stage.stageName.trim();
+      normalized.add(pcompat.PlannedStage(stageId: id, stageName: name, extra: stage.extra));
+    }
+    return normalized;
+  }
+
   List<String> _plannedStageNames(pcompat.PlannedStage planned) {
     final names = <String>{};
     final base = planned.stageName.trim();
@@ -253,18 +300,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
             final normalizedRows = rows
                 .whereType<Map>()
                 .map((r) => Map<String, dynamic>.from(r))
-                .toList()
-              ..sort((a, b) => _readStageOrder(a).compareTo(_readStageOrder(b)));
-            for (final m in normalizedRows) {
-              final id =
-                  (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString();
-              final name =
-                  (m['stage_name'] ?? m['workplace_name'] ?? m['name'] ?? 'Этап')
-                      .toString();
-              if (id.isNotEmpty) {
-                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
-              }
-            }
+                .toList();
+            stages = _stagesFromRows(normalizedRows);
           }
         }
       } catch (_) {
@@ -281,14 +318,11 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               .order('step_no', ascending: true);
 
           if (rows is List && rows.isNotEmpty) {
-            for (final r in rows) {
-              final m = (r as Map<String, dynamic>);
-              final id = (m['stage_id'] ?? '').toString();
-              final name = (m['stage_name'] ?? 'Этап').toString();
-              if (id.isNotEmpty) {
-                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
-              }
-            }
+            final normalizedRows = rows
+                .whereType<Map>()
+                .map((r) => Map<String, dynamic>.from(r))
+                .toList();
+            stages = _stagesFromRows(normalizedRows);
           }
         } catch (_) {
           // нет представления — идём дальше
@@ -314,7 +348,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
       if (mounted) {
         setState(() {
-          _plannedStages = stages;
+          _plannedStages = _normalizeLoadedStages(stages);
           _loadingPlan = false;
         });
       }
