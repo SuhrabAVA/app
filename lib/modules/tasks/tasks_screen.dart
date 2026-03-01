@@ -514,64 +514,36 @@ String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
   return null;
 }
 
-bool _isFlexoStageId(PersonnelProvider personnel, String stageId) {
-  final probes = <String>{stageId, _workplaceName(personnel, stageId)};
-  for (final probe in probes) {
-    if (_containsFlexo(probe)) return true;
-  }
-  return false;
-}
 
-bool _isBobbinStageId(PersonnelProvider personnel, String stageId) {
-  final probes = <String>{stageId, _workplaceName(personnel, stageId)};
-  for (final probe in probes) {
-    if (_containsBobbin(probe)) return true;
-  }
-  return false;
-}
-
-void _ensureFlexoOrdering(List<String> stageIds, PersonnelProvider personnel) {
+void _ensureBobbinBeforeFlexoByLabel(
+  List<String> stageIds,
+  String Function(String stageId) labelResolver,
+) {
   if (stageIds.length <= 1) return;
 
-  final flexoIndex =
-      stageIds.indexWhere((id) => _isFlexoStageId(personnel, id));
-  if (flexoIndex == -1) return;
+  bool isFlexo(String stageId) =>
+      _containsFlexo(stageId) || _containsFlexo(labelResolver(stageId));
+  bool isBobbin(String stageId) =>
+      _containsBobbin(stageId) || _containsBobbin(labelResolver(stageId));
 
-  final bobbinIndex =
-      stageIds.indexWhere((id) => _isBobbinStageId(personnel, id));
+  final flexoIndex = stageIds.indexWhere(isFlexo);
+  final bobbinIndex = stageIds.indexWhere(isBobbin);
+  if (flexoIndex == -1 || bobbinIndex == -1) return;
+  if (bobbinIndex < flexoIndex) return;
 
-  final adjusted = List<String>.from(stageIds);
-  final flexoId = adjusted.removeAt(flexoIndex);
-
-  if (bobbinIndex == -1) {
-    adjusted.insert(0, flexoId);
-    stageIds
-      ..clear()
-      ..addAll(adjusted);
-    return;
+  final reordered = List<String>.from(stageIds);
+  final bobbinId = reordered.removeAt(bobbinIndex);
+  var targetIndex = flexoIndex;
+  if (bobbinIndex < flexoIndex) {
+    targetIndex -= 1;
   }
-
-  var bobIndex = bobbinIndex;
-  if (bobbinIndex > flexoIndex) {
-    bobIndex -= 1;
-  }
-  if (bobIndex < 0) {
-    bobIndex = 0;
-  } else if (bobIndex >= adjusted.length) {
-    bobIndex = adjusted.length - 1;
-  }
-
-  final bobbinId = adjusted.removeAt(bobIndex);
-  adjusted.insert(0, bobbinId);
-  final insertIndex = adjusted.isEmpty ? 0 : 1;
-  final safeIndex = insertIndex < 0
-      ? 0
-      : (insertIndex > adjusted.length ? adjusted.length : insertIndex);
-  adjusted.insert(safeIndex, flexoId);
+  if (targetIndex < 0) targetIndex = 0;
+  if (targetIndex > reordered.length) targetIndex = reordered.length;
+  reordered.insert(targetIndex, bobbinId);
 
   stageIds
     ..clear()
-    ..addAll(adjusted);
+    ..addAll(reordered);
 }
 
 /// Разрешить старт только для самого первого незавершённого этапа заказа
@@ -628,9 +600,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
       if (ib != null) return 1;
       return a.compareTo(b);
     });
-    // Для печати/бобинорезки приоритет должен оставаться у бобинорезки,
-    // даже если порядок в шаблоне/очереди пришёл в старом виде.
-    _ensureFlexoOrdering(pendingStageIds, personnel);
   } else {
     // Отсортировать по названию рабочего места (fallback к id)
     int byName(String a, String b) {
@@ -647,7 +616,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     }
 
     pendingStageIds.sort(byName);
-    _ensureFlexoOrdering(pendingStageIds, personnel);
   }
 
   // Первый незавершённый этап
@@ -2319,7 +2287,16 @@ class _TasksScreenState extends State<TasksScreen>
       final repIds = orderedGroupKeys
           .map((key) => groupRepresentative[key] ?? key.split('|').first)
           .toList();
-      _ensureFlexoOrdering(repIds, personnel);
+      _ensureBobbinBeforeFlexoByLabel(repIds, (id) {
+        return _stageLabelForOrder(
+          personnel,
+          templates,
+          ordersProvider,
+          taskProvider,
+          order.id,
+          id,
+        );
+      });
       orderedGroupKeys
         ..clear()
         ..addAll(repIds.map((id) => repToKey[id] ?? id));
@@ -2347,7 +2324,16 @@ class _TasksScreenState extends State<TasksScreen>
       final repIds = orderedGroupKeys
           .map((key) => groupRepresentative[key] ?? key.split('|').first)
           .toList();
-      _ensureFlexoOrdering(repIds, personnel);
+      _ensureBobbinBeforeFlexoByLabel(repIds, (id) {
+        return _stageLabelForOrder(
+          personnel,
+          templates,
+          ordersProvider,
+          taskProvider,
+          order.id,
+          id,
+        );
+      });
       orderedGroupKeys
         ..clear()
         ..addAll(repIds.map((id) => repToKey[id] ?? id));
