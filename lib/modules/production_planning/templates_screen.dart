@@ -57,7 +57,13 @@ class TemplatesScreen extends StatelessWidget {
                         ),
                       );
                       if (confirm == true) {
-                        await context.read<TemplateProvider>().deleteTemplate(tpl.id);
+                        try {
+                          await context.read<TemplateProvider>().deleteTemplate(tpl.id);
+                        } on TemplateDeleteException catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(SnackBar(content: Text(e.message)));
+                        }
                       }
                     },
                   ),

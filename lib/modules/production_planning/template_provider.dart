@@ -20,6 +20,15 @@ import 'package:uuid/uuid.dart';
 import 'template_model.dart';
 import 'planned_stage_model.dart';
 
+class TemplateDeleteException implements Exception {
+  TemplateDeleteException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class TemplateProvider with ChangeNotifier {
   final _uuid = const Uuid();
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -211,19 +220,48 @@ class TemplateProvider with ChangeNotifier {
   /// Удаление шаблона.
   /// По умолчанию — мягкое (архивация). Для полного удаления укажи hard: true.
   Future<void> deleteTemplate(String id, {bool hard = false}) async {
-    if (hard) {
+    Future<void> hardDelete() async {
       await _supabase.from('plan_templates').delete().eq('id', id);
-    } else {
-      try {
-        await _supabase
-            .from('plan_templates')
-            .update({'is_archived': true}).eq('id', id);
-      } catch (_) {
-        // На старых инсталляциях/политиках update может быть недоступен.
-        // В таком случае удаляем запись физически.
-        await _supabase.from('plan_templates').delete().eq('id', id);
-      }
     }
+
+    try {
+      if (hard) {
+        await hardDelete();
+      } else {
+        try {
+          await _supabase
+              .from('plan_templates')
+              .update({'is_archived': true}).eq('id', id);
+        } on PostgrestException catch (e) {
+          // На старых инсталляциях update недоступен, либо нет колонки.
+          // Тогда пытаемся удалить запись физически.
+          if (e.code == '42703' || e.code == '42501' || e.code == 'PGRST204') {
+            await hardDelete();
+          } else {
+            rethrow;
+          }
+        }
+      }
+    } on PostgrestException catch (e) {
+      if (e.code == '23503') {
+        throw TemplateDeleteException(
+          'Шаблон используется в заказах и не может быть удалён. '
+          'Снимите шаблон в связанных заказах или включите ON DELETE SET NULL для orders.stage_template_id.',
+        );
+      }
+
+      if (e.code == '42501') {
+        throw TemplateDeleteException(
+          'Недостаточно прав для удаления шаблона (RLS/policy). '
+          'Нужно разрешить UPDATE/DELETE для plan_templates.',
+        );
+      }
+
+      throw TemplateDeleteException('Ошибка удаления шаблона: ${e.message}');
+    } catch (e) {
+      throw TemplateDeleteException('Ошибка удаления шаблона: $e');
+    }
+
     await _fetchAndSetTemplates(includeArchived: false);
   }
 
