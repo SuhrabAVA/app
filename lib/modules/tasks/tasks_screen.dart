@@ -2495,7 +2495,7 @@ class _TasksScreenState extends State<TasksScreen>
     if (_selectedWorkplaceId == null) return const <TaskModel>[];
 
     final ordersProvider = context.read<OrdersProvider>();
-    final templateProvider = context.read<StageTemplatesProvider>();
+    final templateProvider = context.read<TemplateProvider>();
     final stageGroupByOrder = <String, Map<String, String>>{};
     for (final order in ordersProvider.orders) {
       final map = _stageGroupMapForOrder(order, templateProvider);
