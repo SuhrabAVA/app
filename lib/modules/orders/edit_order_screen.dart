@@ -2523,14 +2523,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               if (createdStageIds.contains(resolvedStageId)) {
                 continue;
               }
+              // Не пропускаем этапы с не-UUID идентификаторами: они могут
+              // храниться как алиасы (code/name) и будут нормализованы
+              // TaskProvider-ом при чтении задач.
               if (!_looksLikeUuid(resolvedStageId) &&
                   !workplaceLookup.containsValue(resolvedStageId) &&
                   !legacyStageLookup.containsValue(resolvedStageId) &&
                   !_looksLikeBobbin(sm)) {
                 debugPrint(
-                  '⚠️ skip task insert: unresolved non-uuid stage id=$stageId, resolved=$resolvedStageId',
+                  '⚠️ insert task with non-uuid stage alias: stage=$stageId, resolved=$resolvedStageId',
                 );
-                continue;
               }
               await _sb.from('tasks').insert({
                 'order_id': createdOrUpdatedOrder.id,
@@ -2574,13 +2576,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
           int step = 1;
           for (final sm in stageMaps) {
-            final stageId = _resolvePrimaryStageId(sm) ??
+            final rawStageId = _resolvePrimaryStageId(sm) ??
                 (sm['stageId'] as String?) ??
                 (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
+            if (rawStageId == null || rawStageId.isEmpty) continue;
+            final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
+                legacyStageLookup[rawStageId.toLowerCase()] ??
+                rawStageId;
             await _sb.from('prod_plan_stages').insert({
               'plan_id': planId,
-              'stage_id': stageId,
+              'stage_id': resolvedStageId,
               'step': step++,
               'status': 'waiting',
             });
