@@ -247,8 +247,11 @@ class TemplateProvider with ChangeNotifier {
           affected = await archiveTemplate();
         } on PostgrestException catch (e) {
           // На старых инсталляциях update недоступен, либо нет колонки.
-          // Тогда пытаемся удалить запись физически.
-          if (e.code == '42703' || e.code == 'PGRST204') {
+          // Также бывает, что UPDATE запрещён RLS-политикой,
+          // но DELETE разрешён. Тогда пробуем физическое удаление.
+          if (e.code == '42703' ||
+              e.code == 'PGRST204' ||
+              e.code == '42501') {
             affected = await hardDelete();
           } else {
             rethrow;
