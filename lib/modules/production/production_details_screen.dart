@@ -136,6 +136,27 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
   TaskStatus? _groupStatus(List<TaskModel> stageTasks) {
     if (stageTasks.isEmpty) return null;
+
+    bool isEffectivelyCompleted(TaskModel task) {
+      if (task.status == TaskStatus.completed) return true;
+      for (final comment in task.comments) {
+        final type = comment.type.trim().toLowerCase();
+        if (type == 'user_done' || type == 'finish_note') {
+          return true;
+        }
+
+        final text = comment.text.trim().toLowerCase();
+        if (text == 'done' || text == 'finish' || text == 'finished') {
+          return true;
+        }
+
+        if (text.startsWith('{') && text.contains('"endtime"')) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     if (stageTasks.any((t) => t.status == TaskStatus.problem)) {
       return TaskStatus.problem;
     }
@@ -145,7 +166,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     if (stageTasks.any((t) => t.status == TaskStatus.paused)) {
       return TaskStatus.paused;
     }
-    if (stageTasks.any((t) => t.status == TaskStatus.completed)) {
+    if (stageTasks.any(isEffectivelyCompleted)) {
       return TaskStatus.completed;
     }
     return TaskStatus.waiting;

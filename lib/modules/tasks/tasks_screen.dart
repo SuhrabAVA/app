@@ -2311,6 +2311,18 @@ class _TasksScreenState extends State<TasksScreen>
           orderedGroupKeys.add(key);
         }
       }
+
+      final repToKey = <String, String>{};
+      for (final entry in groupRepresentative.entries) {
+        repToKey[entry.value] = entry.key;
+      }
+      final repIds = orderedGroupKeys
+          .map((key) => groupRepresentative[key] ?? key.split('|').first)
+          .toList();
+      _ensureFlexoOrdering(repIds, personnel);
+      orderedGroupKeys
+        ..clear()
+        ..addAll(repIds.map((id) => repToKey[id] ?? id));
     } else {
       for (final id in taskStageIds) {
         final key = registerStage(id);
