@@ -66,6 +66,19 @@ class _PaintEntry {
   set qtyKg(double? value) => qtyGrams = value == null ? null : value * 1000;
 }
 
+const String _canonicalFlexoWorkplaceId =
+    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+const String _canonicalBobbinWorkplaceId =
+    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
+const Set<String> _legacyFlexoAliases = {
+  'w_flexoprint',
+  'w_flexo',
+};
+const Set<String> _legacyBobbinAliases = {
+  'w_bobiner',
+  'w_bobbin',
+};
+
 class _StageRuleOutcome {
   final List<Map<String, dynamic>> stages;
   final bool shouldCompleteBobbin;
@@ -840,6 +853,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         bob = await _sb
             .from('workplaces')
             .select('id,title,name')
+            .eq('id', _canonicalBobbinWorkplaceId)
+            .maybeSingle();
+      }
+      if (bob == null) {
+        bob = await _sb
+            .from('workplaces')
+            .select('id,title,name')
             .eq('id', 'w_bobiner')
             .maybeSingle();
       }
@@ -908,7 +928,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     bool paintsFilled = _hasAnyPaints();
 
     if (paintsFilled) {
-      flexoId ??= 'w_flexoprint';
+      flexoId ??= _canonicalFlexoWorkplaceId;
       flexoTitle = (flexoTitle?.trim().isNotEmpty ?? false)
           ? flexoTitle
           : 'Флексопечать';
@@ -998,7 +1018,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final resolvedTitle = (bobbinTitle?.trim().isNotEmpty ?? false)
           ? bobbinTitle
           : 'Бабинорезка';
-      final fallbackId = resolvedId ?? 'w_bobiner';
+      final fallbackId = resolvedId ?? _canonicalBobbinWorkplaceId;
       stageMaps.insert(0, {
         'stageId': fallbackId,
         'workplaceId': fallbackId,
@@ -1020,7 +1040,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
-    final Set<String> uniqueStageIds = <String>{};
+    final Set<String> uniqueStageKeys = <String>{};
+
+    bool _isFlexoStage(Map<String, dynamic> map, String stageId) {
+      final stageKey = stageId.toLowerCase();
+      if (stageId == _canonicalFlexoWorkplaceId ||
+          _legacyFlexoAliases.contains(stageKey)) {
+        return true;
+      }
+      final name =
+          ((map['stageName'] ?? map['title'] ?? '') as String).toLowerCase();
+      return name.contains('флекс') || name.contains('flexo');
+    }
+
+    bool _isBobbinStage(Map<String, dynamic> map, String stageId) {
+      final stageKey = stageId.toLowerCase();
+      if (stageId == _canonicalBobbinWorkplaceId ||
+          _legacyBobbinAliases.contains(stageKey)) {
+        return true;
+      }
+      final name =
+          ((map['stageName'] ?? map['title'] ?? '') as String).toLowerCase();
+      return name.contains('бобин') || name.contains('бабин') || name.contains('bobbin');
+    }
 
     for (final stage in stageMaps) {
       final map = Map<String, dynamic>.from(stage);
@@ -1032,11 +1074,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               map['id'])
           ?.toString();
       if (stageId != null && stageId.isNotEmpty) {
-        if (uniqueStageIds.contains(stageId)) {
+        final normalizedStageId = stageId == 'w_flexoprint'
+            ? _canonicalFlexoWorkplaceId
+            : (stageId == 'w_bobiner' || stageId == 'w_bobbin')
+                ? _canonicalBobbinWorkplaceId
+                : stageId;
+        final dedupeKey = _isFlexoStage(map, normalizedStageId)
+            ? 'position:print'
+            : _isBobbinStage(map, normalizedStageId)
+                ? 'position:bob_cutter'
+                : 'stage:$normalizedStageId';
+        if (uniqueStageKeys.contains(dedupeKey)) {
           continue;
         }
-        uniqueStageIds.add(stageId);
-        map['stageId'] = stageId;
+        uniqueStageKeys.add(dedupeKey);
+        map['stageId'] = normalizedStageId;
+        map['workplaceId'] = normalizedStageId;
       }
       map['stageName'] = _resolveStageName(map);
       normalized.add(map);
@@ -2337,8 +2390,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return text.contains('флекс') || text.contains('flexo');
         }
 
-        final legacyStageLookup = <String, String>{};
-        for (final map in workplaceRows) {
+      final legacyStageLookup = <String, String>{};
+      legacyStageLookup['w_flexoprint'] = _canonicalFlexoWorkplaceId;
+      legacyStageLookup['w_flexo'] = _canonicalFlexoWorkplaceId;
+      legacyStageLookup['w_bobiner'] = _canonicalBobbinWorkplaceId;
+      legacyStageLookup['w_bobbin'] = _canonicalBobbinWorkplaceId;
+      for (final map in workplaceRows) {
           final id = _normalizeText(map['id']);
           if (id.isEmpty) continue;
           final probes = [
