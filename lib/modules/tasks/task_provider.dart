@@ -99,6 +99,41 @@ class TaskProvider with ChangeNotifier {
     return _workplaceAliasToId[normalized.toLowerCase()] ?? normalized;
   }
 
+  bool _isFlexoAlias(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('флекс') || lower.contains('flexo');
+  }
+
+  bool _isBobbinAlias(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('бобин') ||
+        lower.contains('бабин') ||
+        lower.contains('bobbin') ||
+        lower.contains('bobiner');
+  }
+
+  String? _detectWorkplaceIdByAlias(
+      List<Map<String, dynamic>> rows, bool Function(String text) matcher) {
+    for (final row in rows) {
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      final probes = [
+        row['id'],
+        row['name'],
+        row['title'],
+        row['short_name'],
+        row['workplace_name'],
+        row['stage_name'],
+      ];
+      for (final probe in probes) {
+        final alias = probe?.toString().trim();
+        if (alias == null || alias.isEmpty) continue;
+        if (matcher(alias)) return id;
+      }
+    }
+    return null;
+  }
+
   Future<void> _loadWorkplaceAliases() async {
     Future<List<Map<String, dynamic>>> _readRows(String select) async {
       final rows = await _supabase.from('workplaces').select(select);
@@ -122,14 +157,31 @@ class TaskProvider with ChangeNotifier {
       }
     }
 
-    final aliases = <String, String>{
-      'w_flexoprint': _canonicalFlexoWorkplaceId,
-      'w_flexo': _canonicalFlexoWorkplaceId,
-      _canonicalFlexoWorkplaceId.toLowerCase(): _canonicalFlexoWorkplaceId,
-      'w_bobiner': _canonicalBobbinWorkplaceId,
-      'w_bobbin': _canonicalBobbinWorkplaceId,
-      _canonicalBobbinWorkplaceId.toLowerCase(): _canonicalBobbinWorkplaceId,
-    };
+    final knownIds = rows
+        .map((row) => row['id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    final detectedFlexoId = _detectWorkplaceIdByAlias(rows, _isFlexoAlias) ??
+        (knownIds.contains(_canonicalFlexoWorkplaceId)
+            ? _canonicalFlexoWorkplaceId
+            : null);
+    final detectedBobbinId = _detectWorkplaceIdByAlias(rows, _isBobbinAlias) ??
+        (knownIds.contains(_canonicalBobbinWorkplaceId)
+            ? _canonicalBobbinWorkplaceId
+            : null);
+
+    final aliases = <String, String>{};
+    if (detectedFlexoId != null) {
+      aliases['w_flexoprint'] = detectedFlexoId;
+      aliases['w_flexo'] = detectedFlexoId;
+      aliases[detectedFlexoId.toLowerCase()] = detectedFlexoId;
+    }
+    if (detectedBobbinId != null) {
+      aliases['w_bobiner'] = detectedBobbinId;
+      aliases['w_bobbin'] = detectedBobbinId;
+      aliases[detectedBobbinId.toLowerCase()] = detectedBobbinId;
+    }
     for (final row in rows) {
       final id = row['id']?.toString().trim() ?? '';
       if (id.isEmpty) continue;
@@ -146,11 +198,15 @@ class TaskProvider with ChangeNotifier {
         if (alias.isEmpty) continue;
         final normalizedAlias = alias.toLowerCase();
         if (normalizedAlias == 'w_flexoprint' || normalizedAlias == 'w_flexo') {
-          aliases[normalizedAlias] = _canonicalFlexoWorkplaceId;
+          if (detectedFlexoId != null) {
+            aliases[normalizedAlias] = detectedFlexoId;
+          }
           continue;
         }
         if (normalizedAlias == 'w_bobiner' || normalizedAlias == 'w_bobbin') {
-          aliases[normalizedAlias] = _canonicalBobbinWorkplaceId;
+          if (detectedBobbinId != null) {
+            aliases[normalizedAlias] = detectedBobbinId;
+          }
           continue;
         }
         aliases.putIfAbsent(normalizedAlias, () => id);
