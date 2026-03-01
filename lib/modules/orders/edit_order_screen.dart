@@ -2455,13 +2455,34 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             }
           }
 
-          final altIds = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
-          if (altIds is List) {
-            for (final raw in altIds) {
-              final resolved = _resolveStageValue(raw);
-              if (resolved != null && resolved.isNotEmpty) {
-                return resolved;
+          Iterable<dynamic> _collectAlternativeIds() sync* {
+            final candidates = <dynamic>[
+              sm['alternativeStageIds'],
+              sm['alternative_stage_ids'],
+              sm['allStageIds'],
+              sm['all_stage_ids'],
+              sm['stageIds'],
+              sm['stage_ids'],
+            ];
+            for (final candidate in candidates) {
+              if (candidate is List) {
+                for (final value in candidate) {
+                  yield value;
+                }
+                continue;
               }
+              if (candidate is String) {
+                for (final token in candidate.split(',')) {
+                  yield token;
+                }
+              }
+            }
+          }
+
+          for (final raw in _collectAlternativeIds()) {
+            final resolved = _resolveStageValue(raw);
+            if (resolved != null && resolved.isNotEmpty) {
+              return resolved;
             }
           }
 
