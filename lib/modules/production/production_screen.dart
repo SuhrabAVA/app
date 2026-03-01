@@ -638,6 +638,8 @@ class _ProductionTab extends StatelessWidget {
       return canonical.join('|');
     }
 
+    final seenLabelKeys = <String>{};
+
     void addGroup(List<String> sourceIds, {String? explicitLabel}) {
       final ids = sourceIds
           .map(normalizeStageId)
@@ -660,7 +662,21 @@ class _ProductionTab extends StatelessWidget {
         if (resolved.isNotEmpty) labels.add(resolved);
       }
       final label = labels.join(' / ');
-      groups[key] = _StageGroupInfo(key: key, stageIds: ids, label: label.isEmpty ? key : label);
+      final normalizedLabelKey =
+          (label.isEmpty ? key : label).trim().toLowerCase();
+      if (normalizedLabelKey.isNotEmpty &&
+          seenLabelKeys.contains(normalizedLabelKey)) {
+        return;
+      }
+
+      groups[key] = _StageGroupInfo(
+        key: key,
+        stageIds: ids,
+        label: label.isEmpty ? key : label,
+      );
+      if (normalizedLabelKey.isNotEmpty) {
+        seenLabelKeys.add(normalizedLabelKey);
+      }
     }
 
     final templateId = order.stageTemplateId;

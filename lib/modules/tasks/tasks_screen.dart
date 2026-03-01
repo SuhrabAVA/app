@@ -2359,6 +2359,32 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
 
+    final deduplicatedGroupKeys = <String>[];
+    final seenLabels = <String>{};
+    for (final key in orderedGroupKeys) {
+      final repId = groupRepresentative[key] ?? key.split('|').first;
+      final label = _stageLabelForOrder(
+        personnel,
+        templates,
+        ordersProvider,
+        taskProvider,
+        order.id,
+        repId,
+      ).trim();
+      final labelKey = label.toLowerCase();
+
+      if (labelKey.isNotEmpty && seenLabels.contains(labelKey)) {
+        continue;
+      }
+      deduplicatedGroupKeys.add(key);
+      if (labelKey.isNotEmpty) {
+        seenLabels.add(labelKey);
+      }
+    }
+    orderedGroupKeys
+      ..clear()
+      ..addAll(deduplicatedGroupKeys);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
