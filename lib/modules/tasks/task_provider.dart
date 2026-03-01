@@ -638,7 +638,7 @@ class TaskProvider with ChangeNotifier {
       if (plan != null && plan is Map && plan['id'] != null) {
         final rows = await _supabase
             .from('production.plan_stages')
-            .select('stage_id, order, position, idx, step_no')
+            .select('stage_id, order, position, idx, step, step_no')
             .eq('plan_id', plan['id'].toString());
         final seq = await fromRows(rows);
         if (seq.ids.isNotEmpty) return seq;
@@ -655,7 +655,7 @@ class TaskProvider with ChangeNotifier {
       if (plan != null && plan is Map && plan['id'] != null) {
         final rows = await _supabase
             .from('prod_plan_stages')
-            .select('stage_id, order, position, idx, step_no, seq')
+            .select('stage_id, order, position, idx, step, step_no, seq')
             .eq('plan_id', plan['id'].toString());
         final seq = await fromRows(rows);
         if (seq.ids.isNotEmpty) return seq;

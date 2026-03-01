@@ -77,6 +77,20 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return ids.toList();
   }
 
+  int _readStageOrder(Map<String, dynamic> row) {
+    const keys = ['step', 'step_no', 'seq', 'order', 'position', 'idx'];
+    for (final key in keys) {
+      final value = row[key];
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) {
+        final parsed = int.tryParse(value.trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    return 0;
+  }
+
   List<String> _plannedStageNames(pcompat.PlannedStage planned) {
     final names = <String>{};
     final base = planned.stageName.trim();
@@ -211,15 +225,21 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
           final String planId = plan['id'] as String;
           final rows = await sb
               .from('prod_plan_stages')
-              .select('id, name, seq')
-              .eq('plan_id', planId)
-              .order('seq', ascending: true);
+              .select('stage_id, stage_name, workplace_name, name, step, step_no, seq')
+              .eq('plan_id', planId);
 
           if (rows is List && rows.isNotEmpty) {
-            for (final r in rows) {
-              final m = (r as Map<String, dynamic>);
-              final id = (m['id'] ?? '').toString();
-              final name = (m['name'] ?? 'Этап').toString();
+            final normalizedRows = rows
+                .whereType<Map>()
+                .map((r) => Map<String, dynamic>.from(r))
+                .toList()
+              ..sort((a, b) => _readStageOrder(a).compareTo(_readStageOrder(b)));
+            for (final m in normalizedRows) {
+              final id =
+                  (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString();
+              final name =
+                  (m['stage_name'] ?? m['workplace_name'] ?? m['name'] ?? 'Этап')
+                      .toString();
               if (id.isNotEmpty) {
                 stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
               }
