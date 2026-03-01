@@ -559,27 +559,43 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;
 
-  // Сгруппировать по этапу; фиксируем и незавершённые, и уже завершённые
-  // альтернативы, чтобы не блокировать последующие этапы, когда одна из
-  // альтернатив завершена.
-  final stages = <String, Map<String, bool>>{}; // stageId -> {pending, completed}
+  // Сгруппировать по этапу и зафиксировать:
+  // - started: этап уже был начат кем-то (любой статус кроме waiting);
+  // - pending: этап ещё не завершён полностью;
+  // - completed: этап завершён.
+  //
+  // Бизнес-правило: если этап №1 уже начали, сотрудникам можно открывать
+  // этап №2 (и так далее), не дожидаясь полного завершения предыдущего.
+  final stages = <String, Map<String, bool>>{};
   for (final t in all) {
     final completed = _isEffectivelyCompleted(t);
     final pending = !completed;
+    final started = completed || t.status != TaskStatus.waiting;
     final key = _groupKey(t.stageId);
-    final current = stages[key] ?? {'pending': false, 'completed': false};
+    final current = stages[key] ?? {
+      'started': false,
+      'pending': false,
+      'completed': false,
+    };
     stages[key] = {
+      'started': current['started'] == true || started,
       'pending': current['pending'] == true || pending,
       'completed': current['completed'] == true || completed,
     };
   }
 
-  // Отфильтровать только pending этапы
-  final pendingStageIds = stages.entries
-      .where((e) => e.value['pending'] == true && e.value['completed'] != true)
+  final currentState = stages[_groupKey(task.stageId)];
+  // Уже начатый (или завершённый) этап можно продолжать всегда.
+  if (currentState?['started'] == true) {
+    return true;
+  }
+
+  // Из не начатых этапов выбрать первый по очереди.
+  final notStartedStageIds = stages.entries
+      .where((e) => e.value['started'] != true && e.value['pending'] == true)
       .map((e) => e.key)
       .toList();
-  if (pendingStageIds.isEmpty) return true;
+  if (notStartedStageIds.isEmpty) return true;
 
   final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
   if (orderedStages.isNotEmpty) {
@@ -592,7 +608,7 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     for (var i = 0; i < orderedKeys.length; i++) {
       indexMap.putIfAbsent(orderedKeys[i], () => i);
     }
-    pendingStageIds.sort((a, b) {
+    notStartedStageIds.sort((a, b) {
       final ia = indexMap[a];
       final ib = indexMap[b];
       if (ia != null && ib != null) return ia.compareTo(ib);
@@ -615,11 +631,11 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
       return name(a).compareTo(name(b));
     }
 
-    pendingStageIds.sort(byName);
+    notStartedStageIds.sort(byName);
   }
 
-  // Первый незавершённый этап
-  final firstPendingStageId = pendingStageIds.first;
+  // Первый ещё не начатый этап.
+  final firstPendingStageId = notStartedStageIds.first;
 
   // Разрешаем старт, если наш task относится к самому первому незавершённому этапу
   return _groupKey(task.stageId) == firstPendingStageId;
