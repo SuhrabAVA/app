@@ -280,7 +280,7 @@ class TaskProvider with ChangeNotifier {
     return 0;
   }
 
-  String _readStageId(Map<String, dynamic> row) {
+  List<String> _readStageIds(Map<String, dynamic> row) {
     dynamic pick(List<String> keys) {
       for (final k in keys) {
         if (row.containsKey(k) && row[k] != null) return row[k];
@@ -288,10 +288,37 @@ class TaskProvider with ChangeNotifier {
       return null;
     }
 
-    final raw =
-        pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']);
-    if (raw == null) return '';
-    return raw.toString();
+    final result = <String>[];
+    void addCandidate(dynamic raw) {
+      if (raw == null) return;
+      final id = _resolveWorkplaceId(raw.toString().trim());
+      if (id.isEmpty || result.contains(id)) return;
+      result.add(id);
+    }
+
+    addCandidate(
+      pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']),
+    );
+
+    dynamic alt = pick(const [
+      'alternativeStageIds',
+      'alternative_stage_ids',
+      'allStageIds',
+      'all_stage_ids',
+      'stageIds',
+      'stage_ids',
+    ]);
+    if (alt is List) {
+      for (final value in alt) {
+        addCandidate(value);
+      }
+    } else if (alt is String) {
+      for (final token in alt.split(',')) {
+        addCandidate(token);
+      }
+    }
+
+    return result;
   }
 
   String _readStageName(Map<String, dynamic> row) {
@@ -478,7 +505,11 @@ class TaskProvider with ChangeNotifier {
           final bi = hasOrderValue(b.value) ? _readOrderIndex(b.value) : b.key;
           if (ai != bi) return ai.compareTo(bi);
           if (a.key != b.key) return a.key.compareTo(b.key);
-          return _readStageId(a.value).compareTo(_readStageId(b.value));
+          final aStage = _readStageIds(a.value);
+          final bStage = _readStageIds(b.value);
+          final aKey = aStage.isEmpty ? '' : aStage.first;
+          final bKey = bStage.isEmpty ? '' : bStage.first;
+          return aKey.compareTo(bKey);
         });
         list
           ..clear()
@@ -487,8 +518,14 @@ class TaskProvider with ChangeNotifier {
       final result = <String>[];
       final filteredRows = <Map<String, dynamic>>[];
       for (final m in list) {
-        final id = _resolveWorkplaceId(_readStageId(m));
-        if (id.isNotEmpty && !result.contains(id)) {
+        final stageIds = _readStageIds(m);
+        if (stageIds.isEmpty) {
+          continue;
+        }
+        for (final id in stageIds) {
+          if (id.isEmpty || result.contains(id)) {
+            continue;
+          }
           result.add(id);
           final normalizedRow = Map<String, dynamic>.from(m);
           normalizedRow['stage_id'] = id;
@@ -508,9 +545,13 @@ class TaskProvider with ChangeNotifier {
       }
       final names = <String, Map<String, dynamic>>{};
       for (final row in filteredRows) {
-        final id = _resolveWorkplaceId(_readStageId(row));
-        if (id.isEmpty) continue;
-        names[id] = Map<String, dynamic>.from(row);
+        final stageIds = _readStageIds(row);
+        for (final id in stageIds) {
+          if (id.isEmpty) continue;
+          names[id] = Map<String, dynamic>.from(row)
+            ..['stage_id'] = id
+            ..['stageId'] = id;
+        }
       }
 
       return _StageSequenceData(ids: normalizedIds, meta: names);
