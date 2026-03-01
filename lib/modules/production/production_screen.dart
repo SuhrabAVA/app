@@ -701,8 +701,8 @@ class _ProductionTab extends StatelessWidget {
       }
     }
 
-    final orderedFallbackIds = <String>[];
     final plannedSequence = taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
+    final orderedFallbackIds = <String>[];
     for (final id in plannedSequence.map(normalizeStageId)) {
       if (id.isNotEmpty && !orderedFallbackIds.contains(id)) {
         orderedFallbackIds.add(id);
@@ -721,7 +721,45 @@ class _ProductionTab extends StatelessWidget {
       }
     }
 
-    return groups;
+    if (groups.length <= 1 || plannedSequence.isEmpty) {
+      return groups;
+    }
+
+    final stageIndex = <String, int>{};
+    for (var i = 0; i < plannedSequence.length; i++) {
+      final id = normalizeStageId(plannedSequence[i]);
+      if (id.isEmpty || stageIndex.containsKey(id)) continue;
+      stageIndex[id] = i;
+    }
+    if (stageIndex.isEmpty) {
+      return groups;
+    }
+
+    final indexedGroups = groups.entries.toList().asMap().entries.toList();
+    int groupPriority(_StageGroupInfo group) {
+      var best = 1 << 30;
+      for (final stageId in group.stageIds) {
+        final idx = stageIndex[normalizeStageId(stageId)];
+        if (idx != null && idx < best) {
+          best = idx;
+        }
+      }
+      return best;
+    }
+
+    indexedGroups.sort((a, b) {
+      final aPriority = groupPriority(a.value.value);
+      final bPriority = groupPriority(b.value.value);
+      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
+      return a.key.compareTo(b.key);
+    });
+
+    final orderedGroups = <String, _StageGroupInfo>{};
+    for (final entry in indexedGroups) {
+      final group = entry.value;
+      orderedGroups[group.key] = group.value;
+    }
+    return orderedGroups;
   }
 
   Map<String, String> _stageGroupLookup(Map<String, _StageGroupInfo> groups) {
