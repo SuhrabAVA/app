@@ -630,17 +630,54 @@ class _ProductionTab extends StatelessWidget {
     List<TaskModel> orderTasks,
   ) {
     final groups = <String, _StageGroupInfo>{};
+    final sequence = taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
+
+    int _stageRank(String stageId) {
+      final idx = sequence.indexOf(stageId);
+      return idx == -1 ? 1 << 20 : idx;
+    }
+
+    int _groupRank(_StageGroupInfo group) {
+      if (group.stageIds.isEmpty) return 1 << 20;
+      var rank = 1 << 20;
+      for (final id in group.stageIds) {
+        final current = _stageRank(id);
+        if (current < rank) {
+          rank = current;
+        }
+      }
+      return rank;
+    }
+
+    void _reorderGroups() {
+      final sorted = groups.values.toList()
+        ..sort((a, b) {
+          final ar = _groupRank(a);
+          final br = _groupRank(b);
+          if (ar != br) return ar.compareTo(br);
+          return a.label.toLowerCase().compareTo(b.label.toLowerCase());
+        });
+      groups
+        ..clear()
+        ..addEntries(sorted.map((g) => MapEntry(g.key, g)));
+    }
 
     void addGroup(List<String> sourceIds, {String? explicitLabel}) {
       final ids = sourceIds
           .map((id) => id.trim())
           .where((id) => id.isNotEmpty)
           .toSet()
-          .toList()
-        ..sort();
+          .toList();
+      ids.sort((a, b) {
+        final ra = _stageRank(a);
+        final rb = _stageRank(b);
+        if (ra != rb) return ra.compareTo(rb);
+        return a.compareTo(b);
+      });
       if (ids.isEmpty) return;
 
       final key = ids.join('|');
+      if (groups.containsKey(key)) return;
       final labels = <String>{};
       final explicit = explicitLabel?.trim();
       if (explicit != null && explicit.isNotEmpty) {
@@ -676,16 +713,26 @@ class _ProductionTab extends StatelessWidget {
       }
     }
 
-    final uniqueStageIds = orderTasks
-        .map((t) => t.stageId.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet();
-    for (final id in uniqueStageIds) {
+    final extraStageIds = <String>{
+      ...sequence.where((id) => id.trim().isNotEmpty),
+      ...orderTasks
+          .map((t) => t.stageId.trim())
+          .where((id) => id.isNotEmpty),
+    }.toList()
+      ..sort((a, b) {
+        final ra = _stageRank(a);
+        final rb = _stageRank(b);
+        if (ra != rb) return ra.compareTo(rb);
+        return a.compareTo(b);
+      });
+    for (final id in extraStageIds) {
       final existsInGroup = groups.values.any((group) => group.stageIds.contains(id));
       if (!existsInGroup) {
         addGroup([id]);
       }
     }
+
+    _reorderGroups();
 
     return groups;
   }
