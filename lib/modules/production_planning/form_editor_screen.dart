@@ -1566,11 +1566,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       for (final sm in stageMaps) {
         final stageIds = _extractStageIds(sm);
         for (final stageId in stageIds) {
-          if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
+          if (stageId.isEmpty) continue;
           try {
             final resolvedStageId = workplaceLookup[stageId.toLowerCase()] ??
                 legacyStageLookup[stageId.toLowerCase()] ??
                 stageId;
+            if (createdStageIds.contains(resolvedStageId)) {
+              continue;
+            }
             if (!_looksLikeUuid(resolvedStageId) &&
                 !workplaceLookup.containsValue(resolvedStageId) &&
                 !legacyStageLookup.containsValue(resolvedStageId)) {
