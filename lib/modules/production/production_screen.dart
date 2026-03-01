@@ -277,8 +277,8 @@ class _ProductionScreenState extends State<ProductionScreen>
     }
 
     final chips = <Widget>[];
-    final groups = stageGroups.values.toList()
-      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    // Keep template/plan order (insertion order) instead of alphabetical sort.
+    final groups = stageGroups.values.toList();
 
     for (final group in groups) {
       final tasksForStage = tasksByGroup[group.key] ?? const <TaskModel>[];
