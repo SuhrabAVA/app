@@ -34,6 +34,7 @@ class TemplatesScreen extends StatelessWidget {
               itemBuilder: (context, index) {
                 final tpl = templates[index];
                 return ListTile(
+                  key: ValueKey(tpl.id),
                   title: Text(tpl.name),
                   onTap: () => _openEditor(context, tpl),
                   trailing: IconButton(
@@ -58,6 +59,7 @@ class TemplatesScreen extends StatelessWidget {
                       );
                       if (confirm == true) {
                         try {
+                          await context.read<TemplateProvider>().deleteTemplate(tpl.id, hard: true);
                           await context.read<TemplateProvider>().deleteTemplate(tpl.id);
                         } on TemplateDeleteException catch (e) {
                           if (!context.mounted) return;
