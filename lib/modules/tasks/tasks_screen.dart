@@ -647,6 +647,13 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   return _groupKey(task.stageId) == firstPendingStageId;
 }
 
+bool _hasWorkplaceQueueActivity(TaskModel task) {
+  if (task.status != TaskStatus.waiting) return true;
+  return task.comments.any(
+    (c) => c.type == 'start' || c.type == 'resume' || c.type == 'user_done',
+  );
+}
+
 class _StageComment {
   final TaskComment comment;
   final String stageId;
@@ -1206,40 +1213,7 @@ class _TasksScreenState extends State<TasksScreen>
       return null;
     }
 
-    final stageGroupByOrder = <String, Map<String, String>>{};
-    for (final order in ordersProvider.orders) {
-      final map = _stageGroupMapForOrder(order, templateProvider);
-      if (map.isNotEmpty) {
-        stageGroupByOrder[order.id] = map;
-      }
-    }
-
-    String taskGroupKey(TaskModel task) {
-      final lookup = stageGroupByOrder[task.orderId];
-      final groupKey = lookup?[task.stageId] ?? task.stageId;
-      return '${task.orderId}::$groupKey';
-    }
-
-    final tasksByGroup = <String, List<TaskModel>>{};
-    for (final task in taskProvider.tasks) {
-      final key = taskGroupKey(task);
-      tasksByGroup.putIfAbsent(key, () => []).add(task);
-    }
-
-    final tasksForWorkplace = taskProvider.tasks
-        .where((t) => t.stageId == _selectedWorkplaceId)
-        .where((t) => !_isEffectivelyCompleted(t))
-        .where((task) {
-          final groupKey = taskGroupKey(task);
-          final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
-          final groupHasActive =
-              groupTasks.any((t) => t.status != TaskStatus.waiting);
-          if (groupHasActive && task.status == TaskStatus.waiting) {
-            return false;
-          }
-          return true;
-        })
-        .toList();
+    final tasksForWorkplace = _tasksForWorkplace(taskProvider);
 
     if (_selectedTask == null && savedTid != null) {
       TaskModel? restoredTask;
@@ -1444,7 +1418,13 @@ class _TasksScreenState extends State<TasksScreen>
                 for (int i = 0; i < sectionedTasks.length; i++)
                   Builder(builder: (context) {
                     final task = sectionedTasks[i];
+                    final unlockedByQueue = _isUnlockedByWorkplaceQueue(
+                      task,
+                      taskProvider,
+                      queue,
+                    );
                     final readyForStage = task.status == TaskStatus.waiting &&
+                        unlockedByQueue &&
                         _isFirstPendingStage(
                           taskProvider,
                           personnel,
@@ -2511,6 +2491,72 @@ class _TasksScreenState extends State<TasksScreen>
     });
   }
 
+  List<TaskModel> _tasksForWorkplace(TaskProvider taskProvider) {
+    if (_selectedWorkplaceId == null) return const <TaskModel>[];
+
+    final ordersProvider = context.read<OrdersProvider>();
+    final templateProvider = context.read<StageTemplatesProvider>();
+    final stageGroupByOrder = <String, Map<String, String>>{};
+    for (final order in ordersProvider.orders) {
+      final map = _stageGroupMapForOrder(order, templateProvider);
+      if (map.isNotEmpty) {
+        stageGroupByOrder[order.id] = map;
+      }
+    }
+
+    String taskGroupKey(TaskModel task) {
+      final lookup = stageGroupByOrder[task.orderId];
+      final groupKey = lookup?[task.stageId] ?? task.stageId;
+      return '${task.orderId}::$groupKey';
+    }
+
+    final tasksByGroup = <String, List<TaskModel>>{};
+    for (final task in taskProvider.tasks) {
+      final key = taskGroupKey(task);
+      tasksByGroup.putIfAbsent(key, () => []).add(task);
+    }
+
+    return taskProvider.tasks
+        .where((t) => t.stageId == _selectedWorkplaceId)
+        .where((t) => !_isEffectivelyCompleted(t))
+        .where((task) {
+          final groupKey = taskGroupKey(task);
+          final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+          final groupHasActive =
+              groupTasks.any((t) => t.status != TaskStatus.waiting);
+          if (groupHasActive && task.status == TaskStatus.waiting) {
+            return false;
+          }
+          return true;
+        })
+        .toList();
+  }
+
+  bool _isUnlockedByWorkplaceQueue(
+    TaskModel task,
+    TaskProvider taskProvider,
+    ProductionQueueProvider queue,
+  ) {
+    if (task.status != TaskStatus.waiting) return true;
+    if (_selectedWorkplaceId?.trim().isEmpty ?? true) return true;
+
+    final queueGroupId = _selectedWorkplaceId!.trim();
+    final queued = _tasksForWorkplace(taskProvider)
+      ..sort((a, b) => queue
+          .priorityOf(a.orderId, groupId: queueGroupId)
+          .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
+
+    final index = queued.indexWhere((t) => t.id == task.id);
+    if (index <= 0) return true;
+
+    for (var i = 0; i < index; i++) {
+      if (!_hasWorkplaceQueueActivity(queued[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
       TaskProvider provider, double scale, bool isTablet) {
     // === Derived state & permissions ===
@@ -2558,6 +2604,11 @@ class _TasksScreenState extends State<TasksScreen>
                 task.status == TaskStatus.paused ||
                 task.status == TaskStatus.problem ||
                 (task.status == TaskStatus.inProgress && _slotAvailable()))) &&
+        _isUnlockedByWorkplaceQueue(
+          task,
+          provider,
+          context.read<ProductionQueueProvider>(),
+        ) &&
         _isFirstPendingStage(context.read<TaskProvider>(),
             context.read<PersonnelProvider>(), task,
             groupResolver: _stageGroupKey) &&
@@ -2764,6 +2815,20 @@ class _TasksScreenState extends State<TasksScreen>
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
                                   'Сначала выполните предыдущий этап заказа')));
+                        }
+                        return;
+                      }
+
+
+                      if (!_isUnlockedByWorkplaceQueue(
+                        task,
+                        taskProvider,
+                        context.read<ProductionQueueProvider>(),
+                      )) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Сначала начните предыдущие задания в очереди')));
                         }
                         return;
                       }
