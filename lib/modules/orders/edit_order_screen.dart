@@ -2436,57 +2436,81 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .hasMatch(v);
         }
 
-        String? _resolvePrimaryStageId(Map<String, dynamic> sm) {
-          final direct = _resolveStageValue(_resolveStageId(sm));
-          if (direct != null && direct.isNotEmpty) return direct;
+        final knownWorkplaceIds = workplaceRows
+            .map((row) => _normalizeText(row['id']))
+            .where((id) => id.isNotEmpty)
+            .toSet();
 
-          final probes = <dynamic>[
+        bool _isResolvableWorkplaceId(String stageId) {
+          if (stageId.isEmpty) return false;
+          if (_looksLikeUuid(stageId)) {
+            // При неполном lookup (например, из-за RLS) пропускаем UUID дальше,
+            // но при наличии списка рабочих мест всё равно предпочитаем реальные id.
+            return knownWorkplaceIds.isEmpty || knownWorkplaceIds.contains(stageId);
+          }
+          return workplaceLookup.containsValue(stageId) ||
+              legacyStageLookup.containsValue(stageId);
+        }
+
+        Iterable<dynamic> _collectAlternativeIds(Map<String, dynamic> sm) sync* {
+          final candidates = <dynamic>[
+            sm['alternativeStageIds'],
+            sm['alternative_stage_ids'],
+            sm['allStageIds'],
+            sm['all_stage_ids'],
+            sm['stageIds'],
+            sm['stage_ids'],
+          ];
+          for (final candidate in candidates) {
+            if (candidate is List) {
+              for (final value in candidate) {
+                yield value;
+              }
+              continue;
+            }
+            if (candidate is String) {
+              for (final token in candidate.split(',')) {
+                yield token;
+              }
+            }
+          }
+        }
+
+        String? _resolvePrimaryStageId(Map<String, dynamic> sm) {
+          final candidates = <String>[];
+
+          void addCandidate(dynamic raw) {
+            final resolved = _resolveStageValue(raw);
+            if (resolved == null || resolved.isEmpty) return;
+            if (!candidates.contains(resolved)) {
+              candidates.add(resolved);
+            }
+          }
+
+          addCandidate(_resolveStageId(sm));
+
+          for (final probe in <dynamic>[
             sm['stageName'],
             sm['stage_name'],
             sm['workplaceName'],
             sm['workplace_name'],
             sm['title'],
             sm['name'],
-          ];
-          for (final probe in probes) {
-            final resolved = _resolveStageValue(probe);
-            if (resolved != null && resolved.isNotEmpty) {
-              return resolved;
+          ]) {
+            addCandidate(probe);
+          }
+
+          for (final raw in _collectAlternativeIds(sm)) {
+            addCandidate(raw);
+          }
+
+          for (final candidate in candidates) {
+            if (_isResolvableWorkplaceId(candidate)) {
+              return candidate;
             }
           }
 
-          Iterable<dynamic> _collectAlternativeIds() sync* {
-            final candidates = <dynamic>[
-              sm['alternativeStageIds'],
-              sm['alternative_stage_ids'],
-              sm['allStageIds'],
-              sm['all_stage_ids'],
-              sm['stageIds'],
-              sm['stage_ids'],
-            ];
-            for (final candidate in candidates) {
-              if (candidate is List) {
-                for (final value in candidate) {
-                  yield value;
-                }
-                continue;
-              }
-              if (candidate is String) {
-                for (final token in candidate.split(',')) {
-                  yield token;
-                }
-              }
-            }
-          }
-
-          for (final raw in _collectAlternativeIds()) {
-            final resolved = _resolveStageValue(raw);
-            if (resolved != null && resolved.isNotEmpty) {
-              return resolved;
-            }
-          }
-
-          return null;
+          return candidates.isEmpty ? null : candidates.first;
         }
 
         // Build a list of resolved stage IDs.
