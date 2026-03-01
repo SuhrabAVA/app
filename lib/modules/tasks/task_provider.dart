@@ -8,6 +8,12 @@ import '../orders/order_model.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
 
+
+const String _canonicalFlexoWorkplaceId =
+    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+const String _canonicalBobbinWorkplaceId =
+    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
+
 class _StageSequenceData {
   final List<String> ids;
   final Map<String, Map<String, dynamic>> meta;
@@ -116,7 +122,14 @@ class TaskProvider with ChangeNotifier {
       }
     }
 
-    final aliases = <String, String>{};
+    final aliases = <String, String>{
+      'w_flexoprint': _canonicalFlexoWorkplaceId,
+      'w_flexo': _canonicalFlexoWorkplaceId,
+      _canonicalFlexoWorkplaceId.toLowerCase(): _canonicalFlexoWorkplaceId,
+      'w_bobiner': _canonicalBobbinWorkplaceId,
+      'w_bobbin': _canonicalBobbinWorkplaceId,
+      _canonicalBobbinWorkplaceId.toLowerCase(): _canonicalBobbinWorkplaceId,
+    };
     for (final row in rows) {
       final id = row['id']?.toString().trim() ?? '';
       if (id.isEmpty) continue;
@@ -131,7 +144,16 @@ class TaskProvider with ChangeNotifier {
       for (final probe in probes) {
         final alias = probe?.toString().trim() ?? '';
         if (alias.isEmpty) continue;
-        aliases.putIfAbsent(alias.toLowerCase(), () => id);
+        final normalizedAlias = alias.toLowerCase();
+        if (normalizedAlias == 'w_flexoprint' || normalizedAlias == 'w_flexo') {
+          aliases[normalizedAlias] = _canonicalFlexoWorkplaceId;
+          continue;
+        }
+        if (normalizedAlias == 'w_bobiner' || normalizedAlias == 'w_bobbin') {
+          aliases[normalizedAlias] = _canonicalBobbinWorkplaceId;
+          continue;
+        }
+        aliases.putIfAbsent(normalizedAlias, () => id);
       }
     }
 

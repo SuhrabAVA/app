@@ -17,12 +17,18 @@ import 'order_model.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
+
 import '../production_planning/template_provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../tasks/task_provider.dart';
+
+const String _canonicalFlexoWorkplaceId =
+    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+const String _canonicalBobbinWorkplaceId =
+    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -1196,7 +1202,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             bob = await _sb
                 .from('workplaces')
                 .select('id,title,name')
-                .eq('id', 'w_bobiner')
+                .eq('id', _canonicalBobbinWorkplaceId)
                 .maybeSingle();
           }
           if (bob != null) {
@@ -1281,7 +1287,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (__paintsFilled) {
           // Determine if Flexo already present by id or by name
           if (__flexoId == null || __flexoId!.isEmpty) {
-            __flexoId = 'w_flexoprint';
+            __flexoId = _canonicalFlexoWorkplaceId;
           }
           if (__flexoTitle == null || __flexoTitle!.trim().isEmpty) {
             __flexoTitle = 'Флексопечать';
@@ -1297,7 +1303,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final title =
                 ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
             final byId = (__flexoId != null && sid == __flexoId) ||
-                (sid != null && (sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
+                (sid != null && (sid == _canonicalFlexoWorkplaceId || sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
             final byName =
                 title.contains('флексопечать') || title.contains('flexo');
             return byId || byName;
@@ -1344,8 +1350,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   ? __bobbinTitle!.trim()
                   : 'Бабинорезка';
           stageMaps.insert(0, {
-            'stageId': 'w_bobiner',
-            'workplaceId': 'w_bobiner',
+            'stageId': _canonicalBobbinWorkplaceId,
+            'workplaceId': _canonicalBobbinWorkplaceId,
             'stageName': resolvedBobbinTitle,
             'workplaceName': resolvedBobbinTitle,
             'order': 0,
@@ -1428,6 +1434,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
 
       final legacyStageLookup = <String, String>{};
+      legacyStageLookup['w_flexoprint'] = _canonicalFlexoWorkplaceId;
+      legacyStageLookup['w_flexo'] = _canonicalFlexoWorkplaceId;
+      legacyStageLookup['w_bobiner'] = _canonicalBobbinWorkplaceId;
+      legacyStageLookup['w_bobbin'] = _canonicalBobbinWorkplaceId;
       for (final map in workplaceRows) {
         final id = _normalizeText(map['id']);
         if (id.isEmpty) continue;

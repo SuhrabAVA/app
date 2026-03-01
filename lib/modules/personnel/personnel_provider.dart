@@ -13,7 +13,12 @@ import 'employee_model.dart';
 import 'workplace_model.dart';
 import 'terminal_model.dart';
 
-const Set<String> _protectedWorkplaceIds = {'w_bobiner', 'w_flexoprint'};
+const Set<String> _protectedWorkplaceIds = {
+  'w_bobiner',
+  'w_flexoprint',
+  '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+  'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+};
 
 class PersonnelProvider extends ChangeNotifier {
   PersonnelProvider({PersonnelDB? db, DocDB? docDb, bool bootstrap = true})
