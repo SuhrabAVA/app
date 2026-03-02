@@ -3356,7 +3356,11 @@ class _TasksScreenState extends State<TasksScreen>
                     }
 
                     String timeText() {
-                      final d = (jointGroup != null)
+                      final hasShiftHistory = _taskTimeEvents(task)
+                              .any((event) => event.type == TaskTimeType.shiftChange) ||
+                          task.comments.any((c) =>
+                              c.type == 'shift_pause' || c.type == 'shift_resume');
+                      final d = (jointGroup != null || hasShiftHistory)
                           ? _elapsed(task)
                           : _userElapsed(task, userId!);
                       String two(int n) => n.toString().padLeft(2, '0');
@@ -3387,7 +3391,8 @@ class _TasksScreenState extends State<TasksScreen>
                                             ))),
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
-                                      onPressed: (!_isSetupCompletedForUser(
+                                      onPressed: (!shiftPaused &&
+                                              !_isSetupCompletedForUser(
                                                   task, widget.employeeId) &&
                                               !_isSetupInProgressForUser(
                                                   task, widget.employeeId))
