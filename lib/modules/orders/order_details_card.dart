@@ -39,6 +39,84 @@ class OrderDetailsCard extends StatelessWidget {
     return '$trimmed г';
   }
 
+  bool _isImageFile(String fileName, String objectPath) {
+    final normalized = '$fileName $objectPath'.toLowerCase();
+    return normalized.endsWith('.png') ||
+        normalized.endsWith('.jpg') ||
+        normalized.endsWith('.jpeg') ||
+        normalized.endsWith('.webp') ||
+        normalized.endsWith('.gif') ||
+        normalized.endsWith('.bmp') ||
+        normalized.endsWith('.heic') ||
+        normalized.endsWith('.heif') ||
+        normalized.contains('.png?') ||
+        normalized.contains('.jpg?') ||
+        normalized.contains('.jpeg?') ||
+        normalized.contains('.webp?') ||
+        normalized.contains('.gif?') ||
+        normalized.contains('.bmp?') ||
+        normalized.contains('.heic?') ||
+        normalized.contains('.heif?');
+  }
+
+  Future<void> _showImagePreview(
+    BuildContext context,
+    String imageUrl, {
+    String title = 'Просмотр изображения',
+  }) async {
+    if (!context.mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (_) => Dialog(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900, maxHeight: 700),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Закрыть',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: InteractiveViewer(
+                  minScale: 0.6,
+                  maxScale: 5,
+                  child: Center(
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text('Не удалось загрузить изображение'),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDimensionsValue() {
     final p = order.product;
     final dimensions = <({String label, String value})>[
@@ -301,14 +379,23 @@ class OrderDetailsCard extends StatelessWidget {
                                   formImageUrl!.trim().isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 8),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Image.network(
+                                  child: InkWell(
+                                    onTap: () => _showImagePreview(
+                                      context,
                                       formImageUrl!,
-                                      height: 90,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) =>
-                                          const Text('Изображение формы недоступно'),
+                                      title: 'Форма ${o.newFormNo?.toString() ?? ''}'
+                                          .trim(),
+                                    ),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        formImageUrl!,
+                                        height: 90,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Text('Изображение формы недоступно'),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -508,11 +595,12 @@ class OrderDetailsCard extends StatelessWidget {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     final objectPath = (f['objectPath'] ?? f['path'] ?? '').toString();
+    final isImage = _isImageFile(fileName, objectPath);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         children: [
-          const Icon(Icons.picture_as_pdf, size: 18),
+          Icon(isImage ? Icons.image_outlined : Icons.picture_as_pdf, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -527,6 +615,14 @@ class OrderDetailsCard extends StatelessWidget {
                 : () async {
                     final url = await storage.getSignedUrl(objectPath);
                     if (!context.mounted) return;
+                    if (isImage) {
+                      await _showImagePreview(
+                        context,
+                        url,
+                        title: fileName.isEmpty ? 'Изображение' : fileName,
+                      );
+                      return;
+                    }
                     showDialog(
                       context: context,
                       builder: (_) => AlertDialog(
