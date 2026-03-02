@@ -119,8 +119,6 @@ class OrderDetailsCard extends StatelessWidget {
 
   Widget _buildDimensionsValue() {
     final p = order.product;
-    const dimensionCellScale = 0.8;
-    const dimensionTextScale = 0.6;
     final dimensions = <({String label, String value})>[
       if (p.height != null) (label: 'Д', value: _fmtNum(p.height)),
       if (p.width != null) (label: 'Ш', value: _fmtNum(p.width)),
@@ -133,29 +131,29 @@ class OrderDetailsCard extends StatelessWidget {
 
     return Wrap(
       alignment: WrapAlignment.end,
-      spacing: 12 * dimensionCellScale,
-      runSpacing: 4 * dimensionCellScale,
+      spacing: 12,
+      runSpacing: 4,
       children: dimensions
           .map(
             (d) => SizedBox(
-              width: 30 * dimensionCellScale,
+              width: 30,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
                     d.label,
-                    style: TextStyle(
-                      fontSize: 11 * dimensionTextScale,
+                    style: const TextStyle(
+                      fontSize: 11,
                       height: 1.1,
                       fontWeight: FontWeight.w600,
-                      color: const Color(0xFF9CA3AF),
+                      color: Color(0xFF9CA3AF),
                     ),
                   ),
-                  SizedBox(height: 2 * dimensionCellScale),
+                  const SizedBox(height: 2),
                   Text(
                     d.value,
-                    style: TextStyle(
-                      fontSize: 16 * dimensionTextScale,
+                    style: const TextStyle(
+                      fontSize: 16,
                       height: 1,
                       fontWeight: FontWeight.w600,
                     ),
