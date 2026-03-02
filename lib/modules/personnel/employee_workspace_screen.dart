@@ -217,12 +217,18 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
     final bool isTablet1000x700 = isTablet &&
         ((media.size.width == 1000 && media.size.height == 700) ||
             (media.size.width == 700 && media.size.height == 1000));
-    final double toolbarHeight = isTablet1280x800
-        ? 20
-        : (isTablet1000x700 ? 19 : (isCompactTablet ? 24 : (isTablet ? 28 : 50)));
-    final double actionIconSize = isTablet1280x800
-        ? 11
-        : (isTablet1000x700 ? 10 : (isCompactTablet ? 14 : (isTablet ? 16 : 22)));
+    final double toolbarHeight = isTablet
+        ? ((isTablet1280x800
+                ? 20
+                : (isTablet1000x700 ? 19 : (isCompactTablet ? 24 : 28))) *
+            0.6)
+        : 50;
+    final double actionIconSize = isTablet
+        ? ((isTablet1280x800
+                ? 11
+                : (isTablet1000x700 ? 10 : (isCompactTablet ? 14 : 16))) *
+            0.8)
+        : 22;
     final double tabLabelSize = isTablet1280x800
         ? 7
         : (isTablet1000x700 ? 6.8 : (isCompactTablet ? 8 : (isTablet ? 9.5 : 13)));
@@ -273,6 +279,11 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
                 ],
               ),
               child: IconButton(
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tightFor(
+                  width: isTablet ? 26 : 40,
+                  height: isTablet ? 26 : 40,
+                ),
                 iconSize: actionIconSize,
                 icon: const Icon(Icons.add),
                 tooltip: 'Добавить сотрудника',
@@ -297,6 +308,11 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
                 ],
               ),
               child: IconButton(
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tightFor(
+                  width: isTablet ? 26 : 40,
+                  height: isTablet ? 26 : 40,
+                ),
                 iconSize: actionIconSize,
                 icon: const Icon(Icons.logout),
                 tooltip: 'Выйти',
@@ -348,6 +364,7 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
           tabs: [
             for (final id in _employeeIds)
               Tab(
+                height: isTablet ? 28 : null,
                 text: () {
                   final emp = personnel.employees.firstWhere(
                     (e) => e.id == id,

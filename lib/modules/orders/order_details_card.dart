@@ -307,13 +307,17 @@ class OrderDetailsCard extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final media = MediaQuery.of(context);
+        final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
         const spacing = 16.0;
         final maxWidth = constraints.maxWidth;
-        final columns = maxWidth >= 560
+        final columns = isTablet
             ? 3
-            : maxWidth >= 380
-                ? 2
-                : 1;
+            : maxWidth >= 560
+                ? 3
+                : maxWidth >= 380
+                    ? 2
+                    : 1;
         final sectionWidth = columns == 1
             ? maxWidth
             : (maxWidth - spacing * (columns - 1)) / columns;
