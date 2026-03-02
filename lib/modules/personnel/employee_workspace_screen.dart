@@ -217,21 +217,24 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
     final bool isTablet1000x700 = isTablet &&
         ((media.size.width == 1000 && media.size.height == 700) ||
             (media.size.width == 700 && media.size.height == 1000));
+    const double topBlockScale = 0.6;
     final double toolbarHeight = isTablet
         ? ((isTablet1280x800
                 ? 20
                 : (isTablet1000x700 ? 19 : (isCompactTablet ? 24 : 28))) *
-            0.6)
-        : 50;
+            topBlockScale)
+        : 50 * topBlockScale;
     final double actionIconSize = isTablet
         ? ((isTablet1280x800
                 ? 11
                 : (isTablet1000x700 ? 10 : (isCompactTablet ? 14 : 16))) *
             0.8)
-        : 22;
+        : 22 * 0.8;
     final double tabLabelSize = isTablet1280x800
         ? 7
-        : (isTablet1000x700 ? 6.8 : (isCompactTablet ? 8 : (isTablet ? 9.5 : 13)));
+        : (isTablet1000x700
+            ? 6.8
+            : (isCompactTablet ? 8 : (isTablet ? 9.5 : 13 * topBlockScale)));
     final EdgeInsetsGeometry tabPadding = isTablet
         ? EdgeInsets.symmetric(
             horizontal: isTablet1280x800
@@ -241,7 +244,7 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
                 ? 1
                 : (isTablet1000x700 ? 0.5 : 2),
           )
-        : const EdgeInsets.symmetric(horizontal: 12, vertical: 4);
+        : const EdgeInsets.symmetric(horizontal: 8, vertical: 2);
 
     final theme = Theme.of(context);
     final TextStyle? tabLabelStyle = theme.textTheme.labelLarge?.copyWith(
@@ -281,8 +284,8 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
               child: IconButton(
                 padding: EdgeInsets.zero,
                 constraints: BoxConstraints.tightFor(
-                  width: isTablet ? 26 : 40,
-                  height: isTablet ? 26 : 40,
+                  width: isTablet ? 26 : 24,
+                  height: isTablet ? 26 : 24,
                 ),
                 iconSize: actionIconSize,
                 icon: const Icon(Icons.add),
@@ -310,8 +313,8 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
               child: IconButton(
                 padding: EdgeInsets.zero,
                 constraints: BoxConstraints.tightFor(
-                  width: isTablet ? 26 : 40,
-                  height: isTablet ? 26 : 40,
+                  width: isTablet ? 26 : 24,
+                  height: isTablet ? 26 : 24,
                 ),
                 iconSize: actionIconSize,
                 icon: const Icon(Icons.logout),
@@ -364,7 +367,7 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
           tabs: [
             for (final id in _employeeIds)
               Tab(
-                height: isTablet ? 28 : null,
+                height: isTablet ? 28 : 18,
                 text: () {
                   final emp = personnel.employees.firstWhere(
                     (e) => e.id == id,
@@ -512,7 +515,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
     );
     final double tabBarHeight = isTablet1280x800
         ? 18
-        : (isTablet1000x700 ? 17 : (isCompactTablet ? 23 : (isTablet ? 25 : 44)));
+        : (isTablet1000x700 ? 17 : (isCompactTablet ? 23 : (isTablet ? 25 : 26)));
     const Color tabBackground = Color(0xFFF1F1F5);
     const Color tabBorder = Color(0xFFE1E1E8);
 
@@ -524,10 +527,10 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
           length: 3,
           child: Scaffold(
             appBar: PreferredSize(
-              preferredSize: Size.fromHeight(tabBarHeight + 10),
+              preferredSize: Size.fromHeight(tabBarHeight + 6),
               child: Container(
                 color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 5, 16, 5),
+                padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: tabBackground,
