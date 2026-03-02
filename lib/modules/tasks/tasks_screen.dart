@@ -1544,7 +1544,7 @@ class _TasksScreenState extends State<TasksScreen>
         bottom: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final bool isNarrow = constraints.maxWidth < 1000;
+            final bool isNarrow = constraints.maxWidth < (isTablet ? 700 : 1000);
             final bool showList = !widget.hideListPanel;
             final bool showDetails = !widget.showListOnly;
 
