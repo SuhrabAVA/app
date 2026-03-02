@@ -309,9 +309,9 @@ class OrderDetailsCard extends StatelessWidget {
       builder: (context, constraints) {
         const spacing = 16.0;
         final maxWidth = constraints.maxWidth;
-        final columns = maxWidth >= 900
+        final columns = maxWidth >= 560
             ? 3
-            : maxWidth >= 760
+            : maxWidth >= 380
                 ? 2
                 : 1;
         final sectionWidth = columns == 1
