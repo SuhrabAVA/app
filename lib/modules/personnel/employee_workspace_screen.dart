@@ -218,14 +218,14 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
         ((media.size.width == 1000 && media.size.height == 700) ||
             (media.size.width == 700 && media.size.height == 1000));
     final double toolbarHeight = isTablet1280x800
-        ? 34
-        : (isTablet1000x700 ? 32 : (isCompactTablet ? 40 : (isTablet ? 46 : 50)));
+        ? 20
+        : (isTablet1000x700 ? 19 : (isCompactTablet ? 24 : (isTablet ? 28 : 50)));
     final double actionIconSize = isTablet1280x800
-        ? 14
-        : (isTablet1000x700 ? 13 : (isCompactTablet ? 18 : (isTablet ? 20 : 22)));
+        ? 11
+        : (isTablet1000x700 ? 10 : (isCompactTablet ? 14 : (isTablet ? 16 : 22)));
     final double tabLabelSize = isTablet1280x800
-        ? 9
-        : (isTablet1000x700 ? 8.5 : (isCompactTablet ? 10 : (isTablet ? 12 : 13)));
+        ? 7
+        : (isTablet1000x700 ? 6.8 : (isCompactTablet ? 8 : (isTablet ? 9.5 : 13)));
     final EdgeInsetsGeometry tabPadding = isTablet
         ? EdgeInsets.symmetric(
             horizontal: isTablet1280x800
@@ -494,8 +494,8 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
       ),
     );
     final double tabBarHeight = isTablet1280x800
-        ? 30
-        : (isTablet1000x700 ? 28 : (isCompactTablet ? 38 : (isTablet ? 42 : 44)));
+        ? 18
+        : (isTablet1000x700 ? 17 : (isCompactTablet ? 23 : (isTablet ? 25 : 44)));
     const Color tabBackground = Color(0xFFF1F1F5);
     const Color tabBorder = Color(0xFFE1E1E8);
 
@@ -507,10 +507,10 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
           length: 3,
           child: Scaffold(
             appBar: PreferredSize(
-              preferredSize: Size.fromHeight(tabBarHeight + 16),
+              preferredSize: Size.fromHeight(tabBarHeight + 10),
               child: Container(
                 color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 5, 16, 5),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: tabBackground,
@@ -519,7 +519,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                   ),
                   child: TabBar(
                     indicatorSize: TabBarIndicatorSize.tab,
-                    indicatorPadding: const EdgeInsets.all(2),
+                    indicatorPadding: const EdgeInsets.all(1.2),
                     labelColor: Colors.black,
                     unselectedLabelColor: const Color(0xFF6F6F7B),
                     labelStyle: Theme.of(context)
@@ -527,8 +527,8 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                         .labelLarge
                         ?.copyWith(
                           fontSize: isTablet1280x800
-                              ? 9
-                              : (isTablet1000x700 ? 8 : (isCompactTablet ? 11 : 12)),
+                              ? 7
+                              : (isTablet1000x700 ? 6.5 : (isCompactTablet ? 8.8 : 9.8)),
                           fontWeight: FontWeight.w600,
                         ),
                     unselectedLabelStyle: Theme.of(context)
@@ -536,8 +536,8 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
                         .labelMedium
                         ?.copyWith(
                           fontSize: isTablet1280x800
-                              ? 8.5
-                              : (isTablet1000x700 ? 7.8 : (isCompactTablet ? 10 : 11)),
+                              ? 6.7
+                              : (isTablet1000x700 ? 6.2 : (isCompactTablet ? 8.2 : 9.2)),
                           fontWeight: FontWeight.w500,
                         ),
                     indicator: BoxDecoration(

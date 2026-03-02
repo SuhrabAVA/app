@@ -1660,7 +1660,7 @@ class _TasksScreenState extends State<TasksScreen>
             );
 
             if (!isNarrow) {
-              const int detailsPanelFlex = 2;
+              const int detailsPanelFlex = 1;
               const int controlPanelFlex = 1;
               return SingleChildScrollView(
                 padding: EdgeInsets.all(outerPadding),
@@ -1683,8 +1683,8 @@ class _TasksScreenState extends State<TasksScreen>
 
             return LayoutBuilder(
               builder: (context, scrollConstraints) {
-                const double minDetailsPanelWidth = 640;
-                const double minControlPanelWidth = 320;
+                const double minDetailsPanelWidth = 560;
+                const double minControlPanelWidth = 560;
                 final double totalMinWidth =
                     minDetailsPanelWidth + columnGap + minControlPanelWidth;
                 final double contentWidth = math.max(
