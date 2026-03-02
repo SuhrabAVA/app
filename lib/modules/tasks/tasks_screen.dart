@@ -3296,7 +3296,43 @@ class _TasksScreenState extends State<TasksScreen>
                             );
                           }
                         }
-                        await onStart();
+                        if (_hasPendingSetupForStage(latestTask)) {
+                          if (!_isSetupInProgressForUser(
+                                  latestTask, widget.employeeId) &&
+                              !_isSetupCompletedForUser(
+                                  latestTask, widget.employeeId)) {
+                            await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'setup_start',
+                              text: 'Начал(а) настройку станка',
+                              userIdOverride: widget.employeeId,
+                            );
+                          }
+                          final startedAtTs = latestTask.startedAt ??
+                              DateTime.now().millisecondsSinceEpoch;
+                          await taskProvider.updateStatus(
+                            task.id,
+                            TaskStatus.inProgress,
+                            startedAt: startedAtTs,
+                          );
+                          final participants =
+                              _participantsSnapshot(latestTask, widget.employeeId);
+                          final execMode = _stageExecutionMode(latestTask);
+                          await taskProvider.recordTimeEvent(
+                            task: latestTask,
+                            type: TaskTimeType.setup,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: widget.employeeId,
+                            workplaceId: latestTask.stageId,
+                            participantsSnapshot: participants,
+                            executionMode: execMode != null
+                                ? _executionModeCode(execMode)
+                                : null,
+                            note: 'shift_resume_setup',
+                          );
+                        } else {
+                          await onStart();
+                        }
                         final updated = taskProvider.tasks.firstWhere(
                           (t) => t.id == task.id,
                           orElse: () => task,
@@ -3829,6 +3865,28 @@ class _TasksScreenState extends State<TasksScreen>
         ? 0
         : dones.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
     return lastStartTs > lastDoneTs;
+  }
+
+  bool _hasPendingSetupForStage(TaskModel task) {
+    final lastStartByUser = <String, int>{};
+    final lastDoneByUser = <String, int>{};
+    for (final c in task.comments) {
+      final uid = c.userId;
+      if (uid.isEmpty) continue;
+      if (c.type == 'setup_start') {
+        final prev = lastStartByUser[uid] ?? 0;
+        if (c.timestamp > prev) lastStartByUser[uid] = c.timestamp;
+      } else if (c.type == 'setup_done') {
+        final prev = lastDoneByUser[uid] ?? 0;
+        if (c.timestamp > prev) lastDoneByUser[uid] = c.timestamp;
+      }
+    }
+    for (final entry in lastStartByUser.entries) {
+      if (entry.value > (lastDoneByUser[entry.key] ?? 0)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
