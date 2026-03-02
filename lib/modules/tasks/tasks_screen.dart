@@ -2763,7 +2763,7 @@ class _TasksScreenState extends State<TasksScreen>
                         canProblem &&
                         stateRowUser == UserRunState.active;
                     final bool canShiftControl = shiftPaused
-                        ? true
+                        ? !_hasBlockingActiveOrder(tp, task)
                         : (isMyRow &&
                             (stateRowUser == UserRunState.active ||
                                 stateRowUser == UserRunState.paused ||
@@ -3187,6 +3187,16 @@ class _TasksScreenState extends State<TasksScreen>
                       final taskProvider = context.read<TaskProvider>();
                       final analytics = context.read<AnalyticsProvider>();
 
+                      if (shiftPaused &&
+                          _hasBlockingActiveOrder(taskProvider, task)) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Сначала завершите текущий активный заказ')));
+                        }
+                        return;
+                      }
+
                       if (!shiftPaused) {
                         final latestTask = taskProvider.tasks.firstWhere(
                           (t) => t.id == task.id,
@@ -3242,10 +3252,6 @@ class _TasksScreenState extends State<TasksScreen>
                           await taskProvider.updateAssignees(
                               task.id, updatedAssignees);
                         }
-
-                        // Clear assignees on shift change so the next operator
-                        // becomes the main performer instead of a helper.
-                        await taskProvider.updateAssignees(task.id, const []);
 
                         final related = _relatedTasks(taskProvider, task);
                         for (final rel in related) {
