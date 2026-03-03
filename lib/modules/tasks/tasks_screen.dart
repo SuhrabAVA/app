@@ -2785,8 +2785,15 @@ class _TasksScreenState extends State<TasksScreen>
                     // (разрешаем возобновление), либо уже завершил личную
                     // смену статуса, но этап ещё не закрыт общей кнопкой
                     // "Завершить" снизу.
+                    final bool requiresSetupBeforeStart =
+                        _hasMachineForStage(stage) &&
+                            !_isSetupInProgressForUser(
+                                task, widget.employeeId) &&
+                            !_isSetupCompletedForUser(
+                                task, widget.employeeId);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
+                        !requiresSetupBeforeStart &&
                         (stateRowUser == UserRunState.idle ||
                             stateRowUser == UserRunState.paused ||
                             stateRowUser == UserRunState.problem ||
@@ -2914,6 +2921,19 @@ class _TasksScreenState extends State<TasksScreen>
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text('Уже выполняется альтернативный этап')));
+                        }
+                        return;
+                      }
+
+                      if (_hasMachineForStage(stage) &&
+                          !_isSetupInProgressForUser(
+                              task, widget.employeeId) &&
+                          !_isSetupCompletedForUser(
+                              task, widget.employeeId)) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Сначала начните наладку, затем запускайте этап')));
                         }
                         return;
                       }
