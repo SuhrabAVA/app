@@ -2796,8 +2796,9 @@ class _TasksScreenState extends State<TasksScreen>
                         !requiresSetupBeforeStart &&
                         ((stateRowUser == UserRunState.idle &&
                                 task.status != TaskStatus.inProgress) ||
-                            stateRowUser == UserRunState.paused ||
-                            stateRowUser == UserRunState.problem ||
+                            ((stateRowUser == UserRunState.paused ||
+                                    stateRowUser == UserRunState.problem) &&
+                                task.status != TaskStatus.inProgress) ||
                             (stateRowUser == UserRunState.finished &&
                                 task.status != TaskStatus.inProgress) ||
                             (stateRowUser == UserRunState.active &&
