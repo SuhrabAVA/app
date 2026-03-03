@@ -1189,12 +1189,20 @@ class _TasksScreenState extends State<TasksScreen>
         ? personnel.workplaces
         : filteredWorkplaces;
 
-    if (_selectedWorkplaceId == null && workplaces.isNotEmpty) {
+    final hasValidSelectedWorkplace = _selectedWorkplaceId != null &&
+        workplaces.any((w) => w.id == _selectedWorkplaceId);
+
+    if (!hasValidSelectedWorkplace && workplaces.isNotEmpty) {
       final desiredWorkplaceId =
-          (savedWid?.trim().isNotEmpty == true ? savedWid : workplaces.first.id)
-              ?.trim();
+          (savedWid?.trim().isNotEmpty == true &&
+                  workplaces.any((w) => w.id == savedWid)
+              ? savedWid
+              : workplaces.first.id)
+              .trim();
       _scheduleSelectionUpdate(() {
-        if (_selectedWorkplaceId != null) return;
+        final stillValid = _selectedWorkplaceId != null &&
+            workplaces.any((w) => w.id == _selectedWorkplaceId);
+        if (stillValid) return;
         _selection.workplaceId = desiredWorkplaceId;
         _persistWorkplace(desiredWorkplaceId);
         _selection.notifyListeners();
@@ -1229,7 +1237,8 @@ class _TasksScreenState extends State<TasksScreen>
           _selection.notifyListeners();
         });
       }
-    } else if (_selectedTask != null &&
+    } else if (_selectedWorkplaceId != null &&
+        _selectedTask != null &&
         !tasksForWorkplace.any((t) => t.id == _selectedTask!.id)) {
       _scheduleSelectionUpdate(() {
         if (_selectedTask == null) return;
