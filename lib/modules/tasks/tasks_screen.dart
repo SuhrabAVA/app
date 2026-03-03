@@ -2798,7 +2798,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 task.status != TaskStatus.inProgress) ||
                             stateRowUser == UserRunState.paused ||
                             stateRowUser == UserRunState.problem ||
-                            stateRowUser == UserRunState.finished ||
+                            (stateRowUser == UserRunState.finished &&
+                                task.status != TaskStatus.inProgress) ||
                             (stateRowUser == UserRunState.active &&
                                 isSetupActiveForRow));
                     final bool canPauseRow = isMyRow &&
