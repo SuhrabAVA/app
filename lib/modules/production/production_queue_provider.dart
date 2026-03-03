@@ -23,6 +23,7 @@ class ProductionQueueProvider with ChangeNotifier {
   final SupabaseClient _sb = Supabase.instance.client;
   RealtimeChannel? _channel;
   Future<void>? _remoteBootstrap;
+  Timer? _pollingTimer;
 
   bool _loaded = false;
 
@@ -30,6 +31,14 @@ class ProductionQueueProvider with ChangeNotifier {
 
   ProductionQueueProvider() {
     _bootstrapRemoteSync();
+    _startPollingFallback();
+  }
+
+  void _startPollingFallback() {
+    _pollingTimer?.cancel();
+    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_loadRemote());
+    });
   }
 
   Future<void> _init() async {
@@ -382,6 +391,8 @@ class ProductionQueueProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _pollingTimer?.cancel();
+    _pollingTimer = null;
     if (_channel != null) {
       _channel!.unsubscribe();
       _sb.removeChannel(_channel!);
