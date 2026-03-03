@@ -3586,43 +3586,50 @@ class _TasksScreenState extends State<TasksScreen>
                   };
 
                   final rows = <Widget>[];
-                  if (separateUsers.isNotEmpty) {
-                    for (final uid in separateUsers) {
-                      rows.add(buildControlsFor('Исполнитель: ' + nameFor(uid),
-                          userId: uid));
-                      rows.add(SizedBox(height: scaled(8)));
-                    }
-                  }
-                  if (jointUsers.isNotEmpty) {
-                    final helperIds = _helperIds(task);
-                    final ownerId =
-                        task.assignees.isNotEmpty ? task.assignees.first : null;
-                    final labels = helperIds.map(nameFor).toList();
-                    final label = labels.isEmpty
-                        ? (ownerId != null
-                            ? 'Исполнитель: ' + nameFor(ownerId)
-                            : 'Одиночная или совместная работа')
-                        : 'Помощники: ' + labels.join(', ');
-                    if (label == 'Одиночная или совместная работа') {
-                      // скрываем строку с кнопками для "одиночной/совместной" работы
-                    } else if (separateUsers.isEmpty) {
-                      rows.add(buildControlsFor(label, jointGroup: jointUsers));
-                    } else {
-                      rows.add(Padding(
-                        padding: EdgeInsets.symmetric(vertical: scaled(4)),
-                        child: Text(label,
-                            style: TextStyle(
-                                fontStyle: FontStyle.italic,
-                                color: Colors.grey,
-                                fontSize: scaled(13))),
-                      ));
-                    }
-                  }
-                  final shouldShowCurrentUserRow =
-                      !task.assignees.contains(widget.employeeId) &&
-                          (canStart || shiftPaused);
-                  if (shouldShowCurrentUserRow) {
+                  final shouldShowOnlyCurrentUserRow =
+                      shiftPaused && !task.assignees.contains(widget.employeeId);
+
+                  if (shouldShowOnlyCurrentUserRow) {
                     rows.add(buildControlsFor('Вы', userId: widget.employeeId));
+                  } else {
+                    if (separateUsers.isNotEmpty) {
+                      for (final uid in separateUsers) {
+                        rows.add(buildControlsFor('Исполнитель: ' + nameFor(uid),
+                            userId: uid));
+                        rows.add(SizedBox(height: scaled(8)));
+                      }
+                    }
+                    if (jointUsers.isNotEmpty) {
+                      final helperIds = _helperIds(task);
+                      final ownerId =
+                          task.assignees.isNotEmpty ? task.assignees.first : null;
+                      final labels = helperIds.map(nameFor).toList();
+                      final label = labels.isEmpty
+                          ? (ownerId != null
+                              ? 'Исполнитель: ' + nameFor(ownerId)
+                              : 'Одиночная или совместная работа')
+                          : 'Помощники: ' + labels.join(', ');
+                      if (label == 'Одиночная или совместная работа') {
+                        // скрываем строку с кнопками для "одиночной/совместной" работы
+                      } else if (separateUsers.isEmpty) {
+                        rows.add(buildControlsFor(label, jointGroup: jointUsers));
+                      } else {
+                        rows.add(Padding(
+                          padding: EdgeInsets.symmetric(vertical: scaled(4)),
+                          child: Text(label,
+                              style: TextStyle(
+                                  fontStyle: FontStyle.italic,
+                                  color: Colors.grey,
+                                  fontSize: scaled(13))),
+                        ));
+                      }
+                    }
+                    final shouldShowCurrentUserRow =
+                        !task.assignees.contains(widget.employeeId) &&
+                            (canStart || shiftPaused);
+                    if (shouldShowCurrentUserRow) {
+                      rows.add(buildControlsFor('Вы', userId: widget.employeeId));
+                    }
                   }
               return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
