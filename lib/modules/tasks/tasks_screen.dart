@@ -698,6 +698,8 @@ class _TasksScreenState extends State<TasksScreen>
   final ScrollController _commentsScrollController = ScrollController();
   late final _TaskSelectionState _selection;
   bool _selectionUpdateScheduled = false;
+  String? _lastQueueSyncGroupId;
+  String? _lastQueueSyncIdsSignature;
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
     final normalized = value?.trim();
@@ -754,6 +756,36 @@ class _TasksScreenState extends State<TasksScreen>
       _selectionUpdateScheduled = false;
       if (!mounted) return;
       update();
+    });
+  }
+
+  String _queueIdsSignature(Iterable<String> ids) {
+    final normalized = <String>[];
+    final seen = <String>{};
+    for (final raw in ids) {
+      final id = raw.trim();
+      if (id.isEmpty || !seen.add(id)) continue;
+      normalized.add(id);
+    }
+    normalized.sort();
+    return normalized.join('|');
+  }
+
+  void _scheduleQueueSyncIfNeeded({
+    required ProductionQueueProvider queue,
+    required String groupId,
+    required Iterable<String> ids,
+  }) {
+    final nextSignature = _queueIdsSignature(ids);
+    if (_lastQueueSyncGroupId == groupId &&
+        _lastQueueSyncIdsSignature == nextSignature) {
+      return;
+    }
+    _lastQueueSyncGroupId = groupId;
+    _lastQueueSyncIdsSignature = nextSignature;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      queue.syncOrders(ids, groupId: groupId);
     });
   }
 
@@ -1268,13 +1300,11 @@ class _TasksScreenState extends State<TasksScreen>
     final stageOrderIds =
         stageTasksAll.map((task) => task.orderId).toSet().toList();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      queue.syncOrders(
-        _selectedWorkplaceId == null ? orderIds : stageOrderIds,
-        groupId: queueGroupId,
-      );
-    });
+    _scheduleQueueSyncIfNeeded(
+      queue: queue,
+      groupId: queueGroupId,
+      ids: _selectedWorkplaceId == null ? orderIds : stageOrderIds,
+    );
 
     final sectionedTasks = tasksForWorkplace.toList();
     sectionedTasks.sort((a, b) =>
