@@ -31,7 +31,8 @@ class TaskProvider with ChangeNotifier {
   final Map<String, String> _workplaceAliasToId = <String, String>{};
   final Map<String, List<String>> _orderStageSequences = {};
   final Map<String, Map<String, String>> _orderStageNames = {};
-  RealtimeChannel? _channel;
+  RealtimeChannel? _tasksChannel;
+  final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
 
   TaskProvider() {
     _listenToTasks();
@@ -255,12 +256,13 @@ class TaskProvider with ChangeNotifier {
     refresh();
 
     // remove old channel
-    if (_channel != null) {
-      _supabase.removeChannel(_channel!);
-      _channel = null;
+    if (_tasksChannel != null) {
+      _supabase.removeChannel(_tasksChannel!);
+      _tasksChannel = null;
     }
+    _disposeStageSyncChannels();
 
-    _channel = _supabase
+    _tasksChannel = _supabase
         .channel('public:tasks')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
@@ -271,6 +273,69 @@ class TaskProvider with ChangeNotifier {
           },
         )
         .subscribe();
+
+    // Изменения рабочих мест/маршрутов этапов часто не трогают напрямую
+    // таблицу tasks, поэтому без этих подписок очередь может устаревать.
+    _registerStageSyncChannel(
+      channelName: 'public:orders:task-sync',
+      schema: 'public',
+      table: 'orders',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:production_plans:task-sync',
+      schema: 'public',
+      table: 'production_plans',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:prod_plan_stages:task-sync',
+      schema: 'public',
+      table: 'prod_plan_stages',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:workplace_stages:task-sync',
+      schema: 'public',
+      table: 'workplace_stages',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:order_stages:task-sync',
+      schema: 'public',
+      table: 'order_stages',
+    );
+    _registerStageSyncChannel(
+      channelName: 'production:plan_stages:task-sync',
+      schema: 'production',
+      table: 'plan_stages',
+    );
+  }
+
+  void _registerStageSyncChannel({
+    required String channelName,
+    required String schema,
+    required String table,
+  }) {
+    try {
+      final channel = _supabase
+          .channel(channelName)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: schema,
+            table: table,
+            callback: (_) async {
+              await refresh();
+            },
+          )
+          .subscribe();
+      _stageSyncChannels.add(channel);
+    } catch (_) {
+      // Таблица/схема может отсутствовать в конкретной инсталляции.
+    }
+  }
+
+  void _disposeStageSyncChannels() {
+    for (final channel in _stageSyncChannels) {
+      _supabase.removeChannel(channel);
+    }
+    _stageSyncChannels.clear();
   }
 
   // ===== updates =====
@@ -1328,10 +1393,11 @@ class TaskProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    if (_channel != null) {
-      _supabase.removeChannel(_channel!);
-      _channel = null;
+    if (_tasksChannel != null) {
+      _supabase.removeChannel(_tasksChannel!);
+      _tasksChannel = null;
     }
+    _disposeStageSyncChannels();
     super.dispose();
   }
 
