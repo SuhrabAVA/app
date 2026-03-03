@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -21,19 +22,30 @@ class ProductionQueueProvider with ChangeNotifier {
   final Map<String, Set<String>> _hiddenOrders = {};
   final SupabaseClient _sb = Supabase.instance.client;
   RealtimeChannel? _channel;
+  Future<void>? _remoteBootstrap;
 
   bool _loaded = false;
 
   bool get isReady => _loaded;
 
   ProductionQueueProvider() {
-    _init();
+    _bootstrapRemoteSync();
   }
 
   Future<void> _init() async {
     await _loadLocal();
     await _loadRemote();
     await _subscribeRemote();
+  }
+
+  Future<void> _bootstrapRemoteSync() {
+    final existing = _remoteBootstrap;
+    if (existing != null) return existing;
+    final future = _init().whenComplete(() {
+      _remoteBootstrap = null;
+    });
+    _remoteBootstrap = future;
+    return future;
   }
 
   String _normalizeGroup(String groupId) {
@@ -240,6 +252,7 @@ class ProductionQueueProvider with ChangeNotifier {
 
   /// Добавляем недостающие id и удаляем отсутствующие в [ids].
   void syncOrders(Iterable<String> ids, {String groupId = _defaultGroup}) {
+    unawaited(_bootstrapRemoteSync());
     final normalizedIds = <String>[];
     final seen = <String>{};
     for (final raw in ids) {
@@ -307,6 +320,7 @@ class ProductionQueueProvider with ChangeNotifier {
   /// Сортирует заказы по сохранённой очереди.
   List<T> sortByPriority<T>(List<T> items, String Function(T) idSelector,
       {String groupId = _defaultGroup}) {
+    unawaited(_bootstrapRemoteSync());
     final copy = [...items];
     copy.sort((a, b) =>
         priorityOf(idSelector(a), groupId: groupId).compareTo(priorityOf(idSelector(b), groupId: groupId)));
@@ -315,6 +329,7 @@ class ProductionQueueProvider with ChangeNotifier {
 
   /// Переставляет видимые заказы, сохраняя положение остальных.
   void applyVisibleReorder(List<String> orderedIds, {String groupId = _defaultGroup}) {
+    unawaited(_bootstrapRemoteSync());
     if (orderedIds.isEmpty) return;
     final normalizedOrderedIds = <String>[];
     final seen = <String>{};
@@ -348,6 +363,7 @@ class ProductionQueueProvider with ChangeNotifier {
       _hiddenForGroup(groupId).contains(_normalizeOrderId(orderId));
 
   void hideOrder(String orderId, {String groupId = _defaultGroup}) {
+    unawaited(_bootstrapRemoteSync());
     final normalizedOrderId = _normalizeOrderId(orderId);
     if (normalizedOrderId.isEmpty) return;
     if (_hiddenForGroup(groupId).add(normalizedOrderId)) {
@@ -357,6 +373,7 @@ class ProductionQueueProvider with ChangeNotifier {
   }
 
   void restoreOrder(String orderId, {String groupId = _defaultGroup}) {
+    unawaited(_bootstrapRemoteSync());
     if (_hiddenForGroup(groupId).remove(_normalizeOrderId(orderId))) {
       _persistEverywhere(groupId: groupId);
       notifyListeners();
