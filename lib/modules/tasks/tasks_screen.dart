@@ -2196,6 +2196,8 @@ class _TasksScreenState extends State<TasksScreen>
         ? _resolveTemplateName(order.stageTemplateId, templates)
         : null;
 
+    final cachedFormImageUrl = _formImageCache[order.id];
+
     return Container(
       padding: EdgeInsets.all(10 * scale),
       decoration: BoxDecoration(
@@ -2212,14 +2214,16 @@ class _TasksScreenState extends State<TasksScreen>
       ),
       child: FutureBuilder<String?>(
         future: _getFormImageFuture(order),
+        initialData: cachedFormImageUrl,
         builder: (context, snapshot) {
+          final resolvedFormImageUrl = snapshot.data ?? cachedFormImageUrl;
           return OrderDetailsCard(
             order: order,
             paints: const [],
             files: const [],
             loadingFiles: false,
             stageTemplateName: templateName,
-            formImageUrl: snapshot.data,
+            formImageUrl: resolvedFormImageUrl,
             extraSections: [
               _buildStageList(order, scale),
             ],
