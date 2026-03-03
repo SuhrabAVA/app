@@ -2794,13 +2794,10 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
-                        ((stateRowUser == UserRunState.idle &&
-                                task.status != TaskStatus.inProgress) ||
-                            ((stateRowUser == UserRunState.paused ||
-                                    stateRowUser == UserRunState.problem) &&
-                                task.status != TaskStatus.inProgress) ||
-                            (stateRowUser == UserRunState.finished &&
-                                task.status != TaskStatus.inProgress) ||
+                        ((stateRowUser == UserRunState.idle) ||
+                            (stateRowUser == UserRunState.paused) ||
+                            (stateRowUser == UserRunState.problem) ||
+                            (stateRowUser == UserRunState.finished) ||
                             (stateRowUser == UserRunState.active &&
                                 isSetupActiveForRow));
                     final bool canPauseRow = isMyRow &&
