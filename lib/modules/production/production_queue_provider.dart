@@ -141,11 +141,11 @@ class ProductionQueueProvider with ChangeNotifier {
   }
 
   List<String> _decodeStringList(dynamic raw) {
-    if (raw is! List) return const <String>[];
+    if (raw is! List) return <String>[];
     return raw
         .map((e) => e?.toString().trim() ?? '')
         .where((e) => e.isNotEmpty)
-        .toList(growable: false);
+        .toList();
   }
 
   Future<void> _loadRemote() async {
