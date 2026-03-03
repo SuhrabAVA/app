@@ -1194,11 +1194,10 @@ class _TasksScreenState extends State<TasksScreen>
 
     if (!hasValidSelectedWorkplace && workplaces.isNotEmpty) {
       final desiredWorkplaceId =
-          (savedWid?.trim().isNotEmpty == true &&
+          savedWid?.trim().isNotEmpty == true &&
                   workplaces.any((w) => w.id == savedWid)
-              ? savedWid
-              : workplaces.first.id)
-              .trim();
+              ? savedWid!.trim()
+              : workplaces.first.id.trim();
       _scheduleSelectionUpdate(() {
         final stillValid = _selectedWorkplaceId != null &&
             workplaces.any((w) => w.id == _selectedWorkplaceId);
