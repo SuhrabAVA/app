@@ -251,35 +251,6 @@ Duration _setupElapsedFromTimeEvents(TaskModel task) {
 
 enum UserRunState { idle, active, paused, finished, problem }
 
-class _TaskProcessSnapshot {
-  final bool setupActive;
-  final bool productionActive;
-  final bool paused;
-  final bool problemActive;
-  final bool shiftHandoverPending;
-  final bool productionStarted;
-
-  const _TaskProcessSnapshot({
-    required this.setupActive,
-    required this.productionActive,
-    required this.paused,
-    required this.problemActive,
-    required this.shiftHandoverPending,
-    required this.productionStarted,
-  });
-
-  factory _TaskProcessSnapshot.fromTask(TaskModel task) {
-    return _TaskProcessSnapshot(
-      setupActive: task.hasActiveSetup,
-      productionActive: task.hasActiveProduction,
-      paused: task.hasActivePause,
-      problemActive: task.hasActiveProblem,
-      shiftHandoverPending: task.hasActiveShiftChange,
-      productionStarted: task.hasProductionStarted,
-    );
-  }
-}
-
 UserRunState _userRunState(TaskModel task, String userId) {
   final timeEvents = _timeEventsForUser(task, userId);
   if (timeEvents.isNotEmpty) {
@@ -2710,18 +2681,20 @@ class _TasksScreenState extends State<TasksScreen>
             context.read<PersonnelProvider>(), task,
             groupResolver: _stageGroupKey) &&
         stageModeAllowsJoin &&
+        !shiftPaused &&
         !groupLocked &&
         !_hasBlockingActiveOrder(provider, task);
 
     // Пауза/Завершить/Проблема доступны только своим исполнителям
     final bool canPause =
-        task.status == TaskStatus.inProgress && isAssignee;
+        task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
     final bool canFinish = (task.status == TaskStatus.inProgress ||
             task.status == TaskStatus.paused ||
             task.status == TaskStatus.problem) &&
-        isAssignee;
+        isAssignee &&
+        !shiftPaused;
     final bool canProblem =
-        task.status == TaskStatus.inProgress && isAssignee;
+        task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
     final bool canFinalizeTask = _canFinalizeTask(task);
     final Widget panel = Container(
       padding: EdgeInsets.all(panelPadding),
@@ -2802,38 +2775,44 @@ class _TasksScreenState extends State<TasksScreen>
                     }
                     final UserRunState stateRowUser =
                         _userRunState(task, currentRowUserId);
-                    final process = _TaskProcessSnapshot.fromTask(task);
-                    final bool hasMachine = _hasMachineForStage(stage);
-                    final bool canStartFromSetup =
-                        process.setupActive && !process.productionStarted;
-                    final bool requiresSetupBeforeStart = hasMachine &&
-                        !process.setupActive &&
-                        !process.productionStarted &&
-                        !_isSetupCompletedForUser(task, widget.employeeId);
+                    final bool isSetupActiveForRow =
+                        _openEventForUser(task, currentRowUserId)?.type ==
+                            TaskTimeType.setup;
+                    // Disable buttons for other users' rows
+                    // Кнопка "Начать" доступна для своей строки, если
+                    // пользователь может стартовать, и он либо ещё не
+                    // запускал этап (idle), либо находится на паузе/в проблеме
+                    // (разрешаем возобновление), либо уже завершил личную
+                    // смену статуса, но этап ещё не закрыт общей кнопкой
+                    // "Завершить" снизу.
+                    final bool requiresSetupBeforeStart =
+                        _hasMachineForStage(stage) &&
+                            !_isSetupInProgressForUser(
+                                task, widget.employeeId) &&
+                            !_isSetupCompletedForUser(
+                                task, widget.employeeId);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
-                        !process.productionStarted &&
-                        (!requiresSetupBeforeStart || canStartFromSetup) &&
+                        !requiresSetupBeforeStart &&
                         ((stateRowUser == UserRunState.idle) ||
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
                             (stateRowUser == UserRunState.finished) ||
-                            canStartFromSetup);
-                    final bool canPauseRow =
-                        isMyRow && canPause && !process.paused;
+                            (stateRowUser == UserRunState.active &&
+                                isSetupActiveForRow));
+                    final bool canPauseRow = isMyRow &&
+                        canPause &&
+                        stateRowUser == UserRunState.active;
+                    // allow pausing also if user resumed
                     final bool canFinishRow = isMyRow &&
                         canFinish &&
                         (stateRowUser != UserRunState.idle &&
                             stateRowUser != UserRunState.finished);
-                    final bool canProblemRow =
-                        isMyRow && canProblem && !process.problemActive;
-                    final activeShiftEvent =
-                        task.activeEventByType(TaskTimeType.shiftChange);
+                    final bool canProblemRow = isMyRow &&
+                        canProblem &&
+                        stateRowUser == UserRunState.active;
                     final bool canShiftControl = shiftPaused
-                        ? activeShiftEvent != null &&
-                            activeShiftEvent.subjectUserId !=
-                                widget.employeeId &&
-                            !_hasBlockingActiveOrder(tp, task)
+                        ? !_hasBlockingActiveOrder(tp, task)
                         : (isMyRow &&
                             (stateRowUser == UserRunState.active ||
                                 stateRowUser == UserRunState.paused ||
@@ -2946,24 +2925,11 @@ class _TasksScreenState extends State<TasksScreen>
                         return;
                       }
 
-                      final latestForStart = taskProvider.tasks.firstWhere(
-                        (t) => t.id == task.id,
-                        orElse: () => task,
-                      );
-                      final processBeforeStart =
-                          _TaskProcessSnapshot.fromTask(latestForStart);
-                      if (processBeforeStart.productionStarted) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('Производство уже запущено для этого этапа')));
-                        }
-                        return;
-                      }
-
                       if (_hasMachineForStage(stage) &&
-                          !processBeforeStart.setupActive &&
+                          !_isSetupInProgressForUser(
+                              task, widget.employeeId) &&
                           !_isSetupCompletedForUser(
-                              latestForStart, widget.employeeId)) {
+                              task, widget.employeeId)) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
@@ -3000,29 +2966,18 @@ class _TasksScreenState extends State<TasksScreen>
                               userId: widget.employeeId,
                             );
                       }
-                      // Start завершает наладку и снимает паузу в setup-этапе,
-                      // чтобы не блокировать запуск производства после пересмены.
-                      if (processBeforeStart.setupActive) {
-                        await taskProvider.closeActiveEvent(
-                          task.id,
-                          TaskTimeType.setup,
-                          initiatedBy: widget.employeeId,
-                          note: 'start_production',
-                        );
-                        if (processBeforeStart.paused) {
-                          await taskProvider.closeActiveEvent(
-                            task.id,
-                            TaskTimeType.pause,
-                            initiatedBy: widget.employeeId,
-                            note: 'start_production_from_setup',
-                          );
-                        }
-                        await taskProvider.addCommentAutoUser(
-                          taskId: task.id,
-                          type: 'setup_done',
-                          text: 'Завершил(а) настройку станка',
-                          userIdOverride: widget.employeeId,
-                        );
+                      // Обновляем статус задачи. Не сбрасываем startedAt, если этап уже
+                      // находится в работе – используем существующее значение. В
+                      // состоянии паузы или проблемы возобновляем работу с тем же
+                      // startedAt, чтобы таймер продолжал считаться корректно.
+                      // Всегда обновляем статус: переводим этап в работу и
+                      // сохраняем начальное время. Если этап ещё не начинался,
+                      // фиксируем текущий момент; иначе используем существующий
+                      // startedAt, чтобы не обнулять таймер.
+                      if (_hasMachineForStage(stage) &&
+                          !_isSetupCompletedForUser(
+                              task, widget.employeeId)) {
+                        await _finishSetup(task, provider);
                       }
                       final startedAtTs = task.startedAt ??
                           DateTime.now().millisecondsSinceEpoch;
@@ -3274,8 +3229,8 @@ class _TasksScreenState extends State<TasksScreen>
                                   ? 'Продолжить после пересмены?'
                                   : 'Пересмена'),
                               content: Text(shiftPaused
-                                  ? 'Подтвердите продолжение этапа другим сотрудником.'
-                                  : 'Передать этап следующему сотруднику без остановки процесса?'),
+                                  ? 'Подтвердите возобновление работы на этапе.'
+                                  : 'Этап будет остановлен до следующего сотрудника. Продолжить?'),
                               actions: [
                                 TextButton(
                                   onPressed: () => Navigator.of(ctx).pop(false),
@@ -3294,9 +3249,81 @@ class _TasksScreenState extends State<TasksScreen>
                       final taskProvider = context.read<TaskProvider>();
                       final analytics = context.read<AnalyticsProvider>();
 
+                      if (shiftPaused &&
+                          _hasBlockingActiveOrder(taskProvider, task)) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Сначала завершите текущий активный заказ')));
+                        }
+                        return;
+                      }
+
                       if (!shiftPaused) {
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final unitLabel =
+                            _workplaceUnit(personnel, task.stageId);
+                        final qtyInput =
+                            await _askQuantity(context, unit: unitLabel);
+                        if (qtyInput == null) return;
+                        final qtyText = qtyInput.displayText;
+                        final helperIds = jointGroup != null && isMyRow
+                            ? jointGroup
+                                .where((id) => id != latestTask.assignees.first)
+                                .toList()
+                            : const <String>[];
+
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'quantity_share',
+                            text: qtyText,
+                            userIdOverride: widget.employeeId);
+
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'user_done',
+                            text: 'done',
+                            userIdOverride: widget.employeeId);
+
+                        for (final helperId in helperIds) {
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'quantity_share',
+                              text: qtyText,
+                              userIdOverride: helperId);
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'user_done',
+                              text: 'done',
+                              userIdOverride: helperId);
+                          await taskProvider.closeOpenTimeEvent(
+                            task: task,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: helperId,
+                            note: 'shift_change',
+                          );
+                        }
+
+                        if (helperIds.isNotEmpty) {
+                          final updatedAssignees = latestTask.assignees
+                              .where((id) => !helperIds.contains(id))
+                              .toList();
+                          await taskProvider.updateAssignees(
+                              task.id, updatedAssignees);
+                        }
+
+                        final related = _relatedTasks(taskProvider, task);
+                        for (final rel in related) {
+                          if (rel.status == TaskStatus.inProgress) {
+                            await taskProvider.updateStatus(
+                                rel.id, TaskStatus.paused);
+                          }
+                        }
                         await recordTimeEventForUser(TaskTimeType.shiftChange,
-                            includeHelpers: false, note: 'shift_pending');
+                            includeHelpers: false);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'shift_pause',
@@ -3308,54 +3335,92 @@ class _TasksScreenState extends State<TasksScreen>
                           userId: widget.employeeId,
                           action: 'shift_pause',
                           category: 'production',
-                          details: 'Передача этапа следующему сотруднику',
+                          details: 'Этап остановлен для пересмены',
                         );
-                        return;
-                      }
-
-                      final latestTask = taskProvider.tasks.firstWhere(
-                        (t) => t.id == task.id,
-                        orElse: () => task,
-                      );
-                      final openShift =
-                          latestTask.activeEventByType(TaskTimeType.shiftChange);
-                      if (openShift == null) return;
-                      if (openShift.subjectUserId == widget.employeeId) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('Пересмену должен подтверждать другой сотрудник')));
+                      } else {
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final assignees = latestTask.assignees;
+                        if (assignees.length != 1 ||
+                            assignees.first != widget.employeeId) {
+                          await taskProvider.updateAssignees(
+                              task.id, [widget.employeeId]);
                         }
-                        return;
-                      }
-
-                      final related = _relatedTasks(taskProvider, latestTask);
-                      for (final rel in related) {
-                        await taskProvider.closeActiveEvent(
-                          rel.id,
-                          TaskTimeType.shiftChange,
-                          initiatedBy: widget.employeeId,
-                          note: 'shift_resume',
+                        final related = _relatedTasks(taskProvider, latestTask);
+                        for (final rel in related) {
+                          final openShiftEvents = _taskTimeEvents(rel)
+                              .where((e) =>
+                                  e.type == TaskTimeType.shiftChange &&
+                                  e.endTime == null)
+                              .toList();
+                          for (final event in openShiftEvents) {
+                            await taskProvider.closeOpenTimeEvent(
+                              task: rel,
+                              initiatedBy: widget.employeeId,
+                              subjectUserId: event.subjectUserId,
+                              note: 'shift_resume',
+                            );
+                          }
+                        }
+                        if (_hasPendingSetupForStage(latestTask)) {
+                          if (!_isSetupInProgressForUser(
+                                  latestTask, widget.employeeId) &&
+                              !_isSetupCompletedForUser(
+                                  latestTask, widget.employeeId)) {
+                            await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'setup_start',
+                              text: 'Начал(а) настройку станка',
+                              userIdOverride: widget.employeeId,
+                            );
+                          }
+                          final startedAtTs = latestTask.startedAt ??
+                              DateTime.now().millisecondsSinceEpoch;
+                          await taskProvider.updateStatus(
+                            task.id,
+                            TaskStatus.inProgress,
+                            startedAt: startedAtTs,
+                          );
+                          final participants =
+                              _participantsSnapshot(latestTask, widget.employeeId);
+                          final execMode = _stageExecutionMode(latestTask);
+                          await taskProvider.recordTimeEvent(
+                            task: latestTask,
+                            type: TaskTimeType.setup,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: widget.employeeId,
+                            workplaceId: latestTask.stageId,
+                            participantsSnapshot: participants,
+                            executionMode: execMode != null
+                                ? _executionModeCode(execMode)
+                                : null,
+                            note: 'shift_resume_setup',
+                          );
+                        } else {
+                          await onStart();
+                        }
+                        final updated = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
                         );
+                        if (updated.status == TaskStatus.inProgress) {
+                          await taskProvider.addCommentAutoUser(
+                              taskId: task.id,
+                              type: 'shift_resume',
+                              text: 'Пересмена: работа возобновлена',
+                              userIdOverride: widget.employeeId);
+                          await analytics.logEvent(
+                            orderId: task.orderId,
+                            stageId: task.stageId,
+                            userId: widget.employeeId,
+                            action: 'shift_resume',
+                            category: 'production',
+                            details: 'Работа возобновлена после пересмены',
+                          );
+                        }
                       }
-
-                      final assignees = latestTask.assignees;
-                      if (assignees.length != 1 || assignees.first != widget.employeeId) {
-                        await taskProvider.updateAssignees(task.id, [widget.employeeId]);
-                      }
-
-                      await taskProvider.addCommentAutoUser(
-                          taskId: task.id,
-                          type: 'shift_resume',
-                          text: 'Пересмена: работа возобновлена',
-                          userIdOverride: widget.employeeId);
-                      await analytics.logEvent(
-                        orderId: task.orderId,
-                        stageId: task.stageId,
-                        userId: widget.employeeId,
-                        action: 'shift_resume',
-                        category: 'production',
-                        details: 'Работа продолжена после пересмены',
-                      );
                     }
 
                     String timeText() {
@@ -3394,9 +3459,11 @@ class _TasksScreenState extends State<TasksScreen>
                                             ))),
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
-                                      onPressed: (!process.shiftHandoverPending &&
-                                              !process.productionStarted &&
-                                              !process.setupActive)
+                                      onPressed: (!shiftPaused &&
+                                              !_isSetupCompletedForUser(
+                                                  task, widget.employeeId) &&
+                                              !_isSetupInProgressForUser(
+                                                  task, widget.employeeId))
                                           ? () => _startSetup(task, provider)
                                           : null,
                                       style: ElevatedButton.styleFrom(
@@ -3903,7 +3970,6 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
-    if (task.hasProductionStarted || task.hasActiveSetup) return;
     await provider.addCommentAutoUser(
       taskId: task.id,
       type: 'setup_start',
