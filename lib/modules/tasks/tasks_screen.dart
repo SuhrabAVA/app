@@ -3513,21 +3513,24 @@ class _TasksScreenState extends State<TasksScreen>
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
-                        if (updated.status == TaskStatus.inProgress) {
-                          await taskProvider.addCommentAutoUser(
-                              taskId: task.id,
-                              type: 'shift_resume',
-                              text: 'Пересмена: работа возобновлена',
-                              userIdOverride: widget.employeeId);
-                          await analytics.logEvent(
-                            orderId: task.orderId,
-                            stageId: task.stageId,
-                            userId: widget.employeeId,
-                            action: 'shift_resume',
-                            category: 'production',
-                            details: 'Работа возобновлена после пересмены',
-                          );
-                        }
+                        final resumeDetails = updated.status == TaskStatus.inProgress
+                            ? 'Пересмена: работа возобновлена'
+                            : 'Пересмена: состояние восстановлено';
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'shift_resume',
+                            text: resumeDetails,
+                            userIdOverride: widget.employeeId);
+                        await analytics.logEvent(
+                          orderId: task.orderId,
+                          stageId: task.stageId,
+                          userId: widget.employeeId,
+                          action: 'shift_resume',
+                          category: 'production',
+                          details: updated.status == TaskStatus.inProgress
+                              ? 'Работа возобновлена после пересмены'
+                              : 'Восстановлено состояние этапа после пересмены',
+                        );
                       }
                     }
 
