@@ -362,41 +362,4 @@ class TaskModel {
       comments: comments ?? this.comments,
     );
   }
-
-  List<TaskTimeEvent> get timeEvents {
-    final events = <TaskTimeEvent>[];
-    for (final comment in comments) {
-      if (comment.type != 'time_event') continue;
-      final event = TaskTimeEvent.fromPayload(
-        comment.text,
-        comment.id,
-        comment.timestamp,
-        comment.userId,
-      );
-      if (event != null) events.add(event);
-    }
-    events.sort((a, b) => a.startTime.compareTo(b.startTime));
-    return events;
-  }
-
-  TaskTimeEvent? activeEventByType(TaskTimeType type, {String? subjectUserId}) {
-    final candidates = timeEvents.where((event) {
-      if (event.type != type || event.endTime != null) return false;
-      if (subjectUserId == null) return true;
-      return event.subjectUserId == subjectUserId;
-    }).toList();
-    if (candidates.isEmpty) return null;
-    candidates.sort((a, b) => a.startTime.compareTo(b.startTime));
-    return candidates.last;
-  }
-
-  bool get hasActiveSetup => activeEventByType(TaskTimeType.setup) != null;
-  bool get hasActiveProduction =>
-      activeEventByType(TaskTimeType.production) != null;
-  bool get hasActivePause => activeEventByType(TaskTimeType.pause) != null;
-  bool get hasActiveProblem => activeEventByType(TaskTimeType.problem) != null;
-  bool get hasActiveShiftChange =>
-      activeEventByType(TaskTimeType.shiftChange) != null;
-  bool get hasProductionStarted =>
-      timeEvents.any((event) => event.type == TaskTimeType.production);
 }
