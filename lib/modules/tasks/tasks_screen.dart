@@ -2816,6 +2816,8 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool isSetupActiveForRow =
                         _openEventForUser(task, currentRowUserId)?.type ==
                             TaskTimeType.setup;
+                    final bool setupLockedByProduction =
+                        _isSetupLockedByProduction(task);
                     // Disable buttons for other users' rows
                     // Кнопка "Начать" доступна для своей строки, если
                     // пользователь может стартовать, и он либо ещё не
@@ -2825,6 +2827,7 @@ class _TasksScreenState extends State<TasksScreen>
                     // "Завершить" снизу.
                     final bool requiresSetupBeforeStart =
                         _hasMachineForStage(stage) &&
+                            !setupLockedByProduction &&
                             !_isSetupInProgressForUser(
                                 task, widget.employeeId) &&
                             !_isSetupCompletedForUser(
@@ -3318,7 +3321,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 .where((id) => id != latestTask.assignees.first)
                                 .toList()
                             : const <String>[];
-                        final shiftResumeState = isSetupActiveForRow
+                        final shiftResumeState =
+                            (!setupLockedByProduction && isSetupActiveForRow)
                             ? 'setup'
                             : stateRowUser == UserRunState.paused
                                 ? 'paused'
@@ -3425,15 +3429,21 @@ class _TasksScreenState extends State<TasksScreen>
                         final shiftResumeState = shiftStateComment.isNotEmpty
                             ? shiftStateComment.last.text.trim().toLowerCase()
                             : (_hasPendingSetupForStage(latestTask)
+                                && !_isSetupLockedByProduction(latestTask)
                                 ? 'setup'
                                 : 'production');
+                        final normalizedShiftResumeState =
+                            shiftResumeState == 'setup' &&
+                                    _isSetupLockedByProduction(latestTask)
+                                ? 'production'
+                                : shiftResumeState;
                         final startedAtTs = latestTask.startedAt ??
                             DateTime.now().millisecondsSinceEpoch;
                         final participants =
                             _participantsSnapshot(latestTask, widget.employeeId);
                         final execMode = _stageExecutionMode(latestTask);
 
-                        if (shiftResumeState == 'setup') {
+                        if (normalizedShiftResumeState == 'setup') {
                           if (!_isSetupInProgressForUser(
                                   latestTask, widget.employeeId) &&
                               !_isSetupCompletedForUser(
@@ -3462,7 +3472,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 : null,
                             note: 'shift_resume_setup',
                           );
-                        } else if (shiftResumeState == 'paused') {
+                        } else if (normalizedShiftResumeState == 'paused') {
                           await taskProvider.updateStatus(task.id, TaskStatus.paused);
                           await taskProvider.recordTimeEvent(
                             task: latestTask,
@@ -3476,7 +3486,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 : null,
                             note: 'shift_resume_pause',
                           );
-                        } else if (shiftResumeState == 'problem') {
+                        } else if (normalizedShiftResumeState == 'problem') {
                           await taskProvider.updateStatus(task.id, TaskStatus.problem);
                           await taskProvider.recordTimeEvent(
                             task: latestTask,
@@ -3571,6 +3581,7 @@ class _TasksScreenState extends State<TasksScreen>
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
                                       onPressed: (!shiftPaused &&
+                                              !setupLockedByProduction &&
                                               !_isSetupCompletedForUser(
                                                   task, widget.employeeId) &&
                                               !_isSetupInProgressForUser(
@@ -4081,6 +4092,15 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
     return false;
+  }
+
+  bool _isSetupLockedByProduction(TaskModel task) {
+    if (task.comments.any((c) => c.type == 'start' || c.type == 'resume')) {
+      return true;
+    }
+
+    return _taskTimeEvents(task)
+        .any((event) => event.type == TaskTimeType.production);
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
