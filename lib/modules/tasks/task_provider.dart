@@ -994,6 +994,139 @@ class TaskProvider with ChangeNotifier {
     return result;
   }
 
+  TaskTimeEvent? _activeEventFromComments(
+    List<Map<String, dynamic>> comments,
+    TaskTimeType type, {
+    String? subjectUserId,
+  }) {
+    TaskTimeEvent? latest;
+    for (final comment in comments) {
+      if ((comment['type'] ?? '') != 'time_event') continue;
+      final event = TaskTimeEvent.fromPayload(
+        comment['text']?.toString() ?? '',
+        comment['id']?.toString() ?? '',
+        _parseCommentTimestamp(comment['timestamp']),
+        comment['userId']?.toString() ?? '',
+      );
+      if (event == null) continue;
+      if (event.type != type || event.endTime != null) continue;
+      if (subjectUserId != null && event.subjectUserId != subjectUserId) continue;
+      if (latest == null || event.startTime.isAfter(latest.startTime)) {
+        latest = event;
+      }
+    }
+    return latest;
+  }
+
+  Future<TaskTimeEvent?> getActiveEvent(
+    String taskId,
+    TaskTimeType type, {
+    String? subjectUserId,
+  }) async {
+    final row = await _supabase
+        .from('tasks')
+        .select('comments')
+        .eq('id', taskId)
+        .single();
+    final comments = _normalizeComments(row['comments']);
+    return _activeEventFromComments(comments, type, subjectUserId: subjectUserId);
+  }
+
+  Future<void> ensureSingleActiveEventPerType({
+    required String taskId,
+    required TaskTimeType type,
+    String? subjectUserId,
+  }) async {
+    final row = await _supabase
+        .from('tasks')
+        .select('comments')
+        .eq('id', taskId)
+        .single();
+    final comments = _normalizeComments(row['comments']);
+    final matching = <Map<String, dynamic>>[];
+    for (final comment in comments) {
+      if ((comment['type'] ?? '') != 'time_event') continue;
+      final event = TaskTimeEvent.fromPayload(
+        comment['text']?.toString() ?? '',
+        comment['id']?.toString() ?? '',
+        _parseCommentTimestamp(comment['timestamp']),
+        comment['userId']?.toString() ?? '',
+      );
+      if (event == null || event.type != type || event.endTime != null) continue;
+      if (subjectUserId != null && event.subjectUserId != subjectUserId) continue;
+      matching.add(comment);
+    }
+    if (matching.length <= 1) return;
+    matching.sort((a, b) => _parseCommentTimestamp(a['timestamp'])
+        .compareTo(_parseCommentTimestamp(b['timestamp'])));
+    final now = DateTime.now().toUtc();
+    for (var i = 0; i < matching.length - 1; i++) {
+      final comment = matching[i];
+      final event = TaskTimeEvent.fromPayload(
+        comment['text']?.toString() ?? '',
+        comment['id']?.toString() ?? '',
+        _parseCommentTimestamp(comment['timestamp']),
+        comment['userId']?.toString() ?? '',
+      );
+      if (event == null) continue;
+      comment['text'] = TaskTimeEvent.encodePayload(event.copyWith(endTime: now));
+    }
+    await _supabase.from('tasks').update({'comments': comments}).eq('id', taskId);
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx != -1) {
+      _tasks[idx] = _tasks[idx].copyWith(comments: _toTaskComments(comments));
+      notifyListeners();
+    }
+  }
+
+  Future<bool> closeActiveEvent({
+    required TaskModel task,
+    required TaskTimeType type,
+    required String initiatedBy,
+    String? subjectUserId,
+    String? note,
+  }) async {
+    try {
+      final row = await _supabase
+          .from('tasks')
+          .select('comments')
+          .eq('id', task.id)
+          .single();
+      final comments = _normalizeComments(row['comments']);
+      final now = DateTime.now().toUtc();
+      bool changed = false;
+      for (final comment in comments) {
+        if ((comment['type'] ?? '') != 'time_event') continue;
+        final event = TaskTimeEvent.fromPayload(
+          comment['text']?.toString() ?? '',
+          comment['id']?.toString() ?? '',
+          _parseCommentTimestamp(comment['timestamp']),
+          comment['userId']?.toString() ?? '',
+        );
+        if (event == null) continue;
+        if (event.type != type || event.endTime != null) continue;
+        if (subjectUserId != null && event.subjectUserId != subjectUserId) continue;
+        comment['text'] = TaskTimeEvent.encodePayload(event.copyWith(
+          endTime: now,
+          initiatedBy: initiatedBy,
+          note: note,
+        ));
+        changed = true;
+      }
+      if (!changed) return false;
+      await _supabase.from('tasks').update({'comments': comments}).eq('id', task.id);
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        _tasks[idx] = _tasks[idx].copyWith(comments: _toTaskComments(comments));
+        notifyListeners();
+      }
+      return true;
+    } catch (e, st) {
+      debugPrint('❌ closeActiveEvent error: $e\n$st');
+      return false;
+    }
+  }
+
   int? _findOpenTimeEventIndex(List<Map<String, dynamic>> comments,
       String subjectUserId) {
     int? openIndex;
@@ -1035,23 +1168,12 @@ class TaskProvider with ChangeNotifier {
           .single();
       final comments = _normalizeComments(row['comments']);
       final now = DateTime.now().toUtc();
-      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
-      if (openIndex != null) {
-        final open = comments[openIndex];
-        final rawText = open['text']?.toString() ?? '';
-        final openEvent = TaskTimeEvent.fromPayload(
-            rawText,
-            open['id']?.toString() ?? '',
-            _parseCommentTimestamp(open['timestamp']),
-            open['userId']?.toString() ?? '');
-        if (openEvent != null) {
-          if (openEvent.type == type && openEvent.endTime == null) {
-            return;
-          }
-          final closed = openEvent.copyWith(endTime: now, note: note);
-          open['text'] = TaskTimeEvent.encodePayload(closed);
-        }
-      }
+      final sameTypeOpen = _activeEventFromComments(
+        comments,
+        type,
+        subjectUserId: subjectUserId,
+      );
+      if (sameTypeOpen != null) return;
 
       final event = TaskTimeEvent(
         id: '${now.millisecondsSinceEpoch}-${subjectUserId}',
@@ -1082,6 +1204,12 @@ class TaskProvider with ChangeNotifier {
       await _supabase
           .from('tasks')
           .update({'comments': comments}).eq('id', task.id);
+
+      await ensureSingleActiveEventPerType(
+        taskId: task.id,
+        type: type,
+        subjectUserId: subjectUserId,
+      );
 
       final idx = _tasks.indexWhere((t) => t.id == task.id);
       if (idx != -1) {
