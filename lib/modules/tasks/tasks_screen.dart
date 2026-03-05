@@ -2854,12 +2854,6 @@ class _TasksScreenState extends State<TasksScreen>
                             (stateRowUser == UserRunState.active ||
                                 stateRowUser == UserRunState.paused ||
                                 stateRowUser == UserRunState.problem));
-                    final bool hasShiftPausedByCurrentUser = task.comments.any(
-                      (comment) =>
-                          comment.type == 'shift_pause' &&
-                          comment.userId == widget.employeeId,
-                    );
-
                     Future<void> recordTimeEventForUser(TaskTimeType type,
                         {String? note, bool includeHelpers = true}) async {
                       final participants =
@@ -3631,9 +3625,7 @@ class _TasksScreenState extends State<TasksScreen>
                                       task.assignees.first == widget.employeeId)
                                     ElevatedButton.icon(
                                       onPressed:
-                                          hasShiftPausedByCurrentUser || shiftPaused
-                                              ? null
-                                              : onAddHelper,
+                                          shiftPaused ? null : onAddHelper,
                                       style: ElevatedButton.styleFrom(
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
