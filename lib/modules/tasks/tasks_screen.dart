@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 import '../orders/order_details_card.dart';
+import '../orders/orders_repository.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
 import '../personnel/employee_model.dart';
@@ -754,6 +755,8 @@ class _TasksScreenState extends State<TasksScreen>
   bool _detailsExpanded = true;
   final Map<String, String?> _formImageCache = {};
   final Map<String, Future<String?>> _formImagePending = {};
+  final Map<String, List<Map<String, dynamic>>> _orderPaintsCache = {};
+  final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
@@ -1507,7 +1510,7 @@ class _TasksScreenState extends State<TasksScreen>
                           task,
                           groupResolver: _stageGroupKey,
                         );
-                    final canOpen = task.status != TaskStatus.waiting || readyForStage;
+                    const canOpen = true;
                     return _TaskCard(
                       task: task,
                       order: findOrder(task.orderId),
@@ -2288,14 +2291,28 @@ class _TasksScreenState extends State<TasksScreen>
           )
         ],
       ),
-      child: FutureBuilder<String?>(
-        future: _getFormImageFuture(order),
-        initialData: cachedFormImageUrl,
+      child: FutureBuilder<List<dynamic>>(
+        future: Future.wait<dynamic>([
+          _getFormImageFuture(order),
+          _getOrderPaintsFuture(order.id),
+        ]),
+        initialData: <dynamic>[
+          cachedFormImageUrl,
+          _orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[],
+        ],
         builder: (context, snapshot) {
-          final resolvedFormImageUrl = snapshot.data ?? cachedFormImageUrl;
+          final data = snapshot.data;
+          final resolvedFormImageUrl =
+              (data != null && data.isNotEmpty ? data[0] as String? : null) ??
+                  cachedFormImageUrl;
+          final resolvedPaints =
+              (data != null && data.length > 1
+                      ? data[1] as List<Map<String, dynamic>>
+                      : null) ??
+                  (_orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[]);
           return OrderDetailsCard(
             order: order,
-            paints: const [],
+            paints: resolvedPaints,
             files: const [],
             loadingFiles: false,
             stageTemplateName: templateName,
@@ -2307,6 +2324,31 @@ class _TasksScreenState extends State<TasksScreen>
         },
       ),
     );
+  }
+
+  Future<List<Map<String, dynamic>>> _getOrderPaintsFuture(String orderId) {
+    final normalizedOrderId = orderId.trim();
+    if (normalizedOrderId.isEmpty) {
+      return Future.value(const <Map<String, dynamic>>[]);
+    }
+
+    final pending = _orderPaintsPending[normalizedOrderId];
+    if (pending != null) {
+      return pending;
+    }
+
+    final future = OrdersRepository().getPaints(normalizedOrderId).then((paints) {
+      final normalizedPaints = List<Map<String, dynamic>>.from(paints);
+      _orderPaintsCache[normalizedOrderId] = normalizedPaints;
+      return normalizedPaints;
+    }).catchError((_) {
+      return _orderPaintsCache[normalizedOrderId] ?? const <Map<String, dynamic>>[];
+    }).whenComplete(() {
+      _orderPaintsPending.remove(normalizedOrderId);
+    });
+
+    _orderPaintsPending[normalizedOrderId] = future;
+    return future;
   }
 
   /// Список этапов производства с иконками выполнено/ожидание.

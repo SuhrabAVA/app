@@ -797,6 +797,9 @@ class _ProductionTab extends StatelessWidget {
       final normalizedStageId = task.stageId.trim();
       final groupKey = lookup[normalizedStageId] ?? normalizedStageId;
       final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+      if (_groupCompleted(groupTasks)) {
+        continue;
+      }
       final groupHasActive = groupTasks.any((t) => t.status != TaskStatus.waiting);
       if (!groupHasActive || task.status != TaskStatus.waiting) {
         visibleWorkplaceIds.add(normalizedStageId);
