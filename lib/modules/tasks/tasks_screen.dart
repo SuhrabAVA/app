@@ -2825,10 +2825,9 @@ class _TasksScreenState extends State<TasksScreen>
                     // "Завершить" снизу.
                     final bool requiresSetupBeforeStart =
                         _hasMachineForStage(stage) &&
-                            !_isSetupInProgressForUser(
-                                task, widget.employeeId) &&
-                            !_isSetupCompletedForUser(
-                                task, widget.employeeId);
+                            !_hasPendingSetupForStage(task) &&
+                            !_isSetupCompletedForStage(task) &&
+                            !_hasProductionStartedForStage(task);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
@@ -2969,10 +2968,9 @@ class _TasksScreenState extends State<TasksScreen>
                       }
 
                       if (_hasMachineForStage(stage) &&
-                          !_isSetupInProgressForUser(
-                              task, widget.employeeId) &&
-                          !_isSetupCompletedForUser(
-                              task, widget.employeeId)) {
+                          !_hasPendingSetupForStage(task) &&
+                          !_isSetupCompletedForStage(task) &&
+                          !_hasProductionStartedForStage(task)) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
@@ -3571,10 +3569,9 @@ class _TasksScreenState extends State<TasksScreen>
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
                                       onPressed: (!shiftPaused &&
-                                              !_isSetupCompletedForUser(
-                                                  task, widget.employeeId) &&
-                                              !_isSetupInProgressForUser(
-                                                  task, widget.employeeId))
+                                              !_isSetupCompletedForStage(task) &&
+                                              !_hasPendingSetupForStage(task) &&
+                                              !_hasProductionStartedForStage(task))
                                           ? () => _startSetup(task, provider)
                                           : null,
                                       style: ElevatedButton.styleFrom(
@@ -4081,6 +4078,17 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
     return false;
+  }
+
+  bool _isSetupCompletedForStage(TaskModel task) {
+    if (_hasPendingSetupForStage(task)) return false;
+    return task.comments.any((c) => c.type == 'setup_done');
+  }
+
+  bool _hasProductionStartedForStage(TaskModel task) {
+    if (task.comments.any((c) => c.type == 'start')) return true;
+    return _taskTimeEvents(task)
+        .any((event) => event.type == TaskTimeType.production);
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
