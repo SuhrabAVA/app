@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
-import 'dart:convert';
 
 import '../../services/app_auth.dart';
 
 import '../orders/order_model.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
-import 'task_process_state.dart';
 
 
 const String _canonicalFlexoWorkplaceId =
@@ -91,10 +89,6 @@ class TaskProvider with ChangeNotifier {
       data['comments'] = mapped;
     } else if (c is Map) {
       data['comments'] = c;
-    }
-    final processState = row['process_state'] ?? row['processState'];
-    if (processState != null) {
-      data['process_state'] = processState;
     }
     final id = (row['id'] ?? '').toString();
     return TaskModel.fromMap(data, id);
@@ -253,7 +247,7 @@ class TaskProvider with ChangeNotifier {
       await _preloadStageSequences(orderIds);
       notifyListeners();
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ refresh tasks error: $e\n$st');
     }
   }
 
@@ -840,7 +834,7 @@ class TaskProvider with ChangeNotifier {
       _tasks.add(task);
       notifyListeners();
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ cloneTaskForUser error: $e\n$st');
     }
   }
 
@@ -881,7 +875,7 @@ class TaskProvider with ChangeNotifier {
         }
       }
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ tasks.updateStatus error: $e\n$st');
     }
 
     // If all tasks for order are completed — close the order
@@ -901,39 +895,6 @@ class TaskProvider with ChangeNotifier {
               .update({'status': OrderStatus.completed.name}).eq('id', orderId);
         }
       } catch (_) {}
-    }
-  }
-
-  Future<void> updateProcessState({
-    required String taskId,
-    required TaskProcessState processState,
-    required String userId,
-  }) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
-    if (index != -1) {
-      _tasks[index] = _tasks[index].copyWith(processState: processState);
-      notifyListeners();
-    }
-
-    final payload = jsonEncode(processState.toJson());
-
-    try {
-      await addComment(
-        taskId: taskId,
-        type: 'process_state',
-        text: payload,
-        userId: userId,
-      );
-    } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
-    }
-
-    try {
-      await _supabase
-          .from('tasks')
-          .update({'process_state': processState.toJson()}).eq('id', taskId);
-    } catch (_) {
-      // Optional column: ignore when schema has no process_state field.
     }
   }
 
@@ -991,7 +952,7 @@ class TaskProvider with ChangeNotifier {
         notifyListeners();
       }
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ addComment error: $e\n$st');
     }
   }
 
@@ -1129,7 +1090,7 @@ class TaskProvider with ChangeNotifier {
         notifyListeners();
       }
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ recordTimeEvent error: $e\n$st');
     }
   }
 
@@ -1174,7 +1135,7 @@ class TaskProvider with ChangeNotifier {
         notifyListeners();
       }
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ closeOpenTimeEvent error: $e\n$st');
     }
   }
 
@@ -1205,7 +1166,7 @@ class TaskProvider with ChangeNotifier {
         }
       }
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ assignToUser error: $e\n$st');
     }
   }
 
@@ -1223,7 +1184,7 @@ class TaskProvider with ChangeNotifier {
       });
       await refresh();
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ createTask error: $e\n$st');
     }
   }
 
@@ -1241,7 +1202,7 @@ class TaskProvider with ChangeNotifier {
           .from('tasks')
           .update({'assignees': assignees}).eq('id', id);
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ updateAssignees error: $e\n$st');
     }
   }
 
@@ -1271,7 +1232,7 @@ class TaskProvider with ChangeNotifier {
         }
       }
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ addAssignee error: $e\n$st');
     }
   }
 
@@ -1426,7 +1387,7 @@ class TaskProvider with ChangeNotifier {
           .from('orders')
           .update({'actual_qty': total}).eq('id', orderId);
     } catch (e, st) {
-      debugPrint('updateProcessState comment error: $e\\n$st');
+      debugPrint('❌ _maybeUpdateActualQtyAfterStage error: $e\n$st');
     }
   }
 
@@ -1459,9 +1420,3 @@ class TaskProvider with ChangeNotifier {
     await addComment(taskId: taskId, type: type, text: text, userId: uid);
   }
 }
-
-
-
-
-
-
