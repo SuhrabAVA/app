@@ -2870,10 +2870,13 @@ class _TasksScreenState extends State<TasksScreen>
                             !_hasPendingSetupForStage(task) &&
                             !_isSetupCompletedForStage(task) &&
                             !_hasProductionStartedForStage(task);
+                    final bool productionAlreadyStarted =
+                        _hasProductionStartedForStage(task);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
-                        ((stateRowUser == UserRunState.idle) ||
+                        (((stateRowUser == UserRunState.idle) &&
+                                !productionAlreadyStarted) ||
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
                             (stateRowUser == UserRunState.finished) ||
