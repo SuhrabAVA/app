@@ -3352,7 +3352,15 @@ class _TasksScreenState extends State<TasksScreen>
                                 .where((id) => id != latestTask.assignees.first)
                                 .toList()
                             : const <String>[];
-                        final shiftResumeState = isSetupActiveForRow
+                        final hasPendingSetup =
+                            _hasPendingSetupForStage(latestTask);
+                        final isSetupInProgress = _isSetupInProgressForUser(
+                          latestTask,
+                          currentRowUserId,
+                        );
+                        final shiftResumeState = (isSetupActiveForRow ||
+                                isSetupInProgress ||
+                                hasPendingSetup)
                             ? 'setup'
                             : stateRowUser == UserRunState.paused
                                 ? 'paused'
