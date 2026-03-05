@@ -215,6 +215,44 @@ Duration _totalTimeForUser(TaskModel task, String userId) {
       task, userId, {TaskTimeType.production, TaskTimeType.setup});
 }
 
+Duration _totalStageTime(TaskModel task) {
+  final events = _taskTimeEvents(task)
+      .where((event) =>
+          event.type == TaskTimeType.production || event.type == TaskTimeType.setup)
+      .toList();
+  if (events.isEmpty) return Duration(seconds: task.spentSeconds);
+
+  final now = DateTime.now().toUtc();
+  final intervals = events
+      .map((event) => MapEntry(event.startTime, event.endTime ?? now))
+      .toList()
+    ..sort((a, b) => a.key.compareTo(b.key));
+
+  Duration total = Duration.zero;
+  DateTime? openStart;
+  DateTime? openEnd;
+  for (final interval in intervals) {
+    if (openStart == null) {
+      openStart = interval.key;
+      openEnd = interval.value;
+      continue;
+    }
+    if (interval.key.isAfter(openEnd!)) {
+      total += openEnd.difference(openStart);
+      openStart = interval.key;
+      openEnd = interval.value;
+      continue;
+    }
+    if (interval.value.isAfter(openEnd)) {
+      openEnd = interval.value;
+    }
+  }
+  if (openStart != null && openEnd != null) {
+    total += openEnd.difference(openStart);
+  }
+  return total;
+}
+
 Duration _setupElapsedFromTimeEvents(TaskModel task) {
   final events = _taskTimeEvents(task)
       .where((event) => event.type == TaskTimeType.setup)
@@ -2817,6 +2855,11 @@ class _TasksScreenState extends State<TasksScreen>
                             (stateRowUser == UserRunState.active ||
                                 stateRowUser == UserRunState.paused ||
                                 stateRowUser == UserRunState.problem));
+                    final bool hasShiftPausedByCurrentUser = task.comments.any(
+                      (comment) =>
+                          comment.type == 'shift_pause' &&
+                          comment.userId == widget.employeeId,
+                    );
 
                     Future<void> recordTimeEventForUser(TaskTimeType type,
                         {String? note, bool includeHelpers = true}) async {
@@ -3006,9 +3049,9 @@ class _TasksScreenState extends State<TasksScreen>
                           note: comment);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
-                        await context.read<TaskProvider>().updateStatus(
-                            task.id, TaskStatus.paused,
-                            startedAt: null);
+                        await context
+                            .read<TaskProvider>()
+                            .updateStatus(task.id, TaskStatus.paused);
                       }
                     }
 
@@ -3275,6 +3318,13 @@ class _TasksScreenState extends State<TasksScreen>
                                 .where((id) => id != latestTask.assignees.first)
                                 .toList()
                             : const <String>[];
+                        final shiftResumeState = isSetupActiveForRow
+                            ? 'setup'
+                            : stateRowUser == UserRunState.paused
+                                ? 'paused'
+                                : stateRowUser == UserRunState.problem
+                                    ? 'problem'
+                                    : 'production';
 
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
@@ -3326,6 +3376,11 @@ class _TasksScreenState extends State<TasksScreen>
                             includeHelpers: false);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
+                            type: 'shift_pause_state',
+                            text: shiftResumeState,
+                            userIdOverride: widget.employeeId);
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
                             type: 'shift_pause',
                             text: 'Пересмена: этап приостановлен',
                             userIdOverride: widget.employeeId);
@@ -3364,7 +3419,21 @@ class _TasksScreenState extends State<TasksScreen>
                             );
                           }
                         }
-                        if (_hasPendingSetupForStage(latestTask)) {
+                        final shiftStateComment = latestTask.comments
+                            .where((comment) => comment.type == 'shift_pause_state')
+                            .toList();
+                        final shiftResumeState = shiftStateComment.isNotEmpty
+                            ? shiftStateComment.last.text.trim().toLowerCase()
+                            : (_hasPendingSetupForStage(latestTask)
+                                ? 'setup'
+                                : 'production');
+                        final startedAtTs = latestTask.startedAt ??
+                            DateTime.now().millisecondsSinceEpoch;
+                        final participants =
+                            _participantsSnapshot(latestTask, widget.employeeId);
+                        final execMode = _stageExecutionMode(latestTask);
+
+                        if (shiftResumeState == 'setup') {
                           if (!_isSetupInProgressForUser(
                                   latestTask, widget.employeeId) &&
                               !_isSetupCompletedForUser(
@@ -3376,16 +3445,11 @@ class _TasksScreenState extends State<TasksScreen>
                               userIdOverride: widget.employeeId,
                             );
                           }
-                          final startedAtTs = latestTask.startedAt ??
-                              DateTime.now().millisecondsSinceEpoch;
                           await taskProvider.updateStatus(
                             task.id,
                             TaskStatus.inProgress,
                             startedAt: startedAtTs,
                           );
-                          final participants =
-                              _participantsSnapshot(latestTask, widget.employeeId);
-                          final execMode = _stageExecutionMode(latestTask);
                           await taskProvider.recordTimeEvent(
                             task: latestTask,
                             type: TaskTimeType.setup,
@@ -3398,8 +3462,52 @@ class _TasksScreenState extends State<TasksScreen>
                                 : null,
                             note: 'shift_resume_setup',
                           );
+                        } else if (shiftResumeState == 'paused') {
+                          await taskProvider.updateStatus(task.id, TaskStatus.paused);
+                          await taskProvider.recordTimeEvent(
+                            task: latestTask,
+                            type: TaskTimeType.pause,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: widget.employeeId,
+                            workplaceId: latestTask.stageId,
+                            participantsSnapshot: participants,
+                            executionMode: execMode != null
+                                ? _executionModeCode(execMode)
+                                : null,
+                            note: 'shift_resume_pause',
+                          );
+                        } else if (shiftResumeState == 'problem') {
+                          await taskProvider.updateStatus(task.id, TaskStatus.problem);
+                          await taskProvider.recordTimeEvent(
+                            task: latestTask,
+                            type: TaskTimeType.problem,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: widget.employeeId,
+                            workplaceId: latestTask.stageId,
+                            participantsSnapshot: participants,
+                            executionMode: execMode != null
+                                ? _executionModeCode(execMode)
+                                : null,
+                            note: 'shift_resume_problem',
+                          );
                         } else {
-                          await onStart();
+                          await taskProvider.updateStatus(
+                            task.id,
+                            TaskStatus.inProgress,
+                            startedAt: startedAtTs,
+                          );
+                          await taskProvider.recordTimeEvent(
+                            task: latestTask,
+                            type: TaskTimeType.production,
+                            initiatedBy: widget.employeeId,
+                            subjectUserId: widget.employeeId,
+                            workplaceId: latestTask.stageId,
+                            participantsSnapshot: participants,
+                            executionMode: execMode != null
+                                ? _executionModeCode(execMode)
+                                : null,
+                            note: 'shift_resume_production',
+                          );
                         }
                         final updated = taskProvider.tasks.firstWhere(
                           (t) => t.id == task.id,
@@ -3429,7 +3537,7 @@ class _TasksScreenState extends State<TasksScreen>
                           task.comments.any((c) =>
                               c.type == 'shift_pause' || c.type == 'shift_resume');
                       final d = (jointGroup != null || hasShiftHistory)
-                          ? _elapsed(task)
+                          ? _totalStageTime(task)
                           : _userElapsed(task, userId!);
                       String two(int n) => n.toString().padLeft(2, '0');
                       final s =
@@ -3522,7 +3630,10 @@ class _TasksScreenState extends State<TasksScreen>
                                       task.assignees.isNotEmpty &&
                                       task.assignees.first == widget.employeeId)
                                     ElevatedButton.icon(
-                                      onPressed: onAddHelper,
+                                      onPressed:
+                                          hasShiftPausedByCurrentUser || shiftPaused
+                                              ? null
+                                              : onAddHelper,
                                       style: ElevatedButton.styleFrom(
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
