@@ -391,7 +391,7 @@ class OrderDetailsCard extends StatelessWidget {
                     accentColor: const Color(0xFFF4A12F),
                     child: Column(
                       children: [
-                        _buildInfoRowWidget('Краски', paintsWidget),
+                        _buildInfoRowWidget('Краски', paintsWidget, compact: true),
                         _buildInfoRowWidget(
                           'Форма',
                           Column(
@@ -426,6 +426,7 @@ class OrderDetailsCard extends StatelessWidget {
                                 ),
                             ],
                           ),
+                          compact: true,
                         ),
                         _buildInfoRowWidget(
                           'Файлы',
@@ -439,13 +440,16 @@ class OrderDetailsCard extends StatelessWidget {
                                 ),
                               if (!loadingFiles && files.isEmpty)
                                 const Text('Нет приложенных файлов'),
-                              ...files.map((f) => _fileTile(context, f)).toList(),
+                              ...files
+                                  .map((f) => _fileTile(context, f, compact: true))
+                                  .toList(),
                             ],
                           ),
                           alignEnd: false,
+                          compact: true,
                         ),
                         if (paintInfo.isNotEmpty)
-                          _buildInfoRow('Комментарий', paintInfo),
+                          _buildInfoRow('Комментарий', paintInfo, compact: true),
                       ],
                     ),
                   ),
@@ -459,20 +463,24 @@ class OrderDetailsCard extends StatelessWidget {
                     accentColor: const Color(0xFF7A4CF0),
                     child: Column(
                       children: [
-                        _buildInfoRow('Материал', _materialSummary()),
+                        _buildInfoRow('Материал', _materialSummary(), compact: true),
                         if (widthBValue.isNotEmpty)
-                          _buildInfoRow('Ширина B', widthBValue),
+                          _buildInfoRow('Ширина B', widthBValue, compact: true),
                         if (lengthValue.isNotEmpty)
-                          _buildInfoRow('Длина L', lengthValue),
+                          _buildInfoRow('Длина L', lengthValue, compact: true),
                         _buildInfoRow('Приладка',
-                            o.makeready > 0 ? _fmtNum(o.makeready) : '—'),
-                        _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—'),
+                            o.makeready > 0 ? _fmtNum(o.makeready) : '—',
+                            compact: true),
+                        _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—',
+                            compact: true),
                         _buildInfoRow(
                             'Комментарий',
-                            o.comments.isEmpty ? '—' : o.comments),
+                            o.comments.isEmpty ? '—' : o.comments,
+                            compact: true),
                         _buildInfoRow(
                             'Менеджер',
-                            o.manager.isEmpty ? '—' : o.manager),
+                            o.manager.isEmpty ? '—' : o.manager,
+                            compact: true),
                       ],
                     ),
                   ),
@@ -624,7 +632,8 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
-  Widget _fileTile(BuildContext context, Map<String, dynamic> f) {
+  Widget _fileTile(BuildContext context, Map<String, dynamic> f,
+      {bool compact = false}) {
     final fileName = (f['filename'] ?? f['name'] ?? 'Файл.pdf')
         .toString()
         .replaceAll(RegExp(r'\s+'), ' ')
@@ -635,16 +644,31 @@ class OrderDetailsCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         children: [
-          Icon(isImage ? Icons.image_outlined : Icons.picture_as_pdf, size: 18),
-          const SizedBox(width: 8),
+          Icon(isImage ? Icons.image_outlined : Icons.picture_as_pdf,
+              size: compact ? 14 : 18),
+          SizedBox(width: compact ? 6 : 8),
           Expanded(
             child: Text(
               fileName.isEmpty ? 'Файл.pdf' : fileName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style:
+                  compact ? const TextStyle(fontSize: 14 * _compactTextScale) : null,
             ),
           ),
           TextButton.icon(
+            style: compact
+                ? TextButton.styleFrom(
+                    textStyle: const TextStyle(fontSize: 14 * _compactTextScale),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    minimumSize: const Size(0, 24),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: const VisualDensity(
+                      horizontal: VisualDensity.minimumDensity,
+                      vertical: VisualDensity.minimumDensity,
+                    ),
+                  )
+                : null,
             onPressed: objectPath.isEmpty
                 ? null
                 : () async {
@@ -685,7 +709,7 @@ class OrderDetailsCard extends StatelessWidget {
                       ),
                     );
                   },
-            icon: const Icon(Icons.open_in_new),
+            icon: Icon(Icons.open_in_new, size: compact ? 14 : 18),
             label: const Text('Открыть'),
           ),
         ],
