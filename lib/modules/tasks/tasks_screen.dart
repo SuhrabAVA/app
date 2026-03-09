@@ -3702,18 +3702,20 @@ class _TasksScreenState extends State<TasksScreen>
                                 ],
                               ),
                             ),
-                            SizedBox(width: buttonSpacing),
-                            ElevatedButton.icon(
-                              onPressed: canShiftControl ? onShift : null,
-                              icon: const Icon(Icons.autorenew),
-                              style: ElevatedButton.styleFrom(
-                                textStyle:
-                                    TextStyle(fontSize: scaled(11.5)),
+                            if (stageExecMode == ExecutionMode.joint) ...[
+                              SizedBox(width: buttonSpacing),
+                              ElevatedButton.icon(
+                                onPressed: canShiftControl ? onShift : null,
+                                icon: const Icon(Icons.autorenew),
+                                style: ElevatedButton.styleFrom(
+                                  textStyle:
+                                      TextStyle(fontSize: scaled(11.5)),
+                                ),
+                                label: Text(shiftPaused
+                                    ? 'Продолжить пересмену'
+                                    : 'Пересмена'),
                               ),
-                              label: Text(shiftPaused
-                                  ? 'Продолжить пересмену'
-                                  : 'Пересмена'),
-                            ),
+                            ],
                           ],
                         ),
                       ],
@@ -3820,29 +3822,6 @@ class _TasksScreenState extends State<TasksScreen>
       ),
     );
 
-    // Determine if this user can join a task already started by others. A join button
-    // should appear only when the task has at least one assignee (someone started
-    // the stage) and the current user is not yet in the assignees list. Helpers and
-    // unassigned users should not have control buttons or the ability to add
-    // comments until they join. Joining presents a choice between separate
-    // execution (individual performer) and helper (joint).
-    final bool _joinEligible = task.assignees.isNotEmpty &&
-        !task.assignees.contains(widget.employeeId) &&
-        stageMode == ExecutionMode.separate;
-    if (_joinEligible) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          panel,
-          SizedBox(height: mediumSpacing),
-          ElevatedButton.icon(
-            onPressed: () => _joinTask(task, provider, widget.employeeId),
-            icon: const Icon(Icons.group_add),
-            label: const Text('Присоединиться к заказу'),
-          ),
-        ],
-      );
-    }
     return panel;
   }
 
