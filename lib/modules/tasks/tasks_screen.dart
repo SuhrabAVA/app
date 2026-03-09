@@ -2681,7 +2681,13 @@ class _TasksScreenState extends State<TasksScreen>
 
     return taskProvider.tasks
         .where((t) => t.stageId == _selectedWorkplaceId)
-        .where((t) => !_isEffectivelyCompleted(t))
+        .where((t) {
+          if (!_isEffectivelyCompleted(t)) return true;
+          // В отдельном режиме исполнения допускаем возврат к завершённому
+          // заданию тем сотрудником, который уже участвовал в этапе.
+          return t.assignees.contains(widget.employeeId) &&
+              _hasUserParticipatedInStage(t, widget.employeeId);
+        })
         .where((task) {
           final groupKey = taskGroupKey(task);
           final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
@@ -2766,6 +2772,7 @@ class _TasksScreenState extends State<TasksScreen>
             (task.status == TaskStatus.waiting ||
                 task.status == TaskStatus.paused ||
                 task.status == TaskStatus.problem ||
+                task.status == TaskStatus.completed ||
                 (task.status == TaskStatus.inProgress && _slotAvailable()))) &&
         _isUnlockedByWorkplaceQueue(
           task,
