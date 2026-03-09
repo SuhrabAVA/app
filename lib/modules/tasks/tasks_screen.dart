@@ -348,6 +348,21 @@ UserRunState _userRunState(TaskModel task, String userId) {
   }
 }
 
+bool _hasUserParticipatedInStage(TaskModel task, String userId) {
+  if (_timeEventsForUser(task, userId).isNotEmpty) return true;
+
+  return task.comments.any((c) {
+    if (c.userId != userId) return false;
+    return c.type == 'start' ||
+        c.type == 'resume' ||
+        c.type == 'pause' ||
+        c.type == 'problem' ||
+        c.type == 'user_done' ||
+        c.type == 'setup_start' ||
+        c.type == 'setup_done';
+  });
+}
+
 List<TaskModel> _relatedTasks(TaskProvider provider, TaskModel pivot) {
   return provider.tasks
       .where((t) => t.orderId == pivot.orderId && t.stageId == pivot.stageId)
@@ -2870,13 +2885,12 @@ class _TasksScreenState extends State<TasksScreen>
                             !_hasPendingSetupForStage(task) &&
                             !_isSetupCompletedForStage(task) &&
                             !_hasProductionStartedForStage(task);
-                    final bool productionAlreadyStarted =
-                        _hasProductionStartedForStage(task);
+                    final bool userParticipatedInStage =
+                        _hasUserParticipatedInStage(task, currentRowUserId);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
-                        (((stateRowUser == UserRunState.idle) &&
-                                !productionAlreadyStarted) ||
+                        (((stateRowUser == UserRunState.idle)) ||
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
                             (stateRowUser == UserRunState.finished) ||
@@ -2888,6 +2902,7 @@ class _TasksScreenState extends State<TasksScreen>
                     // allow pausing also if user resumed
                     final bool canFinishRow = isMyRow &&
                         canFinish &&
+                        userParticipatedInStage &&
                         (stateRowUser != UserRunState.idle &&
                             stateRowUser != UserRunState.finished);
                     final bool canProblemRow = isMyRow &&
