@@ -2642,15 +2642,17 @@ class _TasksScreenState extends State<TasksScreen>
 
 
   bool _hasBlockingActiveOrder(TaskProvider provider, TaskModel currentTask) {
+    final currentExecMode = _execModeForUser(currentTask, widget.employeeId);
+    if (currentExecMode != ExecutionMode.separate) {
+      return false;
+    }
+
     return provider.tasks.any((task) {
       if (task.id == currentTask.id) return false;
       if (task.assignees.contains(widget.employeeId) == false) return false;
-      if (task.orderId == currentTask.orderId) return false;
       if (_isEffectivelyCompleted(task)) return false;
       final state = _userRunState(task, widget.employeeId);
-      return state == UserRunState.active ||
-          state == UserRunState.paused ||
-          state == UserRunState.problem;
+      return state == UserRunState.active;
     });
   }
 
