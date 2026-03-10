@@ -2887,13 +2887,16 @@ class _TasksScreenState extends State<TasksScreen>
                             !_hasProductionStartedForStage(task);
                     final bool userParticipatedInStage =
                         _hasUserParticipatedInStage(task, currentRowUserId);
+                    final bool canRestartSeparateAfterPersonalFinish =
+                        stageExecMode == ExecutionMode.separate &&
+                            stateRowUser == UserRunState.finished;
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
                         (((stateRowUser == UserRunState.idle)) ||
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
-                            (stateRowUser == UserRunState.finished) ||
+                            canRestartSeparateAfterPersonalFinish ||
                             (stateRowUser == UserRunState.active &&
                                 isSetupActiveForRow));
                     final bool canPauseRow = isMyRow &&
@@ -3662,7 +3665,11 @@ class _TasksScreenState extends State<TasksScreen>
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
                                       ),
-                                      child: const Text('▶ Начать')),
+                                      child: Text(
+                                        canRestartSeparateAfterPersonalFinish
+                                            ? '▶ Продолжить'
+                                            : '▶ Начать',
+                                      )),
                                   ElevatedButton(
                                       onPressed: canPauseRow ? onPause : null,
                                       style: ElevatedButton.styleFrom(
