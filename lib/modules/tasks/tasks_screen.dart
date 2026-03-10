@@ -2890,12 +2890,21 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
+                        // Для отдельных исполнителей разрешаем возобновлять этап
+                        // после личного завершения (до финальной кнопки
+                        // "Завершить задание").
+                        // Для совместного режима после user_done повторный запуск
+                        // через эту строку недоступен.
                         (((stateRowUser == UserRunState.idle)) ||
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
-                            (stateRowUser == UserRunState.finished) ||
+                            (stateRowUser == UserRunState.finished &&
+                                stageExecMode == ExecutionMode.separate) ||
                             (stateRowUser == UserRunState.active &&
                                 isSetupActiveForRow));
+                    final bool shouldShowContinueLabel =
+                        stateRowUser == UserRunState.finished &&
+                            stageExecMode == ExecutionMode.separate;
                     final bool canPauseRow = isMyRow &&
                         canPause &&
                         stateRowUser == UserRunState.active;
@@ -3662,7 +3671,10 @@ class _TasksScreenState extends State<TasksScreen>
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
                                       ),
-                                      child: const Text('▶ Начать')),
+                                      child: Text(
+                                          shouldShowContinueLabel
+                                              ? '▶ Продолжить'
+                                              : '▶ Начать')),
                                   ElevatedButton(
                                       onPressed: canPauseRow ? onPause : null,
                                       style: ElevatedButton.styleFrom(
