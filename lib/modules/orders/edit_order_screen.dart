@@ -2124,13 +2124,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         );
       return;
     }
-    if (_lengthExceeded) {
-      if (mounted)
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Недостаточно материала на складе')),
-        );
-      return;
-    }
     _validatePaintNames();
     if (_hasInvalidPaintNames()) {
       if (mounted)
@@ -2151,6 +2144,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _upsertPensInParameters(penName);
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+    bool hasEnoughPaperForLaunch() {
+      final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
+      final double need = (_product.length ?? 0).toDouble();
+      if (paperTmc == null || need <= 0) return true;
+      final current = warehouse.allTmc.where((t) => t.id == paperTmc.id).toList();
+      final double availableQty =
+          current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
+      final String itemId = paperTmc.id;
+      final double prevLen = _paperWriteoffBaselineByItem[itemId] ??
+          ((widget.order?.material?.id == itemId)
+              ? (widget.order?.product.length ?? 0).toDouble()
+              : 0.0);
+      final double toWriteOff = need - prevLen;
+      return toWriteOff <= 0 || toWriteOff <= availableQty;
+    }
+
+    final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
@@ -2528,6 +2538,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return candidates.isEmpty ? null : candidates.first;
         }
 
+        final bool shouldLaunchNow =
+            canLaunchProductionNow && !createdOrUpdatedOrder.assignmentCreated;
+
+        if (shouldLaunchNow) {
         // Build a list of resolved stage IDs.
         // При неполном workplaceLookup (например, из-за RLS) не теряем валидные UUID,
         // но и не пытаемся вставлять невалидные идентификаторы этапов.
@@ -2701,6 +2715,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         await provider.refresh();
         await taskProvider.refresh();
         createdOrUpdatedOrder = withAssignment;
+        }
       }
     }
     // === Обработка формы ===
@@ -2713,9 +2728,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (!mounted && !closeImmediately) return;
 
     // Списание материалов/готовой продукции (бумага по длине L)
+    // Выполняем только после запуска заказа в производство.
     final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
     final double need = (_product.length ?? 0).toDouble();
-    if (paperTmc != null && need > 0) {
+    if (createdOrUpdatedOrder.assignmentCreated && paperTmc != null && need > 0) {
       final current = warehouse.allTmc.where((t) => t.id == paperTmc.id).toList();
       final double availableQty =
           current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
@@ -2754,6 +2770,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
 
       _paperWriteoffBaselineByItem[itemId] = need;
+    }
+
+    if (!createdOrUpdatedOrder.assignmentCreated && !canLaunchProductionNow) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Заказ сохранён без запуска: недостаточно материала на складе. '
+            'Запустите заказ позже кнопкой «Запустить».',
+          ),
+        ),
+      );
     }
 
     // Списание лишнего выполняется на этапе отгрузки.

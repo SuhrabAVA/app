@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_model.dart';
 import '../warehouse/warehouse_table_styles.dart';
+import '../warehouse/warehouse_provider.dart';
 import '../personnel/personnel_provider.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
@@ -46,6 +47,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<String> _filterProducts = [];
   DateTimeRange? _filterDateRange;
   final Set<String> _shippingInProgress = <String>{};
+  final Set<String> _launchingInProgress = <String>{};
   final ScrollController _tableHorizontalController = ScrollController();
   final ScrollController _tableVerticalController = ScrollController();
   final ScrollController _cardsScrollController = ScrollController();
@@ -104,10 +106,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             _buildStatusTabs(),
             const SizedBox(height: 12),
             Expanded(
-              child: Consumer3<OrdersProvider, TaskProvider,
-                  PersonnelProvider>(
+              child: Consumer4<OrdersProvider, TaskProvider, PersonnelProvider,
+                  WarehouseProvider>(
                 builder:
-                    (context, ordersProvider, taskProvider, personnel, child) {
+                    (context, ordersProvider, taskProvider, personnel, warehouse, child) {
                   final orders = _filteredOrders(ordersProvider.orders);
                   final allTasks = taskProvider.tasks;
                   if (orders.isEmpty) {
@@ -151,6 +153,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                   final missing = _isIncomplete(o);
                                   final stageName =
                                       _currentStageName(o, allTasks, personnel);
+                                  final canLaunch = _canLaunchOrder(o, warehouse);
+                                  final isLaunching =
+                                      _launchingInProgress.contains(o.id);
                                   return DataRow(
                                     onSelectChanged: (_) => _openViewOrder(o),
                                     color: MaterialStateProperty
@@ -204,6 +209,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                               );
                                             },
                                           ),
+                                          if (canLaunch)
+                                            ElevatedButton(
+                                              onPressed: isLaunching
+                                                  ? null
+                                                  : () => _launchOrder(o),
+                                              child: isLaunching
+                                                  ? const SizedBox(
+                                                      width: 16,
+                                                      height: 16,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                    )
+                                                  : const Text('Запустить'),
+                                            ),
                                         ],
                                       )),
                                     ],
@@ -226,7 +247,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           runSpacing: 10,
                           children: orders
                               .map((o) =>
-                                  _buildOrderCard(o, allTasks, personnel))
+                                  _buildOrderCard(o, allTasks, personnel, warehouse))
                               .toList(),
                         ),
                       ),
@@ -915,6 +936,45 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
+  bool _canLaunchOrder(OrderModel order, WarehouseProvider warehouse) {
+    if (order.assignmentCreated || order.statusEnum != OrderStatus.newOrder) {
+      return false;
+    }
+    if (order.stageTemplateId == null || order.stageTemplateId!.isEmpty) {
+      return false;
+    }
+    final String? materialId = order.material?.id;
+    final double requiredLength = (order.product.length ?? 0).toDouble();
+    if (materialId == null || materialId.isEmpty || requiredLength <= 0) {
+      return true;
+    }
+    final matches = warehouse.allTmc.where((t) => t.id == materialId).toList();
+    if (matches.isEmpty) return false;
+    return matches.first.quantity >= requiredLength;
+  }
+
+  Future<void> _launchOrder(OrderModel order) async {
+    if (_launchingInProgress.contains(order.id)) return;
+    setState(() => _launchingInProgress.add(order.id));
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final provider = context.read<OrdersProvider>();
+      final error = await provider.launchOrder(order);
+      if (!mounted) return;
+      if (error != null) {
+        messenger.showSnackBar(SnackBar(content: Text(error)));
+      } else {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Заказ запущен в производство')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _launchingInProgress.remove(order.id));
+      }
+    }
+  }
+
   /// Возвращает цвет и текст статуса для заказа с учётом связанных задач.
   _OrderStatusInfo _computeStatus(OrderModel order, List<TaskModel> allTasks) {
     final tasks = allTasks.where((t) => t.orderId == order.id).toList();
@@ -958,7 +1018,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// Строит карточку заказа для отображения в списке.
   Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks,
-      PersonnelProvider personnel) {
+      PersonnelProvider personnel, WarehouseProvider warehouse) {
     // Определяем цвет и текст для статуса с учётом задач
     final statusInfo = _computeStatus(order, allTasks);
     final Color statusColor = statusInfo.color;
@@ -969,6 +1029,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final missing = _isIncomplete(order);
     final bool isCompleted = statusLabel == 'Завершено';
     final bool isShipping = _shippingInProgress.contains(order.id);
+    final bool canLaunch = _canLaunchOrder(order, warehouse);
+    final bool isLaunching = _launchingInProgress.contains(order.id);
     final String? stageName =
         _currentStageName(order, allTasks, personnel);
     return SizedBox(
@@ -1066,7 +1128,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         ),
                       ],
                     ),
-                    if (isCompleted && !order.isShipped)
+                    if (canLaunch)
+                      ElevatedButton(
+                        onPressed: isLaunching ? null : () => _launchOrder(order),
+                        child: isLaunching
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Запустить'),
+                      )
+                    else if (isCompleted && !order.isShipped)
                       ElevatedButton(
                         onPressed:
                             isShipping ? null : () => _confirmShipment(order),
