@@ -299,9 +299,7 @@ class OrdersProvider with ChangeNotifier {
             .select('id')
             .eq('order_id', order.id)
             .maybeSingle();
-        final String? planId = (plan is Map && plan['id'] != null)
-            ? plan['id'].toString()
-            : null;
+        final String? planId = plan?['id']?.toString();
         if (planId != null && planId.isNotEmpty) {
           final rows = await _supabase
               .from('prod_plan_stages')
@@ -323,7 +321,7 @@ class OrdersProvider with ChangeNotifier {
               .select('stages')
               .eq('order_id', order.id)
               .maybeSingle();
-          final dynamic stages = legacyPlan is Map ? legacyPlan['stages'] : null;
+          final dynamic stages = legacyPlan?['stages'];
           if (stages is List) {
             for (final raw in stages.whereType<Map>()) {
               final map = Map<String, dynamic>.from(raw as Map);
