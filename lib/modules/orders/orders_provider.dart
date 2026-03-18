@@ -16,9 +16,14 @@ class OrdersProvider with ChangeNotifier {
 
   // Realtime channel for listening to order changes.
   RealtimeChannel? _ordersChannel;
+  RealtimeChannel? _materialsChannel;
+  RealtimeChannel? _papersChannel;
+  Timer? _autoLaunchDebounce;
+  bool _autoLaunchInProgress = false;
 
   OrdersProvider() {
     _listenToOrders();
+    _listenToStockChanges();
   }
 
   // ===== AUTH =====
@@ -49,9 +54,109 @@ class OrdersProvider with ChangeNotifier {
         ..clear()
         ..addAll(rows.map((row) => OrderModel.fromMap(row)));
       notifyListeners();
+      await _autoLaunchPendingOrders();
     } catch (e, st) {
       debugPrint('❌ refresh orders error: $e\n$st');
     }
+  }
+
+  void _listenToStockChanges() {
+    void scheduleAutoLaunch() {
+      _autoLaunchDebounce?.cancel();
+      _autoLaunchDebounce = Timer(const Duration(milliseconds: 400), () async {
+        await _autoLaunchPendingOrders(forceRefresh: true);
+      });
+    }
+
+    _materialsChannel = _supabase
+        .channel('orders:auto-launch:materials')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'materials',
+          callback: (_) => scheduleAutoLaunch(),
+        )
+        .subscribe();
+
+    _papersChannel = _supabase
+        .channel('orders:auto-launch:papers')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'papers',
+          callback: (_) => scheduleAutoLaunch(),
+        )
+        .subscribe();
+  }
+
+  Future<void> _autoLaunchPendingOrders({bool forceRefresh = false}) async {
+    if (_autoLaunchInProgress) return;
+    _autoLaunchInProgress = true;
+    try {
+      await _ensureAuthed();
+
+      if (forceRefresh) {
+        final res = await _supabase
+            .from('orders')
+            .select()
+            .order('created_at', ascending: false);
+        final rows = (res as List).cast<Map<String, dynamic>>();
+        _orders
+          ..clear()
+          ..addAll(rows.map((row) => OrderModel.fromMap(row)));
+        notifyListeners();
+      }
+
+      final pending = _orders.where((order) {
+        if (order.assignmentCreated) return false;
+        if (order.statusEnum != OrderStatus.newOrder) return false;
+        final templateId = order.stageTemplateId?.trim() ?? '';
+        return templateId.isNotEmpty;
+      }).toList(growable: false);
+
+      for (final order in pending) {
+        if (!await _hasEnoughMaterialForLaunch(order)) continue;
+        final error = await launchOrder(order);
+        if (error != null) {
+          debugPrint('⚠️ auto launch skipped for order ${order.id}: $error');
+        }
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ auto launch check failed: $e\n$st');
+    } finally {
+      _autoLaunchInProgress = false;
+    }
+  }
+
+  Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
+    final String materialId = (order.material?.id ?? '').trim();
+    final double requiredLength = (order.product.length ?? 0).toDouble();
+    if (materialId.isEmpty || requiredLength <= 0) {
+      return true;
+    }
+
+    Future<double?> fetchQty(String table) async {
+      try {
+        final row = await _supabase
+            .from(table)
+            .select('quantity')
+            .eq('id', materialId)
+            .maybeSingle();
+        if (row == null) return null;
+        final value = row['quantity'];
+        if (value is num) return value.toDouble();
+        return double.tryParse('$value');
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final qty = await fetchQty('materials') ?? await fetchQty('papers');
+    if (qty == null) {
+      // Если номенклатура не найдена (например, удалена) — не автозапускаем.
+      return false;
+    }
+    return qty >= requiredLength;
   }
 
   // ===== REALTIME =====
@@ -136,6 +241,15 @@ class OrdersProvider with ChangeNotifier {
       _supabase.removeChannel(_ordersChannel!);
       _ordersChannel = null;
     }
+    if (_materialsChannel != null) {
+      _supabase.removeChannel(_materialsChannel!);
+      _materialsChannel = null;
+    }
+    if (_papersChannel != null) {
+      _supabase.removeChannel(_papersChannel!);
+      _papersChannel = null;
+    }
+    _autoLaunchDebounce?.cancel();
     super.dispose();
   }
 
