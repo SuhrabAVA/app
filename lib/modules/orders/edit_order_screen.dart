@@ -676,6 +676,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // ensure at least one paint row only for new orders (not editing)
     if (_paints.isEmpty && widget.order == null)
       _paints.add(_PaintEntry(memo: _paintInfo));
+    if (!_hasAnyPaints()) {
+      _isOldForm = true;
+    }
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1136,6 +1139,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void _handlePaintsChanged() {
     final filled = _hasAnyPaints();
+    if (!filled && !_isOldForm) {
+      setState(() {
+        _isOldForm = true;
+        _newFormImageBytes = null;
+        _selectedOldFormRow = null;
+        _selectedOldForm = null;
+        _formResults = [];
+        _formSearchCtl.clear();
+        _loadingForms = false;
+        _selectedOldFormImageUrl = null;
+      });
+    }
     if (_lastPreviewPaintsFilled != filled) {
       _lastPreviewPaintsFilled = filled;
       _scheduleStagePreviewUpdate();
@@ -3047,7 +3062,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final hasAssignedForm = _hasAssignedForm();
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
     final showFormEditor = !isEditing || _editingForm || !hasAssignedForm;
-    final paintsAvailable = _hasAnyPaints();
     final baseTheme = Theme.of(context);
     // Apply a more compact theme by reducing font size, increasing density,
     // and tightening field padding. This shrinks the entire form by roughly 20%.
@@ -3076,7 +3090,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         showFormEditor: showFormEditor,
         isEditing: isEditing,
         hasAssignedForm: hasAssignedForm,
-        paintsAvailable: paintsAvailable,
       ),
     ];
     return Scaffold(
@@ -3221,7 +3234,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool showFormEditor,
     required bool isEditing,
     required bool hasAssignedForm,
-    required bool paintsAvailable,
   }) {
     const labelWidth = 128.0;
     return LayoutBuilder(
@@ -3318,7 +3330,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         showFormEditor: showFormEditor,
                         isEditing: isEditing,
                         hasAssignedForm: hasAssignedForm,
-                        paintsAvailable: paintsAvailable,
                         wrapWithCard: false,
                       ),
                     ),
@@ -5112,7 +5123,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool showFormEditor,
     required bool isEditing,
     required bool hasAssignedForm,
-    required bool paintsAvailable,
     bool wrapWithCard = true,
   }) {
     final content = <Widget>[];
@@ -5165,25 +5175,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
     );
 
-    if (!paintsAvailable) {
-      content.addAll([
-        _buildFormDisabledNotice(context),
-        const SizedBox(height: 4),
-      ]);
-    }
-
     if (controls.isNotEmpty) {
-      content.add(
-        paintsAvailable
-            ? Column(children: controls)
-            : AbsorbPointer(
-                absorbing: true,
-                child: Opacity(
-                  opacity: 0.6,
-                  child: Column(children: controls),
-                ),
-              ),
-      );
+      content.add(Column(children: controls));
     }
 
     if (wrapWithCard) {
@@ -5197,30 +5190,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: content,
-    );
-  }
-
-  Widget _buildFormDisabledNotice(BuildContext context) {
-    final theme = Theme.of(context);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceVariant.withOpacity(0.35),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: theme.dividerColor),
-        ),
-        child: const Text(
-          'Добавьте хотя бы одну краску, чтобы выбрать форму.',
-          textAlign: TextAlign.left,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
-            height: 1.15,
-          ),
-        ),
-      ),
     );
   }
 
@@ -5472,39 +5441,55 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   List<Widget> _buildFormEditorControls() {
+    final paintsAvailable = _hasAnyPaints();
     final widgets = <Widget>[
       _buildCompactSwitchTile(
         label: _isOldForm ? 'Старая форма' : 'Новая форма',
         value: _isOldForm,
-        onChanged: (val) {
-          _formSearchDebounce?.cancel();
-          setState(() {
-            _isOldForm = val;
-            if (_isOldForm) {
-              _newFormImageBytes = null;
-              if (_formSearchCtl.text.trim().isEmpty) {
-                _formResults = [];
+        onChanged: paintsAvailable
+            ? (val) {
+                _formSearchDebounce?.cancel();
+                setState(() {
+                  _isOldForm = val;
+                  if (_isOldForm) {
+                    _newFormImageBytes = null;
+                    if (_formSearchCtl.text.trim().isEmpty) {
+                      _formResults = [];
+                    }
+                    _loadingForms = false;
+                    _selectedOldFormImageUrl = null;
+                  } else {
+                    _selectedOldFormRow = null;
+                    _selectedOldForm = null;
+                    _formResults = [];
+                    _formSearchCtl.clear();
+                    _loadingForms = false;
+                    _selectedOldFormImageUrl = null;
+                  }
+                });
+                if (val) {
+                  final query = _formSearchCtl.text.trim();
+                  if (query.isNotEmpty) {
+                    _reloadForms(search: query);
+                  }
+                }
               }
-              _loadingForms = false;
-              _selectedOldFormImageUrl = null;
-            } else {
-              _selectedOldFormRow = null;
-              _selectedOldForm = null;
-              _formResults = [];
-              _formSearchCtl.clear();
-              _loadingForms = false;
-              _selectedOldFormImageUrl = null;
-            }
-          });
-          if (val) {
-            final query = _formSearchCtl.text.trim();
-            if (query.isNotEmpty) {
-              _reloadForms(search: query);
-            }
-          }
-        },
+            : null,
       )
     ];
+
+    if (!paintsAvailable) {
+      widgets.addAll([
+        const SizedBox(height: 2),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Без краски доступна только старая форма (можно оставить пусто).',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      ]);
+    }
 
     if (_isOldForm) {
       widgets.add(TextField(
@@ -5573,19 +5558,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_orderFormIsOld != null) {
       items.add(Text(_orderFormIsOld! ? 'Старая форма' : 'Новая форма'));
     }
-    if (_orderFormSeries != null && _orderFormSeries!.isNotEmpty) {
-      items.add(Text('Название формы: ${_orderFormSeries!}'));
-    }
     if (_orderFormNo != null) {
       items.add(Text('Номер формы: ${_orderFormNo}'));
-    }
-    final displaySize = _cleanFormSizeExtras(_orderFormSize);
-    if (displaySize != null && displaySize.isNotEmpty) {
-      items.add(Text('Размер: $displaySize'));
-    }
-    if (_orderFormProductType != null &&
-        _orderFormProductType!.trim().isNotEmpty) {
-      items.add(Text('Тип продукта: ${_orderFormProductType!}'));
     }
     if (_orderFormImageUrl != null && _orderFormImageUrl!.isNotEmpty) {
       items.add(Padding(
@@ -5623,6 +5597,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _editingForm = true;
       if (_orderFormIsOld != null) {
         _isOldForm = _orderFormIsOld!;
+      }
+      if (!_hasAnyPaints()) {
+        _isOldForm = true;
       }
       if (_isOldForm) {
         _selectedOldFormImageUrl = _orderFormImageUrl;
