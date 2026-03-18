@@ -279,6 +279,129 @@ class OrdersProvider with ChangeNotifier {
     }
   }
 
+  /// Запускает заказ в производство:
+  /// - создаёт задачи по сохранённой очереди этапов;
+  /// - списывает бумагу;
+  /// - переводит заказ в статус inWork.
+  /// Возвращает `null` при успехе или текст ошибки.
+  Future<String?> launchOrder(OrderModel order) async {
+    await _ensureAuthed();
+    if (order.assignmentCreated) {
+      return null;
+    }
+
+    try {
+      final List<Map<String, dynamic>> stageRows = <Map<String, dynamic>>[];
+
+      try {
+        final plan = await _supabase
+            .from('prod_plans')
+            .select('id')
+            .eq('order_id', order.id)
+            .maybeSingle();
+        final String? planId = (plan is Map && plan['id'] != null)
+            ? plan['id'].toString()
+            : null;
+        if (planId != null && planId.isNotEmpty) {
+          final rows = await _supabase
+              .from('prod_plan_stages')
+              .select('stage_id, status, step, step_no, seq')
+              .eq('plan_id', planId)
+              .order('step', ascending: true);
+          if (rows is List) {
+            stageRows.addAll(rows
+                .whereType<Map>()
+                .map((r) => Map<String, dynamic>.from(r as Map)));
+          }
+        }
+      } catch (_) {}
+
+      if (stageRows.isEmpty) {
+        try {
+          final legacyPlan = await _supabase
+              .from('production_plans')
+              .select('stages')
+              .eq('order_id', order.id)
+              .maybeSingle();
+          final dynamic stages = legacyPlan is Map ? legacyPlan['stages'] : null;
+          if (stages is List) {
+            for (final raw in stages.whereType<Map>()) {
+              final map = Map<String, dynamic>.from(raw as Map);
+              final stageId = (map['stageId'] ??
+                      map['stage_id'] ??
+                      map['stageid'] ??
+                      map['workplaceId'] ??
+                      map['workplace_id'] ??
+                      map['id'])
+                  ?.toString();
+              if (stageId == null || stageId.trim().isEmpty) continue;
+              stageRows.add({
+                'stage_id': stageId.trim(),
+                'status': 'waiting',
+              });
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (stageRows.isEmpty) {
+        return 'Не удалось запустить заказ: не найдена очередь этапов.';
+      }
+
+      await _supabase.from('tasks').delete().eq('order_id', order.id);
+
+      final Set<String> createdStageIds = <String>{};
+      for (final row in stageRows) {
+        final String stageId = (row['stage_id'] ?? '').toString().trim();
+        if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
+        createdStageIds.add(stageId);
+        final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
+        final String taskStatus =
+            (stageStatus == 'done' || stageStatus == 'completed')
+                ? 'done'
+                : 'waiting';
+        await _supabase.from('tasks').insert({
+          'order_id': order.id,
+          'stage_id': stageId,
+          'status': taskStatus,
+          'assignees': [],
+          'comments': [],
+          if (taskStatus == 'done')
+            'completed_at': DateTime.now().toIso8601String(),
+        });
+      }
+
+      await _applyPaperWriteoffFromOrder(order);
+
+      final String nextAssignmentId =
+          (order.assignmentId ?? '').trim().isNotEmpty
+              ? order.assignmentId!.trim()
+              : generateAssignmentId();
+
+      await _supabase.from('orders').update({
+        'status': OrderStatus.inWork.name,
+        'assignment_created': true,
+        'assignment_id': nextAssignmentId,
+      }).eq('id', order.id);
+
+      final index = _orders.indexWhere((o) => o.id == order.id);
+      if (index != -1) {
+        _orders[index] = _orders[index].copyWith(
+          status: OrderStatus.inWork.name,
+          assignmentCreated: true,
+          assignmentId: nextAssignmentId,
+        );
+        notifyListeners();
+      }
+
+      await _logOrderEvent(order.id, 'Запуск', 'Заказ запущен в производство');
+      return null;
+    } catch (e, st) {
+      debugPrint('❌ launchOrder error: $e\n$st');
+      return 'Не удалось запустить заказ: $e';
+    }
+  }
+
   /// Удаляет заказ по идентификатору (оптимистично).
   Future<void> deleteOrder(String id) async {
     await _ensureAuthed();
@@ -1167,4 +1290,3 @@ class OrdersProvider with ChangeNotifier {
     return '$datePrefix$next';
   }
 }
-
