@@ -16,8 +16,7 @@ class OrdersProvider with ChangeNotifier {
 
   // Realtime channel for listening to order changes.
   RealtimeChannel? _ordersChannel;
-  RealtimeChannel? _materialsChannel;
-  RealtimeChannel? _papersChannel;
+  final List<RealtimeChannel> _stockChannels = <RealtimeChannel>[];
   Timer? _autoLaunchDebounce;
   bool _autoLaunchInProgress = false;
 
@@ -68,25 +67,57 @@ class OrdersProvider with ChangeNotifier {
       });
     }
 
-    _materialsChannel = _supabase
-        .channel('orders:auto-launch:materials')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'materials',
-          callback: (_) => scheduleAutoLaunch(),
-        )
-        .subscribe();
+    void addStockChannel({
+      required String channelName,
+      required String table,
+    }) {
+      final channel = _supabase
+          .channel(channelName)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: table,
+            callback: (_) => scheduleAutoLaunch(),
+          )
+          .subscribe();
+      _stockChannels.add(channel);
+    }
 
-    _papersChannel = _supabase
-        .channel('orders:auto-launch:papers')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'papers',
-          callback: (_) => scheduleAutoLaunch(),
-        )
-        .subscribe();
+    // В разных проектах остатки могут меняться как напрямую в таблицах
+    // номенклатуры, так и через журналы приходов/списаний/инвентаризаций.
+    // Подписываемся на все связанные таблицы, чтобы не пропускать автозапуск.
+    addStockChannel(
+      channelName: 'orders:auto-launch:materials',
+      table: 'materials',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:papers',
+      table: 'papers',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:materials-arrivals',
+      table: 'materials_arrivals',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:materials-writeoffs',
+      table: 'materials_writeoffs',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:materials-inventories',
+      table: 'materials_inventories',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:papers-arrivals',
+      table: 'papers_arrivals',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:papers-writeoffs',
+      table: 'papers_writeoffs',
+    );
+    addStockChannel(
+      channelName: 'orders:auto-launch:papers-inventories',
+      table: 'papers_inventories',
+    );
   }
 
   Future<void> _autoLaunchPendingOrders({bool forceRefresh = false}) async {
@@ -226,6 +257,10 @@ class OrdersProvider with ChangeNotifier {
           _orders.add(updated);
         }
         notifyListeners();
+        if (!updated.assignmentCreated &&
+            updated.statusEnum == OrderStatus.newOrder) {
+          await _autoLaunchPendingOrders();
+        }
         return;
       }
     } catch (e, st) {
@@ -241,14 +276,10 @@ class OrdersProvider with ChangeNotifier {
       _supabase.removeChannel(_ordersChannel!);
       _ordersChannel = null;
     }
-    if (_materialsChannel != null) {
-      _supabase.removeChannel(_materialsChannel!);
-      _materialsChannel = null;
+    for (final channel in _stockChannels) {
+      _supabase.removeChannel(channel);
     }
-    if (_papersChannel != null) {
-      _supabase.removeChannel(_papersChannel!);
-      _papersChannel = null;
-    }
+    _stockChannels.clear();
     _autoLaunchDebounce?.cancel();
     super.dispose();
   }
