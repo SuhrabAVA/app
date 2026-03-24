@@ -28,7 +28,6 @@ import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
-import '../tasks/task_provider.dart';
 import '../../utils/media_viewer.dart';
 
 /// Экран редактирования или создания заказа.
@@ -2100,7 +2099,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final bool isCreating = (widget.order == null);
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
-    final taskProvider = Provider.of<TaskProvider>(context, listen: false);
     if (!_formKey.currentState!.validate()) return;
     _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
     final params = {..._selectedParams};
@@ -2161,6 +2159,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
+    final String nextOrderStatus = canLaunchProductionNow
+        ? OrderStatus.ready_to_start.name
+        : OrderStatus.waiting_materials.name;
+    final String shortageMessage = canLaunchProductionNow
+        ? ''
+        : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.';
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
@@ -2182,6 +2186,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
+        status: nextOrderStatus,
       );
       if (_created == null) {
         if (mounted) {
@@ -2214,12 +2219,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         contractSigned: _contractSigned,
         paymentDone: _paymentDone,
         comments: _commentsController.text.trim(),
-        status: widget.order!.status,
+        status: nextOrderStatus,
+        hasMaterialShortage: !canLaunchProductionNow,
+        materialShortageMessage: shortageMessage,
         assignmentId: widget.order!.assignmentId,
         assignmentCreated: widget.order!.assignmentCreated,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
+    }
+
+    if (createdOrUpdatedOrder.status != nextOrderStatus ||
+        createdOrUpdatedOrder.hasMaterialShortage != !canLaunchProductionNow ||
+        createdOrUpdatedOrder.materialShortageMessage != shortageMessage) {
+      final normalized = createdOrUpdatedOrder.copyWith(
+        status: nextOrderStatus,
+        hasMaterialShortage: !canLaunchProductionNow,
+        materialShortageMessage: shortageMessage,
+      );
+      await provider.updateOrder(normalized);
+      createdOrUpdatedOrder = normalized;
     }
 
     // Присвоим читаемый номер заказа (ЗК-YYYY.MM.DD-N), если ещё не присвоен
@@ -2538,92 +2557,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return candidates.isEmpty ? null : candidates.first;
         }
 
-        final bool shouldLaunchNow =
-            canLaunchProductionNow && !createdOrUpdatedOrder.assignmentCreated;
+        final bool shouldLaunchNow = true;
 
         if (shouldLaunchNow) {
-        // Build a list of resolved stage IDs.
-        // При неполном workplaceLookup (например, из-за RLS) не теряем валидные UUID,
-        // но и не пытаемся вставлять невалидные идентификаторы этапов.
-        final List<String> __validStageIds = [];
-        for (final sm in stageMaps) {
-          final primary = _resolvePrimaryStageId(sm);
-          final stageIds = <String>[
-            if (primary != null && primary.isNotEmpty) primary,
-          ];
-          if (stageIds.isEmpty && _looksLikeBobbin(sm) && __bobbinId != null) {
-            stageIds.add(__bobbinId!);
-          }
-          for (final sid in stageIds) {
-            if (sid.isEmpty) continue;
-            final resolved = workplaceLookup[sid.toLowerCase()] ??
-                legacyStageLookup[sid.toLowerCase()] ??
-                sid;
-            if (_looksLikeUuid(resolved) ||
-                workplaceLookup.containsValue(resolved) ||
-                legacyStageLookup.containsValue(resolved) ||
-                _looksLikeBobbin(sm)) {
-              __validStageIds.add(resolved);
-            }
-          }
-        }
-        if (__validStageIds.isNotEmpty) {
-          await _sb
-              .from('tasks')
-              .delete()
-              .eq('order_id', createdOrUpdatedOrder.id);
-          // create new tasks for each stage
-        } else {
-          // No valid stages resolved — keep existing tasks to avoid losing assignments
-          // (logically indicates a template/config error)
-        }
-        // create new tasks for each stage (only if stage exists)
-        final createdStageIds = <String>{};
-        for (final sm in stageMaps) {
-          final primary = _resolvePrimaryStageId(sm);
-          final stageIds = <String>[
-            if (primary != null && primary.isNotEmpty) primary,
-          ];
-          if (stageIds.isEmpty && _looksLikeBobbin(sm) && __bobbinId != null) {
-            stageIds.add(__bobbinId!);
-          }
-          for (final stageId in stageIds) {
-            if (stageId.isEmpty) continue;
-            var resolvedStageId = stageId;
-            try {
-              resolvedStageId = workplaceLookup[stageId.toLowerCase()] ??
-                  legacyStageLookup[stageId.toLowerCase()] ??
-                  stageId;
-              if (createdStageIds.contains(resolvedStageId)) {
-                continue;
-              }
-              // Не пропускаем этапы с не-UUID идентификаторами: они могут
-              // храниться как алиасы (code/name) и будут нормализованы
-              // TaskProvider-ом при чтении задач.
-              if (!_looksLikeUuid(resolvedStageId) &&
-                  !workplaceLookup.containsValue(resolvedStageId) &&
-                  !legacyStageLookup.containsValue(resolvedStageId) &&
-                  !_looksLikeBobbin(sm)) {
-                debugPrint(
-                  '⚠️ insert task with non-uuid stage alias: stage=$stageId, resolved=$resolvedStageId',
-                );
-              }
-              await _sb.from('tasks').insert({
-                'order_id': createdOrUpdatedOrder.id,
-                'stage_id': resolvedStageId,
-                'status': 'waiting',
-                'assignees': [],
-                'comments': [],
-              });
-              createdStageIds.add(resolvedStageId);
-            } catch (e, st) {
-              debugPrint(
-                '❌ tasks insert failed for stage=$stageId, resolved=$resolvedStageId: $e\n$st',
-              );
-            }
-          }
-        }
-
         // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
         try {
           // Ensure prod_plans row exists
@@ -2676,45 +2612,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         // ---- /sync normalized tables ----
 
-        // update order status
-        // Mark Bobbin (Бабинорезка) as done when format equals width for this order only
-        if (__shouldCompleteBobbin && __bobbinId != null) {
-          await _sb.from('tasks').update({
-            'status': 'done',
-            'completed_at': DateTime.now().toIso8601String(),
-          }).match({
-            'order_id': createdOrUpdatedOrder.id,
-            'stage_id': __bobbinId,
-          });
-        }
-
-        // update order status to inWork and mark assignment
-        final withAssignment = OrderModel(
-          id: createdOrUpdatedOrder.id,
-          manager: createdOrUpdatedOrder.manager,
-          customer: createdOrUpdatedOrder.customer,
-          orderDate: createdOrUpdatedOrder.orderDate,
-          dueDate: createdOrUpdatedOrder.dueDate,
-          product: createdOrUpdatedOrder.product,
-          additionalParams: createdOrUpdatedOrder.additionalParams,
-          handle: createdOrUpdatedOrder.handle,
-          cardboard: createdOrUpdatedOrder.cardboard,
-          material: createdOrUpdatedOrder.material,
-          makeready: createdOrUpdatedOrder.makeready,
-          val: createdOrUpdatedOrder.val,
-          pdfUrl: createdOrUpdatedOrder.pdfUrl,
-          stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
-          contractSigned: createdOrUpdatedOrder.contractSigned,
-          paymentDone: createdOrUpdatedOrder.paymentDone,
-          comments: createdOrUpdatedOrder.comments,
-          status: OrderStatus.inWork.name,
-          assignmentId: provider.generateAssignmentId(),
-          assignmentCreated: true,
-        );
-        await provider.updateOrder(withAssignment);
-        await provider.refresh();
-        await taskProvider.refresh();
-        createdOrUpdatedOrder = withAssignment;
         }
       }
     }
@@ -2779,6 +2676,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             'Заказ сохранён без запуска: недостаточно материала на складе. '
             'Запустите заказ позже кнопкой «Запустить».',
           ),
+        ),
+      );
+    } else if (!createdOrUpdatedOrder.assignmentCreated && canLaunchProductionNow) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Заказ сохранён и готов к запуску. Нажмите «Запустить».'),
         ),
       );
     }

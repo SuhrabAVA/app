@@ -97,7 +97,7 @@ class OrderFormData {
       'val': val ?? 0,
       'queue_id': queueId,
       'stage_template_id': stageTemplateId,
-      'status': status ?? 'newOrder',
+      'status': status ?? 'draft',
     };
     return _cleanForInsert(m);
   }

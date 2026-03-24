@@ -156,6 +156,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                   final canLaunch = _canLaunchOrder(o, warehouse);
                                   final isLaunching =
                                       _launchingInProgress.contains(o.id);
+                                  final isMaterialBlocked =
+                                      o.statusEnum == OrderStatus.waiting_materials;
                                   return DataRow(
                                     onSelectChanged: (_) => _openViewOrder(o),
                                     color: MaterialStateProperty
@@ -163,6 +165,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                       final hoverColor =
                                           warehouseRowHoverColor.resolve(states);
                                       if (hoverColor != null) return hoverColor;
+                                      if (isMaterialBlocked) {
+                                        return Colors.red.shade50;
+                                      }
                                       // Если заказ неполон, подсвечиваем строку серым
                                       return missing ? Colors.grey.shade200 : null;
                                     }),
@@ -174,7 +179,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                       DataCell(Text(productSize)),
                                       DataCell(Text(totalQty.toString())),
                                       DataCell(
-                                        statusLabel == 'В работе' &&
+                                        statusLabel == 'В производстве' &&
                                                 stageName != null
                                             ? Tooltip(
                                                 message:
@@ -307,8 +312,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget _buildStatusTabs() {
     final tabs = [
       {'key': 'all', 'label': 'Все заказы'},
-      {'key': 'new', 'label': 'Новые'},
-      {'key': 'inWork', 'label': 'В работе'},
+      {'key': 'draft', 'label': 'Черновики'},
+      {'key': 'waiting_materials', 'label': 'Ожидание материалов'},
+      {'key': 'ready_to_start', 'label': 'Готовы к запуску'},
+      {'key': 'in_production', 'label': 'В производстве'},
       {'key': 'completed', 'label': 'Завершенные'},
     ];
     return Row(
@@ -368,14 +375,24 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     // Filter by status
     switch (_selectedFilter) {
-      case 'new':
+      case 'draft':
         filtered = filtered
-            .where((o) => o.statusEnum == OrderStatus.newOrder)
+            .where((o) => o.statusEnum == OrderStatus.draft)
             .toList();
         break;
-      case 'inWork':
+      case 'waiting_materials':
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.waiting_materials)
+            .toList();
+        break;
+      case 'ready_to_start':
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.ready_to_start)
+            .toList();
+        break;
+      case 'in_production':
         filtered =
-            filtered.where((o) => o.statusEnum == OrderStatus.inWork).toList();
+            filtered.where((o) => o.statusEnum == OrderStatus.in_production).toList();
         break;
       case 'completed':
         filtered = filtered
@@ -937,7 +954,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   bool _canLaunchOrder(OrderModel order, WarehouseProvider warehouse) {
-    if (order.assignmentCreated || order.statusEnum != OrderStatus.newOrder) {
+    if (order.assignmentCreated ||
+        order.statusEnum != OrderStatus.ready_to_start) {
       return false;
     }
     if (order.stageTemplateId == null || order.stageTemplateId!.isEmpty) {
@@ -983,18 +1001,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
         return const _OrderStatusInfo(Colors.green, 'Завершено');
       }
       if (tasks.any((t) => t.status == TaskStatus.inProgress)) {
-        return const _OrderStatusInfo(Colors.orange, 'В работе');
+        return const _OrderStatusInfo(Colors.orange, 'В производстве');
       }
-      return const _OrderStatusInfo(Colors.blue, 'Новый');
+      return const _OrderStatusInfo(Colors.blue, 'Ожидание запуска');
     }
     switch (order.statusEnum) {
-      case OrderStatus.inWork:
-        return const _OrderStatusInfo(Colors.orange, 'В работе');
+      case OrderStatus.in_production:
+        return const _OrderStatusInfo(Colors.orange, 'В производстве');
       case OrderStatus.completed:
         return const _OrderStatusInfo(Colors.green, 'Завершено');
-      case OrderStatus.newOrder:
+      case OrderStatus.waiting_materials:
+        return const _OrderStatusInfo(Colors.red, 'Ожидание материалов');
+      case OrderStatus.ready_to_start:
+        return const _OrderStatusInfo(Colors.blueGrey, 'Готов к запуску');
+      case OrderStatus.draft:
       default:
-        return const _OrderStatusInfo(Colors.blue, 'Новый');
+        return const _OrderStatusInfo(Colors.blue, 'Черновик');
     }
   }
 
@@ -1028,6 +1050,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final productSize = _formatProductSize(product);
     final missing = _isIncomplete(order);
     final bool isCompleted = statusLabel == 'Завершено';
+    final bool isMaterialBlocked =
+        order.statusEnum == OrderStatus.waiting_materials;
     final bool isShipping = _shippingInProgress.contains(order.id);
     final bool canLaunch = _canLaunchOrder(order, warehouse);
     final bool isLaunching = _launchingInProgress.contains(order.id);
@@ -1036,7 +1060,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return SizedBox(
       width: 240,
       child: Card(
-        color: missing ? Colors.grey.shade100 : null,
+        color: isMaterialBlocked
+            ? Colors.red.shade50
+            : (missing ? Colors.grey.shade100 : null),
         elevation: 1,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: InkWell(
@@ -1058,7 +1084,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         fontSize: 13,
                       ),
                     ),
-                    statusLabel == 'В работе' && stageName != null
+                    statusLabel == 'В производстве' && stageName != null
                         ? Tooltip(
                             message: 'Текущий этап: $stageName',
                             child: _StatusBadge(
@@ -1079,6 +1105,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 // Дата заказа
                 Text('Дата заказа: ${_formatDate(order.orderDate)}',
                     style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                if (isMaterialBlocked &&
+                    order.materialShortageMessage.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    order.materialShortageMessage,
+                    style: const TextStyle(fontSize: 10, color: Colors.red),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
                 const SizedBox(height: 6),
                 // Информация о продукте
                 Text('Изделие: ${product.type}',

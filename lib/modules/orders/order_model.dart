@@ -4,7 +4,20 @@ import 'product_model.dart';
 import 'material_model.dart';
 
 /// Статус заказа.
-enum OrderStatus { newOrder, inWork, completed }
+///
+/// Канонические значения:
+/// - draft
+/// - waiting_materials
+/// - ready_to_start
+/// - in_production
+/// - completed
+enum OrderStatus {
+  draft,
+  waiting_materials,
+  ready_to_start,
+  in_production,
+  completed,
+}
 
 /// ===== SAFE CAST HELPERS =====
 bool? _asBool(dynamic v) {
@@ -104,8 +117,10 @@ class OrderModel {
   String? shippedBy;
   double? shippedQty;
 
-  /// Храним строкой (name), чтобы не падать на незнакомых значениях
+  /// Храним строкой, чтобы не падать на незнакомых значениях.
   String status;
+  bool hasMaterialShortage;
+  String materialShortageMessage;
   String? assignmentId;
   bool assignmentCreated;
 
@@ -133,6 +148,8 @@ class OrderModel {
     bool? paymentDone,
     String? comments,
     String? status,
+    bool? hasMaterialShortage,
+    String? materialShortageMessage,
     this.assignmentId,
     bool? assignmentCreated,
     this.actualQty,
@@ -147,11 +164,35 @@ class OrderModel {
         contractSigned = contractSigned ?? false,
         paymentDone = paymentDone ?? false,
         comments = comments ?? '',
-        status = status ?? 'newOrder',
+        status = status ?? OrderStatus.draft.name,
+        hasMaterialShortage = hasMaterialShortage ?? false,
+        materialShortageMessage = materialShortageMessage ?? '',
         assignmentCreated = assignmentCreated ?? false;
 
-  OrderStatus get statusEnum => OrderStatus.values
-      .firstWhere((s) => s.name == status, orElse: () => OrderStatus.newOrder);
+  static String normalizeStatus(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return OrderStatus.draft.name;
+    switch (value) {
+      // legacy
+      case 'newOrder':
+        return OrderStatus.draft.name;
+      case 'inWork':
+        return OrderStatus.in_production.name;
+      // canonical
+      case 'draft':
+      case 'waiting_materials':
+      case 'ready_to_start':
+      case 'in_production':
+      case 'completed':
+        return value;
+      default:
+        return OrderStatus.draft.name;
+    }
+  }
+
+  OrderStatus get statusEnum => OrderStatus.values.firstWhere(
+      (s) => s.name == normalizeStatus(status),
+      orElse: () => OrderStatus.draft);
   set statusEnum(OrderStatus s) => status = s.name;
 
   /// В БД пишем snake_case.
@@ -178,7 +219,9 @@ class OrderModel {
         'contract_signed': contractSigned,
         'payment_done': paymentDone,
         'comments': comments,
-        'status': status,
+        'status': normalizeStatus(status),
+        'has_material_shortage': hasMaterialShortage,
+        'material_shortage_message': materialShortageMessage,
         if (assignmentId != null) 'assignment_id': assignmentId,
         'assignment_created': assignmentCreated,
         if (actualQty != null) 'actual_qty': actualQty,
@@ -264,7 +307,18 @@ class OrderModel {
       contractSigned: contractSignedBool,
       paymentDone: paymentDoneBool,
       comments: (_pickAny(map, const ['comments']) as String?) ?? '',
-      status: (_pickAny(map, const ['status']) as String?) ?? 'newOrder',
+      status:
+          normalizeStatus((_pickAny(map, const ['status']) as String?) ?? ''),
+      hasMaterialShortage: _asBool(_pickAny(map, const [
+            'has_material_shortage',
+            'hasMaterialShortage'
+          ])) ??
+          false,
+      materialShortageMessage: (_pickAny(map, const [
+            'material_shortage_message',
+            'materialShortageMessage'
+          ]) as String?) ??
+          '',
       assignmentId:
           (_pickAny(map, const ['assignment_id', 'assignmentId']) as String?),
       assignmentCreated: assignmentCreatedBool,
@@ -298,6 +352,8 @@ class OrderModel {
     bool? paymentDone,
     String? comments,
     String? status,
+    bool? hasMaterialShortage,
+    String? materialShortageMessage,
     String? assignmentId,
     bool? assignmentCreated,
     double? actualQty,
@@ -329,6 +385,9 @@ class OrderModel {
       paymentDone: paymentDone ?? this.paymentDone,
       comments: comments ?? this.comments,
       status: status ?? this.status,
+      hasMaterialShortage: hasMaterialShortage ?? this.hasMaterialShortage,
+      materialShortageMessage:
+          materialShortageMessage ?? this.materialShortageMessage,
       assignmentId: assignmentId ?? this.assignmentId,
       assignmentCreated: assignmentCreated ?? this.assignmentCreated,
       actualQty: actualQty ?? this.actualQty,
