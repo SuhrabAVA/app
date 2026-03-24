@@ -463,6 +463,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String _stageTemplateSearchText = '';
   String? _selectedStageTemplateName;
   List<Map<String, dynamic>> _stagePreviewStages = <Map<String, dynamic>>[];
+  bool _stageOrderManuallyChanged = false;
   bool _stagePreviewLoading = false;
   String? _stagePreviewError;
   bool _stagePreviewScheduled = false;
@@ -766,6 +767,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _stagePreviewLoading = true;
       _stagePreviewInitialized = false;
       _stagePreviewScheduled = false;
+      _stageOrderManuallyChanged = false;
     });
 
     _scheduleStagePreviewUpdate(immediate: true);
@@ -1104,6 +1106,115 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  bool _isFlexoPreviewStage(Map<String, dynamic> stage) {
+    final stageId = ((stage['stageId'] ??
+                stage['stage_id'] ??
+                stage['stageid'] ??
+                stage['workplaceId'] ??
+                stage['workplace_id'] ??
+                stage['id']) as String?)
+            ?.trim() ??
+        '';
+    if (stageId == _canonicalFlexoWorkplaceId ||
+        _legacyFlexoAliases.contains(stageId.toLowerCase())) {
+      return true;
+    }
+    final title = _resolveStageName(stage).toLowerCase();
+    return title.contains('флекс') || title.contains('flexo');
+  }
+
+  bool _isBobbinPreviewStage(Map<String, dynamic> stage) {
+    final stageId = ((stage['stageId'] ??
+                stage['stage_id'] ??
+                stage['stageid'] ??
+                stage['workplaceId'] ??
+                stage['workplace_id'] ??
+                stage['id']) as String?)
+            ?.trim() ??
+        '';
+    if (stageId == _canonicalBobbinWorkplaceId ||
+        _legacyBobbinAliases.contains(stageId.toLowerCase())) {
+      return true;
+    }
+    final title = _resolveStageName(stage).toLowerCase();
+    return title.contains('бобин') ||
+        title.contains('бабин') ||
+        title.contains('bobbin');
+  }
+
+  void _swapFlexoAndBobbinInPreview() {
+    final flexoIndex = _stagePreviewStages.indexWhere(_isFlexoPreviewStage);
+    final bobbinIndex = _stagePreviewStages.indexWhere(_isBobbinPreviewStage);
+    if (flexoIndex < 0 || bobbinIndex < 0 || flexoIndex == bobbinIndex) return;
+
+    setState(() {
+      final next = _stagePreviewStages
+          .map((stage) => Map<String, dynamic>.from(stage))
+          .toList(growable: true);
+      final flexo = next[flexoIndex];
+      next[flexoIndex] = next[bobbinIndex];
+      next[bobbinIndex] = flexo;
+      _stagePreviewStages = next;
+      // Важно: после ручного swap больше не должны возвращать auto-порядок.
+      _stageOrderManuallyChanged = true;
+    });
+  }
+
+  List<Map<String, dynamic>> _decodeAndSortStageMaps(dynamic stagesData) {
+    final stageMaps = <Map<String, dynamic>>[];
+
+    int orderOf(Map<String, dynamic> m, int fallback) {
+      final rawOrder = m['order'] ?? m['step'] ?? m['position'] ?? m['step_no'];
+      if (rawOrder is num) return rawOrder.toInt();
+      if (rawOrder is String) {
+        final parsed = int.tryParse(rawOrder);
+        if (parsed != null) return parsed;
+      }
+      return fallback;
+    }
+
+    if (stagesData is List) {
+      for (final item in stagesData.whereType<Map>()) {
+        stageMaps.add(Map<String, dynamic>.from(item));
+      }
+    } else if (stagesData is Map) {
+      final entries = stagesData.entries.toList()
+        ..sort((a, b) {
+          final ak = int.tryParse(a.key.toString());
+          final bk = int.tryParse(b.key.toString());
+          if (ak != null && bk != null) return ak.compareTo(bk);
+          if (ak != null) return -1;
+          if (bk != null) return 1;
+          return a.key.toString().compareTo(b.key.toString());
+        });
+      for (final entry in entries) {
+        if (entry.value is! Map) continue;
+        final map = Map<String, dynamic>.from(entry.value as Map);
+        final hasOrder = map.containsKey('order') ||
+            map.containsKey('step') ||
+            map.containsKey('position') ||
+            map.containsKey('step_no');
+        if (!hasOrder) {
+          final parsed = int.tryParse(entry.key.toString());
+          if (parsed != null) {
+            map['order'] = parsed;
+          }
+        }
+        stageMaps.add(map);
+      }
+    }
+
+    final entries = stageMaps.asMap().entries.toList();
+    entries.sort((a, b) {
+      final ao = orderOf(a.value, a.key);
+      final bo = orderOf(b.value, b.key);
+      final cmp = ao.compareTo(bo);
+      if (cmp != 0) return cmp;
+      return a.key.compareTo(b.key);
+    });
+    return entries.map((e) => e.value).toList(growable: true);
+  }
+
   void _onStageTemplateTextChanged() {
     if (_updatingStageTemplateText) return;
     final text = _stageTemplateController.text;
@@ -1289,18 +1400,37 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return;
     }
 
-    final rawStages = tpl.stages
-        .map((s) => {
-              'stageId': s.stageId,
-              'workplaceId': s.stageId,
-              'stageName': s.stageName,
-              'workplaceName': s.stageName,
-              if (s.alternativeStageIds.isNotEmpty)
-                'alternativeStageIds': List<String>.from(s.alternativeStageIds),
-              if (s.alternativeStageNames.isNotEmpty)
-                'alternativeStageNames': List<String>.from(s.alternativeStageNames),
-            })
-        .toList();
+    // Для редактирования сначала берём уже сохранённый план заказа,
+    // чтобы отобразить и редактировать именно пользовательскую очередь.
+    List<Map<String, dynamic>> rawStages = <Map<String, dynamic>>[];
+    if (widget.order != null) {
+      try {
+        final plan = await _sb
+            .from('production_plans')
+            .select('stages')
+            .eq('order_id', widget.order!.id)
+            .maybeSingle();
+        rawStages = _decodeAndSortStageMaps(plan?['stages']);
+      } catch (_) {
+        rawStages = <Map<String, dynamic>>[];
+      }
+    }
+    if (rawStages.isEmpty) {
+      rawStages = tpl.stages
+          .map((s) => {
+                'stageId': s.stageId,
+                'workplaceId': s.stageId,
+                'stageName': s.stageName,
+                'workplaceName': s.stageName,
+                if (s.alternativeStageIds.isNotEmpty)
+                  'alternativeStageIds':
+                      List<String>.from(s.alternativeStageIds),
+                if (s.alternativeStageNames.isNotEmpty)
+                  'alternativeStageNames':
+                      List<String>.from(s.alternativeStageNames),
+              })
+          .toList();
+    }
 
     if (mounted) {
       setState(() {
@@ -1317,6 +1447,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _stagePreviewLoading = false;
         _stagePreviewError = null;
         _stagePreviewInitialized = true;
+        _stageOrderManuallyChanged = false;
       });
     } catch (e) {
       if (!mounted) return;
@@ -2294,58 +2425,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         final stagesData = tplRow['stages'];
         List<Map<String, dynamic>> stageMaps = [];
 
-        int _orderOf(Map<String, dynamic> m, int fallback) {
-          final rawOrder = m['order'] ?? m['step'] ?? m['position'] ?? m['step_no'];
-          if (rawOrder is num) return rawOrder.toInt();
-          if (rawOrder is String) {
-            final parsed = int.tryParse(rawOrder);
-            if (parsed != null) return parsed;
-          }
-          return fallback;
+        // Источник истины при сохранении — текущий preview.
+        // Он уже может содержать ручную перестановку флексо/бобинорезки.
+        if (_stagePreviewStages.isNotEmpty) {
+          stageMaps = _stagePreviewStages
+              .map((stage) => Map<String, dynamic>.from(stage))
+              .toList(growable: true);
+        } else {
+          stageMaps = _decodeAndSortStageMaps(stagesData);
         }
-
-        if (stagesData is List) {
-          for (final item in stagesData.whereType<Map>()) {
-            stageMaps.add(Map<String, dynamic>.from(item));
-          }
-        } else if (stagesData is Map) {
-          final entries = stagesData.entries.toList()
-            ..sort((a, b) {
-              final ak = int.tryParse(a.key.toString());
-              final bk = int.tryParse(b.key.toString());
-              if (ak != null && bk != null) return ak.compareTo(bk);
-              if (ak != null) return -1;
-              if (bk != null) return 1;
-              return a.key.toString().compareTo(b.key.toString());
-            });
-          for (final entry in entries) {
-            if (entry.value is! Map) continue;
-            final map = Map<String, dynamic>.from(entry.value as Map);
-            final hasOrder = map.containsKey('order') ||
-                map.containsKey('step') ||
-                map.containsKey('position') ||
-                map.containsKey('step_no');
-            if (!hasOrder) {
-              final parsed = int.tryParse(entry.key.toString());
-              if (parsed != null) {
-                map['order'] = parsed;
-              }
-            }
-            stageMaps.add(map);
-          }
-        }
-
-        final entries = stageMaps.asMap().entries.toList();
-        entries.sort((a, b) {
-          final ao = _orderOf(a.value, a.key);
-          final bo = _orderOf(b.value, b.key);
-          final cmp = ao.compareTo(bo);
-          if (cmp != 0) return cmp;
-          return a.key.compareTo(b.key);
-        });
-        stageMaps
-          ..clear()
-          ..addAll(entries.map((e) => e.value));
 
         final outcome = await _applyStageRules(stageMaps);
         stageMaps = outcome.stages;
@@ -4998,6 +5086,34 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     final children = <Widget>[];
+    final hasFlexo = _stagePreviewStages.any(_isFlexoPreviewStage);
+    final hasBobbin = _stagePreviewStages.any(_isBobbinPreviewStage);
+    if (hasFlexo && hasBobbin) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _swapFlexoAndBobbinInPreview,
+                icon: const Icon(Icons.swap_vert),
+                label: const Text('Поменять местами бобинорезку и флексопечать'),
+              ),
+              if (_stageOrderManuallyChanged)
+                Text(
+                  'Порядок изменён вручную',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
     for (var i = 0; i < _stagePreviewStages.length; i++) {
       final stage = _stagePreviewStages[i];
       final title = _resolveStageName(stage);
