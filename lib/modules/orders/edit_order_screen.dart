@@ -29,6 +29,7 @@ import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../../utils/media_viewer.dart';
+import '../../utils/enter_key_behavior.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -440,7 +441,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Клиент и комментарии
   late TextEditingController _customerController;
   late TextEditingController _commentsController;
-  late final TextEditingController _dimensionsController;
+  late final TextEditingController _lengthController;
+  late final TextEditingController _widthController;
+  late final TextEditingController _depthController;
   DateTime? _orderDate;
   DateTime? _dueDate;
   bool _contractSigned = false;
@@ -664,8 +667,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         leftover: null,
       );
     }
-    _dimensionsController = TextEditingController(
-      text: _formatDimensionsInput(),
+    _lengthController = TextEditingController(
+      text: _product.width > 0 ? _formatDecimal(_product.width) : '',
+    );
+    _widthController = TextEditingController(
+      text: _product.height > 0 ? _formatDecimal(_product.height) : '',
+    );
+    _depthController = TextEditingController(
+      text: _product.depth > 0 ? _formatDecimal(_product.depth) : '',
     );
     _stockExtraSelectedQty =
         (_product.leftover != null && _product.leftover! > 0)
@@ -732,11 +741,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       altNames.addAll(rawAlt.whereType<String>().map((e) => e.trim()).where((e) => e.isNotEmpty));
     }
 
-    final names = <String>{...altNames};
-    if (baseName.isNotEmpty) names.add(baseName);
+    final ordered = <String>[];
+    final seen = <String>{};
+    void addName(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      final key = trimmed.toLowerCase();
+      if (!seen.add(key)) return;
+      ordered.add(trimmed);
+    }
 
-    if (names.isEmpty) return 'Без названия';
-    return names.join(' / ');
+    for (final alt in altNames) {
+      addName(alt);
+    }
+    addName(baseName);
+
+    if (ordered.isEmpty) return 'Без названия';
+    return ordered.join(' / ');
   }
 
   void _setStageTemplateText(String value) {
@@ -1577,7 +1598,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   void dispose() {
     _customerController.dispose();
     _commentsController.dispose();
-    _dimensionsController.dispose();
+    _lengthController.dispose();
+    _widthController.dispose();
+    _depthController.dispose();
     _paintInfoController.dispose();
     _formScrollController.dispose();
     _paperSearchController.dispose();
@@ -2314,8 +2337,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         makeready: _makeready,
         val: _val,
         stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
+        // Временно отключено в форме создания/редактирования заказа.
+        contractSigned: false,
+        paymentDone: false,
         comments: _commentsController.text.trim(),
         status: nextOrderStatus,
       );
@@ -2347,8 +2371,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
         stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
+        // Временно отключено в форме создания/редактирования заказа.
+        contractSigned: false,
+        paymentDone: false,
         comments: _commentsController.text.trim(),
         status: nextOrderStatus,
         hasMaterialShortage: !canLaunchProductionNow,
@@ -2712,6 +2737,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     if (!mounted && !closeImmediately) return;
 
+    // ВРЕМЕННО: списание материалов со склада отключено по бизнес-требованию.
+    // Ниже оставлен исходный код списания (закомментирован), чтобы позже
+    // можно было безопасно вернуть без потери контекста.
+    /*
     // Списание материалов/готовой продукции (бумага по длине L)
     // Выполняем только после запуска заказа в производство.
     final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
@@ -2756,6 +2785,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
       _paperWriteoffBaselineByItem[itemId] = need;
     }
+    */
 
     if (!createdOrUpdatedOrder.assignmentCreated && !canLaunchProductionNow) {
       messenger.showSnackBar(
@@ -3163,9 +3193,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
       body: Theme(
         data: compactTheme,
-        child: Form(
-          key: _formKey,
-          child: LayoutBuilder(
+        child: EnterKeyBehavior(
+          child: Form(
+            key: _formKey,
+            child: LayoutBuilder(
             builder: (context, constraints) {
               final formList = LayoutBuilder(
                 builder: (context, innerConstraints) {
@@ -3240,6 +3271,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ],
               );
             },
+            ),
           ),
         ),
       ),
@@ -3399,11 +3431,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         wrapWithCard: false,
                         includeMakeready: false,
                       ),
-                    ),
-                    _buildLabelRow(
-                      label: 'Договоры',
-                      labelWidth: labelWidth,
-                      child: _buildContractsRow(),
                     ),
                     _buildLabelRow(
                       label: 'Менеджер',
@@ -4060,14 +4087,56 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Widget _buildDimensionsField() {
-    return TextFormField(
-      controller: _dimensionsController,
-      decoration: const InputDecoration(
-        labelText: 'Размеры',
-        hintText: '23 34 45 или 23*34*45',
-        border: OutlineInputBorder(),
-      ),
-      onChanged: _applyDimensionsInput,
+    Widget dimField({
+      required TextEditingController controller,
+      required String label,
+      required void Function(double value) onChanged,
+    }) {
+      return TextFormField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        textInputAction: TextInputAction.next,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+        onChanged: (value) {
+          final parsed = double.tryParse(value.replaceAll(',', '.')) ?? 0;
+          // Бизнес-логика: размеры теперь вводятся раздельно (д/ш/г),
+          // но сохраняются в те же поля модели для обратной совместимости.
+          onChanged(parsed);
+          _scheduleStagePreviewUpdate();
+        },
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: dimField(
+            controller: _lengthController,
+            label: 'Длина',
+            onChanged: (value) => _product.width = value,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: dimField(
+            controller: _widthController,
+            label: 'Ширина',
+            onChanged: (value) => _product.height = value,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: dimField(
+            controller: _depthController,
+            label: 'Глубина',
+            onChanged: (value) => _product.depth = value,
+          ),
+        ),
+      ],
     );
   }
 
@@ -4188,30 +4257,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             emptyError: 'Укажите срок',
           ),
         ], maxColumns: 2),
-        const SizedBox(height: 4),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final bool narrow = constraints.maxWidth < 520;
-            final contractTile = _buildContractSignedTile();
-            final paymentTile = _buildPaymentDoneTile();
-            if (narrow) {
-              return Column(
-                children: [
-                  contractTile,
-                  const SizedBox(height: 3),
-                  paymentTile,
-                ],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: contractTile),
-                const SizedBox(width: 12),
-                Expanded(child: paymentTile),
-              ],
-            );
-          },
-        ),
       ];
 
     if (!wrapWithCard) {
@@ -5174,18 +5219,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final content = <Widget>[];
     final controls = <Widget>[];
     if (showFormSummary) {
-      controls.addAll([
-        _buildFormSummary(context),
-        const SizedBox(height: 4),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            onPressed: _startFormEditing,
-            icon: const Icon(Icons.edit),
-            label: const Text('Изменить форму'),
-          ),
-        ),
-      ]);
+      controls.add(_buildFormSummary(context));
     }
     if (showFormEditor) {
       if (controls.isNotEmpty) {
@@ -5368,7 +5402,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 final qtyField = SizedBox(
                   width: 130,
                   child: TextFormField(
-                    key: ValueKey('qty_\${i}'),
+                    key: ValueKey('qty_$i'),
                     decoration: InputDecoration(
                       labelText: 'Кол-во (г)',
                       border: const OutlineInputBorder(),

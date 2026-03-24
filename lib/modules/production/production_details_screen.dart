@@ -92,18 +92,26 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   }
 
   List<String> _plannedStageNames(pcompat.PlannedStage planned) {
-    final names = <String>{};
+    final ordered = <String>[];
+    final seen = <String>{};
+    void addName(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      final key = trimmed.toLowerCase();
+      if (!seen.add(key)) return;
+      ordered.add(trimmed);
+    }
+
     final base = planned.stageName.trim();
-    if (base.isNotEmpty) names.add(base);
+    addName(base);
     final extra = planned.extra;
     final altNames = _decodeStringList(
       extra['alternativeStageNames'] ?? extra['alternative_stage_names'],
     );
     for (final name in altNames) {
-      final trimmed = name.trim();
-      if (trimmed.isNotEmpty) names.add(trimmed);
+      addName(name);
     }
-    return names.toList();
+    return ordered;
   }
 
   String _resolveStageName(
@@ -132,6 +140,26 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         .where((name) => name.trim().isNotEmpty)
         .toList();
     return resolved.isEmpty ? planned.stageName : resolved.toSet().join(' / ');
+  }
+
+  Future<void> _skipStageForTesting(List<TaskModel> stageTasks) async {
+    if (stageTasks.isEmpty) return;
+    final provider = context.read<TaskProvider>();
+    // Тестовый режим: помечаем текущий этап завершённым и передаём заказ дальше.
+    for (final task in stageTasks) {
+      await provider.addComment(
+        taskId: task.id,
+        type: 'skip_stage_test',
+        text: 'Этап пропущен в тестовом режиме',
+        userId: 'system',
+      );
+      await provider.updateStatus(task.id, TaskStatus.completed);
+    }
+    await provider.refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Этап пропущен, переход к следующему этапу')),
+    );
   }
 
   TaskStatus? _groupStatus(List<TaskModel> stageTasks) {
@@ -616,6 +644,17 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                         color: Colors.black54,
                                       ),
                                     ),
+                                    if (stageTasks.isNotEmpty &&
+                                        stageStatus != TaskStatus.completed) ...[
+                                      const SizedBox(height: 6),
+                                      OutlinedButton.icon(
+                                        onPressed: _loadingPlan
+                                            ? null
+                                            : () => _skipStageForTesting(stageTasks),
+                                        icon: const Icon(Icons.skip_next, size: 16),
+                                        label: const Text('Пропустить этап'),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),

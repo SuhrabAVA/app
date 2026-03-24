@@ -594,6 +594,27 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      // Важно: удаляем связанные сущности синхронно, чтобы заказ не "висел"
+      // в модуле производственных заданий и рабочем пространстве.
+      await _supabase.from('tasks').delete().eq('order_id', id);
+      await _supabase.from('order_paints').delete().eq('order_id', id);
+      try {
+        final plan = await _supabase
+            .from('prod_plans')
+            .select('id')
+            .eq('order_id', id)
+            .maybeSingle();
+        if (plan != null && plan['id'] != null) {
+          await _supabase
+              .from('prod_plan_stages')
+              .delete()
+              .eq('plan_id', plan['id'].toString());
+        }
+      } catch (_) {
+        // Таблицы могут отсутствовать в некоторых окружениях.
+      }
+      await _supabase.from('prod_plans').delete().eq('order_id', id);
+      await _supabase.from('production_plans').delete().eq('order_id', id);
       await _supabase.from('orders').delete().eq('id', id);
       // Историю удалять не обязательно — это след.
       await _logOrderEvent(id, 'Удаление', 'Удалён заказ');
