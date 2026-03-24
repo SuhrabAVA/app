@@ -1073,15 +1073,26 @@ class _OrdersScreenState extends State<OrdersScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Заказчик
+                Text(
+                  order.customer,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 15),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
                 // Номер и статус заказа
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       '№ ${orderDisplayId(order)}',
                       style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 11,
+                        color: Colors.black54,
                       ),
                     ),
                     statusLabel == 'В производстве' && stageName != null
@@ -1092,14 +1103,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           )
                         : _StatusBadge(color: statusColor, label: statusLabel),
                   ],
-                ),
-                const SizedBox(height: 4),
-                // Заказчик
-                Text(
-                  order.customer,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
                 // Дата заказа

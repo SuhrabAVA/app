@@ -906,15 +906,9 @@ class _ProductionTab extends StatelessWidget {
           })
           .toList();
       ordered = _sortOrders(ordered);
-      if (sort == _ProductionSort.queue) {
-        ordered.sort((a, b) => b.orderDate.compareTo(a.orderDate));
-      }
     } else if (tab.isAll) {
       ordered = orders.toList();
       ordered = _sortOrders(ordered);
-      if (sort == _ProductionSort.queue) {
-        ordered.sort((a, b) => b.orderDate.compareTo(a.orderDate));
-      }
     } else {
       final visible = orders.where((o) {
         final grouping = groupingByOrder[o.id];
