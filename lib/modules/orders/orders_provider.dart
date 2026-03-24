@@ -17,8 +17,8 @@ class OrdersProvider with ChangeNotifier {
   // Realtime channel for listening to order changes.
   RealtimeChannel? _ordersChannel;
   final List<RealtimeChannel> _stockChannels = <RealtimeChannel>[];
-  Timer? _autoLaunchDebounce;
-  bool _autoLaunchInProgress = false;
+  Timer? _stockRecheckDebounce;
+  bool _stockRecheckInProgress = false;
 
   OrdersProvider() {
     _listenToOrders();
@@ -53,17 +53,16 @@ class OrdersProvider with ChangeNotifier {
         ..clear()
         ..addAll(rows.map((row) => OrderModel.fromMap(row)));
       notifyListeners();
-      await _autoLaunchPendingOrders();
     } catch (e, st) {
       debugPrint('❌ refresh orders error: $e\n$st');
     }
   }
 
   void _listenToStockChanges() {
-    void scheduleAutoLaunch() {
-      _autoLaunchDebounce?.cancel();
-      _autoLaunchDebounce = Timer(const Duration(milliseconds: 400), () async {
-        await _autoLaunchPendingOrders(forceRefresh: true);
+    void scheduleStockRecheck() {
+      _stockRecheckDebounce?.cancel();
+      _stockRecheckDebounce = Timer(const Duration(milliseconds: 400), () async {
+        await recheckMaterialAvailability(forceRefresh: true);
       });
     }
 
@@ -77,7 +76,7 @@ class OrdersProvider with ChangeNotifier {
             event: PostgresChangeEvent.all,
             schema: 'public',
             table: table,
-            callback: (_) => scheduleAutoLaunch(),
+            callback: (_) => scheduleStockRecheck(),
           )
           .subscribe();
       _stockChannels.add(channel);
@@ -87,42 +86,42 @@ class OrdersProvider with ChangeNotifier {
     // номенклатуры, так и через журналы приходов/списаний/инвентаризаций.
     // Подписываемся на все связанные таблицы, чтобы не пропускать автозапуск.
     addStockChannel(
-      channelName: 'orders:auto-launch:materials',
+      channelName: 'orders:stock-recheck:materials',
       table: 'materials',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:papers',
+      channelName: 'orders:stock-recheck:papers',
       table: 'papers',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:materials-arrivals',
+      channelName: 'orders:stock-recheck:materials-arrivals',
       table: 'materials_arrivals',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:materials-writeoffs',
+      channelName: 'orders:stock-recheck:materials-writeoffs',
       table: 'materials_writeoffs',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:materials-inventories',
+      channelName: 'orders:stock-recheck:materials-inventories',
       table: 'materials_inventories',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:papers-arrivals',
+      channelName: 'orders:stock-recheck:papers-arrivals',
       table: 'papers_arrivals',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:papers-writeoffs',
+      channelName: 'orders:stock-recheck:papers-writeoffs',
       table: 'papers_writeoffs',
     );
     addStockChannel(
-      channelName: 'orders:auto-launch:papers-inventories',
+      channelName: 'orders:stock-recheck:papers-inventories',
       table: 'papers_inventories',
     );
   }
 
-  Future<void> _autoLaunchPendingOrders({bool forceRefresh = false}) async {
-    if (_autoLaunchInProgress) return;
-    _autoLaunchInProgress = true;
+  Future<void> recheckMaterialAvailability({bool forceRefresh = false}) async {
+    if (_stockRecheckInProgress) return;
+    _stockRecheckInProgress = true;
     try {
       await _ensureAuthed();
 
@@ -140,39 +139,53 @@ class OrdersProvider with ChangeNotifier {
 
       final pending = _orders.where((order) {
         if (order.assignmentCreated) return false;
-        if (order.statusEnum != OrderStatus.newOrder) return false;
-        final templateId = order.stageTemplateId?.trim() ?? '';
-        return templateId.isNotEmpty;
+        return order.statusEnum == OrderStatus.waiting_materials ||
+            order.statusEnum == OrderStatus.ready_to_start;
       }).toList(growable: false);
 
       for (final order in pending) {
-        if (!await _hasEnoughMaterialForLaunch(order)) continue;
-        final error = await launchOrder(order);
-        if (error != null) {
-          debugPrint('⚠️ auto launch skipped for order ${order.id}: $error');
+        final hasEnough = await _hasEnoughMaterialForLaunch(order);
+        final nextStatus = hasEnough
+            ? OrderStatus.ready_to_start
+            : OrderStatus.waiting_materials;
+        if (order.statusEnum == nextStatus &&
+            order.hasMaterialShortage == !hasEnough) {
+          continue;
         }
+        final shortageMessage =
+            hasEnough ? '' : await _materialShortageMessage(order);
+        await _supabase.from('orders').update({
+          'status': nextStatus.name,
+          'has_material_shortage': !hasEnough,
+          'material_shortage_message': shortageMessage,
+        }).eq('id', order.id);
       }
+      await refresh();
     } catch (e, st) {
-      debugPrint('⚠️ auto launch check failed: $e\n$st');
+      debugPrint('⚠️ material recheck failed: $e\n$st');
     } finally {
-      _autoLaunchInProgress = false;
+      _stockRecheckInProgress = false;
     }
   }
 
-  Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
-    final String materialId = (order.material?.id ?? '').trim();
-    final double requiredLength = (order.product.length ?? 0).toDouble();
-    if (materialId.isEmpty || requiredLength <= 0) {
-      return true;
-    }
+  Future<String> _materialShortageMessage(OrderModel order) async {
+    final requiredLength = (order.product.length ?? 0).toDouble();
+    if (requiredLength <= 0) return 'Недостаточно материала на складе.';
+    final available = await _fetchMaterialQty(order.material?.id);
+    if (available == null) return 'Материал не найден на складе.';
+    final shortage = requiredLength - available;
+    if (shortage <= 0) return '';
+    return 'Недостаточно материала: требуется ${requiredLength.toStringAsFixed(2)}, '
+        'доступно ${available.toStringAsFixed(2)} (не хватает ${shortage.toStringAsFixed(2)}).';
+  }
 
+  Future<double?> _fetchMaterialQty(String? materialId) async {
+    final id = (materialId ?? '').trim();
+    if (id.isEmpty) return null;
     Future<double?> fetchQty(String table) async {
       try {
-        final row = await _supabase
-            .from(table)
-            .select('quantity')
-            .eq('id', materialId)
-            .maybeSingle();
+        final row =
+            await _supabase.from(table).select('quantity').eq('id', id).maybeSingle();
         if (row == null) return null;
         final value = row['quantity'];
         if (value is num) return value.toDouble();
@@ -182,7 +195,17 @@ class OrdersProvider with ChangeNotifier {
       }
     }
 
-    final qty = await fetchQty('materials') ?? await fetchQty('papers');
+    return await fetchQty('materials') ?? await fetchQty('papers');
+  }
+
+  Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
+    final String materialId = (order.material?.id ?? '').trim();
+    final double requiredLength = (order.product.length ?? 0).toDouble();
+    if (materialId.isEmpty || requiredLength <= 0) {
+      return true;
+    }
+
+    final qty = await _fetchMaterialQty(materialId);
     if (qty == null) {
       // Если номенклатура не найдена (например, удалена) — не автозапускаем.
       return false;
@@ -257,10 +280,6 @@ class OrdersProvider with ChangeNotifier {
           _orders.add(updated);
         }
         notifyListeners();
-        if (!updated.assignmentCreated &&
-            updated.statusEnum == OrderStatus.newOrder) {
-          await _autoLaunchPendingOrders();
-        }
         return;
       }
     } catch (e, st) {
@@ -280,7 +299,7 @@ class OrdersProvider with ChangeNotifier {
       _supabase.removeChannel(channel);
     }
     _stockChannels.clear();
-    _autoLaunchDebounce?.cancel();
+    _stockRecheckDebounce?.cancel();
     super.dispose();
   }
 
@@ -338,7 +357,7 @@ class OrdersProvider with ChangeNotifier {
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
-    String status = 'newOrder',
+    String status = 'draft',
     String? assignmentId,
     bool assignmentCreated = false,
   }) async {
@@ -434,6 +453,21 @@ class OrdersProvider with ChangeNotifier {
     if (order.assignmentCreated) {
       return null;
     }
+    if (order.statusEnum != OrderStatus.ready_to_start) {
+      return 'Заказ нельзя запустить: статус должен быть ready_to_start.';
+    }
+    if (!await _hasEnoughMaterialForLaunch(order)) {
+      final message = await _materialShortageMessage(order);
+      await _supabase.from('orders').update({
+        'status': OrderStatus.waiting_materials.name,
+        'has_material_shortage': true,
+        'material_shortage_message': message,
+      }).eq('id', order.id);
+      await refresh();
+      return message.isEmpty
+          ? 'Недостаточно материала для запуска заказа.'
+          : message;
+    }
 
     try {
       final List<Map<String, dynamic>> stageRows = <Map<String, dynamic>>[];
@@ -522,7 +556,9 @@ class OrdersProvider with ChangeNotifier {
               : generateAssignmentId();
 
       await _supabase.from('orders').update({
-        'status': OrderStatus.inWork.name,
+        'status': OrderStatus.in_production.name,
+        'has_material_shortage': false,
+        'material_shortage_message': '',
         'assignment_created': true,
         'assignment_id': nextAssignmentId,
       }).eq('id', order.id);
@@ -530,7 +566,9 @@ class OrdersProvider with ChangeNotifier {
       final index = _orders.indexWhere((o) => o.id == order.id);
       if (index != -1) {
         _orders[index] = _orders[index].copyWith(
-          status: OrderStatus.inWork.name,
+          status: OrderStatus.in_production.name,
+          hasMaterialShortage: false,
+          materialShortageMessage: '',
           assignmentCreated: true,
           assignmentId: nextAssignmentId,
         );

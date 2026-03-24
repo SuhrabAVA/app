@@ -323,7 +323,10 @@ class _ProductionScreenState extends State<ProductionScreen>
     final queue = context.watch<ProductionQueueProvider>();
     final templateProvider = context.watch<TemplateProvider>();
 
-    final orders = ordersProvider.orders;
+    final orders = ordersProvider.orders.where((order) {
+      return order.statusEnum == OrderStatus.in_production ||
+          order.statusEnum == OrderStatus.completed;
+    }).toList(growable: false);
     final tasks = taskProvider.tasks;
 
     final productTypeOptions = {

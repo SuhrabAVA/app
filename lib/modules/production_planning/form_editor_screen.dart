@@ -1688,7 +1688,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           contractSigned: createdOrUpdatedOrder.contractSigned,
           paymentDone: createdOrUpdatedOrder.paymentDone,
           comments: createdOrUpdatedOrder.comments,
-          status: OrderStatus.inWork.name,
+          status: OrderStatus.in_production.name,
           assignmentId: provider.generateAssignmentId(),
           assignmentCreated: true,
         );
