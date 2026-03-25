@@ -89,6 +89,13 @@ class _StageRuleOutcome {
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
+  String _trimTrailingFractionZeros(String value) {
+    if (!value.contains('.')) return value;
+    return value
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -705,10 +712,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if ((value - value.round()).abs() < 1e-6) {
       return value.round().toString();
     }
-    final formatted = value.toStringAsFixed(3);
-    return formatted
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    return _trimTrailingFractionZeros(value.toStringAsFixed(3));
   }
 
   TemplateModel? _findTemplateById(
@@ -1340,9 +1344,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (grams == null) return null;
     if (grams == 0) return '0';
     final fixed = grams.toStringAsFixed(grams % 1 == 0 ? 0 : 2);
-    return fixed
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    return _trimTrailingFractionZeros(fixed);
   }
 
   double _gramsToStockUnit(double grams, TmcModel tmc) {
@@ -1359,8 +1361,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String _formatGrams(double grams) {
     final precision = grams % 1 == 0 ? 0 : 2;
     final fixed = grams.toStringAsFixed(precision);
-    final trimmed =
-        fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+    final trimmed = _trimTrailingFractionZeros(fixed);
     return '$trimmed г';
   }
 
@@ -2811,9 +2812,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   String _formatDecimal(double value, {int fractionDigits = 2}) {
     final formatted = value.toStringAsFixed(fractionDigits);
-    return formatted
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    return _trimTrailingFractionZeros(formatted);
   }
 
   String? _productSizeLabel() {
@@ -3179,14 +3178,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 }
               },
             ),
-          TextButton(
-            onPressed: () {
-              _saveOrder(closeImmediately: true);
-            },
-            child:
-                const Text('Сохранить', style: TextStyle(color: Colors.white)),
-          ),
         ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () => _saveOrder(closeImmediately: true),
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Сохранить'),
+          ),
+        ),
       ),
       body: Theme(
         data: compactTheme,

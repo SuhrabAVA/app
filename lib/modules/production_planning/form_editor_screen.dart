@@ -204,6 +204,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (grams == null) return null;
     if (grams == 0) return '0';
     final fixed = grams.toStringAsFixed(grams % 1 == 0 ? 0 : 2);
+    if (!fixed.contains('.')) return fixed;
     return fixed
         .replaceFirst(RegExp(r'0+$'), '')
         .replaceFirst(RegExp(r'\.$'), '');
@@ -223,9 +224,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String _formatGrams(double grams) {
     final precision = grams % 1 == 0 ? 0 : 2;
     final fixed = grams.toStringAsFixed(precision);
-    final trimmed = fixed
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    final trimmed = !fixed.contains('.')
+        ? fixed
+        : fixed
+            .replaceFirst(RegExp(r'0+$'), '')
+            .replaceFirst(RegExp(r'\.$'), '');
     return '$trimmed г';
   }
 
