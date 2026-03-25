@@ -446,8 +446,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   late final TextEditingController _depthController;
   DateTime? _orderDate;
   DateTime? _dueDate;
-  bool _contractSigned = false;
-  bool _paymentDone = false;
   late ProductModel _product;
   List<String> _selectedParams = [];
   // Ручки (из склада)
@@ -598,8 +596,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
-    _contractSigned = template?.contractSigned ?? false;
-    _paymentDone = template?.paymentDone ?? false;
+    // Поля "договор/оплата" временно исключены из сценария создания/редактирования.
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
     _trimming = _selectedParams.contains('Подрезка');
     final initialHandle = template?.handle?.trim();
@@ -1919,8 +1916,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final memo = (m.group(4) ?? '').trim();
       final qty = double.tryParse(qtyStr);
       if (name.isEmpty || qty == null) continue;
-      final grams =
-          (unit.contains('г')) ? qty : qty * 1000; // default to kg -> grams
+      // Важно: "кг" тоже содержит букву "г", поэтому проверяем килограммы первыми.
+      final grams = (unit.contains('кг') || unit.contains('kg')) ? qty * 1000 : qty;
       TmcModel? found;
       for (final t in paintTmcList) {
         if (t.description.trim() == name) {
@@ -4232,8 +4229,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       spacing: 6,
       runSpacing: 3,
       children: [
-        _buildContractSignedTile(),
-        _buildPaymentDoneTile(),
       ],
     );
   }
@@ -4530,22 +4525,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     if (width == null) return tile;
     return SizedBox(width: width, child: tile);
-  }
-
-  Widget _buildContractSignedTile() {
-    return _buildCompactCheckboxTile(
-      value: _contractSigned,
-      onChanged: (val) => setState(() => _contractSigned = val ?? false),
-      label: 'Договор подписан',
-    );
-  }
-
-  Widget _buildPaymentDoneTile() {
-    return _buildCompactCheckboxTile(
-      value: _paymentDone,
-      onChanged: (val) => setState(() => _paymentDone = val ?? false),
-      label: 'Оплата произведена',
-    );
   }
 
   Widget _buildCustomerField() {
