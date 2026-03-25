@@ -34,11 +34,17 @@ class OrderDetailsCard extends StatelessWidget {
   static const double _compactCellScale = 0.8;
   static const double _compactTextScale = 0.65;
 
+  String _trimTrailingFractionZeros(String value) {
+    if (!value.contains('.')) return value;
+    return value
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
   String _formatGrams(double grams) {
     final precision = grams % 1 == 0 ? 0 : 2;
     final fixed = grams.toStringAsFixed(precision);
-    final trimmed =
-        fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+    final trimmed = _trimTrailingFractionZeros(fixed);
     return '$trimmed г';
   }
 
