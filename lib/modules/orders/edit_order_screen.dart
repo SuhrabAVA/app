@@ -3146,6 +3146,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ? 'Редактирование заказа ${(widget.order!.assignmentId ?? widget.order!.id)}'
             : 'Новый заказ'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: FilledButton.tonalIcon(
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              ),
+              onPressed: () => _saveOrder(closeImmediately: true),
+              icon: const Icon(Icons.save_outlined, size: 18),
+              label: const Text('Сохранить'),
+            ),
+          ),
           if (isEditing)
             IconButton(
               icon: const Icon(Icons.delete_outline),
@@ -3179,17 +3192,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               },
             ),
         ],
-      ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        child: SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: () => _saveOrder(closeImmediately: true),
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Сохранить'),
-          ),
-        ),
       ),
       body: Theme(
         data: compactTheme,
