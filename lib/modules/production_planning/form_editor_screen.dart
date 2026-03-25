@@ -161,8 +161,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   late TextEditingController _commentsController;
   DateTime? _orderDate;
   DateTime? _dueDate;
-  bool _contractSigned = false;
-  bool _paymentDone = false;
+  // Поля "договор подписан / оплата произведена" временно исключены
+  // из создания и редактирования заказа по бизнес-требованию.
   late ProductModel _product;
   List<String> _selectedParams = [];
   // Ручки (из склада): выбранная ручка
@@ -311,8 +311,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
-    _contractSigned = template?.contractSigned ?? false;
-    _paymentDone = template?.paymentDone ?? false;
+    // Поля договора/оплаты намеренно не инициализируем:
+    // в этой форме они временно отключены.
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
     _selectedHandle = template?.handle ?? '-';
     // Если редактируем и есть строка 'Ручки:' в параметрах - подставим предыдущее количество
@@ -635,7 +635,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final memo = (m.group(4) ?? '').trim();
       final qty = double.tryParse(qtyStr);
       if (name.isEmpty || qty == null) continue;
-      final grams = unit.contains('г') ? qty : qty * 1000;
+      // Важно: "кг" содержит "г", поэтому сначала проверяем килограммы.
+      final grams = (unit.contains('кг') || unit.contains('kg')) ? qty * 1000 : qty;
       TmcModel? found;
       for (final t in paintTmcList) {
         if (t.description.trim() == name) {
@@ -973,8 +974,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         makeready: _makeready,
         val: _val,
         stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
+        // Временно отключено в форме создания/редактирования заказа.
+        contractSigned: false,
+        paymentDone: false,
         comments: _commentsController.text.trim(),
       );
       if (_created == null) {
@@ -1001,8 +1003,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
         stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
+        // Временно отключено в форме создания/редактирования заказа.
+        contractSigned: false,
+        paymentDone: false,
         comments: _commentsController.text.trim(),
         status: widget.order!.status,
         assignmentId: widget.order!.assignmentId,
@@ -1793,6 +1796,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     // === Конец обработки формы ===
 
+    // ВРЕМЕННО: списание материалов со склада отключено по бизнес-требованию.
+    // Ниже оставлен исходный код (в комментарии), чтобы позже вернуть логику быстро и безопасно.
+    /*
     // Списание ручек (канцтовары/ручки), если выбраны и указано количество
     if (_selectedHandle != '-' && (_handleQty ?? 0) > 0) {
       try {
@@ -1969,6 +1975,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
     }
+    */
 
 // Независимо от создания/редактирования - синхронизируем список красок
 // c полем product.parameters и таблицей order_paints.
@@ -2021,14 +2028,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 }
               },
             ),
-          TextButton(
-            onPressed: () async {
-              await _saveOrder();
-            },
-            child:
-                const Text('Сохранить', style: TextStyle(color: Colors.white)),
-          ),
         ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _saveOrder,
+            icon: const Icon(Icons.save),
+            label: const Text('Сохранить'),
+          ),
+        ),
       ),
       body: Form(
         key: _formKey,
@@ -2307,20 +2318,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               maxLines: 5,
             ),
             const SizedBox(height: 12),
-            // contract and payment
-            CheckboxListTile(
-              value: _contractSigned,
-              onChanged: (val) =>
-                  setState(() => _contractSigned = val ?? false),
-              title: const Text('Договор подписан'),
-              contentPadding: EdgeInsets.zero,
-            ),
-            CheckboxListTile(
-              value: _paymentDone,
-              onChanged: (val) => setState(() => _paymentDone = val ?? false),
-              title: const Text('Оплата произведена'),
-              contentPadding: EdgeInsets.zero,
-            ),
             const SizedBox(height: 16),
             Text('Продукт в заказе',
                 style: Theme.of(context).textTheme.titleMedium),
