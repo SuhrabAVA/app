@@ -553,7 +553,8 @@ Map<String, String> _stageGroupMapForOrder(
       ids.add(normalized);
     }
     if (ids.isEmpty) continue;
-    final key = ids.join('|');
+    final canonicalIds = List<String>.from(ids)..sort();
+    final key = canonicalIds.join('|');
     for (final id in ids) {
       map[id] = key;
     }

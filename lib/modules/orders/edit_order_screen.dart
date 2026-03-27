@@ -2318,12 +2318,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
-    final String nextOrderStatus = canLaunchProductionNow
-        ? OrderStatus.ready_to_start.name
-        : OrderStatus.waiting_materials.name;
-    final String shortageMessage = canLaunchProductionNow
-        ? ''
-        : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.';
+    final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
+    final String nextOrderStatus = wasAlreadyLaunched
+        ? widget.order!.status
+        : (canLaunchProductionNow
+            ? OrderStatus.ready_to_start.name
+            : OrderStatus.waiting_materials.name);
+    final bool nextHasMaterialShortage = wasAlreadyLaunched
+        ? widget.order!.hasMaterialShortage
+        : !canLaunchProductionNow;
+    final String shortageMessage = wasAlreadyLaunched
+        ? widget.order!.materialShortageMessage
+        : (canLaunchProductionNow
+            ? ''
+            : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.');
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
@@ -2381,7 +2389,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         paymentDone: false,
         comments: _commentsController.text.trim(),
         status: nextOrderStatus,
-        hasMaterialShortage: !canLaunchProductionNow,
+        hasMaterialShortage: nextHasMaterialShortage,
         materialShortageMessage: shortageMessage,
         assignmentId: widget.order!.assignmentId,
         assignmentCreated: widget.order!.assignmentCreated,
@@ -2391,11 +2399,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     if (createdOrUpdatedOrder.status != nextOrderStatus ||
-        createdOrUpdatedOrder.hasMaterialShortage != !canLaunchProductionNow ||
+        createdOrUpdatedOrder.hasMaterialShortage != nextHasMaterialShortage ||
         createdOrUpdatedOrder.materialShortageMessage != shortageMessage) {
       final normalized = createdOrUpdatedOrder.copyWith(
         status: nextOrderStatus,
-        hasMaterialShortage: !canLaunchProductionNow,
+        hasMaterialShortage: nextHasMaterialShortage,
         materialShortageMessage: shortageMessage,
       );
       await provider.updateOrder(normalized);
@@ -2638,7 +2646,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         }
 
-        String? _resolvePrimaryStageId(Map<String, dynamic> sm) {
+        List<String> _resolveStageIds(Map<String, dynamic> sm) {
           final candidates = <String>[];
 
           void addCandidate(dynamic raw) {
@@ -2666,13 +2674,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             addCandidate(raw);
           }
 
+          final resolved = <String>[];
           for (final candidate in candidates) {
-            if (_isResolvableWorkplaceId(candidate)) {
-              return candidate;
+            if (_isResolvableWorkplaceId(candidate) && !resolved.contains(candidate)) {
+              resolved.add(candidate);
             }
           }
 
-          return candidates.isEmpty ? null : candidates.first;
+          if (resolved.isNotEmpty) return resolved;
+          if (candidates.isEmpty) return const <String>[];
+          return <String>[candidates.first];
         }
 
         final bool shouldLaunchNow = true;
@@ -2703,20 +2714,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           // Rebuild plan stages
           await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
           int step = 1;
+          String? previousGroupKey;
           for (final sm in stageMaps) {
-            final rawStageId = _resolvePrimaryStageId(sm) ??
-                (sm['stageId'] as String?) ??
-                (sm['stage_id'] as String?);
-            if (rawStageId == null || rawStageId.isEmpty) continue;
-            final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
-                legacyStageLookup[rawStageId.toLowerCase()] ??
-                rawStageId;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': resolvedStageId,
-              'step': step++,
-              'status': 'waiting',
-            });
+            final stageIds = _resolveStageIds(sm);
+            if (stageIds.isEmpty) continue;
+
+            final canonical = List<String>.from(stageIds)..sort();
+            final groupKey = canonical.join('|');
+            if (groupKey.isNotEmpty && groupKey == previousGroupKey) {
+              continue;
+            }
+            previousGroupKey = groupKey;
+
+            for (final rawStageId in stageIds) {
+              final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
+                  legacyStageLookup[rawStageId.toLowerCase()] ??
+                  rawStageId;
+              await _sb.from('prod_plan_stages').insert({
+                'plan_id': planId,
+                'stage_id': resolvedStageId,
+                'step': step,
+                'status': 'waiting',
+              });
+            }
+            step += 1;
           }
           // Mark bobbin as done here as well
           if (__shouldCompleteBobbin && __bobbinId != null) {

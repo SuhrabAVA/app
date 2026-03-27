@@ -658,7 +658,12 @@ class _ProductionTab extends StatelessWidget {
       final labels = <String>{};
       final explicit = explicitLabel?.trim();
       if (explicit != null && explicit.isNotEmpty) {
-        labels.add(explicit);
+        for (final chunk in explicit.split('/')) {
+          final normalized = chunk.trim();
+          if (normalized.isNotEmpty) {
+            labels.add(normalized);
+          }
+        }
       }
       for (final id in ids) {
         final resolved = _stageLabel(id, taskProvider, personnelProvider, order.id).trim();
