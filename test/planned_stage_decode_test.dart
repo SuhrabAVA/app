@@ -23,6 +23,7 @@ void main() {
     expect(fromMap[1].comment, 'note');
   });
 
+
   test('PlannedStage normalizes and deduplicates stage names', () {
     final stage = PlannedStage.fromMap({
       'stageId': 'w1',
@@ -40,4 +41,5 @@ void main() {
       ['Автомат большой', 'Автомат маленький'],
     );
   });
+
 }
