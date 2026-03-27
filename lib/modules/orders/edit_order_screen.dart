@@ -547,6 +547,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<String> _categoryTitles = [];
   bool _catsLoading = false;
   bool _stockExtraAutoloaded = false;
+  bool _materialsBlockLocked = false;
+  bool _printBlockLocked = false;
+  bool _launchedNoStartedStages = false;
+  bool _launchedWithStartedStages = false;
 
   Future<void> _loadCategoriesForProduct() async {
     setState(() => _catsLoading = true);
@@ -705,6 +709,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _paperWriteoffBaselineByItem[initialMaterialId] =
           (_product.length ?? 0).toDouble();
     }
+    if (widget.order != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadRuntimeEditLocks();
+      });
+    }
   }
 
   String _formatActualQuantity(double value) {
@@ -713,6 +722,126 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return value.round().toString();
     }
     return _trimTrailingFractionZeros(value.toStringAsFixed(3));
+  }
+
+  bool _looksLikeFlexo(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('флекс') || lower.contains('flexo');
+  }
+
+  bool _hasTaskActivity(Map<String, dynamic> row) {
+    final status = (row['status'] ?? '').toString().toLowerCase();
+    if (status.isNotEmpty && status != 'waiting') return true;
+    final dynamic comments = row['comments'];
+    if (comments is List) {
+      for (final item in comments) {
+        if (item is! Map) continue;
+        final type = (item['type'] ?? '').toString().toLowerCase();
+        if (type == 'start' ||
+            type == 'resume' ||
+            type == 'setup_start' ||
+            type == 'setup_done' ||
+            type == 'user_done') {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  Future<void> _loadRuntimeEditLocks() async {
+    final order = widget.order;
+    if (order == null || !order.assignmentCreated) return;
+    try {
+      final taskRows = await _sb
+          .from('tasks')
+          .select('stage_id, status, comments')
+          .eq('order_id', order.id);
+      if (taskRows is! List || !mounted) return;
+      final List<Map<String, dynamic>> tasks = taskRows
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+      if (tasks.isEmpty) return;
+      final anyStageStarted = tasks.any(_hasTaskActivity);
+
+      String? firstStageId;
+      try {
+        final plan = await _sb
+            .from('prod_plans')
+            .select('id')
+            .eq('order_id', order.id)
+            .maybeSingle();
+        final String? planId = plan?['id']?.toString();
+        if (planId != null && planId.isNotEmpty) {
+          final firstStage = await _sb
+              .from('prod_plan_stages')
+              .select('stage_id')
+              .eq('plan_id', planId)
+              .order('step', ascending: true)
+              .limit(1)
+              .maybeSingle();
+          firstStageId = firstStage?['stage_id']?.toString();
+        }
+      } catch (_) {}
+
+      bool firstStarted = false;
+      if (firstStageId != null && firstStageId.isNotEmpty) {
+        firstStarted = tasks
+            .where((row) => (row['stage_id'] ?? '').toString() == firstStageId)
+            .any(_hasTaskActivity);
+      } else {
+        firstStarted = anyStageStarted;
+      }
+
+      final stageIds = tasks
+          .map((row) => (row['stage_id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      final flexoStageIds = <String>{};
+      if (stageIds.isNotEmpty) {
+        try {
+          final wpRows = await _sb
+              .from('workplaces')
+              .select('id,name,title,short_name,stage_name')
+              .inFilter('id', stageIds);
+          if (wpRows is List) {
+            for (final raw in wpRows.whereType<Map>()) {
+              final map = Map<String, dynamic>.from(raw);
+              final id = (map['id'] ?? '').toString().trim();
+              if (id.isEmpty) continue;
+              final probes = [
+                map['name'],
+                map['title'],
+                map['short_name'],
+                map['stage_name'],
+                id,
+              ];
+              final isFlexo =
+                  probes.any((value) => _looksLikeFlexo((value ?? '').toString()));
+              if (isFlexo) {
+                flexoStageIds.add(id);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      final flexoStarted = tasks.where((row) {
+        final stageId = (row['stage_id'] ?? '').toString();
+        return flexoStageIds.contains(stageId);
+      }).any(_hasTaskActivity);
+
+      if (!mounted) return;
+      setState(() {
+        _launchedWithStartedStages = anyStageStarted;
+        _launchedNoStartedStages = !anyStageStarted;
+        // Блок "Склад и материалы" запрещён, если стартовал/завершён первый этап.
+        _materialsBlockLocked = firstStarted;
+        // Блок "Печать" запрещён, если стартовал/завершён этап флексопечати.
+        _printBlockLocked = flexoStarted;
+      });
+    } catch (_) {}
   }
 
   TemplateModel? _findTemplateById(
@@ -2319,6 +2448,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
+    final bool stageQueueChangedForLaunchedOrder = wasAlreadyLaunched &&
+        ((_stageTemplateId ?? '') != (widget.order?.stageTemplateId ?? '') ||
+            _stageOrderManuallyChanged);
+    if (stageQueueChangedForLaunchedOrder && _launchedWithStartedStages) {
+      // Бизнес-правило: после старта этапов нельзя менять очередь.
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Нельзя изменить очередь этапов: производство уже начато.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     final String nextOrderStatus = wasAlreadyLaunched
         ? widget.order!.status
         : (canLaunchProductionNow
@@ -2333,6 +2478,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ? ''
             : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.');
     late OrderModel createdOrUpdatedOrder;
+    bool resetForRelaunchAfterEdit = false;
     if (widget.order == null) {
       // создаём новый заказ
       final _created = await provider.createOrder(
@@ -2396,6 +2542,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
+      if (wasAlreadyLaunched && _launchedNoStartedStages && mounted) {
+        // Бизнес-правило: запущен, но этапы не начаты — после изменения
+        // снимаем заказ с производства, дальше нужен ручной повторный запуск.
+        await provider.resetLaunchedOrderForRelaunch(updated.id);
+        createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
+          assignmentCreated: false,
+          status: OrderStatus.ready_to_start.name,
+        );
+        resetForRelaunchAfterEdit = true;
+      }
     }
 
     if (createdOrUpdatedOrder.status != nextOrderStatus ||
@@ -2813,7 +2969,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     */
 
-    if (!createdOrUpdatedOrder.assignmentCreated && !canLaunchProductionNow) {
+    if (resetForRelaunchAfterEdit) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Заказ обновлён и снят с производства. Для продолжения запустите его повторно.',
+          ),
+        ),
+      );
+    } else if (!createdOrUpdatedOrder.assignmentCreated && !canLaunchProductionNow) {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
@@ -3393,32 +3557,47 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 icon: Icons.print_outlined,
                 backgroundColor: const Color(0xFFFFF4DE),
                 accentColor: const Color(0xFFF4A12F),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildLabelRow(
-                      label: 'Краски',
-                      labelWidth: labelWidth,
-                      child: _buildPaintsSection(wrapWithCard: false),
+                child: AbsorbPointer(
+                  absorbing: _printBlockLocked,
+                  child: Opacity(
+                    // Бизнес-правило: после старта флексопечати блок "Печать" только для чтения.
+                    opacity: _printBlockLocked ? 0.55 : 1,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_printBlockLocked)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              'Редактирование блока "Печать" запрещено: этап флексопечати уже начат.',
+                              style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                            ),
+                          ),
+                        _buildLabelRow(
+                          label: 'Краски',
+                          labelWidth: labelWidth,
+                          child: _buildPaintsSection(wrapWithCard: false),
+                        ),
+                        _buildLabelRow(
+                          label: 'Форма',
+                          labelWidth: labelWidth,
+                          child: _buildFormSection(
+                            context: context,
+                            showFormSummary: showFormSummary,
+                            showFormEditor: showFormEditor,
+                            isEditing: isEditing,
+                            hasAssignedForm: hasAssignedForm,
+                            wrapWithCard: false,
+                          ),
+                        ),
+                        _buildLabelRow(
+                          label: 'PDF',
+                          labelWidth: labelWidth,
+                          child: _buildPdfAttachmentRow(),
+                        ),
+                      ],
                     ),
-                    _buildLabelRow(
-                      label: 'Форма',
-                      labelWidth: labelWidth,
-                      child: _buildFormSection(
-                        context: context,
-                        showFormSummary: showFormSummary,
-                        showFormEditor: showFormEditor,
-                        isEditing: isEditing,
-                        hasAssignedForm: hasAssignedForm,
-                        wrapWithCard: false,
-                      ),
-                    ),
-                    _buildLabelRow(
-                      label: 'PDF',
-                      labelWidth: labelWidth,
-                      child: _buildPdfAttachmentRow(),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -3441,7 +3620,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         return 'Остаток бумаги по выбранному материалу: '
                             '${paperQty.toStringAsFixed(2)}';
                       }(),
-                      child: _buildProductMaterialAndExtras(_product),
+                      child: AbsorbPointer(
+                        absorbing: _materialsBlockLocked,
+                        child: Opacity(
+                          // Бизнес-правило: после старта первого этапа склад/материалы только для чтения.
+                          opacity: _materialsBlockLocked ? 0.55 : 1,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (_materialsBlockLocked)
+                                const Padding(
+                                  padding: EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    'Редактирование блока "Склад и материалы" запрещено: первый этап уже начат.',
+                                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                                  ),
+                                ),
+                              _buildProductMaterialAndExtras(_product),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                     _buildLabelRow(
                       label: 'Приладка',

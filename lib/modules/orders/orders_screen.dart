@@ -942,14 +942,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void _showOrderTimeline(OrderModel order) async {
     final provider = context.read<OrdersProvider>();
     final events = await provider.fetchOrderHistory(order.id);
-    final executionEvents = events
-        .where((event) => (event['source'] ?? '') == 'task_comment')
-        .toList();
 
     showDialog(
       context: context,
-      builder: (_) =>
-          OrderTimelineDialog(order: order, events: executionEvents),
+      builder: (_) => OrderTimelineDialog(order: order, events: events),
     );
   }
 

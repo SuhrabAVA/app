@@ -1513,10 +1513,12 @@ class _TasksScreenState extends State<TasksScreen>
                 for (int i = 0; i < sectionedTasks.length; i++)
                   Builder(builder: (context) {
                     final task = sectionedTasks[i];
+                    final workplace = personnel.workplaceById(task.stageId);
                     final unlockedByQueue = _isUnlockedByWorkplaceQueue(
                       task,
                       taskProvider,
                       queue,
+                      workplace,
                     );
                     final readyForStage = task.status == TaskStatus.waiting &&
                         unlockedByQueue &&
@@ -2702,6 +2704,7 @@ class _TasksScreenState extends State<TasksScreen>
     TaskModel task,
     TaskProvider taskProvider,
     ProductionQueueProvider queue,
+    WorkplaceModel? workplace,
   ) {
     if (task.status != TaskStatus.waiting) return true;
     if (_selectedWorkplaceId?.trim().isEmpty ?? true) return true;
@@ -2715,8 +2718,23 @@ class _TasksScreenState extends State<TasksScreen>
     final index = queued.indexWhere((t) => t.id == task.id);
     if (index <= 0) return true;
 
+    final bool strictSequentialByPreviousCompletion =
+        workplace != null && workplace.executionMode != WorkplaceExecutionMode.separate;
+
     for (var i = 0; i < index; i++) {
-      if (!_hasWorkplaceQueueActivity(queued[i])) {
+      final previous = queued[i];
+      if (strictSequentialByPreviousCompletion) {
+        final bool previousCompleted = _isEffectivelyCompleted(previous);
+        final bool previousInProblem = previous.status == TaskStatus.problem ||
+            previous.comments.any((c) => c.type == 'problem');
+        // Бизнес-правило для "Одиночная/Совместная": следующий заказ можно
+        // стартовать только после завершения предыдущего, либо если он в "Проблеме".
+        if (!previousCompleted && !previousInProblem) {
+          return false;
+        }
+        continue;
+      }
+      if (!_hasWorkplaceQueueActivity(previous)) {
         return false;
       }
     }
@@ -2774,6 +2792,7 @@ class _TasksScreenState extends State<TasksScreen>
           task,
           provider,
           context.read<ProductionQueueProvider>(),
+          stage,
         ) &&
         _isFirstPendingStage(context.read<TaskProvider>(),
             context.read<PersonnelProvider>(), task,
@@ -2890,9 +2909,13 @@ class _TasksScreenState extends State<TasksScreen>
                             !_hasProductionStartedForStage(task);
                     final bool userParticipatedInStage =
                         _hasUserParticipatedInStage(task, currentRowUserId);
+                    final bool stageStartedBeforeShiftResume =
+                        _hasProductionStartedForStage(task) &&
+                            task.comments.any((c) => c.type == 'shift_resume');
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !requiresSetupBeforeStart &&
+                        !stageStartedBeforeShiftResume &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
                         // после личного завершения (до финальной кнопки
                         // "Завершить задание").
@@ -3007,6 +3030,7 @@ class _TasksScreenState extends State<TasksScreen>
                         task,
                         taskProvider,
                         context.read<ProductionQueueProvider>(),
+                        stage,
                       )) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -3044,6 +3068,10 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                         return;
                       }
+
+                      final bool setupInProgressForCurrentUser =
+                          _isSetupInProgressForUser(task, widget.employeeId) &&
+                              !_hasProductionStartedForStage(task);
 
                       ExecutionMode? selectedMode = stageExecMode;
                       final alreadyAssigned =
@@ -3083,7 +3111,8 @@ class _TasksScreenState extends State<TasksScreen>
                       // startedAt, чтобы не обнулять таймер.
                       if (_hasMachineForStage(stage) &&
                           !_isSetupCompletedForUser(
-                              task, widget.employeeId)) {
+                              task, widget.employeeId) &&
+                          !setupInProgressForCurrentUser) {
                         await _finishSetup(task, provider);
                       }
                       final startedAtTs = task.startedAt ??
@@ -3098,7 +3127,21 @@ class _TasksScreenState extends State<TasksScreen>
                           type: 'start',
                           text: 'Начал(а) этап',
                           userIdOverride: widget.employeeId);
-                      await recordTimeEventForUser(TaskTimeType.production);
+                      if (setupInProgressForCurrentUser) {
+                        // Бизнес-правило: после "Наладка" -> "Пауза/Проблема"
+                        // продолжение возвращает именно в наладку.
+                        await taskProvider.addCommentAutoUser(
+                            taskId: task.id,
+                            type: 'setup_resume',
+                            text: 'Продолжил(а) наладку',
+                            userIdOverride: widget.employeeId);
+                        await recordTimeEventForUser(
+                          TaskTimeType.setup,
+                          note: 'setup_resume',
+                        );
+                      } else {
+                        await recordTimeEventForUser(TaskTimeType.production);
+                      }
                     }
 
                     Future<void> onPause() async {

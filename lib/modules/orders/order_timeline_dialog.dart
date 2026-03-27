@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -17,7 +18,7 @@ class OrderTimelineDialog extends StatelessWidget {
     required this.events,
   });
 
-  static final DateFormat _dateTimeFormat = DateFormat('dd.MM.yyyy HH:mm');
+  static final DateFormat _dateTimeFormat = DateFormat('dd.MM.yyyy в HH:mm', 'ru');
 
   DateTime? _parseTimestamp(dynamic value) {
     if (value == null) return null;
@@ -106,6 +107,8 @@ class OrderTimelineDialog extends StatelessWidget {
   }
 
   String _describeOrderEvent(String type, String description) {
+    final formattedJson = _formatTechnicalPayload(description);
+    if (formattedJson != null) return formattedJson;
     if (description.isNotEmpty) return description;
     final lower = type.toLowerCase();
     switch (lower) {
@@ -118,6 +121,8 @@ class OrderTimelineDialog extends StatelessWidget {
       case 'deleted':
       case 'удаление':
         return 'Заказ удалён';
+      case 'produced_qty':
+        return 'Обновлено произведённое количество';
       default:
         return type.isEmpty ? 'Событие заказа' : type;
     }
@@ -136,8 +141,47 @@ class OrderTimelineDialog extends StatelessWidget {
       case 'deleted':
       case 'удаление':
         return 'Удаление заказа';
+      case 'produced_qty':
+        return 'Произведено';
+      case 'shipment':
+        return 'Отгрузка';
       default:
         return type;
+    }
+  }
+
+  String? _formatTechnicalPayload(String rawDescription) {
+    final text = rawDescription.trim();
+    if (!(text.startsWith('{') && text.endsWith('}'))) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      final String eventType = (map['type'] ?? '').toString().trim().toLowerCase();
+      if (eventType.isEmpty) return null;
+      if (eventType == 'setup') {
+        final started = _formatTimestamp(map['startTime']);
+        final ended = _formatTimestamp(map['endTime']);
+        final who = (map['initiatedBy'] ?? '').toString();
+        final workplace = (map['workplaceId'] ?? '').toString();
+        final participants = map['participantsSnapshot'];
+        final participantsText = participants is List
+            ? participants.map((e) => e.toString()).where((e) => e.isNotEmpty).join(', ')
+            : '';
+        final parts = <String>[
+          if (started.isNotEmpty) 'Наладка начата: $started',
+          if (ended.isNotEmpty) 'Наладка завершена: $ended',
+          if (who.isNotEmpty) 'Инициатор: $who',
+          if (workplace.isNotEmpty) 'Рабочее место: $workplace',
+          if (participantsText.isNotEmpty) 'Участники: $participantsText',
+        ];
+        return parts.isEmpty ? 'Событие наладки' : parts.join('\n');
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -166,6 +210,7 @@ class OrderTimelineDialog extends StatelessWidget {
       BuildContext context, Map<String, dynamic> event, PersonnelProvider personnel) {
     final source = (event['source'] ?? 'order_event').toString();
     final bool isComment = source == 'task_comment';
+    final bool isChat = source == 'chat_message';
     final dynamic timestampRaw = event['timestamp'] ?? event['created_at'];
     final String timeLabel = _formatTimestamp(timestampRaw);
     final String userLabel = _userDisplay(personnel, event['user_id'] as String?);
@@ -182,10 +227,14 @@ class OrderTimelineDialog extends StatelessWidget {
     final String eventType = (event['event_type'] ?? '').toString();
     final String description = (event['description'] ?? '').toString();
 
-    final String titleText = isComment
+    final String titleText = isChat
+        ? 'Чат заказа'
+        : isComment
         ? (stageLabel.isNotEmpty ? stageLabel : 'Комментарий к этапу')
         : _orderEventTitle(eventType);
-    final String bodyText = isComment
+    final String bodyText = isChat
+        ? (description.isEmpty ? 'Сообщение в чате' : description)
+        : isComment
         ? _describeComment(eventType, description, quantity)
         : _describeOrderEvent(eventType, description);
 
