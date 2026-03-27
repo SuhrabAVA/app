@@ -1365,9 +1365,9 @@ class OrdersProvider with ChangeNotifier {
             .select('shipped_at, shipped_qty, shipped_by, actual_qty')
             .eq('id', orderId)
             .maybeSingle();
-        if (orderRow is Map) {
+        if (orderRow case final Map<dynamic, dynamic> orderRowMap) {
           final Map<String, dynamic> orderData =
-              Map<String, dynamic>.from(orderRow);
+              Map<String, dynamic>.from(orderRowMap);
           final DateTime? shippedAt = _parseTimestamp(orderData['shipped_at']);
           final double? shippedQty = _toDoubleNullable(orderData['shipped_qty']);
           final double? producedQty = _toDoubleNullable(orderData['actual_qty']);
