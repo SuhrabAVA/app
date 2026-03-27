@@ -420,6 +420,49 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     );
   }
 
+  String _timeTypeLabel(TaskTimeType type) {
+    switch (type) {
+      case TaskTimeType.production:
+        return 'Производство';
+      case TaskTimeType.pause:
+        return 'Пауза';
+      case TaskTimeType.problem:
+        return 'Проблема';
+      case TaskTimeType.shiftChange:
+        return 'Пересмена';
+      case TaskTimeType.setup:
+        return 'Наладка';
+    }
+  }
+
+  String _renderCommentText(TaskComment comment, List<EmployeeModel> employees) {
+    final rawText = comment.text.trim();
+    if (rawText.isEmpty) return 'Без комментария';
+
+    final parsed = TaskTimeEvent.fromPayload(
+      rawText,
+      comment.id,
+      comment.timestamp,
+      comment.userId,
+    );
+    if (parsed != null) {
+      final periodStart = DateFormat('dd.MM.yyyy HH:mm')
+          .format(parsed.startTime.toLocal());
+      final periodEnd = parsed.endTime == null
+          ? 'в процессе'
+          : DateFormat('dd.MM.yyyy HH:mm').format(parsed.endTime!.toLocal());
+      final subject = _commentAuthorName(parsed.subjectUserId, employees);
+      final note = parsed.note?.trim();
+      final notePart = (note != null && note.isNotEmpty) ? ' · $note' : '';
+      return '${_timeTypeLabel(parsed.type)}: $periodStart — $periodEnd · $subject$notePart';
+    }
+
+    if (rawText.startsWith('{') && rawText.endsWith('}')) {
+      return 'Служебный комментарий';
+    }
+    return rawText;
+  }
+
   String _stageStatusLabel(TaskStatus? status) {
     switch (status) {
       case TaskStatus.completed:
@@ -509,7 +552,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                               children: [
                                 _buildCommentMeta(c, personnel.employees),
                                 Text(
-                                  c.text,
+                                  _renderCommentText(c, personnel.employees),
                                   style: const TextStyle(fontSize: 14),
                                 ),
                               ],

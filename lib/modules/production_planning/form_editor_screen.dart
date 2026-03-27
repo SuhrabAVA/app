@@ -2,8 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import '../../services/app_auth.dart';
-import '../../utils/auth_helper.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -960,7 +958,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return;
     }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
-    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
@@ -1798,187 +1795,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       } catch (_) {}
     }
     // === Конец обработки формы ===
-
-    // ВРЕМЕННО: списание материалов со склада отключено по бизнес-требованию.
-    // Ниже оставлен исходный код (в комментарии), чтобы позже вернуть логику быстро и безопасно.
-    /*
-    // Списание ручек (канцтовары/ручки), если выбраны и указано количество
-    if (_selectedHandle != '-' && (_handleQty ?? 0) > 0) {
-      try {
-        final warehouse =
-            Provider.of<WarehouseProvider>(context, listen: false);
-        // Ищем позицию ручек по описанию среди типа 'pens'
-        final items = warehouse
-            .getTmcByType('pens')
-            .where((t) => t.description == _selectedHandle)
-            .toList(growable: false);
-        if (items.isNotEmpty) {
-          final item = items.first;
-          final double newQty = (_handleQty ?? 0);
-          // Определяем, сколько было ранее (если редактируем)
-          double prevQty = 0;
-          try {
-            prevQty = _previousPenQty(penName: _selectedHandle);
-          } catch (_) {}
-          final double diff = (newQty - prevQty);
-          if (diff > 0) {
-            // Списываем ТОЛЬКО разницу
-            await warehouse.writeOff(
-              itemId: item.id,
-              qty: diff,
-              currentQty: item.quantity,
-              reason: _customerController.text.trim(),
-              typeHint: 'pens',
-            );
-          } else if (diff < 0) {
-            // Если уменьшили количество по сравнению с прошлой версией - вернём на склад разницу
-            await warehouse.registerReturn(
-              id: item.id,
-              type: 'pens',
-              qty: -diff,
-              note: 'Коррекция заказа: ' + _customerController.text.trim(),
-            );
-          }
-          // Запишем выбранные ручки в parameters, чтобы при следующем сохранении посчитать дельту
-          _upsertPensInParameters(_selectedHandle, newQty);
-        }
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка списания ручек: $e')),
-        );
-      }
-    }
-// Списание материалов/готовой продукции (бумага по длине L)
-    if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
-      // Перепроверим остаток по актуальным данным провайдера склада
-      final current = Provider.of<WarehouseProvider>(context, listen: false)
-          .allTmc
-          .where((t) => t.id == _selectedMaterialTmc!.id)
-          .toList();
-      final availableQty = current.isNotEmpty
-          ? (current.first.quantity)
-          : _selectedMaterialTmc!.quantity;
-      final need = (_product.length ?? 0).toDouble();
-      // списываем дельту при редактировании
-      final prevLen = (widget.order?.product.length ?? 0).toDouble();
-      final delta = need - prevLen;
-      final toWriteOff =
-          (widget.order == null) ? need : (delta > 0 ? delta : 0.0);
-      if (need > availableQty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
-        );
-        return;
-      }
-
-      await warehouse.registerShipment(
-        id: _selectedMaterialTmc!.id,
-        type: 'paper',
-        qty: toWriteOff,
-        reason: _customerController.text.trim(),
-      );
-    }
-
-    // Повторная выборка позиций из динамической категории перед списанием - чтобы не зависеть от состояния UI.
-    if (_writeOffStockExtra) {
-      await AppAuth.ensureSignedIn();
-
-      try {
-        final String customer = _customerController.text.trim();
-        final String typeTitle = _product.type.trim();
-        if (customer.isNotEmpty && typeTitle.isNotEmpty) {
-          final cat = await _sb
-              .from('warehouse_categories')
-              .select('id, title, code')
-              .or('title.eq.' + typeTitle + ',code.eq.' + typeTitle)
-              .maybeSingle();
-          if (cat != null) {
-            final rows = await _sb
-                .from('warehouse_category_items')
-                .select('id, description, quantity, table_key')
-                .eq('category_id', cat['id'])
-                .eq('description', customer);
-            final toWriteOffRows = <Map<String, dynamic>>[];
-            for (final r in (rows as List)) {
-              final qv = r['quantity'];
-              final q = (qv is num)
-                  ? qv.toDouble()
-                  : double.tryParse('${qv ?? ''}') ?? 0.0;
-              if (q > 0) {
-                toWriteOffRows.add({'id': r['id'].toString(), 'quantity': q});
-              }
-            }
-            // Выполним списание, если нашли что списывать
-            for (final it in toWriteOffRows) {
-              final String itemId = it['id'].toString();
-              final double q = (it['quantity'] as num).toDouble();
-              // Лог списаний
-              await _sb.from('warehouse_category_writeoffs').insert({
-                'item_id': itemId,
-                'qty': q,
-                'reason': _customerController.text.trim(),
-                'by_name': AuthHelper.currentUserName ?? '',
-              });
-              // Обновим остаток
-              final row = await _sb
-                  .from('warehouse_category_items')
-                  .select('quantity')
-                  .eq('id', itemId)
-                  .maybeSingle();
-              final double cur =
-                  ((row?['quantity'] ?? 0) as num?)?.toDouble() ?? 0.0;
-              final double newQty = (cur - q);
-              await _sb.from('warehouse_category_items').update(
-                  {'quantity': newQty < 0 ? 0 : newQty}).match({'id': itemId});
-            }
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('Ошибка списания лишнего: ' + e.toString())));
-        }
-      }
-    }
-
-    // Списание красок (если указано несколько)
-    // При редактировании списываем только ДЕЛЬТУ, чтобы не дублировать списания
-    if (_paints.any((p) => p.tmc != null)) {
-      final prevRows = (widget.order == null)
-          ? <Map<String, dynamic>>[]
-          : await OrdersRepository().getPaints(createdOrUpdatedOrder.id);
-      final Map<String, double> prevByName = {};
-      for (final it in prevRows) {
-        final name = (it['name'] ?? '').toString();
-        final qRaw = it['qty_kg'];
-        final qKg =
-            (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw');
-        if (name.isNotEmpty && qKg != null) {
-          prevByName[name] = qKg * 1000;
-        }
-      }
-      for (final row in _paints) {
-        if (row.tmc != null && row.qtyGrams != null && row.qtyGrams! > 0) {
-          final name = row.tmc!.description;
-          final double newGrams = row.qtyGrams ?? 0;
-          final double oldGrams = prevByName[name] ?? 0.0;
-          final double delta = newGrams - oldGrams;
-          if (delta > 0) {
-            final double qtyToWriteOff =
-                _gramsToStockUnit(delta, row.tmc!);
-            await warehouse.registerShipment(
-              id: row.tmc!.id,
-              type: 'paint',
-              qty: qtyToWriteOff,
-              reason: _customerController.text.trim(),
-            );
-          }
-        }
-      }
-    }
-    */
 
 // Независимо от создания/редактирования - синхронизируем список красок
 // c полем product.parameters и таблицей order_paints.
