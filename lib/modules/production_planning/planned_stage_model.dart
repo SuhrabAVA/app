@@ -14,10 +14,16 @@ class PlannedStage {
   });
 
   List<String> get allStageIds =>
-      [stageId, ...alternativeStageIds.where((id) => id != stageId)].toSet().toList();
+      _dedupeOrdered(
+        [stageId, ...alternativeStageIds],
+        caseInsensitive: true,
+      );
 
   List<String> get allStageNames =>
-      [stageName, ...alternativeStageNames.where((n) => n != stageName)].toSet().toList();
+      _dedupeOrdered(
+        [stageName, ...alternativeStageNames],
+        caseInsensitive: true,
+      );
 
   PlannedStage copyWith({
     String? comment,
@@ -42,19 +48,41 @@ class PlannedStage {
 
   factory PlannedStage.fromMap(Map<String, dynamic> map) => PlannedStage(
         stageId: map['stageId'] as String,
-        stageName: map['stageName'] as String? ?? '',
-        alternativeStageIds: (map['alternativeStageIds'] as List?)
+        stageName: (map['stageName'] as String? ?? '').trim(),
+        alternativeStageIds: _dedupeOrdered(
+          (map['alternativeStageIds'] as List?)
                 ?.whereType<dynamic>()
                 .map((e) => e.toString())
                 .toList() ??
-            const [],
-        alternativeStageNames: (map['alternativeStageNames'] as List?)
+              const [],
+          caseInsensitive: true,
+        ),
+        alternativeStageNames: _dedupeOrdered(
+          (map['alternativeStageNames'] as List?)
                 ?.whereType<dynamic>()
                 .map((e) => e.toString())
                 .toList() ??
-            const [],
+              const [],
+          caseInsensitive: true,
+        ),
         comment: map['comment'] as String?,
       );
+}
+
+List<String> _dedupeOrdered(
+  List<String> values, {
+  bool caseInsensitive = false,
+}) {
+  final seen = <String>{};
+  final result = <String>[];
+  for (final value in values) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) continue;
+    final key = caseInsensitive ? trimmed.toLowerCase() : trimmed;
+    if (!seen.add(key)) continue;
+    result.add(trimmed);
+  }
+  return result;
 }
 /// Decodes a dynamic value retrieved from Firebase into a list of
 /// [PlannedStage] objects. Firebase can return either a List or a Map for

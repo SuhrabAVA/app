@@ -745,11 +745,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final ordered = <String>[];
     final seen = <String>{};
     void addName(String value) {
-      final trimmed = value.trim();
-      if (trimmed.isEmpty) return;
-      final key = trimmed.toLowerCase();
-      if (!seen.add(key)) return;
-      ordered.add(trimmed);
+      // Некоторые источники уже сохраняют объединённые названия в виде
+      // "Этап A / Этап B". Разбиваем их на части, чтобы убрать дубли на уровне
+      // каждого рабочего места, а не всей строки целиком.
+      final parts = value
+          .split('/')
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty);
+      for (final part in parts) {
+        final key = part.toLowerCase();
+        if (!seen.add(key)) continue;
+        ordered.add(part);
+      }
     }
 
     for (final alt in altNames) {
