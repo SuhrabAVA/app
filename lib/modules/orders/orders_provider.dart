@@ -657,6 +657,13 @@ class OrdersProvider with ChangeNotifier {
     final double actualQty =
         orderData.actualQty ?? orderData.product.quantity.toDouble();
     final double safeActual = actualQty < 0 ? 0 : actualQty;
+    if (safeActual < plannedQty) {
+      // Бизнес-правило отгрузки: нельзя отгружать меньше тиража.
+      throw Exception(
+        'Отгрузка запрещена: фактическое количество '
+        '(${_formatQty(safeActual)}) меньше тиража (${_formatQty(plannedQty)}).',
+      );
+    }
 
     double writeoffQty = writeoffOverride ??
         (safeActual < plannedQty ? safeActual : plannedQty.toDouble());
@@ -719,6 +726,28 @@ class OrdersProvider with ChangeNotifier {
       debugPrint('❌ shipOrder update error: $e\n$st');
       _orders[index] = previous;
       notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> resetLaunchedOrderForRelaunch(String orderId) async {
+    await _ensureAuthed();
+    try {
+      // Бизнес-правило: после правок запущенного, но не начатого заказа
+      // убираем его из производственных списков и возвращаем в ручной запуск.
+      await _supabase.from('tasks').delete().eq('order_id', orderId);
+      await _supabase.from('orders').update({
+        'assignment_created': false,
+        'status': OrderStatus.ready_to_start.name,
+      }).eq('id', orderId);
+      await _logOrderEvent(
+        orderId,
+        'Сброс запуска',
+        'После редактирования заказ снят с производства и требует повторного запуска',
+      );
+      await refresh();
+    } catch (e, st) {
+      debugPrint('❌ resetLaunchedOrderForRelaunch error: $e\n$st');
       rethrow;
     }
   }
@@ -1257,6 +1286,37 @@ class OrdersProvider with ChangeNotifier {
         }
       }
 
+      // Чат заказа (если room_id совпадает с id заказа).
+      try {
+        final chatRows = await _supabase
+            .from('chat_messages')
+            .select('created_at, sender_id, sender_name, body, text, kind')
+            .eq('room_id', orderId)
+            .order('created_at');
+        if (chatRows is List) {
+          for (final raw in chatRows) {
+            if (raw is! Map) continue;
+            final map = Map<String, dynamic>.from(raw as Map);
+            final DateTime? ts =
+                _parseTimestamp(map['created_at'] ?? map['timestamp']);
+            final String text = _stringOrNull(map['body']) ??
+                _stringOrNull(map['text']) ??
+                '[вложение]';
+            combined.add({
+              'source': 'chat_message',
+              'timestamp': ts?.millisecondsSinceEpoch,
+              'event_type': 'chat_message',
+              'description': text,
+              'user_id': _stringOrNull(map['sender_id']),
+              'user_name': _stringOrNull(map['sender_name']),
+              'kind': _stringOrNull(map['kind']) ?? 'text',
+            });
+          }
+        }
+      } catch (_) {
+        // Таблица/колонки чата могут отличаться между инсталляциями.
+      }
+
       final taskRows = await _supabase
           .from('tasks')
           .select('id, stage_id, comments')
@@ -1301,6 +1361,39 @@ class OrdersProvider with ChangeNotifier {
         }
       }
 
+      try {
+        final orderRow = await _supabase
+            .from('orders')
+            .select('shipped_at, shipped_qty, shipped_by, actual_qty')
+            .eq('id', orderId)
+            .maybeSingle();
+        if (orderRow is Map) {
+          final DateTime? shippedAt = _parseTimestamp(orderRow['shipped_at']);
+          final double? shippedQty = _toDoubleNullable(orderRow['shipped_qty']);
+          final double? producedQty = _toDoubleNullable(orderRow['actual_qty']);
+          if (producedQty != null) {
+            combined.add({
+              'source': 'order_event',
+              'timestamp': shippedAt?.millisecondsSinceEpoch,
+              'event_type': 'produced_qty',
+              'description': 'Произведено: ${_formatQty(producedQty)}',
+              'quantity': producedQty,
+            });
+          }
+          if (shippedAt != null || shippedQty != null) {
+            combined.add({
+              'source': 'shipment',
+              'timestamp': shippedAt?.millisecondsSinceEpoch,
+              'event_type': 'shipment',
+              'description':
+                  'Отгрузка: ${_formatQty(shippedQty ?? 0)}; исполнитель: ${_stringOrNull(orderRow['shipped_by']) ?? '—'}',
+              'user_name': _stringOrNull(orderRow['shipped_by']),
+              'quantity': shippedQty,
+            });
+          }
+        }
+      } catch (_) {}
+
       combined.sort((a, b) {
         final int tsA = (a['timestamp'] as int?) ?? 0;
         final int tsB = (b['timestamp'] as int?) ?? 0;
@@ -1312,6 +1405,13 @@ class OrdersProvider with ChangeNotifier {
       debugPrint('❌ fetchOrderHistory error: $e\n$st');
       return [];
     }
+  }
+
+  String _formatQty(double value) {
+    if ((value - value.roundToDouble()).abs() < 0.0001) {
+      return value.round().toString();
+    }
+    return value.toStringAsFixed(2);
   }
 
   // ===== STOCK (WAREHOUSE) INTEGRATION =====
