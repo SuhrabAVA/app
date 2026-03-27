@@ -1368,9 +1368,11 @@ class OrdersProvider with ChangeNotifier {
             .eq('id', orderId)
             .maybeSingle();
         if (orderRow is Map) {
-          final DateTime? shippedAt = _parseTimestamp(orderRow['shipped_at']);
-          final double? shippedQty = _toDoubleNullable(orderRow['shipped_qty']);
-          final double? producedQty = _toDoubleNullable(orderRow['actual_qty']);
+          final Map<String, dynamic> orderData =
+              Map<String, dynamic>.from(orderRow);
+          final DateTime? shippedAt = _parseTimestamp(orderData['shipped_at']);
+          final double? shippedQty = _toDoubleNullable(orderData['shipped_qty']);
+          final double? producedQty = _toDoubleNullable(orderData['actual_qty']);
           if (producedQty != null) {
             combined.add({
               'source': 'order_event',
@@ -1386,8 +1388,8 @@ class OrdersProvider with ChangeNotifier {
               'timestamp': shippedAt?.millisecondsSinceEpoch,
               'event_type': 'shipment',
               'description':
-                  'Отгрузка: ${_formatQty(shippedQty ?? 0)}; исполнитель: ${_stringOrNull(orderRow['shipped_by']) ?? '—'}',
-              'user_name': _stringOrNull(orderRow['shipped_by']),
+                  'Отгрузка: ${_formatQty(shippedQty ?? 0)}; исполнитель: ${_stringOrNull(orderData['shipped_by']) ?? '—'}',
+              'user_name': _stringOrNull(orderData['shipped_by']),
               'quantity': shippedQty,
             });
           }
