@@ -445,7 +445,6 @@ class OrdersProvider with ChangeNotifier {
 
   /// Запускает заказ в производство:
   /// - создаёт задачи по сохранённой очереди этапов;
-  /// - списывает бумагу;
   /// - переводит заказ в статус inWork.
   /// Возвращает `null` при успехе или текст ошибки.
   Future<String?> launchOrder(OrderModel order) async {
@@ -548,7 +547,6 @@ class OrdersProvider with ChangeNotifier {
         });
       }
 
-      await _applyPaperWriteoffFromOrder(order);
 
       final String nextAssignmentId =
           (order.assignmentId ?? '').trim().isNotEmpty
