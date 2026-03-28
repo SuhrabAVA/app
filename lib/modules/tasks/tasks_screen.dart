@@ -2885,6 +2885,10 @@ class _TasksScreenState extends State<TasksScreen>
           final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
           final groupHasActive =
               groupTasks.any((t) => t.status != TaskStatus.waiting);
+          // "Захват" этапа: как только любой task в группе альтернативных
+          // рабочих мест ушёл из waiting, остальные waiting-записи скрываем
+          // в чужих рабочих местах. Выполнение продолжается только там,
+          // где старт произошёл первым.
           if (groupHasActive && task.status == TaskStatus.waiting) {
             return false;
           }

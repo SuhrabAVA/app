@@ -809,6 +809,10 @@ class _ProductionTab extends StatelessWidget {
         continue;
       }
       final groupHasActive = groupTasks.any((t) => t.status != TaskStatus.waiting);
+      // Логика "захвата" общего этапа:
+      // пока все альтернативные tasks в waiting, этап показываем
+      // во всех связанных рабочих местах; после первого старта
+      // оставляем видимым только начавшее рабочее место.
       if (!groupHasActive || task.status != TaskStatus.waiting) {
         visibleWorkplaceIds.add(normalizedStageId);
       }
