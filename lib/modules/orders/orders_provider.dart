@@ -524,9 +524,9 @@ class OrdersProvider with ChangeNotifier {
     final prepared = paperMaterials
         .where((paper) => (paper.id ?? '').trim().isNotEmpty)
         .map((paper) {
-          final qty = paper.quantity > 0
+          final double qty = paper.quantity > 0
               ? paper.quantity
-              : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0);
+              : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0);
           return paper.copyWith(quantity: qty);
         })
         .toList(growable: false);
