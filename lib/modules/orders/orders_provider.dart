@@ -468,6 +468,21 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final bool paperChanged = _hasPaperCompositionChanged(
+        previous: prev,
+        updated: updated,
+      );
+      final bool requiresPaperChangeReason =
+          paperChanged &&
+          (updated.assignmentCreated ||
+              updated.statusEnum == OrderStatus.in_production) &&
+          !AuthHelper.isTechLeader;
+      if (requiresPaperChangeReason &&
+          updated.comments.trim().isEmpty) {
+        throw Exception(
+          'Укажите причину изменения бумаги перед сохранением.',
+        );
+      }
       await _supabase
           .from('orders')
           .update(updated.toMap()..remove('id'))
@@ -1150,19 +1165,11 @@ class OrdersProvider with ChangeNotifier {
     required OrderModel updated,
     String? reason,
   }) {
+    if (!_hasPaperCompositionChanged(previous: previous, updated: updated)) {
+      return null;
+    }
     final before = _resolveOrderPapers(previous);
     final after = _resolveOrderPapers(updated);
-    if (before.length == after.length) {
-      var equal = true;
-      for (var i = 0; i < before.length; i++) {
-        if (before[i].id != after[i].id ||
-            (before[i].quantity - after[i].quantity).abs() > 0.0001) {
-          equal = false;
-          break;
-        }
-      }
-      if (equal) return null;
-    }
     String fmtDate(DateTime dt) {
       final local = dt.toLocal();
       String two(int v) => v.toString().padLeft(2, '0');
@@ -1210,6 +1217,22 @@ class OrdersProvider with ChangeNotifier {
       buffer.writeln('Причина: $reasonText');
     }
     return buffer.toString().trim();
+  }
+
+  bool _hasPaperCompositionChanged({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) {
+    final before = _resolveOrderPapers(previous);
+    final after = _resolveOrderPapers(updated);
+    if (before.length != after.length) return true;
+    for (var i = 0; i < before.length; i++) {
+      if (before[i].id != after[i].id ||
+          (before[i].quantity - after[i].quantity).abs() > 0.0001) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> _applyPensConsumption({

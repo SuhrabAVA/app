@@ -173,6 +173,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Кол-во ручек для списания
   double? _handleQty;
   MaterialModel? _selectedMaterial;
+  final List<MaterialModel> _extraPaperMaterials = <MaterialModel>[];
   TmcModel? _selectedMaterialTmc;
   // === Каскадный выбор Материал → Формат → Грамаж (строгий) ===
   final TextEditingController _matNameCtl = TextEditingController();
@@ -330,7 +331,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _makeready = template?.makeready ?? 0;
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
-    _selectedMaterial = template?.material;
+    final List<MaterialModel> initialPapers = template != null
+        ? (template.paperMaterials.isNotEmpty
+            ? List<MaterialModel>.from(template.paperMaterials)
+            : <MaterialModel>[
+                if (template.material != null) template.material!,
+              ])
+        : const <MaterialModel>[];
+    _selectedMaterial = initialPapers.isNotEmpty ? initialPapers.first : null;
+    _extraPaperMaterials
+      ..clear()
+      ..addAll(initialPapers.skip(1).take(2));
 
     // Инициализация каскадных полей (если есть материал в шаблоне)
     _matNameCtl.text = (_selectedMaterial?.name ?? '').trim();
@@ -608,6 +619,162 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _lengthExceeded = _product.length! > tmc.quantity;
     }
     setState(() {});
+  }
+
+  List<MaterialModel> _collectSelectedPapers() {
+    final List<MaterialModel> selected = <MaterialModel>[];
+    final double fallbackQty =
+        (_product.length ?? _selectedMaterial?.quantity ?? 0).toDouble();
+    if (_selectedMaterial != null) {
+      selected.add(
+        _selectedMaterial!.copyWith(
+          quantity: _selectedMaterial!.quantity > 0
+              ? _selectedMaterial!.quantity
+              : fallbackQty,
+          unit: 'м',
+        ),
+      );
+    }
+    for (final paper in _extraPaperMaterials) {
+      final id = (paper.id ?? '').trim();
+      if (id.isEmpty) continue;
+      selected.add(
+        paper.copyWith(
+          quantity: paper.quantity > 0 ? paper.quantity : fallbackQty,
+          unit: 'м',
+        ),
+      );
+    }
+    if (selected.length > 3) {
+      return selected.take(3).toList(growable: false);
+    }
+    return selected;
+  }
+
+  void _addExtraPaperSlot() {
+    if (_extraPaperMaterials.length >= 2) return;
+    setState(() {
+      _extraPaperMaterials.add(
+        MaterialModel(
+          id: '',
+          name: '',
+          quantity: (_product.length ?? 0).toDouble(),
+          unit: 'м',
+        ),
+      );
+    });
+  }
+
+  Widget _buildExtraPaperSelectors() {
+    final papers = _paperItems();
+    if (papers.isEmpty) return const SizedBox.shrink();
+
+    String paperLabel(TmcModel item) {
+      final parts = <String>[
+        item.description,
+        if ((item.format ?? '').trim().isNotEmpty) 'Формат: ${item.format}',
+        if ((item.grammage ?? '').trim().isNotEmpty) 'Грамаж: ${item.grammage}',
+      ];
+      return parts.join(' • ');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 6),
+        for (var i = 0; i < _extraPaperMaterials.length; i++) ...[
+          Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: DropdownButtonFormField<String>(
+                  value: (_extraPaperMaterials[i].id ?? '').trim().isEmpty
+                      ? null
+                      : _extraPaperMaterials[i].id,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Бумага №${i + 2}',
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: papers
+                      .map(
+                        (paper) => DropdownMenuItem<String>(
+                          value: paper.id,
+                          child: Text(
+                            paperLabel(paper),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    final selected = papers.where((p) => p.id == value);
+                    if (selected.isEmpty) return;
+                    final paper = selected.first;
+                    setState(() {
+                      _extraPaperMaterials[i] = MaterialModel(
+                        id: paper.id,
+                        name: paper.description,
+                        format: paper.format ?? '',
+                        grammage: paper.grammage ?? '',
+                        quantity: _extraPaperMaterials[i].quantity > 0
+                            ? _extraPaperMaterials[i].quantity
+                            : (_product.length ?? 0).toDouble(),
+                        unit: 'м',
+                      );
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: TextFormField(
+                  initialValue: _extraPaperMaterials[i].quantity > 0
+                      ? _extraPaperMaterials[i].quantity.toStringAsFixed(2)
+                      : '',
+                  decoration: const InputDecoration(
+                    labelText: 'Метраж, м',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (value) {
+                    final parsed = double.tryParse(value.replaceAll(',', '.'));
+                    setState(() {
+                      _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
+                        quantity: parsed == null || parsed < 0 ? 0 : parsed,
+                        unit: 'м',
+                      );
+                    });
+                  },
+                ),
+              ),
+              IconButton(
+                tooltip: 'Удалить бумагу',
+                onPressed: () {
+                  setState(() {
+                    _extraPaperMaterials.removeAt(i);
+                  });
+                },
+                icon: const Icon(Icons.delete_outline),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+        ],
+        if (_extraPaperMaterials.length < 2)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _addExtraPaperSlot,
+              icon: const Icon(Icons.add),
+              label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
+            ),
+          ),
+      ],
+    );
   }
 
   void _restorePaintsFromParams(WarehouseProvider warehouse) {
@@ -958,6 +1125,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return;
     }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
+    final List<MaterialModel> selectedPapers = _collectSelectedPapers();
+    final MaterialModel? primaryPaper =
+        selectedPapers.isNotEmpty ? selectedPapers.first : _selectedMaterial;
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
@@ -970,7 +1140,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         additionalParams: _selectedParams,
         handle: _selectedHandle,
         cardboard: _selectedCardboard,
-        material: _selectedMaterial,
+        material: primaryPaper,
+        paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
         stageTemplateId: _stageTemplateId,
@@ -998,7 +1169,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         additionalParams: _selectedParams,
         handle: _selectedHandle,
         cardboard: _selectedCardboard,
-        material: _selectedMaterial,
+        material: primaryPaper,
+        paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
@@ -1032,6 +1204,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           handle: createdOrUpdatedOrder.handle,
           cardboard: createdOrUpdatedOrder.cardboard,
           material: createdOrUpdatedOrder.material,
+          paperMaterials: createdOrUpdatedOrder.paperMaterials,
           makeready: createdOrUpdatedOrder.makeready,
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
@@ -1684,6 +1857,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           handle: createdOrUpdatedOrder.handle,
           cardboard: createdOrUpdatedOrder.cardboard,
           material: createdOrUpdatedOrder.material,
+          paperMaterials: createdOrUpdatedOrder.paperMaterials,
           makeready: createdOrUpdatedOrder.makeready,
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
@@ -2759,6 +2933,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         ),
                       ),
                     ],
+                    _buildExtraPaperSelectors(),
                   ],
                 );
               },
