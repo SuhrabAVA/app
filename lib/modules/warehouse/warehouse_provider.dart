@@ -123,10 +123,50 @@ class WarehouseProvider with ChangeNotifier {
         .eq('paper_id', id)
         .order('created_at', ascending: false);
     if (rows is! List) return const [];
-    return rows
+    final parsedRows = rows
         .whereType<Map>()
         .map((row) => Map<String, dynamic>.from(row as Map))
         .toList(growable: false);
+    final orderIds = parsedRows
+        .map((row) => (row['order_id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (orderIds.isEmpty) return parsedRows;
+
+    final labelsByOrderId = <String, String>{};
+    try {
+      final orderRows = await _sb
+          .from('orders')
+          .select('id, title, name, customer, new_form_no')
+          .inFilter('id', orderIds);
+      if (orderRows is List) {
+        for (final raw in orderRows.whereType<Map>()) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          final orderId = (row['id'] ?? '').toString().trim();
+          if (orderId.isEmpty) continue;
+          final title = (row['title'] ?? '').toString().trim();
+          final name = (row['name'] ?? '').toString().trim();
+          final customer = (row['customer'] ?? '').toString().trim();
+          final formNo = (row['new_form_no'] ?? '').toString().trim();
+          final primaryLabel = [title, name, customer]
+              .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+          final label =
+              primaryLabel.isNotEmpty ? primaryLabel : (formNo.isNotEmpty ? 'Форма №$formNo' : '');
+          if (label.isNotEmpty) labelsByOrderId[orderId] = label;
+        }
+      }
+    } catch (_) {}
+
+    return parsedRows.map((row) {
+      final next = Map<String, dynamic>.from(row);
+      final orderId = (row['order_id'] ?? '').toString().trim();
+      final label = labelsByOrderId[orderId];
+      if (label != null && label.isNotEmpty) {
+        next['order_name'] = label;
+      }
+      return next;
+    }).toList(growable: false);
   }
 
   static const Map<String, Map<String, String>> _arrMap = {
