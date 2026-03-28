@@ -104,6 +104,7 @@ class OrderModel {
   String? pdfUrl;
   String? stageTemplateId;
   // Формы
+  final bool hasForm;
   final bool isOldForm;
   final int? newFormNo;
   final String? formSeries;
@@ -140,6 +141,7 @@ class OrderModel {
     this.pdfUrl,
     this.stageTemplateId,
     // формы
+    this.hasForm = false,
     this.isOldForm = false,
     this.newFormNo,
     this.formSeries,
@@ -210,6 +212,7 @@ class OrderModel {
         if (material != null) 'material': material!.toMap(),
         'makeready': makeready,
         'val': val,
+        'has_form': hasForm,
         'is_old_form': isOldForm,
         if (newFormNo != null) 'new_form_no': newFormNo,
         if (formSeries != null) 'form_series': formSeries,
@@ -262,6 +265,10 @@ class OrderModel {
         (_pickAny(map, const ['form_series', 'formSeries']) as String?);
     final String? formCodeVal =
         (_pickAny(map, const ['form_code', 'formCode']) as String?);
+    final hasFormBool = _asBool(_pickAny(map, const ['has_form', 'hasForm'])) ??
+        isOldFormBool ||
+        newFormNoVal != null ||
+        ((formCodeVal ?? '').trim().isNotEmpty);
 
     double? _parseDouble(dynamic value) {
       if (value == null) return null;
@@ -300,6 +307,7 @@ class OrderModel {
       stageTemplateId:
           (_pickAny(map, const ['stage_template_id', 'stageTemplateId'])
               as String?),
+      hasForm: hasFormBool,
       isOldForm: isOldFormBool,
       newFormNo: newFormNoVal,
       formSeries: formSeriesVal,
@@ -360,6 +368,7 @@ class OrderModel {
     DateTime? shippedAt,
     String? shippedBy,
     double? shippedQty,
+    bool? hasForm,
   }) {
     return OrderModel(
       id: id,
@@ -377,6 +386,7 @@ class OrderModel {
       val: val ?? this.val,
       pdfUrl: pdfUrl ?? this.pdfUrl,
       stageTemplateId: stageTemplateId ?? this.stageTemplateId,
+      hasForm: hasForm ?? this.hasForm,
       isOldForm: isOldForm,
       newFormNo: newFormNo,
       formSeries: formSeries,
