@@ -2650,13 +2650,6 @@ class _TasksScreenState extends State<TasksScreen>
     return order.id;
   }
 
-  Future<OrderModel?> _orderById(String orderId) async {
-    final orders = context.read<OrdersProvider>().orders;
-    for (final order in orders) {
-      if (order.id == orderId) return order;
-    }
-    return null;
-  }
 
   Future<List<Map<String, dynamic>>> _showInkAdjustDialog(
       List<Map<String, dynamic>> paints) async {
@@ -2738,7 +2731,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   Future<void> _confirmInkUsageAndWriteoff(TaskModel task) async {
     if (!_isInkConfirmationStage(task)) return;
-    final order = await _orderById(task.orderId);
+    final order = _orderById(task.orderId);
     if (order == null) return;
 
     final repo = OrdersRepository();
@@ -2774,7 +2767,6 @@ class _TasksScreenState extends State<TasksScreen>
         final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
         updates.add(PaintUsageUpdate(
           paintRowId: id,
-          kilograms: qtyKg,
           grams: qtyKg * 1000,
           name: (row['paint_name'] ?? row['name'] ?? '').toString(),
           info: (row['paint_info'] ?? row['info'] ?? '').toString(),
