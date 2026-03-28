@@ -991,6 +991,13 @@ class _TasksScreenState extends State<TasksScreen>
 
     final related = provider.tasks.where((t) =>
         t.orderId == task.orderId && groupMembers.contains(t.stageId));
+    final capturedWorkplace = related
+        .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
+        .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+    if (capturedWorkplace.isNotEmpty && capturedWorkplace != task.stageId) {
+      // Этап уже захвачен другим рабочим местом — блокируем управление.
+      return true;
+    }
 
     final anyActive = related.any(
         (t) => t.id != task.id && t.status == TaskStatus.inProgress);
@@ -2859,7 +2866,9 @@ class _TasksScreenState extends State<TasksScreen>
 
     String taskGroupKey(TaskModel task) {
       final lookup = stageGroupByOrder[task.orderId];
-      final groupKey = lookup?[task.stageId] ?? task.stageId;
+      final persistedGroup = task.stageGroupKey.trim();
+      final groupKey =
+          persistedGroup.isNotEmpty ? persistedGroup : (lookup?[task.stageId] ?? task.stageId);
       return '${task.orderId}::$groupKey';
     }
 
@@ -2875,6 +2884,14 @@ class _TasksScreenState extends State<TasksScreen>
         .where((task) {
           final groupKey = taskGroupKey(task);
           final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+          final capturedWorkplace = groupTasks
+              .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
+              .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+          if (capturedWorkplace.isNotEmpty &&
+              capturedWorkplace != task.stageId) {
+            // После захвата этап отображается только у рабочего места-захватчика.
+            return false;
+          }
           final groupHasActive =
               groupTasks.any((t) => t.status != TaskStatus.waiting);
           if (groupHasActive && task.status == TaskStatus.waiting) {

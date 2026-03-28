@@ -787,7 +787,10 @@ class _ProductionTab extends StatelessWidget {
     final byGroup = <String, List<TaskModel>>{};
     for (final task in orderTasks) {
       final normalizedStageId = task.stageId.trim();
-      final groupKey = lookup[normalizedStageId] ?? normalizedStageId;
+      final persistedGroup = task.stageGroupKey.trim();
+      final groupKey = persistedGroup.isNotEmpty
+          ? persistedGroup
+          : (lookup[normalizedStageId] ?? normalizedStageId);
       byGroup.putIfAbsent(groupKey, () => []).add(task);
     }
     return byGroup;
@@ -803,8 +806,18 @@ class _ProductionTab extends StatelessWidget {
     final visibleWorkplaceIds = <String>{};
     for (final task in orderTasks) {
       final normalizedStageId = task.stageId.trim();
-      final groupKey = lookup[normalizedStageId] ?? normalizedStageId;
+      final persistedGroup = task.stageGroupKey.trim();
+      final groupKey = persistedGroup.isNotEmpty
+          ? persistedGroup
+          : (lookup[normalizedStageId] ?? normalizedStageId);
       final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+      final capturedWorkplace = groupTasks
+          .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
+          .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+      if (capturedWorkplace.isNotEmpty &&
+          capturedWorkplace != normalizedStageId) {
+        continue;
+      }
       if (_groupCompleted(groupTasks)) {
         continue;
       }

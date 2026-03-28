@@ -59,7 +59,27 @@ class TaskProvider with ChangeNotifier {
     data['orderId'] = _normalizeId(row['order_id']);
     final rawStageId =
         row['stage_id'] ?? row['stageId'] ?? row['workplace_id'] ?? row['workplaceId'];
-    data['stageId'] = _resolveWorkplaceId(_normalizeId(rawStageId));
+    final resolvedStageId = _resolveWorkplaceId(_normalizeId(rawStageId));
+    data['stageId'] = resolvedStageId;
+    final rawStageGroupKey =
+        row['stage_group_key'] ?? row['stageGroupKey'] ?? row['group_key'];
+    final normalizedGroupKey = _normalizeId(rawStageGroupKey);
+    data['stageGroupKey'] =
+        normalizedGroupKey.isEmpty ? resolvedStageId : normalizedGroupKey;
+    data['capturedByWorkplaceId'] = _normalizeId(
+      row['captured_by_workplace_id'] ?? row['capturedByWorkplaceId'],
+    );
+    data['capturedByUserId'] = _normalizeId(
+      row['captured_by_user_id'] ?? row['capturedByUserId'],
+    );
+    final capturedAt = row['captured_at'] ?? row['capturedAt'];
+    if (capturedAt != null) {
+      if (capturedAt is int) data['capturedAt'] = capturedAt;
+      if (capturedAt is String) {
+        final v = int.tryParse(capturedAt);
+        if (v != null) data['capturedAt'] = v;
+      }
+    }
     data['status'] = (row['status'] ?? 'waiting').toString();
     data['spentSeconds'] = (row['spent_seconds'] as int?) ?? 0;
     final startedAt = row['started_at'];
@@ -821,6 +841,10 @@ class TaskProvider with ChangeNotifier {
       final row = {
         'order_id': src.orderId,
         'stage_id': src.stageId,
+        'stage_group_key': src.stageGroupKey,
+        'captured_by_workplace_id': src.capturedByWorkplaceId,
+        'captured_by_user_id': src.capturedByUserId,
+        'captured_at': src.capturedAt,
         'status': 'inProgress',
         'spent_seconds': 0,
         'started_at': now,
@@ -864,6 +888,48 @@ class TaskProvider with ChangeNotifier {
       'started_at': updated.startedAt,
       'updated_at': 'now()',
     };
+    final bool becameInProgress =
+        current.status == TaskStatus.waiting && status == TaskStatus.inProgress;
+    if (becameInProgress) {
+      final capturedAt = DateTime.now().millisecondsSinceEpoch;
+      updates['captured_by_workplace_id'] = current.stageId;
+      updates['captured_at'] = capturedAt;
+      _tasks[index] = updated.copyWith(
+        capturedByWorkplaceId: current.stageId,
+        capturedAt: capturedAt,
+      );
+      notifyListeners();
+      // Если этап состоит из нескольких рабочих мест (одна группа),
+      // первый старт фиксирует "захват" для всех задач группы.
+      final groupKey = current.stageGroupKey.trim();
+      if (groupKey.isNotEmpty) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update({
+                'captured_by_workplace_id': current.stageId,
+                'captured_at': capturedAt,
+              })
+              .eq('order_id', current.orderId)
+              .eq('stage_group_key', groupKey)
+              .isFilter('captured_by_workplace_id', null);
+          for (var i = 0; i < _tasks.length; i++) {
+            final task = _tasks[i];
+            if (task.orderId == current.orderId &&
+                task.stageGroupKey == groupKey &&
+                task.capturedByWorkplaceId == null) {
+              _tasks[i] = task.copyWith(
+                capturedByWorkplaceId: current.stageId,
+                capturedAt: capturedAt,
+              );
+            }
+          }
+          notifyListeners();
+        } catch (e, st) {
+          debugPrint('⚠️ capture stage group update failed: $e\n$st');
+        }
+      }
+    }
     try {
       await _supabase.from('tasks').update(updates).eq('id', id);
       // if this task just became completed — check last-stage and update actual_qty
@@ -934,6 +1000,38 @@ class TaskProvider with ChangeNotifier {
       await _supabase
           .from('tasks')
           .update({'comments': comments}).eq('id', taskId);
+
+      if (type == 'start') {
+        // Фиксируем фактического инициатора захвата этапа.
+        final task = _tasks.cast<TaskModel?>().firstWhere(
+              (t) => t?.id == taskId,
+              orElse: () => null,
+            );
+        if (task != null &&
+            (task.capturedByUserId == null || task.capturedByUserId!.isEmpty)) {
+          final groupKey = task.stageGroupKey.trim();
+          try {
+            await _supabase
+                .from('tasks')
+                .update({'captured_by_user_id': userId})
+                .eq('order_id', task.orderId)
+                .eq('stage_group_key', groupKey)
+                .isFilter('captured_by_user_id', null);
+            for (var i = 0; i < _tasks.length; i++) {
+              final local = _tasks[i];
+              if (local.orderId == task.orderId &&
+                  local.stageGroupKey == groupKey &&
+                  (local.capturedByUserId == null ||
+                      local.capturedByUserId!.isEmpty)) {
+                _tasks[i] = local.copyWith(capturedByUserId: userId);
+              }
+            }
+            notifyListeners();
+          } catch (e, st) {
+            debugPrint('⚠️ capture user update failed: $e\n$st');
+          }
+        }
+      }
 
       // update locally
       final idx = _tasks.indexWhere((t) => t.id == taskId);
@@ -1173,11 +1271,15 @@ class TaskProvider with ChangeNotifier {
   Future<void> createTask({
     required String orderId,
     required String stageId,
+    String? stageGroupKey,
   }) async {
     try {
       await _supabase.from('tasks').insert({
         'order_id': orderId,
         'stage_id': stageId,
+        'stage_group_key': (stageGroupKey == null || stageGroupKey.trim().isEmpty)
+            ? stageId
+            : stageGroupKey.trim(),
         'status': 'waiting',
         'assignees': [],
         'comments': [],
