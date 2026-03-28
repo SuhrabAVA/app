@@ -144,10 +144,7 @@ class WarehouseProvider with ChangeNotifier {
 
     final labelsByOrderId = <String, String>{};
     try {
-      final orderRows = await _sb
-          .from('orders')
-          .select('id, data')
-          .inFilter('id', orderIds);
+      final orderRows = await _sb.from('orders').select().inFilter('id', orderIds);
       if (orderRows is List) {
         for (final raw in orderRows.whereType<Map>()) {
           final row = Map<String, dynamic>.from(raw as Map);
@@ -157,21 +154,35 @@ class WarehouseProvider with ChangeNotifier {
           final data = dataRaw is Map
               ? Map<String, dynamic>.from(dataRaw as Map)
               : <String, dynamic>{};
+          final productTopRaw = row['product'];
+          final productTop = productTopRaw is Map
+              ? Map<String, dynamic>.from(productTopRaw as Map)
+              : <String, dynamic>{};
           final productRaw = data['product'];
           final product = productRaw is Map
               ? Map<String, dynamic>.from(productRaw as Map)
               : <String, dynamic>{};
 
           final primaryLabel = _firstNotEmpty([
+            row['title'],
+            row['name'],
+            row['order_name'],
+            row['product_name'],
             data['title'],
             data['name'],
             data['order_name'],
+            data['product_name'],
+            productTop['name'],
+            productTop['title'],
             product['name'],
             product['title'],
+            row['customer'],
             data['customer'],
+            row['manager'],
             data['manager'],
           ]);
-          final formNo = (data['new_form_no'] ?? '').toString().trim();
+          final formNo =
+              _firstNotEmpty([row['new_form_no'], data['new_form_no']]);
           final label = primaryLabel.isNotEmpty
               ? primaryLabel
               : (formNo.isNotEmpty ? 'Форма №$formNo' : 'Заказ без названия');
