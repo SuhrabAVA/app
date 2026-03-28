@@ -9,6 +9,7 @@ import '../orders/order_details_card.dart';
 import '../orders/orders_repository.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
+import '../orders/material_model.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
@@ -17,6 +18,8 @@ import '../production/production_queue_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../production_planning/planned_stage_model.dart';
+import '../warehouse/tmc_model.dart';
+import '../warehouse/warehouse_provider.dart';
 import 'task_model.dart';
 import 'task_provider.dart';
 import '../common/pdf_view_screen.dart';
@@ -950,6 +953,269 @@ class _TasksScreenState extends State<TasksScreen>
     } catch (_) {
       return null;
     }
+  }
+
+  List<TmcModel> _workspacePaperItems() {
+    final warehouse = context.read<WarehouseProvider>();
+    bool isPaperType(TmcModel item) {
+      final raw = item.type.toLowerCase().trim();
+      return raw.contains('paper') || raw.contains('бумаг');
+    }
+
+    final papers = warehouse.allTmc.where(isPaperType).toList();
+    papers.sort(
+      (a, b) => a.description.toLowerCase().compareTo(b.description.toLowerCase()),
+    );
+    return papers;
+  }
+
+  Future<void> _openPaperEditDialog(OrderModel baseOrder) async {
+    final latest = _orderById(baseOrder.id) ?? baseOrder;
+    final currentMaterials = latest.paperMaterials.isNotEmpty
+        ? List<MaterialModel>.from(latest.paperMaterials)
+        : <MaterialModel>[
+            if (latest.material != null) latest.material!,
+          ];
+    final papers = _workspacePaperItems();
+    if (!mounted) return;
+    if (papers.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('На складе не найдено доступной бумаги.')),
+      );
+      return;
+    }
+
+    final selected = currentMaterials.isNotEmpty
+        ? currentMaterials.take(3).toList()
+        : <MaterialModel>[
+            MaterialModel(
+              id: papers.first.id,
+              name: papers.first.description,
+              quantity: 0,
+              unit: papers.first.unit.isNotEmpty ? papers.first.unit : 'м',
+              format: papers.first.format,
+              grammage: papers.first.grammage,
+              weight: papers.first.weight,
+            ),
+          ];
+
+    final qtyControllers = <TextEditingController>[
+      for (final item in selected)
+        TextEditingController(
+          text: item.quantity > 0 ? item.quantity.toStringAsFixed(2) : '',
+        ),
+    ];
+    final reasonController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    String? errorText;
+    bool saving = false;
+
+    Future<void> addSlot(StateSetter setDialogState) async {
+      if (selected.length >= 3) return;
+      final pick = papers.first;
+      setDialogState(() {
+        selected.add(MaterialModel(
+          id: pick.id,
+          name: pick.description,
+          quantity: 0,
+          unit: pick.unit.isNotEmpty ? pick.unit : 'м',
+          format: pick.format,
+          grammage: pick.grammage,
+          weight: pick.weight,
+        ));
+        qtyControllers.add(TextEditingController());
+      });
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Text('Изменение бумаги в заказе'),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < selected.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: DropdownButtonFormField<String>(
+                                    value: (selected[i].id ?? '').isEmpty
+                                        ? null
+                                        : selected[i].id,
+                                    decoration: InputDecoration(
+                                      labelText: 'Бумага №${i + 1}',
+                                    ),
+                                    items: [
+                                      for (final paper in papers)
+                                        DropdownMenuItem<String>(
+                                          value: paper.id,
+                                          child: Text(paper.description),
+                                        ),
+                                    ],
+                                    validator: (value) =>
+                                        (value == null || value.trim().isEmpty)
+                                            ? 'Выберите бумагу'
+                                            : null,
+                                    onChanged: (value) {
+                                      if (value == null) return;
+                                      final paper = papers.firstWhere(
+                                        (item) => item.id == value,
+                                        orElse: () => papers.first,
+                                      );
+                                      setDialogState(() {
+                                        selected[i] = selected[i].copyWith(
+                                          id: paper.id,
+                                          name: paper.description,
+                                          unit:
+                                              paper.unit.isNotEmpty ? paper.unit : 'м',
+                                          format: paper.format,
+                                          grammage: paper.grammage,
+                                          weight: paper.weight,
+                                        );
+                                      });
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: qtyControllers[i],
+                                    keyboardType: const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Количество (м)',
+                                    ),
+                                    validator: (value) {
+                                      final normalized =
+                                          (value ?? '').trim().replaceAll(',', '.');
+                                      final qty = double.tryParse(normalized);
+                                      if (qty == null || qty <= 0) {
+                                        return 'Введите > 0';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                if (i > 0)
+                                  IconButton(
+                                    tooltip: 'Удалить бумагу',
+                                    onPressed: () {
+                                      setDialogState(() {
+                                        selected.removeAt(i);
+                                        qtyControllers.removeAt(i).dispose();
+                                      });
+                                    },
+                                    icon: const Icon(Icons.delete_outline),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: selected.length >= 3 || saving
+                                ? null
+                                : () => addSlot(setDialogState),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Добавить бумагу'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: reasonController,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            labelText: 'Причина изменения',
+                            hintText: 'Без причины сохранить нельзя',
+                          ),
+                          validator: (value) => (value ?? '').trim().isEmpty
+                              ? 'Укажите причину изменения'
+                              : null,
+                        ),
+                        if (errorText != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            errorText!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Отмена'),
+                ),
+                FilledButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setDialogState(() {
+                            saving = true;
+                            errorText = null;
+                          });
+                          final nextMaterials = <MaterialModel>[];
+                          for (var i = 0; i < selected.length; i++) {
+                            final qty = double.parse(
+                              qtyControllers[i].text.trim().replaceAll(',', '.'),
+                            );
+                            nextMaterials.add(selected[i].copyWith(quantity: qty));
+                          }
+
+                          final orders = context.read<OrdersProvider>();
+                          // Бизнес-логика рабочего пространства: изменение бумаги
+                          // обязательно сопровождается причиной и сразу
+                          // синхронизируется с заказом/управлением/резервом.
+                          final error = await orders.updateOrderPapersFromWorkspace(
+                            orderId: latest.id,
+                            paperMaterials: nextMaterials,
+                            reason: reasonController.text,
+                          );
+                          if (!mounted) return;
+                          if (error != null) {
+                            setDialogState(() {
+                              saving = false;
+                              errorText = error;
+                            });
+                            return;
+                          }
+                          Navigator.of(dialogContext).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Бумага успешно обновлена.'),
+                            ),
+                          );
+                        },
+                  child: Text(saving ? 'Сохранение...' : 'Сохранить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    for (final controller in qtyControllers) {
+      controller.dispose();
+    }
+    reasonController.dispose();
   }
 
   List<String> _stageGroupMembers(String orderId, String stageId) {
@@ -2336,15 +2602,29 @@ class _TasksScreenState extends State<TasksScreen>
                       ? data[1] as List<Map<String, dynamic>>
                       : null) ??
                   (_orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[]);
-          return OrderDetailsCard(
-            order: order,
-            paints: resolvedPaints,
-            files: const [],
-            loadingFiles: false,
-            stageTemplateName: templateName,
-            formImageUrl: resolvedFormImageUrl,
-            extraSections: [
-              _buildStageList(order, scale),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: () => _openPaperEditDialog(order),
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Изменить бумагу'),
+                ),
+              ),
+              SizedBox(height: 8 * scale),
+              OrderDetailsCard(
+                order: order,
+                paints: resolvedPaints,
+                files: const [],
+                loadingFiles: false,
+                stageTemplateName: templateName,
+                formImageUrl: resolvedFormImageUrl,
+                extraSections: [
+                  _buildStageList(order, scale),
+                ],
+              ),
             ],
           );
         },

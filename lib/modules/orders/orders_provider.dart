@@ -503,6 +503,94 @@ class OrdersProvider with ChangeNotifier {
     }
   }
 
+  /// Обновляет состав бумаги из рабочего пространства производства.
+  ///
+  /// Бизнес-правила:
+  /// - причина изменения обязательна;
+  /// - допускается до 3 типов бумаги;
+  /// - при запущенном заказе пересчитываем только резерв (без списания).
+  Future<String?> updateOrderPapersFromWorkspace({
+    required String orderId,
+    required List<MaterialModel> paperMaterials,
+    required String reason,
+  }) async {
+    await _ensureAuthed();
+
+    final trimmedReason = reason.trim();
+    if (trimmedReason.isEmpty) {
+      return 'Укажите причину изменения бумаги.';
+    }
+
+    final prepared = paperMaterials
+        .where((paper) => (paper.id ?? '').trim().isNotEmpty)
+        .map((paper) {
+          final qty = paper.quantity > 0
+              ? paper.quantity
+              : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0);
+          return paper.copyWith(quantity: qty);
+        })
+        .toList(growable: false);
+    if (prepared.isEmpty) {
+      return 'Добавьте хотя бы один тип бумаги.';
+    }
+    if (prepared.length > 3) {
+      return 'Допускается не более 3 типов бумаги в заказе.';
+    }
+
+    final index = _orders.indexWhere((o) => o.id == orderId);
+    if (index == -1) {
+      return 'Заказ не найден в локальном кеше.';
+    }
+    final prev = _orders[index];
+    final updated = prev.copyWith(
+      paperMaterials: prepared,
+      material: prepared.first,
+      comments: trimmedReason,
+    );
+
+    if (!_hasPaperCompositionChanged(previous: prev, updated: updated)) {
+      return null;
+    }
+
+    _orders[index] = updated; // optimistic
+    notifyListeners();
+
+    try {
+      await _supabase
+          .from('orders')
+          .update(updated.toMap()..remove('id'))
+          .eq('id', updated.id);
+      if (updated.assignmentCreated ||
+          updated.statusEnum == OrderStatus.in_production) {
+        // Ключевое бизнес-правило: правка бумаги в работе синхронно
+        // перерасчитывает reserve и не делает writeoff.
+        final reserveError = await _syncPaperReservationsForOrder(updated);
+        if (reserveError != null) {
+          throw Exception(reserveError);
+        }
+      }
+      final paperHistory = _describePaperChanges(
+        previous: prev,
+        updated: updated,
+        reason: trimmedReason,
+      );
+      if (paperHistory != null) {
+        await _logOrderEvent(updated.id, 'Изменение бумаги', paperHistory);
+      }
+      await _logOrderEvent(
+        updated.id,
+        'Обновление',
+        'Состав бумаги обновлен из рабочего пространства',
+      );
+      return null;
+    } catch (e, st) {
+      _orders[index] = prev; // rollback
+      notifyListeners();
+      debugPrint('❌ updateOrderPapersFromWorkspace error: $e\n$st');
+      return 'Не удалось сохранить изменения бумаги: $e';
+    }
+  }
+
   /// Запускает заказ в производство:
   /// - создаёт задачи по сохранённой очереди этапов;
   /// - переводит заказ в статус inWork.
