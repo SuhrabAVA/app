@@ -472,17 +472,8 @@ class OrdersProvider with ChangeNotifier {
         previous: prev,
         updated: updated,
       );
-      final bool requiresPaperChangeReason =
-          paperChanged &&
-          (updated.assignmentCreated ||
-              updated.statusEnum == OrderStatus.in_production) &&
-          !AuthHelper.isTechLeader;
-      if (requiresPaperChangeReason &&
-          updated.comments.trim().isEmpty) {
-        throw Exception(
-          'Укажите причину изменения бумаги перед сохранением.',
-        );
-      }
+      // Причина изменения бумаги валидируется только в рабочем пространстве.
+      // В модулях оформления/редактирования заказа не блокируем сохранение.
       await _supabase
           .from('orders')
           .update(updated.toMap()..remove('id'))
@@ -1110,25 +1101,38 @@ class OrdersProvider with ChangeNotifier {
     final papers = _resolveOrderPapers(order)
         .where((paper) => (paper.id ?? '').trim().isNotEmpty)
         .toList(growable: false);
-    // Бизнес-правило: в production всегда держим актуальный резерв по составу бумаги заказа.
-    await _releasePaperReservations(orderId: order.id);
-    if (papers.isEmpty) return;
 
-    final rows = papers
-        .map((paper) {
-          final qty = paper.quantity > 0
-              ? paper.quantity
-              : (order.product.length ?? 0).toDouble();
-          return <String, dynamic>{
+    // Бизнес-правило: в production всегда держим актуальный резерв по составу бумаги заказа.
+    // Если один и тот же paper_id был выбран в нескольких слотах, агрегируем метраж,
+    // чтобы корректно проходить уникальный индекс (order_id, paper_id).
+    final Map<String, double> aggregated = <String, double>{};
+    for (final paper in papers) {
+      final paperId = (paper.id ?? '').trim();
+      if (paperId.isEmpty) continue;
+      final qty = paper.quantity > 0
+          ? paper.quantity
+          : (order.product.length ?? 0).toDouble();
+      if (qty <= 0) continue;
+      aggregated.update(
+        paperId,
+        (value) => value + qty,
+        ifAbsent: () => qty,
+      );
+    }
+
+    await _releasePaperReservations(orderId: order.id);
+    if (aggregated.isEmpty) return;
+
+    final rows = aggregated.entries
+        .map(
+          (entry) => <String, dynamic>{
             'order_id': order.id,
-            'paper_id': paper.id,
-            'qty': qty < 0 ? 0 : qty,
-          };
-        })
-        .where((row) => (row['qty'] as double) > 0)
+            'paper_id': entry.key,
+            'qty': entry.value,
+          },
+        )
         .toList(growable: false);
 
-    if (rows.isEmpty) return;
     await _supabase.from('order_paper_reservations').insert(rows);
   }
 
