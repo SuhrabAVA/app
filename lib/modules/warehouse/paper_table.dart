@@ -14,6 +14,7 @@ class PaperTable extends StatefulWidget {
 
 class _PaperTableState extends State<PaperTable> {
   final TextEditingController _searchController = TextEditingController();
+  WarehouseProvider? _warehouseProvider;
 
   // ====== SOURCE ======
   List<TmcModel> _papers = [];
@@ -140,8 +141,24 @@ class _PaperTableState extends State<PaperTable> {
   @override
   void initState() {
     super.initState();
+    _warehouseProvider = context.read<WarehouseProvider>();
+    _warehouseProvider?.addListener(_handleWarehouseChanged);
     _loadData();
     _searchController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _warehouseProvider?.removeListener(_handleWarehouseChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleWarehouseChanged() async {
+    if (!mounted) return;
+    // Бизнес-логика резерва: при изменениях склада/резервов
+    // обновляем таблицу бумаги, чтобы колонка резерва была синхронизирована.
+    await _loadData();
   }
 
   Future<void> _loadData() async {
@@ -300,16 +317,12 @@ class _PaperTableState extends State<PaperTable> {
                 future: context.read<WarehouseProvider>().paperReservedQty(item.id),
                 builder: (context, snapshot) {
                   final reserved = snapshot.data ?? 0;
-                  if (reserved <= 0) return const Text('—');
-                  return InkWell(
-                    onTap: () => _showReserveDetails(item),
-                    child: Text(
-                      '${reserved.toStringAsFixed(2)} м',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
+                  final reserveLabel = '${reserved.toStringAsFixed(2)} м';
+                  // Упрощённый UX по запросу: отдельная колонка с кнопкой,
+                  // где текст кнопки = общее количество бумаги в резерве (L).
+                  return OutlinedButton(
+                    onPressed: reserved > 0 ? () => _showReserveDetails(item) : null,
+                    child: Text(reserveLabel),
                   );
                 },
               ),
