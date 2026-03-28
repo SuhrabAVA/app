@@ -472,6 +472,32 @@ class OrdersProvider with ChangeNotifier {
 
     try {
       final List<Map<String, dynamic>> stageRows = <Map<String, dynamic>>[];
+      List<String> _readStageIds(Map<String, dynamic> row) {
+        final ids = <String>[];
+        void add(dynamic value) {
+          final id = value?.toString().trim() ?? '';
+          if (id.isEmpty || ids.contains(id)) return;
+          ids.add(id);
+        }
+
+        add(row['stage_id'] ?? row['stageId'] ?? row['workplace_id']);
+        final alternatives = row['alternative_stage_ids'] ??
+            row['alternativeStageIds'] ??
+            row['stage_ids'] ??
+            row['stageIds'] ??
+            row['all_stage_ids'] ??
+            row['allStageIds'];
+        if (alternatives is List) {
+          for (final id in alternatives) {
+            add(id);
+          }
+        } else if (alternatives is String) {
+          for (final token in alternatives.split(',')) {
+            add(token);
+          }
+        }
+        return ids;
+      }
 
       try {
         final plan = await _supabase
@@ -483,7 +509,7 @@ class OrdersProvider with ChangeNotifier {
         if (planId != null && planId.isNotEmpty) {
           final rows = await _supabase
               .from('prod_plan_stages')
-              .select('stage_id, status, step, step_no, seq')
+              .select('stage_id, alternative_stage_ids, status, step, step_no, seq')
               .eq('plan_id', planId)
               .order('step', ascending: true);
           if (rows is List) {
@@ -515,6 +541,10 @@ class OrdersProvider with ChangeNotifier {
               if (stageId == null || stageId.trim().isEmpty) continue;
               stageRows.add({
                 'stage_id': stageId.trim(),
+                if (map['alternativeStageIds'] != null)
+                  'alternative_stage_ids': map['alternativeStageIds'],
+                if (map['alternative_stage_ids'] != null)
+                  'alternative_stage_ids': map['alternative_stage_ids'],
                 'status': 'waiting',
               });
             }
@@ -528,25 +558,33 @@ class OrdersProvider with ChangeNotifier {
 
       await _supabase.from('tasks').delete().eq('order_id', order.id);
 
-      final Set<String> createdStageIds = <String>{};
+      final Set<String> createdTaskKeys = <String>{};
       for (final row in stageRows) {
-        final String stageId = (row['stage_id'] ?? '').toString().trim();
-        if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
-        createdStageIds.add(stageId);
+        final stageIds = _readStageIds(row);
+        if (stageIds.isEmpty) continue;
+        final groupIds = List<String>.from(stageIds)..sort();
+        final stageGroupKey = groupIds.join('|');
         final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
         final String taskStatus =
             (stageStatus == 'done' || stageStatus == 'completed')
                 ? 'done'
                 : 'waiting';
-        await _supabase.from('tasks').insert({
-          'order_id': order.id,
-          'stage_id': stageId,
-          'status': taskStatus,
-          'assignees': [],
-          'comments': [],
-          if (taskStatus == 'done')
-            'completed_at': DateTime.now().toIso8601String(),
-        });
+        for (final stageId in stageIds) {
+          final dedupeKey = '$stageGroupKey::$stageId';
+          if (!createdTaskKeys.add(dedupeKey)) continue;
+          // Для этапов с несколькими рабочими местами создаём по одной задаче
+          // на каждое рабочее место, но связываем их единым stage_group_key.
+          await _supabase.from('tasks').insert({
+            'order_id': order.id,
+            'stage_id': stageId,
+            'stage_group_key': stageGroupKey,
+            'status': taskStatus,
+            'assignees': [],
+            'comments': [],
+            if (taskStatus == 'done')
+              'completed_at': DateTime.now().toIso8601String(),
+          });
+        }
       }
 
 

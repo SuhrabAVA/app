@@ -233,6 +233,15 @@ class TaskModel {
   final String id;
   final String orderId;
   final String stageId;
+  /// Общий ключ этапа для группы альтернативных рабочих мест.
+  /// Для одиночного этапа равен `stageId`.
+  final String stageGroupKey;
+  /// Фактическое рабочее место, которое первым "захватило" этап.
+  final String? capturedByWorkplaceId;
+  /// Пользователь, который первым начал этап (если известен).
+  final String? capturedByUserId;
+  /// Время захвата этапа первым рабочим местом.
+  final int? capturedAt;
   final TaskStatus status;
   final int spentSeconds;
   final int? startedAt;
@@ -243,12 +252,18 @@ class TaskModel {
     required this.id,
     required this.orderId,
     required this.stageId,
+    String? stageGroupKey,
+    this.capturedByWorkplaceId,
+    this.capturedByUserId,
+    this.capturedAt,
     this.status = TaskStatus.waiting,
     this.spentSeconds = 0,
     this.startedAt,
     this.assignees = const [],
     this.comments = const [],
-  });
+  }) : stageGroupKey = (stageGroupKey == null || stageGroupKey.trim().isEmpty)
+            ? stageId
+            : stageGroupKey.trim();
 
   /// Преобразует задачу в Map для сохранения в Firebase. Комментарии
   /// сохраняются как подузел comments со случайными ключами, поэтому в
@@ -257,6 +272,11 @@ class TaskModel {
   Map<String, dynamic> toMap() => {
         'orderId': orderId,
         'stageId': stageId,
+        'stageGroupKey': stageGroupKey,
+        if (capturedByWorkplaceId != null)
+          'capturedByWorkplaceId': capturedByWorkplaceId,
+        if (capturedByUserId != null) 'capturedByUserId': capturedByUserId,
+        if (capturedAt != null) 'capturedAt': capturedAt,
         'status': status.name,
         'spentSeconds': spentSeconds,
         if (startedAt != null) 'startedAt': startedAt,
@@ -317,6 +337,16 @@ class TaskModel {
   final stageId = _normalizeId(
     pick(['stageId', 'stage_id', 'stageid', 'workplaceId', 'workplace_id']),
   );
+  final stageGroupKey = _normalizeId(pick([
+    'stageGroupKey',
+    'stage_group_key',
+  ]));
+  final capturedByWorkplaceId = _normalizeId(
+    pick(['capturedByWorkplaceId', 'captured_by_workplace_id']),
+  );
+  final capturedByUserId = _normalizeId(
+    pick(['capturedByUserId', 'captured_by_user_id']),
+  );
 
   final statusStr = (map['status'] as String?) ?? 'waiting';
   TaskStatus status;
@@ -335,6 +365,11 @@ class TaskModel {
     id: id,
     orderId: orderId,
     stageId: stageId,
+    stageGroupKey: stageGroupKey.isEmpty ? stageId : stageGroupKey,
+    capturedByWorkplaceId:
+        capturedByWorkplaceId.isEmpty ? null : capturedByWorkplaceId,
+    capturedByUserId: capturedByUserId.isEmpty ? null : capturedByUserId,
+    capturedAt: toInt(pick(['capturedAt', 'captured_at'])),
     status: status,
     spentSeconds: spentSeconds,
     startedAt: startedAt,
@@ -349,6 +384,10 @@ class TaskModel {
     TaskStatus? status,
     int? spentSeconds,
     int? startedAt,
+    String? stageGroupKey,
+    String? capturedByWorkplaceId,
+    String? capturedByUserId,
+    int? capturedAt,
     List<String>? assignees,
     List<TaskComment>? comments,
   }) {
@@ -356,6 +395,10 @@ class TaskModel {
       id: id,
       orderId: orderId,
       stageId: stageId,
+      stageGroupKey: stageGroupKey ?? this.stageGroupKey,
+      capturedByWorkplaceId: capturedByWorkplaceId ?? this.capturedByWorkplaceId,
+      capturedByUserId: capturedByUserId ?? this.capturedByUserId,
+      capturedAt: capturedAt ?? this.capturedAt,
       status: status ?? this.status,
       spentSeconds: spentSeconds ?? this.spentSeconds,
       startedAt: startedAt ?? this.startedAt,
