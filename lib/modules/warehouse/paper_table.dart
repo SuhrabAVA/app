@@ -316,7 +316,17 @@ class _PaperTableState extends State<PaperTable> {
           cells: [
             DataCell(Text('$counter')), // №
             DataCell(Text(item.description)), // Наименование
-            DataCell(Text(item.quantity.toStringAsFixed(2))), // Общий остаток
+            DataCell(
+              FutureBuilder<double>(
+                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
+                builder: (context, snapshot) {
+                  final reserved = snapshot.data ?? 0;
+                  final available = item.quantity - reserved;
+                  final safeAvailable = available < 0 ? 0 : available;
+                  return Text(safeAvailable.toStringAsFixed(2));
+                },
+              ),
+            ), // Остаток с учётом резерва
             DataCell(Text(item.unit)), // Ед.
             DataCell(Text(item.format ?? '')), // Формат
             DataCell(Text(item.grammage ?? '')), // Грамаж
@@ -333,18 +343,6 @@ class _PaperTableState extends State<PaperTable> {
                     onPressed: reserved > 0 ? () => _showReserveDetails(item) : null,
                     child: Text(reserveLabel),
                   );
-                },
-              ),
-            ),
-            DataCell(
-              FutureBuilder<double>(
-                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
-                builder: (context, snapshot) {
-                  final reserved = snapshot.data ?? 0;
-                  // Бизнес-правило: доступный остаток = общий остаток - активный резерв.
-                  final available = item.quantity - reserved;
-                  final safeAvailable = available < 0 ? 0 : available;
-                  return Text(safeAvailable.toStringAsFixed(2));
                 },
               ),
             ),
@@ -425,13 +423,12 @@ class _PaperTableState extends State<PaperTable> {
                       columns: const [
                         DataColumn(label: Text('№')),
                         DataColumn(label: Text('Наименование')),
-                        DataColumn(label: Text('Общий остаток')),
+                        DataColumn(label: Text('Остаток')),
                         DataColumn(label: Text('Ед.')),
                         DataColumn(label: Text('Формат')),
                         DataColumn(label: Text('Грамаж')),
                         DataColumn(label: Text('Заметки')),
                         DataColumn(label: Text('Резерв')),
-                        DataColumn(label: Text('Доступно')),
                         DataColumn(label: Text('Действия')),
                       ],
                       rows: _buildGroupedRows(),
