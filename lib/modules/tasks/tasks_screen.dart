@@ -728,8 +728,13 @@ class _StageComment {
 class _QuantityInput {
   final int quantity;
   final String displayText;
+  final bool openPaperEditor;
 
-  const _QuantityInput({required this.quantity, required this.displayText});
+  const _QuantityInput({
+    required this.quantity,
+    required this.displayText,
+    this.openPaperEditor = false,
+  });
 }
 
 class _TaskSelectionState extends ChangeNotifier {
@@ -2605,15 +2610,6 @@ class _TasksScreenState extends State<TasksScreen>
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: () => _openPaperEditDialog(order),
-                  icon: const Icon(Icons.edit_note),
-                  label: const Text('Изменить бумагу'),
-                ),
-              ),
-              SizedBox(height: 8 * scale),
               OrderDetailsCard(
                 order: order,
                 paints: resolvedPaints,
@@ -3646,8 +3642,17 @@ class _TasksScreenState extends State<TasksScreen>
 
                     Future<void> onFinish() async {
                       final unitLabel = _workplaceUnit(personnel, task.stageId);
-                      final qtyInput =
-                          await _askQuantity(context, unit: unitLabel);
+                      _QuantityInput? qtyInput;
+                      while (true) {
+                        qtyInput = await _askQuantity(
+                          context,
+                          unit: unitLabel,
+                          allowPaperEdit: true,
+                        );
+                        if (qtyInput == null) return;
+                        if (!qtyInput.openPaperEditor) break;
+                        await _openPaperEditDialog(order);
+                      }
                       if (qtyInput == null) return;
                       final qtyText = qtyInput.displayText;
                       final taskProvider = context.read<TaskProvider>();
@@ -5415,9 +5420,14 @@ String _statusText(TaskStatus status) {
   }
 }
 
-Future<_QuantityInput?> _askQuantity(BuildContext context, {String? unit}) async {
+Future<_QuantityInput?> _askQuantity(
+  BuildContext context, {
+  String? unit,
+  bool allowPaperEdit = false,
+}) async {
   final controller = TextEditingController();
   final unitLabel = (unit ?? '').trim();
+  const paperEditValue = '__open_paper_edit__';
   final v = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -5434,6 +5444,11 @@ Future<_QuantityInput?> _askQuantity(BuildContext context, {String? unit}) async
         ),
       ),
       actions: [
+        if (allowPaperEdit)
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, paperEditValue),
+            child: const Text('Изменить бумагу'),
+          ),
         TextButton(
             onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
         ElevatedButton(
@@ -5443,6 +5458,13 @@ Future<_QuantityInput?> _askQuantity(BuildContext context, {String? unit}) async
     ),
   );
   if (v == null || v.isEmpty) return null;
+  if (v == paperEditValue) {
+    return const _QuantityInput(
+      quantity: 0,
+      displayText: '',
+      openPaperEditor: true,
+    );
+  }
   final n = int.tryParse(v);
   if (n == null) return null;
   final display = unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
