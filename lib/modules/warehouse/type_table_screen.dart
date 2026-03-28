@@ -499,12 +499,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   shrinkWrap: true,
                   children: details.map((row) {
                     final orderId = (row['order_id'] ?? '').toString();
+                    final orderName = (row['order_name'] ?? '').toString().trim();
                     final qty = (row['qty'] as num?)?.toDouble() ??
                         double.tryParse('${row['qty']}') ??
                         0;
                     final normalizedOrderId = orderId.trim().isEmpty
                         ? 'Без номера'
                         : orderId.trim();
+                    final orderLabel =
+                        orderName.isNotEmpty ? orderName : 'Заказ №$normalizedOrderId';
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.symmetric(
@@ -517,7 +520,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         color: Colors.grey.shade50,
                       ),
                       child: Text(
-                        'Заказ №$normalizedOrderId • ${qty.toStringAsFixed(2)} м',
+                        '$orderLabel • ${qty.toStringAsFixed(2)} м',
                         style: const TextStyle(fontWeight: FontWeight.w500),
                       ),
                     );
@@ -1344,9 +1347,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         const DataColumn(label: Text('Заметки')),
                       if (widget.enablePhoto)
                         const DataColumn(label: Text('Фото')),
+                      const DataColumn(label: Text('Действия')),
                       if (_normalizeType(widget.type) == 'paper')
                         const DataColumn(label: Text('В резерве')),
-                      const DataColumn(label: Text('Действия')),
                     ],
                     rows: List<DataRow>.generate(items.length, (i) {
                       final item = items[i];
@@ -1407,6 +1410,30 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                                 tooltip: 'Сменить фото',
                                 onPressed: () => _changePhoto(item)),
                           ])),
+                        DataCell(Row(children: [
+                          IconButton(
+                              icon: const Icon(Icons.edit, size: 20),
+                              tooltip: 'Редактировать',
+                              onPressed: () => _editItem(item)),
+                          IconButton(
+                              icon: const Icon(Icons.add, size: 20),
+                              tooltip: 'Пополнить',
+                              onPressed: () => _increase(item)),
+                          IconButton(
+                              icon: const Icon(Icons.remove_circle_outline,
+                                  size: 20),
+                              tooltip: 'Списать',
+                              onPressed: () => _writeOff(item)),
+                          IconButton(
+                              icon: const Icon(Icons.inventory_2_outlined,
+                                  size: 20),
+                              tooltip: 'Инвентаризация',
+                              onPressed: () => _inventory(item)),
+                          IconButton(
+                              icon: const Icon(Icons.delete, size: 20),
+                              tooltip: 'Удалить',
+                              onPressed: () => _deleteItem(item)),
+                        ])),
                         if (_normalizeType(widget.type) == 'paper')
                           DataCell(
                             FutureBuilder<double>(
@@ -1438,30 +1465,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                               },
                             ),
                           ),
-                        DataCell(Row(children: [
-                          IconButton(
-                              icon: const Icon(Icons.edit, size: 20),
-                              tooltip: 'Редактировать',
-                              onPressed: () => _editItem(item)),
-                          IconButton(
-                              icon: const Icon(Icons.add, size: 20),
-                              tooltip: 'Пополнить',
-                              onPressed: () => _increase(item)),
-                          IconButton(
-                              icon: const Icon(Icons.remove_circle_outline,
-                                  size: 20),
-                              tooltip: 'Списать',
-                              onPressed: () => _writeOff(item)),
-                          IconButton(
-                              icon: const Icon(Icons.inventory_2_outlined,
-                                  size: 20),
-                              tooltip: 'Инвентаризация',
-                              onPressed: () => _inventory(item)),
-                          IconButton(
-                              icon: const Icon(Icons.delete, size: 20),
-                              tooltip: 'Удалить',
-                              onPressed: () => _deleteItem(item)),
-                        ])),
                       ]);
                     }),
                   ),
