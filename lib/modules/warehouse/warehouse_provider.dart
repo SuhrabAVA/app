@@ -57,6 +57,7 @@ class WarehouseProvider with ChangeNotifier {
   RealtimeChannel? _chanPaints;
   RealtimeChannel? _chanMaterials;
   RealtimeChannel? _chanPapers;
+  RealtimeChannel? _chanPaperReservations;
   RealtimeChannel? _chanStationery;
 
   final List<TmcModel> _allTmc = [];
@@ -232,6 +233,9 @@ class WarehouseProvider with ChangeNotifier {
     if (_chanPaints != null) _sb.removeChannel(_chanPaints!);
     if (_chanMaterials != null) _sb.removeChannel(_chanMaterials!);
     if (_chanPapers != null) _sb.removeChannel(_chanPapers!);
+    if (_chanPaperReservations != null) {
+      _sb.removeChannel(_chanPaperReservations!);
+    }
     if (_chanStationery != null) _sb.removeChannel(_chanStationery!);
     super.dispose();
   }
@@ -265,6 +269,21 @@ class WarehouseProvider with ChangeNotifier {
           schema: 'public',
           table: 'papers',
           callback: (_) => fetchTmc(),
+        )
+        .subscribe();
+
+    _chanPaperReservations = _sb
+        .channel('wh:paper_reservations')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'order_paper_reservations',
+          callback: (_) {
+            // Бизнес-логика резерва бумаги:
+            // при любом изменении резервов обновляем UI склада,
+            // чтобы колонка "Резерв" показывала актуальные значения.
+            notifyListeners();
+          },
         )
         .subscribe();
 
