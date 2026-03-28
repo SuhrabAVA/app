@@ -2425,6 +2425,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return need <= availableQty;
     }
 
+    // Бизнес-правило: бумага хранится списком для совместимости с новыми заказами.
+    final List<MaterialModel> selectedPapers = <MaterialModel>[
+      if (_selectedMaterial != null)
+        _selectedMaterial!.copyWith(
+          quantity: (_product.length ?? _selectedMaterial!.quantity).toDouble(),
+          unit: 'м',
+        ),
+    ];
+
     final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
     final bool stageQueueChangedForLaunchedOrder = wasAlreadyLaunched &&
@@ -2472,6 +2481,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             : _selectedHandleDescription,
         cardboard: _selectedCardboard,
         material: _selectedMaterial,
+        paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
         stageTemplateId: _stageTemplateId,
@@ -2492,6 +2502,34 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
       createdOrUpdatedOrder = _created;
     } else {
+      final List<MaterialModel> oldPapers =
+          widget.order!.paperMaterials.isNotEmpty
+              ? widget.order!.paperMaterials
+              : <MaterialModel>[
+                  if (widget.order!.material != null) widget.order!.material!,
+                ];
+      final bool paperChanged = oldPapers.length != selectedPapers.length ||
+          oldPapers.asMap().entries.any((entry) {
+            final idx = entry.key;
+            final old = entry.value;
+            final next = selectedPapers[idx];
+            return old.id != next.id ||
+                (old.quantity - next.quantity).abs() > 0.0001;
+          });
+      if ((widget.order!.assignmentCreated ||
+              widget.order!.statusEnum == OrderStatus.in_production) &&
+          paperChanged &&
+          _commentsController.text.trim().isEmpty) {
+        if (mounted) {
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text(
+                  'Укажите причину изменения бумаги в поле "Комментарии" перед сохранением'),
+            ),
+          );
+        }
+        return;
+      }
       // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
       final updated = OrderModel(
         id: widget.order!.id,
@@ -2506,6 +2544,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             : _selectedHandleDescription,
         cardboard: _selectedCardboard,
         material: _selectedMaterial,
+        paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
