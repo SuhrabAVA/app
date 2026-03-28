@@ -477,7 +477,11 @@ class OrdersProvider with ChangeNotifier {
         // Бизнес-правило: при изменении заказа в производстве пересчитываем резерв бумаги.
         await _syncPaperReservationsForOrder(updated);
       }
-      final paperHistory = _describePaperChanges(previous: prev, updated: updated);
+      final paperHistory = _describePaperChanges(
+        previous: prev,
+        updated: updated,
+        reason: updated.comments,
+      );
       if (paperHistory != null) {
         await _logOrderEvent(updated.id, 'Изменение бумаги', paperHistory);
       }
@@ -1142,6 +1146,7 @@ class OrdersProvider with ChangeNotifier {
   String? _describePaperChanges({
     required OrderModel previous,
     required OrderModel updated,
+    String? reason,
   }) {
     final before = _resolveOrderPapers(previous);
     final after = _resolveOrderPapers(updated);
@@ -1156,20 +1161,52 @@ class OrdersProvider with ChangeNotifier {
       }
       if (equal) return null;
     }
+    String fmtDate(DateTime dt) {
+      final local = dt.toLocal();
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '${two(local.day)}.${two(local.month)}.${local.year} '
+          '${two(local.hour)}:${two(local.minute)}';
+    }
+
+    String materialName(MaterialModel m) {
+      final format = (m.format ?? '').trim();
+      final grammage = (m.grammage ?? '').trim();
+      final suffix = [
+        if (format.isNotEmpty) format,
+        if (grammage.isNotEmpty) grammage,
+      ].join(', ');
+      return suffix.isEmpty ? m.name : '${m.name} ($suffix)';
+    }
+
     final user = (AuthHelper.currentUserName ?? 'Сотрудник').trim();
-    final timestamp = DateTime.now().toLocal().toIso8601String();
-    String line(int index, MaterialModel m) =>
-        'Бумага №$index: ${m.name} (${m.quantity.toStringAsFixed(2)} ${m.unit})';
+    final timestamp = fmtDate(DateTime.now());
+    final maxCount = before.length > after.length ? before.length : after.length;
     final buffer = StringBuffer()
-      ..writeln('$user изменил бумагу $timestamp')
-      ..writeln('Было:')
-      ..writeln(before.isEmpty
-          ? '—'
-          : before.asMap().entries.map((e) => line(e.key + 1, e.value)).join('\n'))
-      ..writeln('Стало:')
-      ..write(after.isEmpty
-          ? '—'
-          : after.asMap().entries.map((e) => line(e.key + 1, e.value)).join('\n'));
+      ..writeln('$user изменил бумагу $timestamp');
+    for (var i = 0; i < maxCount; i++) {
+      final old = i < before.length ? before[i] : null;
+      final next = i < after.length ? after[i] : null;
+      final slot = i + 1;
+      if (old != null && next != null) {
+        buffer.writeln(
+          'Бумага №$slot: было ${materialName(old)} — ${old.quantity.toStringAsFixed(2)} м, '
+          'стало ${materialName(next)} — ${next.quantity.toStringAsFixed(2)} м',
+        );
+      } else if (old == null && next != null) {
+        buffer.writeln(
+          'Добавлена бумага №$slot: ${materialName(next)} — ${next.quantity.toStringAsFixed(2)} м',
+        );
+      } else if (old != null && next == null) {
+        buffer.writeln(
+          'Удалена бумага №$slot: ${materialName(old)} — ${old.quantity.toStringAsFixed(2)} м',
+        );
+      }
+    }
+    final reasonText = (reason ?? '').trim();
+    if (reasonText.isNotEmpty) {
+      // Бизнес-правило: причина изменения бумаги обязательна для производства.
+      buffer.writeln('Причина: $reasonText');
+    }
     return buffer.toString().trim();
   }
 

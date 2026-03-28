@@ -483,6 +483,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _lastPreviewPaintsFilled = false;
   MaterialModel? _selectedMaterial;
   TmcModel? _selectedMaterialTmc;
+  // Бизнес-правило: заказ может содержать до 3 видов бумаги.
+  final List<MaterialModel> _extraPaperMaterials = <MaterialModel>[];
   // === Каскадный выбор Материал → Формат → Грамаж (строгий) ===
   final TextEditingController _matNameCtl = TextEditingController();
   final TextEditingController _matFormatCtl = TextEditingController();
@@ -627,7 +629,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _makeready = template?.makeready ?? 0;
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
-    _selectedMaterial = template?.material;
+    final List<MaterialModel> initialPapers = template != null
+        ? (template.paperMaterials.isNotEmpty
+            ? List<MaterialModel>.from(template.paperMaterials)
+            : <MaterialModel>[
+                if (template.material != null) template.material!,
+              ])
+        : const <MaterialModel>[];
+    _selectedMaterial = initialPapers.isNotEmpty ? initialPapers.first : null;
+    _extraPaperMaterials
+      ..clear()
+      ..addAll(initialPapers.skip(1).take(2));
     _hasForm = template?.hasForm ?? false;
 
     // Инициализация каскадных полей (если есть материал в шаблоне)
@@ -1985,6 +1997,51 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _selectMaterial(paper);
   }
 
+  List<MaterialModel> _collectSelectedPapers() {
+    final List<MaterialModel> selected = <MaterialModel>[];
+    final double fallbackQty =
+        (_product.length ?? _selectedMaterial?.quantity ?? 0).toDouble();
+    if (_selectedMaterial != null) {
+      selected.add(
+        _selectedMaterial!.copyWith(
+          quantity: _selectedMaterial!.quantity > 0
+              ? _selectedMaterial!.quantity
+              : fallbackQty,
+          unit: 'м',
+        ),
+      );
+    }
+    // Бизнес-правило: поддерживаем второй/третий тип бумаги как отдельные позиции.
+    for (final paper in _extraPaperMaterials) {
+      final id = (paper.id ?? '').trim();
+      if (id.isEmpty) continue;
+      selected.add(
+        paper.copyWith(
+          quantity: paper.quantity > 0 ? paper.quantity : fallbackQty,
+          unit: 'м',
+        ),
+      );
+    }
+    if (selected.length > 3) {
+      return selected.take(3).toList(growable: false);
+    }
+    return selected;
+  }
+
+  void _addExtraPaperSlot() {
+    if (_extraPaperMaterials.length >= 2) return;
+    setState(() {
+      _extraPaperMaterials.add(
+        MaterialModel(
+          id: '',
+          name: '',
+          quantity: (_product.length ?? 0).toDouble(),
+          unit: 'м',
+        ),
+      );
+    });
+  }
+
   void _addPaintFromTmc(TmcModel paint) {
     final qtyGrams = _stockQtyToGrams(paint);
     setState(() {
@@ -2415,24 +2472,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _upsertPensInParameters(penName);
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+    // Бизнес-правило: бумага хранится списком (до 3 позиций).
+    final List<MaterialModel> selectedPapers = _collectSelectedPapers();
     bool hasEnoughPaperForLaunch() {
-      final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
-      final double need = (_product.length ?? 0).toDouble();
-      if (paperTmc == null || need <= 0) return true;
-      final current = warehouse.allTmc.where((t) => t.id == paperTmc.id).toList();
-      final double availableQty =
-          current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
-      return need <= availableQty;
+      if (selectedPapers.isEmpty) return true;
+      for (final paper in selectedPapers) {
+        final paperId = (paper.id ?? '').trim();
+        final double need = paper.quantity > 0
+            ? paper.quantity
+            : (_product.length ?? 0).toDouble();
+        if (paperId.isEmpty || need <= 0) {
+          continue;
+        }
+        final current = warehouse.allTmc.where((t) => t.id == paperId).toList();
+        if (current.isEmpty) return false;
+        final availableQty = current.first.quantity;
+        if (need > availableQty) return false;
+      }
+      return true;
     }
-
-    // Бизнес-правило: бумага хранится списком для совместимости с новыми заказами.
-    final List<MaterialModel> selectedPapers = <MaterialModel>[
-      if (_selectedMaterial != null)
-        _selectedMaterial!.copyWith(
-          quantity: (_product.length ?? _selectedMaterial!.quantity).toDouble(),
-          unit: 'м',
-        ),
-    ];
 
     final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
@@ -3671,6 +3729,120 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  Widget _buildExtraPaperSelectors() {
+    final papers = _paperItems();
+    if (papers.isEmpty) return const SizedBox.shrink();
+
+    String paperLabel(TmcModel item) {
+      final parts = <String>[
+        item.description,
+        if ((item.format ?? '').trim().isNotEmpty) 'Формат: ${item.format}',
+        if ((item.grammage ?? '').trim().isNotEmpty)
+          'Грамаж: ${item.grammage}',
+      ];
+      return parts.join(' • ');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 6),
+        for (var i = 0; i < _extraPaperMaterials.length; i++) ...[
+          Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: DropdownButtonFormField<String>(
+                  value: (_extraPaperMaterials[i].id ?? '').trim().isEmpty
+                      ? null
+                      : _extraPaperMaterials[i].id,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Бумага №${i + 2}',
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: papers
+                      .map(
+                        (paper) => DropdownMenuItem<String>(
+                          value: paper.id,
+                          child: Text(
+                            paperLabel(paper),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    final selected = papers.where((p) => p.id == value);
+                    if (selected.isEmpty) return;
+                    final paper = selected.first;
+                    setState(() {
+                      _extraPaperMaterials[i] = MaterialModel(
+                        id: paper.id,
+                        name: paper.description,
+                        format: paper.format ?? '',
+                        grammage: paper.grammage ?? '',
+                        quantity: _extraPaperMaterials[i].quantity > 0
+                            ? _extraPaperMaterials[i].quantity
+                            : (_product.length ?? 0).toDouble(),
+                        unit: 'м',
+                      );
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: TextFormField(
+                  initialValue:
+                      _extraPaperMaterials[i].quantity > 0
+                          ? _formatDecimal(_extraPaperMaterials[i].quantity)
+                          : '',
+                  decoration: const InputDecoration(
+                    labelText: 'Метраж, м',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (value) {
+                    final parsed = double.tryParse(value.replaceAll(',', '.'));
+                    setState(() {
+                      _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
+                        quantity: parsed == null || parsed < 0 ? 0 : parsed,
+                        unit: 'м',
+                      );
+                    });
+                  },
+                ),
+              ),
+              IconButton(
+                tooltip: 'Удалить бумагу',
+                onPressed: () {
+                  setState(() {
+                    _extraPaperMaterials.removeAt(i);
+                  });
+                },
+                icon: const Icon(Icons.delete_outline),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+        ],
+        if (_extraPaperMaterials.length < 2)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _addExtraPaperSlot,
+              icon: const Icon(Icons.add),
+              label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
+            ),
+          ),
+      ],
+    );
+  }
+
   /// Дополнительные параметры продукта: материал, складские остатки и вложения
   Widget _buildProductMaterialAndExtras(ProductModel product) {
     return Column(
@@ -3946,6 +4118,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             );
           },
         ),
+        _buildExtraPaperSelectors(),
         const SizedBox(height: 3),
         _buildStockExtraLayout(
           Column(
