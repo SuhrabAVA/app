@@ -1186,7 +1186,20 @@ class OrdersProvider with ChangeNotifier {
 
     await _logPensCompletionWriteoff(order: updated, quantity: quantity);
     // Бизнес-правило: финальное списание бумаги выполняем только после завершения заказа.
-    await _finalizePaperReservations(orderId: updated.id);
+    await _finalizePaperReservations(
+      orderId: updated.id,
+      orderLabel: _buildOrderLabelForWriteoff(updated),
+    );
+  }
+
+  String _buildOrderLabelForWriteoff(OrderModel order) {
+    final assignment = (order.assignmentId ?? '').trim();
+    if (assignment.isNotEmpty) return assignment;
+
+    final customer = order.customer.trim();
+    if (customer.isNotEmpty) return customer;
+
+    return order.id;
   }
 
   List<MaterialModel> _resolveOrderPapers(OrderModel order) {
@@ -1275,9 +1288,16 @@ class OrdersProvider with ChangeNotifier {
     );
   }
 
-  Future<void> _finalizePaperReservations({required String orderId}) async {
+  Future<void> _finalizePaperReservations({
+    required String orderId,
+    required String orderLabel,
+  }) async {
     final before = await _loadOrderReservationMap(orderId);
     if (before.isEmpty) return;
+    final normalizedOrderLabel = orderLabel.trim().isEmpty ? orderId : orderLabel.trim();
+    final defaultReason = 'Списание после завершения заказа $orderId';
+    final humanReadableReason =
+        'Списание после завершения заказа $normalizedOrderLabel';
     try {
       // Финализируем резерв атомарно: списание + очистка резерва в одной транзакции.
       await _supabase.rpc(
@@ -1302,7 +1322,7 @@ class OrdersProvider with ChangeNotifier {
         await _supabase.from('papers_writeoffs').insert({
           'paper_id': paperId,
           'qty': qty,
-          'reason': 'Списание после завершения заказа $orderId',
+          'reason': humanReadableReason,
           'by_name': AuthHelper.currentUserName ?? '',
         });
       }
@@ -1311,6 +1331,16 @@ class OrdersProvider with ChangeNotifier {
           .delete()
           .eq('order_id', orderId);
     }
+
+    if (humanReadableReason != defaultReason) {
+      // Для RPC-вставок, где причина могла быть записана с UUID заказа,
+      // приводим комментарий к человекочитаемому виду.
+      await _supabase
+          .from('papers_writeoffs')
+          .update({'reason': humanReadableReason})
+          .eq('reason', defaultReason);
+    }
+
     await _logOrderEvent(
       orderId,
       'Резерв бумаги',
