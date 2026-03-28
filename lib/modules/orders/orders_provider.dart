@@ -687,6 +687,10 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      // Фикс: логируем удаление до фактического удаления заказа, иначе
+      // вставка в order_events ломается по FK order_events_order_id_fkey.
+      await _logOrderEvent(id, 'Удаление', 'Удалён заказ');
+
       // Важно: удаляем связанные сущности синхронно, чтобы заказ не "висел"
       // в модуле производственных заданий и рабочем пространстве.
       await _supabase.from('tasks').delete().eq('order_id', id);
@@ -711,8 +715,6 @@ class OrdersProvider with ChangeNotifier {
       await _supabase.from('prod_plans').delete().eq('order_id', id);
       await _supabase.from('production_plans').delete().eq('order_id', id);
       await _supabase.from('orders').delete().eq('id', id);
-      // Историю удалять не обязательно — это след.
-      await _logOrderEvent(id, 'Удаление', 'Удалён заказ');
     } catch (e, st) {
       // rollback
       _orders.insert(index, removed);
@@ -1429,6 +1431,9 @@ class OrdersProvider with ChangeNotifier {
     String description, {
     String? userId,
   }) async {
+    if (orderId.trim().isEmpty || orderId.startsWith('local-')) {
+      return;
+    }
     try {
       await _supabase.from('order_events').insert({
         'order_id': orderId,
@@ -1437,6 +1442,11 @@ class OrdersProvider with ChangeNotifier {
         if (userId != null) 'user_id': userId,
       });
     } catch (e, st) {
+      if (e is PostgrestException && e.code == '23503') {
+        // Заказ уже удалён/не записан — не считаем это фатальной ошибкой.
+        debugPrint('⚠️ logOrderEvent skipped (missing order_id=$orderId)');
+        return;
+      }
       // Non-fatal
       debugPrint('❌ logOrderEvent error: $e\n$st');
     }
