@@ -472,6 +472,44 @@ class OrdersProvider with ChangeNotifier {
 
     try {
       final List<Map<String, dynamic>> stageRows = <Map<String, dynamic>>[];
+      List<String> readStageIdsFromRow(Map<String, dynamic> row) {
+        // Один этап может быть привязан к нескольким рабочим местам.
+        // Поэтому на запуске разворачиваем все связанные workplace/stage id,
+        // чтобы этап появился в каждой соответствующей вкладке до "захвата".
+        final result = <String>[];
+        void addCandidate(dynamic raw) {
+          final id = raw?.toString().trim() ?? '';
+          if (id.isEmpty || result.contains(id)) return;
+          result.add(id);
+        }
+
+        addCandidate(
+          row['stage_id'] ??
+              row['stageId'] ??
+              row['stageid'] ??
+              row['workplace_id'] ??
+              row['workplaceId'] ??
+              row['id'],
+        );
+
+        final dynamic alternatives = row['alternativeStageIds'] ??
+            row['alternative_stage_ids'] ??
+            row['allStageIds'] ??
+            row['all_stage_ids'] ??
+            row['stageIds'] ??
+            row['stage_ids'];
+        if (alternatives is List) {
+          for (final value in alternatives) {
+            addCandidate(value);
+          }
+        } else if (alternatives is String) {
+          for (final token in alternatives.split(',')) {
+            addCandidate(token);
+          }
+        }
+
+        return result;
+      }
 
       try {
         final plan = await _supabase
@@ -530,25 +568,27 @@ class OrdersProvider with ChangeNotifier {
 
       final Set<String> createdStageIds = <String>{};
       for (final row in stageRows) {
-        final String stageId = (row['stage_id'] ?? '').toString().trim();
-        if (stageId.isEmpty || createdStageIds.contains(stageId)) continue;
-        createdStageIds.add(stageId);
+        final stageIds = readStageIdsFromRow(row);
+        if (stageIds.isEmpty) continue;
         final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
         final String taskStatus =
             (stageStatus == 'done' || stageStatus == 'completed')
                 ? 'done'
                 : 'waiting';
-        await _supabase.from('tasks').insert({
-          'order_id': order.id,
-          'stage_id': stageId,
-          'status': taskStatus,
-          'assignees': [],
-          'comments': [],
-          if (taskStatus == 'done')
-            'completed_at': DateTime.now().toIso8601String(),
-        });
+        for (final stageId in stageIds) {
+          if (createdStageIds.contains(stageId)) continue;
+          createdStageIds.add(stageId);
+          await _supabase.from('tasks').insert({
+            'order_id': order.id,
+            'stage_id': stageId,
+            'status': taskStatus,
+            'assignees': [],
+            'comments': [],
+            if (taskStatus == 'done')
+              'completed_at': DateTime.now().toIso8601String(),
+          });
+        }
       }
-
 
       final String nextAssignmentId =
           (order.assignmentId ?? '').trim().isNotEmpty
