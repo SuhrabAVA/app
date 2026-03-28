@@ -1364,7 +1364,22 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       return DataRow(color: warehouseRowHoverColor, cells: [
                         DataCell(Text('${i + 1}')),
                         DataCell(Text(item.description)),
-                        DataCell(Text(fmtNum(item.quantity, frac: 2))),
+                        DataCell(
+                          _normalizeType(widget.type) == 'paper'
+                              ? FutureBuilder<double>(
+                                  future: context
+                                      .read<WarehouseProvider>()
+                                      .paperReservedQty(item.id),
+                                  builder: (context, snapshot) {
+                                    final reserved = snapshot.data ?? 0;
+                                    final available = item.quantity - reserved;
+                                    final safeAvailable =
+                                        available < 0 ? 0 : available;
+                                    return Text(fmtNum(safeAvailable, frac: 2));
+                                  },
+                                )
+                              : Text(fmtNum(item.quantity, frac: 2)),
+                        ),
                         DataCell(Text(item.unit)),
                         if (items.any((i) =>
                             i.format != null && i.format!.trim().isNotEmpty))
