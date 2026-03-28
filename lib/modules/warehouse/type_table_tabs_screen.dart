@@ -751,7 +751,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     try {
       final rows = await Supabase.instance.client
           .from('orders')
-          .select('id, title, name, order_name, product_name, new_form_no, data, product')
+          .select(
+              'id, assignment_id, title, name, order_name, product_name, new_form_no, data, product')
           .inFilter('id', orderIds.toList(growable: false));
       if (rows is! List) return labels;
       for (final raw in rows.whereType<Map>()) {
@@ -773,10 +774,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
             : <String, dynamic>{};
 
         final label = _firstOrderLabel([
+          row['assignment_id'],
           row['title'],
           row['order_name'],
           row['product_name'],
           data['title'],
+          data['assignment_id'],
           data['order_name'],
           data['product_name'],
           topProduct['name'],
