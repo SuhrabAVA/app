@@ -4996,6 +4996,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return searchColumn;
   }
 
+  void _ensureStockExtrasLoaded() {
+    if (_stockExtraAutoloaded) return;
+    _stockExtraAutoloaded = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _updateStockExtra(includeAllResults: true);
+    });
+  }
+
   Widget _buildWarehousePreviewPanel() {
     _ensureStockExtrasLoaded();
     return Consumer<WarehouseProvider>(
