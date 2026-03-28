@@ -481,7 +481,10 @@ class OrdersProvider with ChangeNotifier {
       if (updated.assignmentCreated ||
           updated.statusEnum == OrderStatus.in_production) {
         // Бизнес-правило: при изменении заказа в производстве пересчитываем резерв бумаги.
-        await _syncPaperReservationsForOrder(updated);
+        final reserveError = await _syncPaperReservationsForOrder(updated);
+        if (reserveError != null) {
+          throw Exception(reserveError);
+        }
       }
       final paperHistory = _describePaperChanges(
         previous: prev,
@@ -643,6 +646,18 @@ class OrdersProvider with ChangeNotifier {
       }
 
 
+      // Бизнес-правило резерва: до перевода в in_production
+      // пытаемся атомарно зафиксировать резерв бумаги.
+      final reserveError = await _syncPaperReservationsForOrder(order.copyWith(
+        status: OrderStatus.in_production.name,
+        assignmentCreated: true,
+      ));
+      if (reserveError != null) {
+        // Если резерв не зафиксирован, не оставляем созданные задачи.
+        await _supabase.from('tasks').delete().eq('order_id', order.id);
+        return reserveError;
+      }
+
       final String nextAssignmentId =
           (order.assignmentId ?? '').trim().isNotEmpty
               ? order.assignmentId!.trim()
@@ -668,11 +683,6 @@ class OrdersProvider with ChangeNotifier {
         notifyListeners();
       }
 
-      // Бизнес-правило: при запуске бумага уходит в резерв, а не в списание.
-      await _syncPaperReservationsForOrder(order.copyWith(
-        status: OrderStatus.in_production.name,
-        assignmentCreated: true,
-      ));
       await _logOrderEvent(
           order.id, 'Запуск', 'Заказ запущен в производство. Бумага переведена в резерв');
       return null;
@@ -1097,7 +1107,7 @@ class OrdersProvider with ChangeNotifier {
     return const <MaterialModel>[];
   }
 
-  Future<void> _syncPaperReservationsForOrder(OrderModel order) async {
+  Future<String?> _syncPaperReservationsForOrder(OrderModel order) async {
     final papers = _resolveOrderPapers(order)
         .where((paper) => (paper.id ?? '').trim().isNotEmpty)
         .toList(growable: false);
@@ -1120,48 +1130,154 @@ class OrdersProvider with ChangeNotifier {
       );
     }
 
-    await _releasePaperReservations(orderId: order.id);
-    if (aggregated.isEmpty) return;
-
-    final rows = aggregated.entries
-        .map(
-          (entry) => <String, dynamic>{
-            'order_id': order.id,
-            'paper_id': entry.key,
-            'qty': entry.value,
-          },
-        )
+    final before = await _loadOrderReservationMap(order.id);
+    final requestedRows = aggregated.entries
+        .map((entry) => <String, dynamic>{
+              'paper_id': entry.key,
+              'qty': entry.value,
+            })
         .toList(growable: false);
 
-    await _supabase.from('order_paper_reservations').insert(rows);
+    try {
+      // Атомарно синхронизируем резерв на стороне БД:
+      // upsert + удаление неактуальных строк + проверка доступного остатка.
+      await _supabase.rpc(
+        'sync_order_paper_reservations',
+        params: {
+          'p_order_id': order.id,
+          'p_reservations': requestedRows,
+          'p_actor': AuthHelper.currentUserName ?? '',
+        },
+      );
+    } on PostgrestException catch (error) {
+      final details = error.message.trim();
+      if (details.isNotEmpty) return details;
+      return 'Не удалось обновить резерв бумаги для заказа ${order.id}.';
+    }
+
+    final after = await _loadOrderReservationMap(order.id);
+    await _logReservationDiff(orderId: order.id, before: before, after: after);
+    return null;
   }
 
   Future<void> _releasePaperReservations({required String orderId}) async {
-    await _supabase
-        .from('order_paper_reservations')
-        .delete()
-        .eq('order_id', orderId);
+    final before = await _loadOrderReservationMap(orderId);
+    if (before.isEmpty) return;
+    try {
+      // Атомарный возврат резерва при удалении/откате заказа.
+      await _supabase.rpc(
+        'release_order_paper_reservations',
+        params: {
+          'p_order_id': orderId,
+          'p_reason': 'order_deleted',
+          'p_actor': AuthHelper.currentUserName ?? '',
+        },
+      );
+    } catch (_) {
+      // Fallback для окружений без RPC-функции.
+      await _supabase
+          .from('order_paper_reservations')
+          .delete()
+          .eq('order_id', orderId);
+    }
+    await _logOrderEvent(
+      orderId,
+      'Резерв бумаги',
+      'Резерв возвращен из-за удаления заказа',
+    );
   }
 
   Future<void> _finalizePaperReservations({required String orderId}) async {
+    final before = await _loadOrderReservationMap(orderId);
+    if (before.isEmpty) return;
+    try {
+      // Финализируем резерв атомарно: списание + очистка резерва в одной транзакции.
+      await _supabase.rpc(
+        'finalize_order_paper_reservations',
+        params: {
+          'p_order_id': orderId,
+          'p_actor': AuthHelper.currentUserName ?? '',
+        },
+      );
+    } catch (_) {
+      // Fallback для обратной совместимости.
+      final rows = await _supabase
+          .from('order_paper_reservations')
+          .select('paper_id, qty')
+          .eq('order_id', orderId);
+      if (rows is! List || rows.isEmpty) return;
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final paperId = (row['paper_id'] ?? '').toString().trim();
+        final qty = _toDouble(row['qty']);
+        if (paperId.isEmpty || qty <= 0) continue;
+        await _supabase.from('papers_writeoffs').insert({
+          'paper_id': paperId,
+          'qty': qty,
+          'reason': 'Списание после завершения заказа $orderId',
+          'by_name': AuthHelper.currentUserName ?? '',
+        });
+      }
+      await _supabase
+          .from('order_paper_reservations')
+          .delete()
+          .eq('order_id', orderId);
+    }
+    await _logOrderEvent(
+      orderId,
+      'Резерв бумаги',
+      'Резерв списан после завершения заказа',
+    );
+  }
+
+  Future<Map<String, double>> _loadOrderReservationMap(String orderId) async {
     final rows = await _supabase
         .from('order_paper_reservations')
         .select('paper_id, qty')
         .eq('order_id', orderId);
-    if (rows is! List || rows.isEmpty) return;
+    if (rows is! List) return const <String, double>{};
+    final map = <String, double>{};
     for (final raw in rows.whereType<Map>()) {
       final row = Map<String, dynamic>.from(raw as Map);
       final paperId = (row['paper_id'] ?? '').toString().trim();
       final qty = _toDouble(row['qty']);
       if (paperId.isEmpty || qty <= 0) continue;
-      await _supabase.from('papers_writeoffs').insert({
-        'paper_id': paperId,
-        'qty': qty,
-        'reason': 'Списание после завершения заказа $orderId',
-        'by_name': AuthHelper.currentUserName ?? '',
-      });
+      map.update(paperId, (value) => value + qty, ifAbsent: () => qty);
     }
-    await _releasePaperReservations(orderId: orderId);
+    return map;
+  }
+
+  Future<void> _logReservationDiff({
+    required String orderId,
+    required Map<String, double> before,
+    required Map<String, double> after,
+  }) async {
+    final paperIds = <String>{...before.keys, ...after.keys};
+    if (paperIds.isEmpty) return;
+    for (final paperId in paperIds) {
+      final oldQty = before[paperId] ?? 0;
+      final newQty = after[paperId] ?? 0;
+      if ((oldQty - newQty).abs() < 0.000001) continue;
+      if (oldQty <= 0 && newQty > 0) {
+        await _logOrderEvent(
+          orderId,
+          'Резерв бумаги',
+          'Создан резерв ${newQty.toStringAsFixed(2)} м бумаги $paperId для заказа $orderId',
+        );
+      } else if (oldQty > 0 && newQty <= 0) {
+        await _logOrderEvent(
+          orderId,
+          'Резерв бумаги',
+          'Удален резерв ${oldQty.toStringAsFixed(2)} м бумаги $paperId для заказа $orderId',
+        );
+      } else {
+        await _logOrderEvent(
+          orderId,
+          'Резерв бумаги',
+          'Изменен резерв бумаги $paperId: было ${oldQty.toStringAsFixed(2)} м, стало ${newQty.toStringAsFixed(2)} м',
+        );
+      }
+    }
   }
 
   String? _describePaperChanges({
