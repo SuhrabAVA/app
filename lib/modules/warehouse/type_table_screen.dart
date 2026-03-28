@@ -502,10 +502,24 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                     final qty = (row['qty'] as num?)?.toDouble() ??
                         double.tryParse('${row['qty']}') ??
                         0;
-                    return ListTile(
-                      dense: true,
-                      title: Text('Заказ: $orderId'),
-                      subtitle: Text('Резерв: ${qty.toStringAsFixed(2)} м'),
+                    final normalizedOrderId = orderId.trim().isEmpty
+                        ? 'Без номера'
+                        : orderId.trim();
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(10),
+                        color: Colors.grey.shade50,
+                      ),
+                      child: Text(
+                        'Заказ №$normalizedOrderId • ${qty.toStringAsFixed(2)} м',
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
                     );
                   }).toList(),
                 ),
@@ -1315,8 +1329,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       const DataColumn(label: Text('№')),
                       const DataColumn(label: Text('Наименование')),
                       const DataColumn(label: Text('Кол-во')),
-                      if (_normalizeType(widget.type) == 'paper')
-                        const DataColumn(label: Text('В резерве')),
                       const DataColumn(label: Text('Ед.')),
                       if (items.any((i) =>
                           i.format != null && i.format!.trim().isNotEmpty))
@@ -1332,6 +1344,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         const DataColumn(label: Text('Заметки')),
                       if (widget.enablePhoto)
                         const DataColumn(label: Text('Фото')),
+                      if (_normalizeType(widget.type) == 'paper')
+                        const DataColumn(label: Text('В резерве')),
                       const DataColumn(label: Text('Действия')),
                     ],
                     rows: List<DataRow>.generate(items.length, (i) {
@@ -1345,27 +1359,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         DataCell(Text('${i + 1}')),
                         DataCell(Text(item.description)),
                         DataCell(Text(fmtNum(item.quantity, frac: 2))),
-                        if (_normalizeType(widget.type) == 'paper')
-                          DataCell(
-                            FutureBuilder<double>(
-                              future: context
-                                  .read<WarehouseProvider>()
-                                  .paperReservedQty(item.id),
-                              builder: (context, snapshot) {
-                                final reserved = snapshot.data ?? 0;
-                                final reserveLabel =
-                                    '${reserved.toStringAsFixed(2)} м';
-                                // По требованию склада: в колонке "В резерве"
-                                // показываем кнопку с суммарным резервом (L).
-                                return TextButton(
-                                  onPressed: reserved > 0
-                                      ? () => _showReserveDetails(item)
-                                      : null,
-                                  child: Text(reserveLabel),
-                                );
-                              },
-                            ),
-                          ),
                         DataCell(Text(item.unit)),
                         if (items.any((i) =>
                             i.format != null && i.format!.trim().isNotEmpty))
@@ -1414,6 +1407,37 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                                 tooltip: 'Сменить фото',
                                 onPressed: () => _changePhoto(item)),
                           ])),
+                        if (_normalizeType(widget.type) == 'paper')
+                          DataCell(
+                            FutureBuilder<double>(
+                              future: context
+                                  .read<WarehouseProvider>()
+                                  .paperReservedQty(item.id),
+                              builder: (context, snapshot) {
+                                final reserved = snapshot.data ?? 0;
+                                final reserveLabel =
+                                    '${reserved.toStringAsFixed(2)} м';
+                                return TextButton(
+                                  style: ButtonStyle(
+                                    foregroundColor:
+                                        WidgetStateProperty.resolveWith(
+                                      (states) => states
+                                              .contains(WidgetState.disabled)
+                                          ? Colors.red.shade200
+                                          : Colors.red.shade700,
+                                    ),
+                                    overlayColor: WidgetStateProperty.all(
+                                      Colors.red.withValues(alpha: 0.12),
+                                    ),
+                                  ),
+                                  onPressed: reserved > 0
+                                      ? () => _showReserveDetails(item)
+                                      : null,
+                                  child: Text(reserveLabel),
+                                );
+                              },
+                            ),
+                          ),
                         DataCell(Row(children: [
                           IconButton(
                               icon: const Icon(Icons.edit, size: 20),
