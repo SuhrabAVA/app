@@ -463,7 +463,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final arrTables = _arrivalTables(typeKey);
 
       final ch = s.channel('wh_${DateTime.now().millisecondsSinceEpoch}');
-      for (final t in [...bases, ...woTables, ...invTables, ...arrTables]) {
+      final watchedTables = <String>[
+        ...bases,
+        ...woTables,
+        ...invTables,
+        ...arrTables,
+        // Бизнес-логика резерва: для бумаги обновляем таблицу
+        // при любом изменении активных резервов.
+        if (typeKey == 'paper') 'order_paper_reservations',
+      ];
+      for (final t in watchedTables) {
         ch.onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -486,6 +495,43 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ch.subscribe();
       _rt = ch;
     } catch (_) {}
+  }
+
+  Future<void> _showReserveDetails(TmcModel item) async {
+    final details =
+        await context.read<WarehouseProvider>().paperReserveDetails(item.id);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Резерв: ${item.description}'),
+        content: SizedBox(
+          width: 420,
+          child: details.isEmpty
+              ? const Text('По этой бумаге нет активного резерва.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: details.map((row) {
+                    final orderId = (row['order_id'] ?? '').toString();
+                    final qty = (row['qty'] as num?)?.toDouble() ??
+                        double.tryParse('${row['qty']}') ??
+                        0;
+                    return ListTile(
+                      dense: true,
+                      title: Text('Заказ: $orderId'),
+                      subtitle: Text('Резерв: ${qty.toStringAsFixed(2)} м'),
+                    );
+                  }).toList(),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1325,6 +1371,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       const DataColumn(label: Text('№')),
                       const DataColumn(label: Text('Наименование')),
                       const DataColumn(label: Text('Кол-во')),
+                      if (_normalizeType(widget.type) == 'paper')
+                        const DataColumn(label: Text('В резерве')),
                       const DataColumn(label: Text('Ед.')),
                       if (items.any((i) =>
                           i.format != null && i.format!.trim().isNotEmpty))
@@ -1353,6 +1401,27 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         DataCell(Text('${i + 1}')),
                         DataCell(Text(item.description)),
                         DataCell(Text(fmtNum(item.quantity, frac: 2))),
+                        if (_normalizeType(widget.type) == 'paper')
+                          DataCell(
+                            FutureBuilder<double>(
+                              future: context
+                                  .read<WarehouseProvider>()
+                                  .paperReservedQty(item.id),
+                              builder: (context, snapshot) {
+                                final reserved = snapshot.data ?? 0;
+                                final reserveLabel =
+                                    '${reserved.toStringAsFixed(2)} м';
+                                // По требованию склада: в колонке "В резерве"
+                                // показываем кнопку с суммарным резервом (L).
+                                return TextButton(
+                                  onPressed: reserved > 0
+                                      ? () => _showReserveDetails(item)
+                                      : null,
+                                  child: Text(reserveLabel),
+                                );
+                              },
+                            ),
+                          ),
                         DataCell(Text(item.unit)),
                         if (items.any((i) =>
                             i.format != null && i.format!.trim().isNotEmpty))
