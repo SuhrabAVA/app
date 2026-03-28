@@ -3647,6 +3647,7 @@ class _TasksScreenState extends State<TasksScreen>
 
                     Future<void> onFinish() async {
                       final unitLabel = _workplaceUnit(personnel, task.stageId);
+                      final order = _orderById(task.orderId);
                       _QuantityInput? qtyInput;
                       while (true) {
                         qtyInput = await _askQuantity(
@@ -3656,6 +3657,17 @@ class _TasksScreenState extends State<TasksScreen>
                         );
                         if (qtyInput == null) return;
                         if (!qtyInput.openPaperEditor) break;
+                        if (order == null) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    'Не удалось найти заказ для редактирования бумаги.'),
+                              ),
+                            );
+                          }
+                          return;
+                        }
                         await _openPaperEditDialog(order);
                       }
                       if (qtyInput == null) return;
