@@ -167,6 +167,42 @@ class _PaperTableState extends State<PaperTable> {
   void _deleteItem(TmcModel item) =>
       context.read<WarehouseProvider>().deleteItem(context, item);
 
+  Future<void> _showReserveDetails(TmcModel item) async {
+    final details = await context.read<WarehouseProvider>().paperReserveDetails(item.id);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Резерв: ${item.description}'),
+        content: SizedBox(
+          width: 420,
+          child: details.isEmpty
+              ? const Text('По этой бумаге нет активного резерва.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: details.map((row) {
+                    final orderId = (row['order_id'] ?? '').toString();
+                    final qty = (row['qty'] as num?)?.toDouble() ??
+                        double.tryParse('${row['qty']}') ??
+                        0;
+                    return ListTile(
+                      dense: true,
+                      title: Text('Заказ: $orderId'),
+                      subtitle: Text('Резерв: ${qty.toStringAsFixed(2)} м'),
+                    );
+                  }).toList(),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<DataRow> _buildGroupedRows() {
     // Текстовый поиск
     final tokens = _searchController.text
@@ -225,6 +261,7 @@ class _PaperTableState extends State<PaperTable> {
               DataCell(Text('')),
               DataCell(Text('')),
               DataCell(Text('')),
+              DataCell(Text('')),
             ],
           ),
         );
@@ -234,6 +271,7 @@ class _PaperTableState extends State<PaperTable> {
             const DataCell(Text('')),
             DataCell(Text(currentName!,
                 style: const TextStyle(fontWeight: FontWeight.w600))),
+            const DataCell(Text('')),
             const DataCell(Text('')),
             const DataCell(Text('')),
             const DataCell(Text('')),
@@ -255,6 +293,25 @@ class _PaperTableState extends State<PaperTable> {
             DataCell(Text(item.format ?? '')), // Формат
             DataCell(Text(item.grammage ?? '')), // Грамаж
             DataCell(Text(item.note ?? '')), // Заметки
+            DataCell(
+              FutureBuilder<double>(
+                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
+                builder: (context, snapshot) {
+                  final reserved = snapshot.data ?? 0;
+                  if (reserved <= 0) return const Text('—');
+                  return InkWell(
+                    onTap: () => _showReserveDetails(item),
+                    child: Text(
+                      '${reserved.toStringAsFixed(2)} м',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
             DataCell(Row(
               // Действия
               children: [
@@ -337,6 +394,7 @@ class _PaperTableState extends State<PaperTable> {
                         DataColumn(label: Text('Формат')),
                         DataColumn(label: Text('Грамаж')),
                         DataColumn(label: Text('Заметки')),
+                        DataColumn(label: Text('Резерв')),
                         DataColumn(label: Text('Действия')),
                       ],
                       rows: _buildGroupedRows(),

@@ -169,14 +169,22 @@ class OrdersProvider with ChangeNotifier {
   }
 
   Future<String> _materialShortageMessage(OrderModel order) async {
-    final requiredLength = (order.product.length ?? 0).toDouble();
-    if (requiredLength <= 0) return 'Недостаточно материала на складе.';
-    final available = await _fetchMaterialQty(order.material?.id);
-    if (available == null) return 'Материал не найден на складе.';
-    final shortage = requiredLength - available;
-    if (shortage <= 0) return '';
-    return 'Недостаточно материала: требуется ${requiredLength.toStringAsFixed(2)}, '
-        'доступно ${available.toStringAsFixed(2)} (не хватает ${shortage.toStringAsFixed(2)}).';
+    final papers = _resolveOrderPapers(order);
+    if (papers.isEmpty) return 'Материал не выбран в заказе.';
+    for (final paper in papers) {
+      final requiredLength = paper.quantity > 0
+          ? paper.quantity
+          : (order.product.length ?? 0).toDouble();
+      if (requiredLength <= 0) continue;
+      final available = await _fetchMaterialQty(paper.id);
+      if (available == null) return 'Материал "${paper.name}" не найден на складе.';
+      final shortage = requiredLength - available;
+      if (shortage > 0) {
+        return 'Недостаточно материала "${paper.name}": требуется ${requiredLength.toStringAsFixed(2)}, '
+            'доступно ${available.toStringAsFixed(2)} (не хватает ${shortage.toStringAsFixed(2)}).';
+      }
+    }
+    return '';
   }
 
   Future<double?> _fetchMaterialQty(String? materialId) async {
@@ -195,22 +203,48 @@ class OrdersProvider with ChangeNotifier {
       }
     }
 
-    return await fetchQty('materials') ?? await fetchQty('papers');
+    final materialQty = await fetchQty('materials');
+    final paperQty = await fetchQty('papers');
+    final baseQty = materialQty ?? paperQty;
+    if (baseQty == null) return null;
+
+    // Бизнес-правило: доступный остаток бумаги = складской остаток - активный резерв.
+    try {
+      final reserveRows = await _supabase
+          .from('order_paper_reservations')
+          .select('qty')
+          .eq('paper_id', id);
+      if (reserveRows is List && reserveRows.isNotEmpty) {
+        double reserved = 0;
+        for (final raw in reserveRows.whereType<Map>()) {
+          final value = raw['qty'];
+          if (value is num) {
+            reserved += value.toDouble();
+          } else {
+            reserved += double.tryParse('$value') ?? 0;
+          }
+        }
+        return baseQty - reserved;
+      }
+    } catch (_) {
+      // Если таблица резервов ещё не развёрнута, используем старый расчёт.
+    }
+    return baseQty;
   }
 
   Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
-    final String materialId = (order.material?.id ?? '').trim();
-    final double requiredLength = (order.product.length ?? 0).toDouble();
-    if (materialId.isEmpty || requiredLength <= 0) {
-      return true;
+    final papers = _resolveOrderPapers(order);
+    if (papers.isEmpty) return true;
+    for (final paper in papers) {
+      final String materialId = (paper.id ?? '').trim();
+      final double requiredLength = paper.quantity > 0
+          ? paper.quantity
+          : (order.product.length ?? 0).toDouble();
+      if (materialId.isEmpty || requiredLength <= 0) continue;
+      final qty = await _fetchMaterialQty(materialId);
+      if (qty == null || qty < requiredLength) return false;
     }
-
-    final qty = await _fetchMaterialQty(materialId);
-    if (qty == null) {
-      // Если номенклатура не найдена (например, удалена) — не автозапускаем.
-      return false;
-    }
-    return qty >= requiredLength;
+    return true;
   }
 
   // ===== REALTIME =====
@@ -350,6 +384,7 @@ class OrdersProvider with ChangeNotifier {
     String handle = '-',
     String cardboard = 'нет',
     MaterialModel? material,
+    List<MaterialModel> paperMaterials = const [],
     double makeready = 0,
     double val = 0,
     String? pdfUrl,
@@ -377,6 +412,7 @@ class OrdersProvider with ChangeNotifier {
       handle: handle,
       cardboard: cardboard,
       material: material,
+      paperMaterials: paperMaterials,
       makeready: makeready,
       val: val,
       pdfUrl: pdfUrl,
@@ -436,6 +472,15 @@ class OrdersProvider with ChangeNotifier {
           .from('orders')
           .update(updated.toMap()..remove('id'))
           .eq('id', updated.id);
+      if (updated.assignmentCreated ||
+          updated.statusEnum == OrderStatus.in_production) {
+        // Бизнес-правило: при изменении заказа в производстве пересчитываем резерв бумаги.
+        await _syncPaperReservationsForOrder(updated);
+      }
+      final paperHistory = _describePaperChanges(previous: prev, updated: updated);
+      if (paperHistory != null) {
+        await _logOrderEvent(updated.id, 'Изменение бумаги', paperHistory);
+      }
 
       await _logOrderEvent(updated.id, 'Обновление', 'Изменён заказ');
     } catch (e, st) {
@@ -613,7 +658,13 @@ class OrdersProvider with ChangeNotifier {
         notifyListeners();
       }
 
-      await _logOrderEvent(order.id, 'Запуск', 'Заказ запущен в производство');
+      // Бизнес-правило: при запуске бумага уходит в резерв, а не в списание.
+      await _syncPaperReservationsForOrder(order.copyWith(
+        status: OrderStatus.in_production.name,
+        assignmentCreated: true,
+      ));
+      await _logOrderEvent(
+          order.id, 'Запуск', 'Заказ запущен в производство. Бумага переведена в резерв');
       return null;
     } catch (e, st) {
       debugPrint('❌ launchOrder error: $e\n$st');
@@ -635,6 +686,8 @@ class OrdersProvider with ChangeNotifier {
       // Важно: удаляем связанные сущности синхронно, чтобы заказ не "висел"
       // в модуле производственных заданий и рабочем пространстве.
       await _supabase.from('tasks').delete().eq('order_id', id);
+      // Бизнес-правило: удаление заказа освобождает весь резерв бумаги.
+      await _releasePaperReservations(orderId: id);
       await _supabase.from('order_paints').delete().eq('order_id', id);
       try {
         final plan = await _supabase
@@ -1022,6 +1075,102 @@ class OrdersProvider with ChangeNotifier {
     }
 
     await _logPensCompletionWriteoff(order: updated, quantity: quantity);
+    // Бизнес-правило: финальное списание бумаги выполняем только после завершения заказа.
+    await _finalizePaperReservations(orderId: updated.id);
+  }
+
+  List<MaterialModel> _resolveOrderPapers(OrderModel order) {
+    if (order.paperMaterials.isNotEmpty) return order.paperMaterials;
+    if (order.material != null) return <MaterialModel>[order.material!];
+    return const <MaterialModel>[];
+  }
+
+  Future<void> _syncPaperReservationsForOrder(OrderModel order) async {
+    final papers = _resolveOrderPapers(order)
+        .where((paper) => (paper.id ?? '').trim().isNotEmpty)
+        .toList(growable: false);
+    // Бизнес-правило: в production всегда держим актуальный резерв по составу бумаги заказа.
+    await _releasePaperReservations(orderId: order.id);
+    if (papers.isEmpty) return;
+
+    final rows = papers
+        .map((paper) {
+          final qty = paper.quantity > 0
+              ? paper.quantity
+              : (order.product.length ?? 0).toDouble();
+          return <String, dynamic>{
+            'order_id': order.id,
+            'paper_id': paper.id,
+            'qty': qty < 0 ? 0 : qty,
+          };
+        })
+        .where((row) => (row['qty'] as double) > 0)
+        .toList(growable: false);
+
+    if (rows.isEmpty) return;
+    await _supabase.from('order_paper_reservations').insert(rows);
+  }
+
+  Future<void> _releasePaperReservations({required String orderId}) async {
+    await _supabase
+        .from('order_paper_reservations')
+        .delete()
+        .eq('order_id', orderId);
+  }
+
+  Future<void> _finalizePaperReservations({required String orderId}) async {
+    final rows = await _supabase
+        .from('order_paper_reservations')
+        .select('paper_id, qty')
+        .eq('order_id', orderId);
+    if (rows is! List || rows.isEmpty) return;
+    for (final raw in rows.whereType<Map>()) {
+      final row = Map<String, dynamic>.from(raw as Map);
+      final paperId = (row['paper_id'] ?? '').toString().trim();
+      final qty = _toDouble(row['qty']);
+      if (paperId.isEmpty || qty <= 0) continue;
+      await _supabase.from('papers_writeoffs').insert({
+        'paper_id': paperId,
+        'qty': qty,
+        'reason': 'Списание после завершения заказа $orderId',
+        'by_name': AuthHelper.currentUserName ?? '',
+      });
+    }
+    await _releasePaperReservations(orderId: orderId);
+  }
+
+  String? _describePaperChanges({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) {
+    final before = _resolveOrderPapers(previous);
+    final after = _resolveOrderPapers(updated);
+    if (before.length == after.length) {
+      var equal = true;
+      for (var i = 0; i < before.length; i++) {
+        if (before[i].id != after[i].id ||
+            (before[i].quantity - after[i].quantity).abs() > 0.0001) {
+          equal = false;
+          break;
+        }
+      }
+      if (equal) return null;
+    }
+    final user = (AuthHelper.currentUserName ?? 'Сотрудник').trim();
+    final timestamp = DateTime.now().toLocal().toIso8601String();
+    String line(int index, MaterialModel m) =>
+        'Бумага №$index: ${m.name} (${m.quantity.toStringAsFixed(2)} ${m.unit})';
+    final buffer = StringBuffer()
+      ..writeln('$user изменил бумагу $timestamp')
+      ..writeln('Было:')
+      ..writeln(before.isEmpty
+          ? '—'
+          : before.asMap().entries.map((e) => line(e.key + 1, e.value)).join('\n'))
+      ..writeln('Стало:')
+      ..write(after.isEmpty
+          ? '—'
+          : after.asMap().entries.map((e) => line(e.key + 1, e.value)).join('\n'));
+    return buffer.toString().trim();
   }
 
   Future<void> _applyPensConsumption({

@@ -93,6 +93,41 @@ class WarehouseProvider with ChangeNotifier {
   List<Map<String, dynamic>> inventories(String itemId) =>
       List.unmodifiable(_inventoriesByItem[itemId] ?? const []);
 
+  Future<double> paperReservedQty(String paperId) async {
+    final id = paperId.trim();
+    if (id.isEmpty) return 0;
+    final rows = await _sb
+        .from('order_paper_reservations')
+        .select('qty')
+        .eq('paper_id', id);
+    if (rows is! List) return 0;
+    double total = 0;
+    for (final raw in rows.whereType<Map>()) {
+      final value = raw['qty'];
+      if (value is num) {
+        total += value.toDouble();
+      } else {
+        total += double.tryParse('$value') ?? 0;
+      }
+    }
+    return total;
+  }
+
+  Future<List<Map<String, dynamic>>> paperReserveDetails(String paperId) async {
+    final id = paperId.trim();
+    if (id.isEmpty) return const [];
+    final rows = await _sb
+        .from('order_paper_reservations')
+        .select('order_id, qty, created_at')
+        .eq('paper_id', id)
+        .order('created_at', ascending: false);
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList(growable: false);
+  }
+
   static const Map<String, Map<String, String>> _arrMap = {
     'paint': {'table': 'paints_arrivals', 'fk': 'paint_id', 'qty': 'qty'},
     'material': {

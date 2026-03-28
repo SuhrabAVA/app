@@ -99,6 +99,7 @@ class OrderModel {
   String handle;
   String cardboard;
   MaterialModel? material;
+  List<MaterialModel> paperMaterials;
   double makeready;
   double val;
   String? pdfUrl;
@@ -136,6 +137,7 @@ class OrderModel {
     String? handle,
     String? cardboard,
     this.material,
+    List<MaterialModel>? paperMaterials,
     double? makeready,
     double? val,
     this.pdfUrl,
@@ -161,6 +163,11 @@ class OrderModel {
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
+        paperMaterials = List<MaterialModel>.from(
+          (paperMaterials != null && paperMaterials.isNotEmpty)
+              ? paperMaterials
+              : (material != null ? [material] : const <MaterialModel>[]),
+        ),
         makeready = (makeready ?? 0).toDouble(),
         val = (val ?? 0).toDouble(),
         contractSigned = contractSigned ?? false,
@@ -210,6 +217,8 @@ class OrderModel {
         'handle': handle,
         'cardboard': cardboard,
         if (material != null) 'material': material!.toMap(),
+        if (paperMaterials.isNotEmpty)
+          'material_list': paperMaterials.map((m) => m.toMap()).toList(),
         'makeready': makeready,
         'val': val,
         'has_form': hasForm,
@@ -247,6 +256,16 @@ class OrderModel {
 
     final productMap = _asMap(_pickAny(map, const ['product', 'productMap']));
     final materialMap = _asMap(_pickAny(map, const ['material']));
+    final List<MaterialModel> materialList = (() {
+      final raw = _pickAny(map, const ['material_list', 'materialList']);
+      if (raw is List) {
+        return raw
+            .whereType<Map>()
+            .map((item) => MaterialModel.fromMap(Map<String, dynamic>.from(item as Map)))
+            .toList();
+      }
+      return const <MaterialModel>[];
+    })();
 
     final assignmentCreatedBool = _asBool(
             _pickAny(map, const ['assignment_created', 'assignmentCreated'])) ??
@@ -300,6 +319,9 @@ class OrderModel {
       handle: (_pickAny(map, const ['handle']) as String?) ?? '-',
       cardboard: (_pickAny(map, const ['cardboard']) as String?) ?? 'нет',
       material: materialMap.isEmpty ? null : MaterialModel.fromMap(materialMap),
+      paperMaterials: materialList.isNotEmpty
+          ? materialList
+          : (materialMap.isEmpty ? const <MaterialModel>[] : [MaterialModel.fromMap(materialMap)]),
       makeready:
           ((_pickAny(map, const ['makeready']) as num?)?.toDouble()) ?? 0,
       val: ((_pickAny(map, const ['val']) as num?)?.toDouble()) ?? 0,
@@ -352,6 +374,7 @@ class OrderModel {
     String? handle,
     String? cardboard,
     MaterialModel? material,
+    List<MaterialModel>? paperMaterials,
     double? makeready,
     double? val,
     String? pdfUrl,
@@ -382,6 +405,7 @@ class OrderModel {
       handle: handle ?? this.handle,
       cardboard: cardboard ?? this.cardboard,
       material: material ?? this.material,
+      paperMaterials: paperMaterials ?? List<MaterialModel>.from(this.paperMaterials),
       makeready: makeready ?? this.makeready,
       val: val ?? this.val,
       pdfUrl: pdfUrl ?? this.pdfUrl,

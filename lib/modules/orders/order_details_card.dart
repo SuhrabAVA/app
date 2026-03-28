@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/storage_service.dart' as storage;
+import 'material_model.dart';
 import 'order_model.dart';
 
 class OrderDetailsCard extends StatelessWidget {
@@ -276,15 +277,27 @@ class OrderDetailsCard extends StatelessWidget {
   }
 
   String _materialSummary() {
-    final m = order.material;
-    if (m == null) return '—';
-    final parts = <String>[];
-    if (m.name.isNotEmpty) parts.add(m.name);
-    if (m.format != null && m.format!.isNotEmpty) parts.add('(${m.format})Ф');
-    if (m.grammage != null && m.grammage!.isNotEmpty) {
-      parts.add('(${m.grammage})Гр');
+    final materials = order.paperMaterials.isNotEmpty
+        ? order.paperMaterials
+        : <MaterialModel>[
+            if (order.material != null) order.material!,
+          ];
+    if (materials.isEmpty) return '—';
+    final lines = <String>[];
+    for (var i = 0; i < materials.length; i++) {
+      final m = materials[i];
+      final parts = <String>[];
+      if (m.name.isNotEmpty) parts.add(m.name);
+      if (m.format != null && m.format!.isNotEmpty) parts.add('(${m.format})Ф');
+      if (m.grammage != null && m.grammage!.isNotEmpty) {
+        parts.add('(${m.grammage})Гр');
+      }
+      if (m.quantity > 0) {
+        parts.add('${m.quantity.toStringAsFixed(2)} ${m.unit}');
+      }
+      if (parts.isNotEmpty) lines.add('Бумага №${i + 1}: ${parts.join(' ')}');
     }
-    return parts.isEmpty ? '—' : parts.join(' ');
+    return lines.isEmpty ? '—' : lines.join('\n');
   }
 
   @override
