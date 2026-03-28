@@ -134,10 +134,19 @@ class WarehouseProvider with ChangeNotifier {
         .toList(growable: false);
     if (orderIds.isEmpty) return parsedRows;
 
+    bool _isMeaningfulText(String value) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized.isEmpty) return false;
+      return normalized != 'null' &&
+          normalized != 'undefined' &&
+          normalized != 'nan' &&
+          normalized != '-';
+    }
+
     String _firstNotEmpty(Iterable<dynamic> values) {
       for (final value in values) {
         final text = (value ?? '').toString().trim();
-        if (text.isNotEmpty) return text;
+        if (_isMeaningfulText(text)) return text;
       }
       return '';
     }
@@ -176,10 +185,6 @@ class WarehouseProvider with ChangeNotifier {
             productTop['title'],
             product['name'],
             product['title'],
-            row['customer'],
-            data['customer'],
-            row['manager'],
-            data['manager'],
           ]);
           final formNo =
               _firstNotEmpty([row['new_form_no'], data['new_form_no']]);

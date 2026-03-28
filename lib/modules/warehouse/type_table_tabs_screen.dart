@@ -514,13 +514,18 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   children: details.map((row) {
                     final orderId = (row['order_id'] ?? '').toString();
                     final orderName = (row['order_name'] ?? '').toString().trim();
+                    final hasOrderName = orderName.isNotEmpty &&
+                        orderName.toLowerCase() != 'null' &&
+                        orderName.toLowerCase() != 'undefined' &&
+                        orderName.toLowerCase() != 'nan' &&
+                        orderName != '-';
                     final qty = (row['qty'] as num?)?.toDouble() ??
                         double.tryParse('${row['qty']}') ??
                         0;
                     final normalizedOrderId = orderId.trim().isEmpty
                         ? 'Без номера'
                         : orderId.trim();
-                    final orderLabel = orderName.isNotEmpty
+                    final orderLabel = hasOrderName
                         ? orderName
                         : (normalizedOrderId == 'Без номера'
                             ? 'Заказ без названия'
