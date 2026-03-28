@@ -476,9 +476,14 @@ bool _isEffectivelyCompleted(TaskModel task) {
       .where((id) => _execModeForUser(task, id) == ExecutionMode.separate)
       .toList();
   if (performers.isEmpty) return false;
-  // Для отдельных исполнителей считаем этап завершённым только после
-  // явного подтверждения кнопкой "Завершить задание".
-  return false;
+  // Для отдельного режима считаем этап завершённым, когда каждый
+  // исполнитель явно зафиксировал личное завершение (comment: user_done).
+  for (final id in performers) {
+    final hasDone = task.comments
+        .any((c) => c.type == 'user_done' && c.userId == id);
+    if (!hasDone) return false;
+  }
+  return true;
 }
 
 String _workplaceName(PersonnelProvider personnel, String stageId,
@@ -3656,6 +3661,7 @@ class _TasksScreenState extends State<TasksScreen>
                       if (qtyInput == null) return;
                       final qtyText = qtyInput.displayText;
                       final taskProvider = context.read<TaskProvider>();
+                      var separateAllDone = false;
                       if (jointGroup != null) {
                         final helperIds = jointGroup
                             .where((id) => id != widget.employeeId)
@@ -3721,7 +3727,7 @@ class _TasksScreenState extends State<TasksScreen>
                           }
                         }
                         if (allDone) {
-                          // ждём финального подтверждения кнопкой внизу панели
+                          separateAllDone = true;
                         } else {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -3741,7 +3747,7 @@ class _TasksScreenState extends State<TasksScreen>
                         final _secs = _elapsed(latestTask).inSeconds;
                         await taskProvider.updateStatus(
                             task.id,
-                            jointGroup != null
+                            (jointGroup != null || separateAllDone)
                                 ? TaskStatus.completed
                                 : TaskStatus.paused,
                             spentSeconds: _secs,
