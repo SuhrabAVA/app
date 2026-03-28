@@ -134,13 +134,21 @@ class WarehouseProvider with ChangeNotifier {
         .toList(growable: false);
     if (orderIds.isEmpty) return parsedRows;
 
+    final uuidLikePattern = RegExp(
+      r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b',
+    );
+
     bool _isMeaningfulText(String value) {
-      final normalized = value.trim().toLowerCase();
+      final normalized = value.trim();
       if (normalized.isEmpty) return false;
-      return normalized != 'null' &&
-          normalized != 'undefined' &&
-          normalized != 'nan' &&
-          normalized != '-';
+      final lowered = normalized.toLowerCase();
+      if (lowered == 'null' ||
+          lowered == 'undefined' ||
+          lowered == 'nan' ||
+          lowered == '-') {
+        return false;
+      }
+      return !uuidLikePattern.hasMatch(normalized);
     }
 
     String _firstNotEmpty(Iterable<dynamic> values) {

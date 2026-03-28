@@ -713,6 +713,105 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   /// Универсальный выбор по списку id (пытается по списку таблиц)
+
+  static final RegExp _uuidLikePattern = RegExp(
+    r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b',
+  );
+
+  bool _isMeaningfulOrderLabel(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return false;
+    final lower = normalized.toLowerCase();
+    if (lower == 'null' || lower == 'undefined' || lower == 'nan' || lower == '-') {
+      return false;
+    }
+    if (_uuidLikePattern.hasMatch(normalized)) return false;
+    return true;
+  }
+
+  String _firstOrderLabel(Iterable<dynamic> values) {
+    for (final value in values) {
+      final text = (value ?? '').toString().trim();
+      if (_isMeaningfulOrderLabel(text)) return text;
+    }
+    return '';
+  }
+
+  String? _extractOrderIdFromWriteoffNote(String? note) {
+    final source = (note ?? '').trim();
+    if (source.isEmpty) return null;
+    final match = _uuidLikePattern.firstMatch(source);
+    if (match == null) return null;
+    return match.group(0);
+  }
+
+  Future<Map<String, String>> _loadOrderLabelsByIds(Set<String> orderIds) async {
+    if (orderIds.isEmpty) return const <String, String>{};
+    final labels = <String, String>{};
+    try {
+      final rows = await Supabase.instance.client
+          .from('orders')
+          .select('id, title, name, order_name, product_name, new_form_no, data, product')
+          .inFilter('id', orderIds.toList(growable: false));
+      if (rows is! List) return labels;
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final orderId = (row['id'] ?? '').toString().trim();
+        if (orderId.isEmpty) continue;
+
+        final dataRaw = row['data'];
+        final data = dataRaw is Map
+            ? Map<String, dynamic>.from(dataRaw as Map)
+            : <String, dynamic>{};
+        final topProductRaw = row['product'];
+        final topProduct = topProductRaw is Map
+            ? Map<String, dynamic>.from(topProductRaw as Map)
+            : <String, dynamic>{};
+        final dataProductRaw = data['product'];
+        final dataProduct = dataProductRaw is Map
+            ? Map<String, dynamic>.from(dataProductRaw as Map)
+            : <String, dynamic>{};
+
+        final label = _firstOrderLabel([
+          row['title'],
+          row['order_name'],
+          row['product_name'],
+          data['title'],
+          data['order_name'],
+          data['product_name'],
+          topProduct['name'],
+          topProduct['title'],
+          dataProduct['name'],
+          dataProduct['title'],
+          row['name'],
+          data['name'],
+        ]);
+
+        final formNo = _firstOrderLabel([row['new_form_no'], data['new_form_no']]);
+        if (label.isNotEmpty) {
+          labels[orderId] = label;
+        } else if (formNo.isNotEmpty) {
+          labels[orderId] = 'Форма №$formNo';
+        }
+      }
+    } catch (_) {
+      return labels;
+    }
+    return labels;
+  }
+
+  String _humanizeWriteoffNote(String? rawNote, Map<String, String> orderLabels) {
+    final note = (rawNote ?? '').trim();
+    if (note.isEmpty) return '';
+    final match = _uuidLikePattern.firstMatch(note);
+    if (match == null) return note;
+    final orderId = match.group(0) ?? '';
+    if (orderId.isEmpty) return note;
+    final label = orderLabels[orderId];
+    if (label == null || label.trim().isEmpty) return note;
+    return note.replaceFirst(orderId, label.trim());
+  }
+
   Future<List<Map<String, dynamic>>> _selectByIdsAny({
     required List<String> tables,
     required String fk,
@@ -779,6 +878,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
     final baseMap = {for (final r in baseRows) r['id']: r};
 
+    final orderIdsInNotes = logs
+        .map((e) => _extractOrderIdFromWriteoffNote(
+            _pickStr(e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment'])))
+        .whereType<String>()
+        .toSet();
+    final orderLabels = await _loadOrderLabelsByIds(orderIdsInNotes);
+
     return logs.map((e) {
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
@@ -805,8 +911,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           0;
       final dateIso =
           (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
-      final note =
+      final rawNote =
           _pickStr(e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment']);
+      final note = _humanizeWriteoffNote(rawNote, orderLabels);
       final by = _pickStr(e, [
         'by_name',
         'byName',
