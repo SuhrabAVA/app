@@ -520,8 +520,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                     final normalizedOrderId = orderId.trim().isEmpty
                         ? 'Без номера'
                         : orderId.trim();
-                    final orderLabel =
-                        orderName.isNotEmpty ? orderName : 'Заказ №$normalizedOrderId';
+                    final orderLabel = orderName.isNotEmpty
+                        ? orderName
+                        : (normalizedOrderId == 'Без номера'
+                            ? 'Заказ без названия'
+                            : 'Заказ без названия ($normalizedOrderId)');
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.symmetric(
