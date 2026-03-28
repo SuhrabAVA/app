@@ -2574,20 +2574,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             return old.id != next.id ||
                 (old.quantity - next.quantity).abs() > 0.0001;
           });
-      if ((widget.order!.assignmentCreated ||
-              widget.order!.statusEnum == OrderStatus.in_production) &&
-          paperChanged &&
-          _commentsController.text.trim().isEmpty) {
-        if (mounted) {
-          messenger.showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'Укажите причину изменения бумаги в поле "Комментарии" перед сохранением'),
-            ),
-          );
-        }
-        return;
-      }
       // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
       final updated = OrderModel(
         id: widget.order!.id,
