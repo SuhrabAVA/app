@@ -21,6 +21,7 @@ import 'task_model.dart';
 import 'task_provider.dart';
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
+import '../../utils/auth_helper.dart';
 // Additional helpers for time formatting and aggregated timers
 
 class TasksScreen extends StatefulWidget {
@@ -2622,6 +2623,197 @@ class _TasksScreenState extends State<TasksScreen>
     return true;
   }
 
+  bool _isInkConfirmationStage(TaskModel task) {
+    final personnel = context.read<PersonnelProvider>();
+    final templates = context.read<TemplateProvider>();
+    final orders = context.read<OrdersProvider>();
+    final tasks = context.read<TaskProvider>();
+    final label = _stageLabelForOrder(
+      personnel,
+      templates,
+      orders,
+      tasks,
+      task.orderId,
+      task.stageId,
+    ).toLowerCase();
+    return label.contains('флекс') ||
+        label.contains('flexo') ||
+        label.contains('печать') ||
+        label.contains('print');
+  }
+
+  String _orderDisplayNameForWriteoff(OrderModel order) {
+    final code = order.assignmentId?.trim() ?? '';
+    if (code.isNotEmpty) return code;
+    final customer = order.customer.trim();
+    if (customer.isNotEmpty) return customer;
+    return order.id;
+  }
+
+  Future<OrderModel?> _orderById(String orderId) async {
+    final orders = context.read<OrdersProvider>().orders;
+    for (final order in orders) {
+      if (order.id == orderId) return order;
+    }
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _showInkAdjustDialog(
+      List<Map<String, dynamic>> paints) async {
+    final mutable = paints
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: true);
+    final ctrls = <TextEditingController>[];
+    for (final row in mutable) {
+      final qty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
+      ctrls.add(TextEditingController(text: qty.toString()));
+    }
+    final result = await showDialog<List<Map<String, dynamic>>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Фактический расход краски'),
+        content: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Измените фактический расход по каждой краске и сохраните.',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: mutable.length,
+                  itemBuilder: (context, index) {
+                    final row = mutable[index];
+                    final name = (row['paint_name'] ?? row['name'] ?? 'Краска')
+                        .toString();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: TextField(
+                        controller: ctrls[index],
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: '$name (кг)',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () {
+              for (var i = 0; i < mutable.length; i++) {
+                final parsed =
+                    double.tryParse(ctrls[i].text.replaceAll(',', '.').trim()) ??
+                        0;
+                mutable[i]['qty_kg'] = parsed < 0 ? 0 : parsed;
+              }
+              Navigator.of(ctx).pop(mutable);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    for (final c in ctrls) {
+      c.dispose();
+    }
+    return result ?? paints;
+  }
+
+  Future<void> _confirmInkUsageAndWriteoff(TaskModel task) async {
+    if (!_isInkConfirmationStage(task)) return;
+    final order = await _orderById(task.orderId);
+    if (order == null) return;
+
+    final repo = OrdersRepository();
+    final initialPaints = await repo.getPaints(task.orderId);
+    if (initialPaints.isEmpty) return;
+
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Уточнение расхода краски'),
+        content: const Text('Изменился фактический расход краски?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Нет'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Да'),
+          ),
+        ],
+      ),
+    );
+    if (changed == null) return;
+
+    List<Map<String, dynamic>> paints = initialPaints;
+    if (changed) {
+      paints = await _showInkAdjustDialog(initialPaints);
+      final updates = <PaintUsageUpdate>[];
+      for (final row in paints) {
+        final id = (row['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
+        updates.add(PaintUsageUpdate(
+          paintRowId: id,
+          kilograms: qtyKg,
+          grams: qtyKg * 1000,
+          name: (row['paint_name'] ?? row['name'] ?? '').toString(),
+          info: (row['paint_info'] ?? row['info'] ?? '').toString(),
+        ));
+      }
+      if (updates.isNotEmpty) {
+        // Бизнес-правило: сначала фиксируем фактический расход в заказе,
+        // и только потом делаем списание со склада.
+        await repo.applyPaintUsage(orderId: task.orderId, usages: updates);
+      }
+    }
+
+    final client = Supabase.instance.client;
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+    final reason = 'Заказ ${_orderDisplayNameForWriteoff(order)}';
+
+    for (final row in paints) {
+      final paintId = (row['paint_id'] ?? '').toString();
+      final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
+      if (paintId.isEmpty || qtyKg <= 0) continue;
+      await client.rpc('writeoff', params: {
+        'type': 'paint',
+        'item': paintId,
+        'qty': qtyKg,
+        'reason': reason,
+        'by_name': byName,
+      });
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _orderPaintsCache[task.orderId] = paints
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+    });
+  }
+
   Future<void> _finalizeTask(TaskModel task) async {
     final tp = context.read<TaskProvider>();
     final latest = tp.tasks.firstWhere(
@@ -2631,6 +2823,7 @@ class _TasksScreenState extends State<TasksScreen>
     final secs = _elapsed(latest).inSeconds;
     await tp.updateStatus(task.id, TaskStatus.completed,
         spentSeconds: secs, startedAt: null);
+    await _confirmInkUsageAndWriteoff(task);
 
     if (!mounted) return;
     final note = await _askFinishNote();

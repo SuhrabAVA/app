@@ -138,7 +138,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     try {
       final row = await _sb
           .from('orders')
-          .select('is_old_form, new_form_no, form_series, form_code')
+          .select('has_form, is_old_form, new_form_no, form_series, form_code')
           .eq('id', widget.order!.id)
           .maybeSingle();
       if (!mounted) return;
@@ -146,6 +146,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final int? no = ((row?['new_form_no'] as num?)?.toInt());
       final String series = (row?['form_series'] ?? '').toString();
       final String code = (row?['form_code'] ?? '').toString();
+      final bool hasForm = (row?['has_form'] as bool?) ??
+          (isOld != null || no != null || code.isNotEmpty);
       String display = '-';
       if (code.isNotEmpty) {
         display = code;
@@ -161,10 +163,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _orderFormCode = code.isNotEmpty ? code : null;
         _orderFormDisplay = display;
         if (!_formStateInitialized) {
+          _hasForm = hasForm;
           if (isOld != null) {
             _isOldForm = isOld;
           }
-          _editingForm = !(no != null || code.isNotEmpty);
+          _editingForm = hasForm ? !(no != null || code.isNotEmpty) : false;
           _formStateInitialized = true;
         }
       });
@@ -516,7 +519,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final TextEditingController _paintInfoController = TextEditingController();
   bool _paintsRestored = false;
   bool _fetchedOrderForm = false;
-  // Форма: использование старой формы или создание новой
+  // Форма: отдельная галочка наличия + выбор старая/новая.
+  bool _hasForm = false;
   bool _isOldForm = false;
   bool _editingForm = false;
   bool _formStateInitialized = false;
@@ -538,7 +542,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   int _defaultFormNumber = 1;
   // Фото новой формы (при создании)
   Uint8List? _newFormImageBytes;
-  final Map<String, double> _paperWriteoffBaselineByItem = {};
   // Выбранный номер старой формы
   String? _selectedOldForm;
   // Фактическое количество (пока не вычисляется)
@@ -547,8 +550,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<String> _categoryTitles = [];
   bool _catsLoading = false;
   bool _stockExtraAutoloaded = false;
-  bool _materialsBlockLocked = false;
-  bool _printBlockLocked = false;
   bool _launchedNoStartedStages = false;
   bool _launchedWithStartedStages = false;
 
@@ -627,6 +628,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
     _selectedMaterial = template?.material;
+    _hasForm = template?.hasForm ?? false;
 
     // Инициализация каскадных полей (если есть материал в шаблоне)
     _matNameCtl.text = (_selectedMaterial?.name ?? '').trim();
@@ -693,9 +695,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // ensure at least one paint row only for new orders (not editing)
     if (_paints.isEmpty && widget.order == null)
       _paints.add(_PaintEntry(memo: _paintInfo));
-    if (!_hasAnyPaints()) {
-      _isOldForm = true;
-    }
     _loadCategoriesForProduct();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -704,11 +703,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _ensureStockExtrasLoaded();
     });
 
-    final String? initialMaterialId = _selectedMaterial?.id;
-    if (initialMaterialId != null && initialMaterialId.isNotEmpty) {
-      _paperWriteoffBaselineByItem[initialMaterialId] =
-          (_product.length ?? 0).toDouble();
-    }
     if (widget.order != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _loadRuntimeEditLocks();
@@ -836,10 +830,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       setState(() {
         _launchedWithStartedStages = anyStageStarted;
         _launchedNoStartedStages = !anyStageStarted;
-        // Блок "Склад и материалы" запрещён, если стартовал/завершён первый этап.
-        _materialsBlockLocked = firstStarted;
-        // Блок "Печать" запрещён, если стартовал/завершён этап флексопечати.
-        _printBlockLocked = flexoStarted;
       });
     } catch (_) {}
   }
@@ -1407,18 +1397,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void _handlePaintsChanged() {
     final filled = _hasAnyPaints();
-    if (!filled && !_isOldForm) {
-      setState(() {
-        _isOldForm = true;
-        _newFormImageBytes = null;
-        _selectedOldFormRow = null;
-        _selectedOldForm = null;
-        _formResults = [];
-        _formSearchCtl.clear();
-        _loadingForms = false;
-        _selectedOldFormImageUrl = null;
-      });
-    }
     if (_lastPreviewPaintsFilled != filled) {
       _lastPreviewPaintsFilled = filled;
       _scheduleStagePreviewUpdate();
@@ -1508,6 +1486,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   bool _hasAssignedForm() {
+    if (!_hasForm) return false;
     final hasNumber = _orderFormNo != null;
     final hasCode = _orderFormCode != null && _orderFormCode!.trim().isNotEmpty;
     return hasNumber || hasCode;
@@ -1678,11 +1657,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         try {
           final row = await _sb
               .from('orders')
-              .select('is_old_form, new_form_no')
+              .select('has_form, is_old_form, new_form_no, form_code')
               .eq('id', widget.order!.id)
               .maybeSingle();
           if (mounted) {
             setState(() {
+              _hasForm = (row?['has_form'] as bool?) ??
+                  ((row?['is_old_form'] as bool?) != null ||
+                      ((row?['new_form_no'] as num?)?.toInt()) != null ||
+                      (row?['form_code'] ?? '').toString().isNotEmpty);
               _orderFormIsOld = (row?['is_old_form'] as bool?);
               _orderFormNo = ((row?['new_form_no'] as num?)?.toInt());
               _orderFormDisplay =
@@ -1699,10 +1682,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         try {
           final row = await _sb
               .from('orders')
-              .select('is_old_form, new_form_no, form_series, form_code')
+              .select('has_form, is_old_form, new_form_no, form_series, form_code')
               .eq('id', widget.order!.id)
               .maybeSingle();
           if (mounted) {
+            final bool hasForm = (row?['has_form'] as bool?) ??
+                ((row?['is_old_form'] as bool?) != null ||
+                    ((row?['new_form_no'] as num?)?.toInt()) != null ||
+                    (row?['form_code'] ?? '').toString().isNotEmpty);
             final bool? isOld = (row?['is_old_form'] as bool?);
             final int? no = ((row?['new_form_no'] as num?)?.toInt());
             final String series = (row?['form_series'] ?? '').toString();
@@ -1716,6 +1703,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               display = no.toString();
             }
             setState(() {
+              _hasForm = hasForm;
               _orderFormIsOld = isOld;
               _orderFormNo = no;
               _orderFormSeries = series.isNotEmpty ? series : null;
@@ -1955,9 +1943,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       grammage: tmc.grammage ?? '',
       weight: tmc.weight,
     );
-    if (!_paperWriteoffBaselineByItem.containsKey(tmc.id)) {
-      _paperWriteoffBaselineByItem[tmc.id] = 0.0;
-    }
     if (_product.length != null) {
       _lengthExceeded = _product.length! > tmc.quantity;
     }
@@ -2437,13 +2422,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final current = warehouse.allTmc.where((t) => t.id == paperTmc.id).toList();
       final double availableQty =
           current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
-      final String itemId = paperTmc.id;
-      final double prevLen = _paperWriteoffBaselineByItem[itemId] ??
-          ((widget.order?.material?.id == itemId)
-              ? (widget.order?.product.length ?? 0).toDouble()
-              : 0.0);
-      final double toWriteOff = need - prevLen;
-      return toWriteOff <= 0 || toWriteOff <= availableQty;
+      return need <= availableQty;
     }
 
     final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
@@ -2496,6 +2475,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         makeready: _makeready,
         val: _val,
         stageTemplateId: _stageTemplateId,
+        hasForm: _hasForm,
         // Временно отключено в форме создания/редактирования заказа.
         contractSigned: false,
         paymentDone: false,
@@ -2530,6 +2510,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
         stageTemplateId: _stageTemplateId,
+        hasForm: _hasForm,
         // Временно отключено в форме создания/редактирования заказа.
         contractSigned: false,
         paymentDone: false,
@@ -2587,6 +2568,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
           stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
+          hasForm: createdOrUpdatedOrder.hasForm,
           contractSigned: createdOrUpdatedOrder.contractSigned,
           paymentDone: createdOrUpdatedOrder.paymentDone,
           comments: createdOrUpdatedOrder.comments,
@@ -2919,55 +2901,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     if (!mounted && !closeImmediately) return;
 
-    // ВРЕМЕННО: списание материалов со склада отключено по бизнес-требованию.
-    // Ниже оставлен исходный код списания (закомментирован), чтобы позже
-    // можно было безопасно вернуть без потери контекста.
-    /*
-    // Списание материалов/готовой продукции (бумага по длине L)
-    // Выполняем только после запуска заказа в производство.
-    final TmcModel? paperTmc = _selectedMaterialTmc ?? _resolvePaperByText();
-    final double need = (_product.length ?? 0).toDouble();
-    if (createdOrUpdatedOrder.assignmentCreated && paperTmc != null && need > 0) {
-      final current = warehouse.allTmc.where((t) => t.id == paperTmc.id).toList();
-      final double availableQty =
-          current.isNotEmpty ? current.first.quantity : paperTmc.quantity;
-      final String itemId = paperTmc.id;
-      final double prevLen = _paperWriteoffBaselineByItem[itemId] ??
-          ((widget.order?.material?.id == itemId)
-              ? (widget.order?.product.length ?? 0).toDouble()
-              : 0.0);
-      final double toWriteOff = need - prevLen;
-
-      if (toWriteOff > 0 && toWriteOff > availableQty) {
-        if (mounted) {
-          messenger.showSnackBar(
-            const SnackBar(
-                content: Text(
-                    'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
-          );
-        }
-        return;
-      }
-
-      try {
-        await provider.applyPaperWriteoff(createdOrUpdatedOrder);
-        if (toWriteOff > 0) {
-          await warehouse.fetchTmc();
-        }
-      } catch (error) {
-        if (mounted) {
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text('Не удалось списать бумагу: ${error.toString()}'),
-            ),
-          );
-        }
-        return;
-      }
-
-      _paperWriteoffBaselineByItem[itemId] = need;
-    }
-    */
+    // Бизнес-правило: в создании/редактировании заказа списание бумаги отключено полностью.
 
     if (resetForRelaunchAfterEdit) {
       messenger.showSnackBar(
@@ -3145,6 +3079,42 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (!shouldHandle) return;
 
     try {
+      // Новое бизнес-правило: наличие формы управляется отдельной галочкой.
+      // Если галочка выключена — полностью сбрасываем выбранную форму.
+      if (!_hasForm) {
+        await _sb
+            .from('orders')
+            .update({
+              'has_form': false,
+              'is_old_form': null,
+              'new_form_no': null,
+              'form_series': null,
+              'form_code': null,
+            })
+            .eq('id', order.id);
+        if (!mounted) return;
+        setState(() {
+          _orderFormIsOld = null;
+          _orderFormNo = null;
+          _orderFormSeries = null;
+          _orderFormCode = null;
+          _orderFormDisplay = '-';
+          _orderFormSize = null;
+          _orderFormProductType = null;
+          _orderFormColors = null;
+          _orderFormImageUrl = null;
+          _editingForm = false;
+          _selectedOldFormRow = null;
+          _selectedOldForm = null;
+          _formResults = [];
+          _formSearchCtl.clear();
+          _loadingForms = false;
+          _selectedOldFormImageUrl = null;
+          _newFormImageBytes = null;
+        });
+        return;
+      }
+
       WarehouseProvider? wp;
       int? selectedFormNumber;
       dynamic rawSeries;
@@ -3241,6 +3211,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final response = await _sb
           .from('orders')
           .update({
+            'has_form': true,
             'is_old_form': isOldFormValue,
             'new_form_no': selectedFormNumber,
             'form_series': sanitizedSeries,
@@ -3557,47 +3528,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 icon: Icons.print_outlined,
                 backgroundColor: const Color(0xFFFFF4DE),
                 accentColor: const Color(0xFFF4A12F),
-                child: AbsorbPointer(
-                  absorbing: _printBlockLocked,
-                  child: Opacity(
-                    // Бизнес-правило: после старта флексопечати блок "Печать" только для чтения.
-                    opacity: _printBlockLocked ? 0.55 : 1,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (_printBlockLocked)
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 8),
-                            child: Text(
-                              'Редактирование блока "Печать" запрещено: этап флексопечати уже начат.',
-                              style: TextStyle(color: Colors.redAccent, fontSize: 12),
-                            ),
-                          ),
-                        _buildLabelRow(
-                          label: 'Краски',
-                          labelWidth: labelWidth,
-                          child: _buildPaintsSection(wrapWithCard: false),
-                        ),
-                        _buildLabelRow(
-                          label: 'Форма',
-                          labelWidth: labelWidth,
-                          child: _buildFormSection(
-                            context: context,
-                            showFormSummary: showFormSummary,
-                            showFormEditor: showFormEditor,
-                            isEditing: isEditing,
-                            hasAssignedForm: hasAssignedForm,
-                            wrapWithCard: false,
-                          ),
-                        ),
-                        _buildLabelRow(
-                          label: 'PDF',
-                          labelWidth: labelWidth,
-                          child: _buildPdfAttachmentRow(),
-                        ),
-                      ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildLabelRow(
+                      label: 'Краски',
+                      labelWidth: labelWidth,
+                      child: _buildPaintsSection(wrapWithCard: false),
                     ),
-                  ),
+                    _buildLabelRow(
+                      label: 'Форма',
+                      labelWidth: labelWidth,
+                      child: _buildFormSection(
+                        context: context,
+                        showFormSummary: showFormSummary,
+                        showFormEditor: showFormEditor,
+                        isEditing: isEditing,
+                        hasAssignedForm: hasAssignedForm,
+                        wrapWithCard: false,
+                      ),
+                    ),
+                    _buildLabelRow(
+                      label: 'PDF',
+                      labelWidth: labelWidth,
+                      child: _buildPdfAttachmentRow(),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -3620,26 +3576,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         return 'Остаток бумаги по выбранному материалу: '
                             '${paperQty.toStringAsFixed(2)}';
                       }(),
-                      child: AbsorbPointer(
-                        absorbing: _materialsBlockLocked,
-                        child: Opacity(
-                          // Бизнес-правило: после старта первого этапа склад/материалы только для чтения.
-                          opacity: _materialsBlockLocked ? 0.55 : 1,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_materialsBlockLocked)
-                                const Padding(
-                                  padding: EdgeInsets.only(bottom: 8),
-                                  child: Text(
-                                    'Редактирование блока "Склад и материалы" запрещено: первый этап уже начат.',
-                                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
-                                  ),
-                                ),
-                              _buildProductMaterialAndExtras(_product),
-                            ],
-                          ),
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildProductMaterialAndExtras(_product),
+                        ],
                       ),
                     ),
                     _buildLabelRow(
@@ -5732,55 +5673,73 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   List<Widget> _buildFormEditorControls() {
-    final paintsAvailable = _hasAnyPaints();
     final widgets = <Widget>[
+      _buildCompactSwitchTile(
+        label: 'Есть форма',
+        value: _hasForm,
+        onChanged: (val) {
+          setState(() {
+            // Новое бизнес-правило: выбор типа формы возможен только при включенной галочке.
+            _hasForm = val;
+            _editingForm = true;
+            if (!val) {
+              _newFormImageBytes = null;
+              _selectedOldFormRow = null;
+              _selectedOldForm = null;
+              _formResults = [];
+              _formSearchCtl.clear();
+              _loadingForms = false;
+              _selectedOldFormImageUrl = null;
+            }
+          });
+        },
+      ),
+    ];
+
+    if (!_hasForm) {
+      widgets.addAll(const [
+        SizedBox(height: 2),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text('Форма не используется для этого заказа.'),
+        ),
+      ]);
+      return widgets;
+    }
+
+    widgets.addAll([
       _buildCompactSwitchTile(
         label: _isOldForm ? 'Старая форма' : 'Новая форма',
         value: _isOldForm,
-        onChanged: paintsAvailable
-            ? (val) {
-                _formSearchDebounce?.cancel();
-                setState(() {
-                  _isOldForm = val;
-                  if (_isOldForm) {
-                    _newFormImageBytes = null;
-                    if (_formSearchCtl.text.trim().isEmpty) {
-                      _formResults = [];
-                    }
-                    _loadingForms = false;
-                    _selectedOldFormImageUrl = null;
-                  } else {
-                    _selectedOldFormRow = null;
-                    _selectedOldForm = null;
-                    _formResults = [];
-                    _formSearchCtl.clear();
-                    _loadingForms = false;
-                    _selectedOldFormImageUrl = null;
-                  }
-                });
-                if (val) {
-                  final query = _formSearchCtl.text.trim();
-                  if (query.isNotEmpty) {
-                    _reloadForms(search: query);
-                  }
-                }
+        onChanged: (val) {
+          _formSearchDebounce?.cancel();
+          setState(() {
+            _isOldForm = val;
+            if (_isOldForm) {
+              _newFormImageBytes = null;
+              if (_formSearchCtl.text.trim().isEmpty) {
+                _formResults = [];
               }
-            : null,
-      )
-    ];
-
-    if (!paintsAvailable) {
-      widgets.addAll([
-        const SizedBox(height: 2),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            'Без краски доступна только старая форма (можно оставить пусто).',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-      ]);
-    }
+              _loadingForms = false;
+              _selectedOldFormImageUrl = null;
+            } else {
+              _selectedOldFormRow = null;
+              _selectedOldForm = null;
+              _formResults = [];
+              _formSearchCtl.clear();
+              _loadingForms = false;
+              _selectedOldFormImageUrl = null;
+            }
+          });
+          if (val) {
+            final query = _formSearchCtl.text.trim();
+            if (query.isNotEmpty) {
+              _reloadForms(search: query);
+            }
+          }
+        },
+      ),
+    ]);
 
     if (_isOldForm) {
       widgets.add(TextField(
@@ -5845,6 +5804,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Widget _buildFormSummary(BuildContext context) {
+    if (!_hasForm) {
+      return Text(
+        'Форма не используется',
+        style: Theme.of(context).textTheme.bodySmall,
+      );
+    }
     final items = <Widget>[];
     if (_orderFormIsOld != null) {
       items.add(Text(_orderFormIsOld! ? 'Старая форма' : 'Новая форма'));
@@ -5886,11 +5851,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _formSearchDebounce?.cancel();
     setState(() {
       _editingForm = true;
+      _hasForm = _hasAssignedForm() || _hasForm;
       if (_orderFormIsOld != null) {
         _isOldForm = _orderFormIsOld!;
-      }
-      if (!_hasAnyPaints()) {
-        _isOldForm = true;
       }
       if (_isOldForm) {
         _selectedOldFormImageUrl = _orderFormImageUrl;
@@ -6053,6 +6016,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
 // Формируем отображаемый код формы для текущего состояния (создание/редактирование)
   String _formDisplayPreview() {
+    if (!_hasForm) return '-';
     final bool isEditing = widget.order != null;
     final bool editableState =
         !isEditing || _editingForm || !_hasAssignedForm();
