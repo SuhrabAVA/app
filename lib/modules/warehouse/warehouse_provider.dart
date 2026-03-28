@@ -134,25 +134,47 @@ class WarehouseProvider with ChangeNotifier {
         .toList(growable: false);
     if (orderIds.isEmpty) return parsedRows;
 
+    String _firstNotEmpty(Iterable<dynamic> values) {
+      for (final value in values) {
+        final text = (value ?? '').toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
     final labelsByOrderId = <String, String>{};
     try {
       final orderRows = await _sb
           .from('orders')
-          .select('id, title, name, customer, new_form_no')
+          .select('id, data')
           .inFilter('id', orderIds);
       if (orderRows is List) {
         for (final raw in orderRows.whereType<Map>()) {
           final row = Map<String, dynamic>.from(raw as Map);
           final orderId = (row['id'] ?? '').toString().trim();
           if (orderId.isEmpty) continue;
-          final title = (row['title'] ?? '').toString().trim();
-          final name = (row['name'] ?? '').toString().trim();
-          final customer = (row['customer'] ?? '').toString().trim();
-          final formNo = (row['new_form_no'] ?? '').toString().trim();
-          final primaryLabel = [title, name, customer]
-              .firstWhere((value) => value.isNotEmpty, orElse: () => '');
-          final label =
-              primaryLabel.isNotEmpty ? primaryLabel : (formNo.isNotEmpty ? 'Форма №$formNo' : '');
+          final dataRaw = row['data'];
+          final data = dataRaw is Map
+              ? Map<String, dynamic>.from(dataRaw as Map)
+              : <String, dynamic>{};
+          final productRaw = data['product'];
+          final product = productRaw is Map
+              ? Map<String, dynamic>.from(productRaw as Map)
+              : <String, dynamic>{};
+
+          final primaryLabel = _firstNotEmpty([
+            data['title'],
+            data['name'],
+            data['order_name'],
+            product['name'],
+            product['title'],
+            data['customer'],
+            data['manager'],
+          ]);
+          final formNo = (data['new_form_no'] ?? '').toString().trim();
+          final label = primaryLabel.isNotEmpty
+              ? primaryLabel
+              : (formNo.isNotEmpty ? 'Форма №$formNo' : 'Заказ без названия');
           if (label.isNotEmpty) labelsByOrderId[orderId] = label;
         }
       }

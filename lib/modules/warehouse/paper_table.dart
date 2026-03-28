@@ -199,12 +199,21 @@ class _PaperTableState extends State<PaperTable> {
                   shrinkWrap: true,
                   children: details.map((row) {
                     final orderId = (row['order_id'] ?? '').toString();
+                    final orderName = (row['order_name'] ?? '').toString().trim();
                     final qty = (row['qty'] as num?)?.toDouble() ??
                         double.tryParse('${row['qty']}') ??
                         0;
+                    final normalizedOrderId = orderId.trim().isEmpty
+                        ? 'Без номера'
+                        : orderId.trim();
+                    final orderLabel = orderName.isNotEmpty
+                        ? orderName
+                        : (normalizedOrderId == 'Без номера'
+                            ? 'Заказ без названия'
+                            : 'Заказ без названия ($normalizedOrderId)');
                     return ListTile(
                       dense: true,
-                      title: Text('Заказ: $orderId'),
+                      title: Text(orderLabel),
                       subtitle: Text('Резерв: ${qty.toStringAsFixed(2)} м'),
                     );
                   }).toList(),
