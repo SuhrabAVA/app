@@ -1193,11 +1193,14 @@ class OrdersProvider with ChangeNotifier {
   }
 
   String _buildOrderLabelForWriteoff(OrderModel order) {
-    final assignment = (order.assignmentId ?? '').trim();
-    if (assignment.isNotEmpty) return assignment;
-
     final customer = order.customer.trim();
     if (customer.isNotEmpty) return customer;
+
+    final productName = order.product.type.trim();
+    if (productName.isNotEmpty) return productName;
+
+    final assignment = (order.assignmentId ?? '').trim();
+    if (assignment.isNotEmpty) return assignment;
 
     return order.id;
   }
