@@ -428,12 +428,35 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
+    final provider = context.read<WarehouseProvider>();
+    final String currentTypeKey = _normalizeType(widget.type);
+
+    String resolveDescription(WarehouseLogEntry entry) {
+      final String original = entry.description.trim();
+      final bool hasMeaningfulDescription =
+          original.isNotEmpty && original != '-' && original != '—';
+      if (hasMeaningfulDescription) return original;
+
+      final String itemId = (entry.itemId ?? '').trim();
+      if (itemId.isEmpty) return entry.description;
+
+      try {
+        final tmc = provider.allTmc.firstWhere(
+          (item) => item.id == itemId && _normalizeType(item.type) == currentTypeKey,
+        );
+        final String fallback = (tmc.description ?? '').trim();
+        if (fallback.isNotEmpty) return fallback;
+      } catch (_) {}
+
+      return entry.description;
+    }
+
     return entries
         .map((entry) {
           final isCanceled = _logIsCanceled(const {}, entry.note);
           return _LogRow(
             id: entry.id,
-            description: entry.description,
+            description: resolveDescription(entry),
             quantity: entry.quantity.toDouble(),
             unit: entry.unit,
             dateIso: entry.timestampIso,
