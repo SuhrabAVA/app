@@ -311,32 +311,32 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
   Future<void> _loadAll() async {
     setState(() => _loading = true);
     try {
-      final itemsRes = await _sb.from('warehouse_category_items').select();
-      final allItems = ((itemsRes as List?) ?? []).cast<Map<String, dynamic>>();
-
-      // uniq table_key
+      // Load table keys separately (only for current category), then fetch
+      // only needed item rows.
       if (widget.hasSubtables) {
+        final keyRows = await _sb
+            .from('warehouse_category_items')
+            .select('table_key')
+            .eq('category_id', widget.categoryId);
         final s = <String>{};
-        for (final r in allItems) {
-          if (r['category_id']?.toString() == widget.categoryId) {
-            final k = (r['table_key'] ?? '').toString();
-            if (k.isNotEmpty) s.add(k);
-          }
+        for (final r in ((keyRows as List?) ?? []).cast<Map<String, dynamic>>()) {
+          final k = (r['table_key'] ?? '').toString();
+          if (k.isNotEmpty) s.add(k);
         }
         _tableKeys = s.toList()..sort();
         _tableKey ??= _tableKeys.isNotEmpty ? _tableKeys.first : 'общая';
       }
 
-      // items for this category (+table_key if needed)
-      _items = allItems
-          .where((r) {
-            final sameCat = r['category_id']?.toString() == widget.categoryId;
-            if (!sameCat) return false;
-            if (widget.hasSubtables) {
-              return (r['table_key'] ?? '').toString() == (_tableKey ?? '');
-            }
-            return true;
-          })
+      var itemsQuery = _sb
+          .from('warehouse_category_items')
+          .select('id, description, quantity, table_key, size, comment')
+          .eq('category_id', widget.categoryId);
+      if (widget.hasSubtables) {
+        itemsQuery = itemsQuery.eq('table_key', _tableKey ?? '');
+      }
+      final itemsRes = await itemsQuery;
+      _items = ((itemsRes as List?) ?? [])
+          .cast<Map<String, dynamic>>()
           .map((r) => {
                 'id': r['id'],
                 'description': r['description'],
@@ -350,54 +350,69 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
             .toString()
             .compareTo((b['description'] ?? '').toString()));
 
-      // load logs
-      final wrRes = await _sb.from('warehouse_category_writeoffs').select();
-      final invRes = await _sb.from('warehouse_category_inventories').select();
-      final itemIds = _items.map((e) => e['id'].toString()).toSet();
+      final itemIds = _items
+          .map((e) => e['id']?.toString())
+          .whereType<String>()
+          .toList();
 
       final itemMeta = {
         for (final it in _items) it['id'].toString(): it,
       };
 
-      _writeoffs = ((wrRes as List?) ?? [])
-          .cast<Map<String, dynamic>>()
-          .where((r) => itemIds.contains(r['item_id']?.toString()))
-          .map((r) => {
-                'id': r['id'],
-                'item_id': r['item_id'],
-                'qty': r['qty'],
-                'reason': r['reason'],
-                'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
-                'created_at': r['created_at'],
-                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
-                'comment': r['comment'] ??
-                    r['reason'] ??
-                    itemMeta[r['item_id']?.toString()]?['comment'],
-              })
-          .toList()
-        ..sort((a, b) => (b['created_at'] ?? '')
-            .toString()
-            .compareTo((a['created_at'] ?? '').toString()));
+      if (itemIds.isEmpty) {
+        _writeoffs = [];
+        _inventories = [];
+      } else {
+        final wrFuture = _sb
+            .from('warehouse_category_writeoffs')
+            .select('id, item_id, qty, reason, by_name, employee_name, employee, created_at, size, comment')
+            .inFilter('item_id', itemIds);
+        final invFuture = _sb
+            .from('warehouse_category_inventories')
+            .select('id, item_id, counted_qty, note, by_name, employee_name, employee, created_at, size, comment')
+            .inFilter('item_id', itemIds);
+        final results = await Future.wait([wrFuture, invFuture]);
+        final wrRes = results[0];
+        final invRes = results[1];
 
-      _inventories = ((invRes as List?) ?? [])
-          .cast<Map<String, dynamic>>()
-          .where((r) => itemIds.contains(r['item_id']?.toString()))
-          .map((r) => {
-                'id': r['id'],
-                'item_id': r['item_id'],
-                'counted_qty': r['counted_qty'],
-                'note': r['note'],
-                'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
-                'created_at': r['created_at'],
-                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
-                'comment': r['comment'] ??
-                    r['note'] ??
-                    itemMeta[r['item_id']?.toString()]?['comment'],
-              })
-          .toList()
-        ..sort((a, b) => (b['created_at'] ?? '')
-            .toString()
-            .compareTo((a['created_at'] ?? '').toString()));
+        _writeoffs = ((wrRes as List?) ?? [])
+            .cast<Map<String, dynamic>>()
+            .map((r) => {
+                  'id': r['id'],
+                  'item_id': r['item_id'],
+                  'qty': r['qty'],
+                  'reason': r['reason'],
+                  'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
+                  'created_at': r['created_at'],
+                  'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                  'comment': r['comment'] ??
+                      r['reason'] ??
+                      itemMeta[r['item_id']?.toString()]?['comment'],
+                })
+            .toList()
+          ..sort((a, b) => (b['created_at'] ?? '')
+              .toString()
+              .compareTo((a['created_at'] ?? '').toString()));
+
+        _inventories = ((invRes as List?) ?? [])
+            .cast<Map<String, dynamic>>()
+            .map((r) => {
+                  'id': r['id'],
+                  'item_id': r['item_id'],
+                  'counted_qty': r['counted_qty'],
+                  'note': r['note'],
+                  'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
+                  'created_at': r['created_at'],
+                  'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                  'comment': r['comment'] ??
+                      r['note'] ??
+                      itemMeta[r['item_id']?.toString()]?['comment'],
+                })
+            .toList()
+          ..sort((a, b) => (b['created_at'] ?? '')
+              .toString()
+              .compareTo((a['created_at'] ?? '').toString()));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
