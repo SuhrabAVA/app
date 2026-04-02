@@ -172,9 +172,7 @@ class OrdersProvider with ChangeNotifier {
     final papers = _resolveOrderPapers(order);
     if (papers.isEmpty) return 'Материал не выбран в заказе.';
     for (final paper in papers) {
-      final requiredLength = paper.quantity > 0
-          ? paper.quantity
-          : (order.product.length ?? 0).toDouble();
+      final requiredLength = _requiredPaperReserveQty(order, paper);
       if (requiredLength <= 0) continue;
       final available = await _fetchMaterialQty(paper.id);
       if (available == null) return 'Материал "${paper.name}" не найден на складе.';
@@ -237,9 +235,7 @@ class OrdersProvider with ChangeNotifier {
     if (papers.isEmpty) return true;
     for (final paper in papers) {
       final String materialId = (paper.id ?? '').trim();
-      final double requiredLength = paper.quantity > 0
-          ? paper.quantity
-          : (order.product.length ?? 0).toDouble();
+      final double requiredLength = _requiredPaperReserveQty(order, paper);
       if (materialId.isEmpty || requiredLength <= 0) continue;
       final qty = await _fetchMaterialQty(materialId);
       if (qty == null || qty < requiredLength) return false;
@@ -1211,6 +1207,16 @@ class OrdersProvider with ChangeNotifier {
     return const <MaterialModel>[];
   }
 
+  double _requiredPaperReserveQty(OrderModel order, MaterialModel paper) {
+    final double length =
+        (order.product.length ?? 0).toDouble();
+    if (length > 0) return length;
+
+    if (paper.quantity > 0) return paper.quantity;
+    if (paper.weight != null && paper.weight! > 0) return paper.weight!;
+    return 0;
+  }
+
   Future<String?> _syncPaperReservationsForOrder(OrderModel order) async {
     final papers = _resolveOrderPapers(order)
         .where((paper) => (paper.id ?? '').trim().isNotEmpty)
@@ -1223,9 +1229,7 @@ class OrdersProvider with ChangeNotifier {
     for (final paper in papers) {
       final paperId = (paper.id ?? '').trim();
       if (paperId.isEmpty) continue;
-      final qty = paper.quantity > 0
-          ? paper.quantity
-          : (order.product.length ?? 0).toDouble();
+      final qty = _requiredPaperReserveQty(order, paper);
       if (qty <= 0) continue;
       aggregated.update(
         paperId,
