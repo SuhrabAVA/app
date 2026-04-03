@@ -2949,10 +2949,12 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   String _orderDisplayNameForWriteoff(OrderModel order) {
-    final code = order.assignmentId?.trim() ?? '';
-    if (code.isNotEmpty) return code;
+    final productName = order.product.type.trim();
+    if (productName.isNotEmpty) return productName;
     final customer = order.customer.trim();
     if (customer.isNotEmpty) return customer;
+    final code = order.assignmentId?.trim() ?? '';
+    if (code.isNotEmpty) return code;
     return order.id;
   }
 
@@ -3046,6 +3048,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final changed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('Уточнение расхода краски'),
         content: const Text('Изменился фактический расход краски?'),
@@ -3061,10 +3064,8 @@ class _TasksScreenState extends State<TasksScreen>
         ],
       ),
     );
-    if (changed == null) return;
-
     List<Map<String, dynamic>> paints = initialPaints;
-    if (changed) {
+    if (changed == true) {
       paints = await _showInkAdjustDialog(initialPaints);
       final updates = <PaintUsageUpdate>[];
       for (final row in paints) {
