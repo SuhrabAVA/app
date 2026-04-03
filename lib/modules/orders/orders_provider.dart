@@ -556,14 +556,12 @@ class OrdersProvider with ChangeNotifier {
           .from('orders')
           .update(updated.toMap()..remove('id'))
           .eq('id', updated.id);
-      if (updated.assignmentCreated ||
-          updated.statusEnum == OrderStatus.in_production) {
-        // Ключевое бизнес-правило: правка бумаги в работе синхронно
-        // перерасчитывает reserve и не делает writeoff.
-        final reserveError = await _syncPaperReservationsForOrder(updated);
-        if (reserveError != null) {
-          throw Exception(reserveError);
-        }
+      // Ключевое бизнес-правило рабочего пространства: при правке бумаги
+      // резерв должен пересчитываться всегда, чтобы детали ПЗ и склад
+      // оставались синхронизированы даже если статус/флаг запуска устарели.
+      final reserveError = await _syncPaperReservationsForOrder(updated);
+      if (reserveError != null) {
+        throw Exception(reserveError);
       }
       final paperHistory = _describePaperChanges(
         previous: prev,
