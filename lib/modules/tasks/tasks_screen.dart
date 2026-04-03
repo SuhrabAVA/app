@@ -2930,6 +2930,10 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   bool _isInkConfirmationStage(TaskModel task) {
+    final stageId = task.stageId.trim().toLowerCase();
+    if (stageId.contains('flexo') || stageId.contains('флекс')) {
+      return true;
+    }
     final personnel = context.read<PersonnelProvider>();
     final templates = context.read<TemplateProvider>();
     final orders = context.read<OrdersProvider>();
@@ -2942,10 +2946,7 @@ class _TasksScreenState extends State<TasksScreen>
       task.orderId,
       task.stageId,
     ).toLowerCase();
-    return label.contains('флекс') ||
-        label.contains('flexo') ||
-        label.contains('печать') ||
-        label.contains('print');
+    return label.contains('флекс') || label.contains('flexo');
   }
 
   String _orderDisplayNameForWriteoff(OrderModel order) {
@@ -2953,9 +2954,7 @@ class _TasksScreenState extends State<TasksScreen>
     if (productName.isNotEmpty) return productName;
     final customer = order.customer.trim();
     if (customer.isNotEmpty) return customer;
-    final code = order.assignmentId?.trim() ?? '';
-    if (code.isNotEmpty) return code;
-    return order.id;
+    return 'Без названия';
   }
 
 
