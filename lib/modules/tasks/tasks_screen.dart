@@ -1009,11 +1009,29 @@ class _TasksScreenState extends State<TasksScreen>
             ),
           ];
 
+    double initialPaperQty(MaterialModel item) {
+      final fromCurrent = item.quantity > 0 ? item.quantity : 0.0;
+      final orderQty =
+          latest.product.quantity > 0 ? latest.product.quantity.toDouble() : 0.0;
+      if (fromCurrent <= 0) return orderQty;
+
+      final orderLength = (latest.product.length ?? 0).toDouble();
+      final looksAutoLength =
+          orderLength > 0 && (fromCurrent - orderLength).abs() < 0.0001;
+      if (looksAutoLength && orderQty > 0) {
+        return orderQty;
+      }
+      return fromCurrent;
+    }
+
     final qtyControllers = <TextEditingController>[
       for (final item in selected)
-        TextEditingController(
-          text: item.quantity > 0 ? item.quantity.toStringAsFixed(2) : '',
-        ),
+        () {
+          final qty = initialPaperQty(item);
+          return TextEditingController(
+            text: qty > 0 ? qty.toStringAsFixed(2) : '',
+          );
+        }(),
     ];
     final reasonController = TextEditingController();
     final formKey = GlobalKey<FormState>();
