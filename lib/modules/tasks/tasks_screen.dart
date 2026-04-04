@@ -2951,10 +2951,27 @@ class _TasksScreenState extends State<TasksScreen>
 
   String _orderDisplayNameForWriteoff(OrderModel order) {
     final productName = order.product.type.trim();
-    if (productName.isNotEmpty) return productName;
+    if (productName.isNotEmpty && !_looksLikeOrderCode(productName)) {
+      return productName;
+    }
     final customer = order.customer.trim();
-    if (customer.isNotEmpty) return customer;
+    if (customer.isNotEmpty && !_looksLikeOrderCode(customer)) {
+      return customer;
+    }
     return 'Без названия';
+  }
+
+  bool _looksLikeOrderCode(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    if (RegExp(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+        .hasMatch(normalized)) {
+      return true;
+    }
+    if (RegExp(r'^(заказ\s*)?#?\d+$').hasMatch(normalized)) {
+      return true;
+    }
+    return false;
   }
 
 
@@ -3089,7 +3106,8 @@ class _TasksScreenState extends State<TasksScreen>
     final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
         ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
         : AuthHelper.currentUserName!;
-    final reason = 'Заказ ${_orderDisplayNameForWriteoff(order)}';
+    final reason =
+        'Списание после этапа «Флексопечать»: ${_orderDisplayNameForWriteoff(order)}';
 
     for (final row in paints) {
       final paintId = (row['paint_id'] ?? '').toString();
