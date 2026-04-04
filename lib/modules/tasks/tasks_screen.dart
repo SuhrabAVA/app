@@ -757,11 +757,9 @@ final Map<String, _TaskSelectionState> _selectionCache = {};
 
 class _InkUsageDialogResult {
   final List<Map<String, dynamic>> paints;
-  final int? producedQuantity;
 
   const _InkUsageDialogResult({
     required this.paints,
-    required this.producedQuantity,
   });
 }
 
@@ -3005,10 +3003,8 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<_InkUsageDialogResult?> _showInkAdjustDialog(
-    List<Map<String, dynamic>> paints, {
-    required bool requireProducedQuantity,
-    String? unitLabel,
-  }) async {
+    List<Map<String, dynamic>> paints,
+  ) async {
     final mutable = paints
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: true);
@@ -3017,7 +3013,6 @@ class _TasksScreenState extends State<TasksScreen>
       final qty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
       ctrls.add(TextEditingController(text: qty.toString()));
     }
-    final producedCtrl = TextEditingController();
     final result = await showDialog<_InkUsageDialogResult>(
       context: context,
       barrierDismissible: false,
@@ -3075,20 +3070,6 @@ class _TasksScreenState extends State<TasksScreen>
                   },
                 ),
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: producedCtrl,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: unitLabel?.trim().isNotEmpty == true
-                      ? 'Сделано, ${unitLabel!.trim()}'
-                      : 'Сделано, шт',
-                  hintText: requireProducedQuantity
-                      ? 'Обязательное поле'
-                      : 'Заполните при необходимости',
-                  border: const OutlineInputBorder(),
-                ),
-              ),
             ],
           ),
         ),
@@ -3113,29 +3094,9 @@ class _TasksScreenState extends State<TasksScreen>
                 }
                 mutable[i]['qty_kg'] = parsed;
               }
-              final producedRaw = producedCtrl.text.trim();
-              final producedQty =
-                  producedRaw.isEmpty ? null : int.tryParse(producedRaw);
-              if (requireProducedQuantity && producedQty == null) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(
-                    content: Text('Укажите корректное количество сделанной продукции.'),
-                  ),
-                );
-                return;
-              }
-              if (producedQty != null && producedQty < 0) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(
-                    content: Text('Количество сделанной продукции не может быть отрицательным.'),
-                  ),
-                );
-                return;
-              }
               Navigator.of(ctx).pop(
                 _InkUsageDialogResult(
                   paints: mutable,
-                  producedQuantity: producedQty,
                 ),
               );
             },
@@ -3147,7 +3108,6 @@ class _TasksScreenState extends State<TasksScreen>
     for (final c in ctrls) {
       c.dispose();
     }
-    producedCtrl.dispose();
     return result;
   }
 
@@ -3190,28 +3150,30 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
-  Future<bool> _confirmInkUsageAndWriteoff(TaskModel task) async {
-    if (!_isInkConfirmationStage(task)) return true;
+  Future<List<Map<String, dynamic>>?> _collectInkUsageForWriteoff(
+      TaskModel task) async {
+    if (!_isInkConfirmationStage(task)) return const <Map<String, dynamic>>[];
     final order = _orderById(task.orderId);
-    if (order == null) return true;
+    if (order == null) return const <Map<String, dynamic>>[];
 
     final repo = OrdersRepository();
     final initialPaints = await repo.getPaints(task.orderId);
-    if (initialPaints.isEmpty) return true;
+    if (initialPaints.isEmpty) return const <Map<String, dynamic>>[];
 
-    final unitLabel = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
-    final dialogResult = await _showInkAdjustDialog(
-      initialPaints,
-      requireProducedQuantity: true,
-      unitLabel: unitLabel,
-    );
-    if (dialogResult == null) return false;
+    final dialogResult = await _showInkAdjustDialog(initialPaints);
+    if (dialogResult == null) return null;
     final paints = dialogResult.paints;
-    final producedQty = dialogResult.producedQuantity;
+    await _validateInkAvailability(paints);
+    return paints;
+  }
+
+  Future<bool> _writeoffInks(TaskModel task, List<Map<String, dynamic>> paints) async {
+    if (paints.isEmpty) return true;
+    final order = _orderById(task.orderId);
+    if (order == null) return true;
+    final repo = OrdersRepository();
 
     try {
-      await _validateInkAvailability(paints);
-
       final warehouse = context.read<WarehouseProvider>();
       final taskProvider = context.read<TaskProvider>();
       final stageName = _stageLabel(task).trim().isEmpty
@@ -3259,18 +3221,6 @@ class _TasksScreenState extends State<TasksScreen>
       if (updates.isNotEmpty) {
         await repo.applyPaintUsage(orderId: task.orderId, usages: updates);
       }
-      if (producedQty != null) {
-        final qtyText = unitLabel?.trim().isNotEmpty == true
-            ? '$producedQty ${unitLabel!.trim()}'
-            : producedQty.toString();
-        await taskProvider.addCommentAutoUser(
-          taskId: task.id,
-          type: 'quantity_done',
-          text: qtyText,
-          userIdOverride: widget.employeeId,
-        );
-      }
-
       if (!mounted) return false;
       setState(() {
         _orderPaintsCache[task.orderId] = paints
@@ -3288,8 +3238,35 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _finalizeTask(TaskModel task) async {
-    final wroteOff = await _confirmInkUsageAndWriteoff(task);
-    if (!wroteOff) return;
+    final unitLabel = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
+    final paints = await _collectInkUsageForWriteoff(task);
+    if (paints == null) return;
+
+    _QuantityInput? qtyInput;
+    while (true) {
+      qtyInput = await _askQuantity(
+        context,
+        unit: unitLabel,
+        allowPaperEdit: true,
+      );
+      if (qtyInput == null) return;
+      if (!qtyInput.openPaperEditor) break;
+      final order = _orderById(task.orderId);
+      if (order == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Не удалось найти заказ для редактирования бумаги.'),
+            ),
+          );
+        }
+        return;
+      }
+      await _openPaperEditDialog(order);
+    }
+
+    if (qtyInput == null) return;
+    final qtyText = qtyInput.displayText;
 
     final tp = context.read<TaskProvider>();
     final latest = tp.tasks.firstWhere(
@@ -3299,6 +3276,16 @@ class _TasksScreenState extends State<TasksScreen>
     final secs = _elapsed(latest).inSeconds;
     await tp.updateStatus(task.id, TaskStatus.completed,
         spentSeconds: secs, startedAt: null);
+
+    await tp.addCommentAutoUser(
+      taskId: task.id,
+      type: 'quantity_done',
+      text: qtyText,
+      userIdOverride: widget.employeeId,
+    );
+
+    final wroteOff = await _writeoffInks(task, paints);
+    if (!wroteOff) return;
 
     if (!mounted) return;
     final note = await _askFinishNote();
