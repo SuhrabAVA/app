@@ -757,7 +757,12 @@ final Map<String, _TaskSelectionState> _selectionCache = {};
 
 class _InkUsageDialogResult {
   final List<Map<String, dynamic>> paints;
-  const _InkUsageDialogResult({required this.paints});
+  final int? producedQuantity;
+
+  const _InkUsageDialogResult({
+    required this.paints,
+    required this.producedQuantity,
+  });
 }
 
 class _TasksScreenState extends State<TasksScreen>
@@ -3000,7 +3005,10 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<_InkUsageDialogResult?> _showInkAdjustDialog(
-      List<Map<String, dynamic>> paints) async {
+    List<Map<String, dynamic>> paints, {
+    required bool requireProducedQuantity,
+    String? unitLabel,
+  }) async {
     final mutable = paints
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: true);
@@ -3009,6 +3017,7 @@ class _TasksScreenState extends State<TasksScreen>
       final qty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
       ctrls.add(TextEditingController(text: qty.toString()));
     }
+    final producedCtrl = TextEditingController();
     final result = await showDialog<_InkUsageDialogResult>(
       context: context,
       barrierDismissible: false,
@@ -3066,6 +3075,20 @@ class _TasksScreenState extends State<TasksScreen>
                   },
                 ),
               ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: producedCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: unitLabel?.trim().isNotEmpty == true
+                      ? 'Сделано, ${unitLabel!.trim()}'
+                      : 'Сделано, шт',
+                  hintText: requireProducedQuantity
+                      ? 'Обязательное поле'
+                      : 'Заполните при необходимости',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
             ],
           ),
         ),
@@ -3090,7 +3113,31 @@ class _TasksScreenState extends State<TasksScreen>
                 }
                 mutable[i]['qty_kg'] = parsed;
               }
-              Navigator.of(ctx).pop(_InkUsageDialogResult(paints: mutable));
+              final producedRaw = producedCtrl.text.trim();
+              final producedQty =
+                  producedRaw.isEmpty ? null : int.tryParse(producedRaw);
+              if (requireProducedQuantity && producedQty == null) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Укажите корректное количество сделанной продукции.'),
+                  ),
+                );
+                return;
+              }
+              if (producedQty != null && producedQty < 0) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Количество сделанной продукции не может быть отрицательным.'),
+                  ),
+                );
+                return;
+              }
+              Navigator.of(ctx).pop(
+                _InkUsageDialogResult(
+                  paints: mutable,
+                  producedQuantity: producedQty,
+                ),
+              );
             },
             child: const Text('Сохранить и завершить'),
           ),
@@ -3100,6 +3147,7 @@ class _TasksScreenState extends State<TasksScreen>
     for (final c in ctrls) {
       c.dispose();
     }
+    producedCtrl.dispose();
     return result;
   }
 
@@ -3151,27 +3199,17 @@ class _TasksScreenState extends State<TasksScreen>
     final initialPaints = await repo.getPaints(task.orderId);
     if (initialPaints.isEmpty) return true;
 
-    final dialogResult = await _showInkAdjustDialog(initialPaints);
+    final unitLabel = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
+    final dialogResult = await _showInkAdjustDialog(
+      initialPaints,
+      requireProducedQuantity: true,
+      unitLabel: unitLabel,
+    );
     if (dialogResult == null) return false;
     final paints = dialogResult.paints;
+    final producedQty = dialogResult.producedQuantity;
 
     try {
-      final updates = <PaintUsageUpdate>[];
-      for (final row in paints) {
-        final id = (row['id'] ?? '').toString();
-        if (id.isEmpty) continue;
-        final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
-        updates.add(PaintUsageUpdate(
-          paintRowId: id,
-          grams: qtyKg * 1000,
-          name: (row['paint_name'] ?? row['name'] ?? '').toString(),
-          info: (row['paint_info'] ?? row['info'] ?? '').toString(),
-        ));
-      }
-      if (updates.isNotEmpty) {
-        await repo.applyPaintUsage(orderId: task.orderId, usages: updates);
-      }
-
       await _validateInkAvailability(paints);
 
       final warehouse = context.read<WarehouseProvider>();
@@ -3203,6 +3241,32 @@ class _TasksScreenState extends State<TasksScreen>
           taskId: task.id,
           type: 'ink_writeoff',
           text: reason,
+          userIdOverride: widget.employeeId,
+        );
+      }
+      final updates = <PaintUsageUpdate>[];
+      for (final row in paints) {
+        final id = (row['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
+        updates.add(PaintUsageUpdate(
+          paintRowId: id,
+          grams: qtyKg * 1000,
+          name: (row['paint_name'] ?? row['name'] ?? '').toString(),
+          info: (row['paint_info'] ?? row['info'] ?? '').toString(),
+        ));
+      }
+      if (updates.isNotEmpty) {
+        await repo.applyPaintUsage(orderId: task.orderId, usages: updates);
+      }
+      if (producedQty != null) {
+        final qtyText = unitLabel?.trim().isNotEmpty == true
+            ? '$producedQty ${unitLabel!.trim()}'
+            : producedQty.toString();
+        await taskProvider.addCommentAutoUser(
+          taskId: task.id,
+          type: 'quantity_done',
+          text: qtyText,
           userIdOverride: widget.employeeId,
         );
       }
