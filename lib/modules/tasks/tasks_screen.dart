@@ -2984,6 +2984,21 @@ class _TasksScreenState extends State<TasksScreen>
     return false;
   }
 
+  String _stageLabel(TaskModel task) {
+    final personnel = context.read<PersonnelProvider>();
+    final templates = context.read<TemplateProvider>();
+    final orders = context.read<OrdersProvider>();
+    final tasks = context.read<TaskProvider>();
+    return _stageLabelForOrder(
+      personnel,
+      templates,
+      orders,
+      tasks,
+      task.orderId,
+      task.stageId,
+    );
+  }
+
   Future<_InkUsageDialogResult?> _showInkAdjustDialog(
       List<Map<String, dynamic>> paints) async {
     final mutable = paints
