@@ -757,9 +757,11 @@ final Map<String, _TaskSelectionState> _selectionCache = {};
 
 class _InkUsageDialogResult {
   final List<Map<String, dynamic>> paints;
+  final _QuantityInput quantityInput;
 
   const _InkUsageDialogResult({
     required this.paints,
+    required this.quantityInput,
   });
 }
 
@@ -3004,16 +3006,21 @@ class _TasksScreenState extends State<TasksScreen>
 
   Future<_InkUsageDialogResult?> _showInkAdjustDialog(
     List<Map<String, dynamic>> paints,
+    String? unit, {
+    bool allowPaperEdit = false,
   ) async {
     final mutable = paints
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: true);
     final ctrls = <TextEditingController>[];
+    final qtyCtrl = TextEditingController();
+    final unitLabel = (unit ?? '').trim();
+    const paperEditValue = '__open_paper_edit__';
     for (final row in mutable) {
       final qty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
       ctrls.add(TextEditingController(text: qty.toString()));
     }
-    final result = await showDialog<_InkUsageDialogResult>(
+    final result = await showDialog<Object?>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
@@ -3027,6 +3034,18 @@ class _TasksScreenState extends State<TasksScreen>
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'Проверьте расход по каждой краске и укажите фактическое количество.',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: qtyCtrl,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: unitLabel.isNotEmpty
+                      ? 'Количество выполнено ($unitLabel)'
+                      : 'Количество выполнено',
+                  border: const OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 12),
@@ -3074,6 +3093,11 @@ class _TasksScreenState extends State<TasksScreen>
           ),
         ),
         actions: [
+          if (allowPaperEdit)
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(paperEditValue),
+              child: const Text('Изменить бумагу'),
+            ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Отмена'),
@@ -3094,9 +3118,26 @@ class _TasksScreenState extends State<TasksScreen>
                 }
                 mutable[i]['qty_kg'] = parsed;
               }
+              final quantity = int.tryParse(qtyCtrl.text.trim());
+              if (quantity == null || quantity < 0) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                    content:
+                        Text('Укажите корректное количество выполненной продукции.'),
+                  ),
+                );
+                return;
+              }
+              final qtyDisplay = unitLabel.isNotEmpty
+                  ? '$quantity $unitLabel'
+                  : quantity.toString();
               Navigator.of(ctx).pop(
                 _InkUsageDialogResult(
                   paints: mutable,
+                  quantityInput: _QuantityInput(
+                    quantity: quantity,
+                    displayText: qtyDisplay,
+                  ),
                 ),
               );
             },
@@ -3108,7 +3149,21 @@ class _TasksScreenState extends State<TasksScreen>
     for (final c in ctrls) {
       c.dispose();
     }
-    return result;
+    qtyCtrl.dispose();
+    if (result == paperEditValue) {
+      return const _InkUsageDialogResult(
+        paints: <Map<String, dynamic>>[],
+        quantityInput: _QuantityInput(
+          quantity: 0,
+          displayText: '',
+          openPaperEditor: true,
+        ),
+      );
+    }
+    if (result is _InkUsageDialogResult) {
+      return result;
+    }
+    return null;
   }
 
   Future<void> _validateInkAvailability(List<Map<String, dynamic>> paints) async {
@@ -3148,23 +3203,6 @@ class _TasksScreenState extends State<TasksScreen>
         );
       }
     }
-  }
-
-  Future<List<Map<String, dynamic>>?> _collectInkUsageForWriteoff(
-      TaskModel task) async {
-    if (!_isInkConfirmationStage(task)) return const <Map<String, dynamic>>[];
-    final order = _orderById(task.orderId);
-    if (order == null) return const <Map<String, dynamic>>[];
-
-    final repo = OrdersRepository();
-    final initialPaints = await repo.getPaints(task.orderId);
-    if (initialPaints.isEmpty) return const <Map<String, dynamic>>[];
-
-    final dialogResult = await _showInkAdjustDialog(initialPaints);
-    if (dialogResult == null) return null;
-    final paints = dialogResult.paints;
-    await _validateInkAvailability(paints);
-    return paints;
   }
 
   Future<bool> _writeoffInks(TaskModel task, List<Map<String, dynamic>> paints) async {
@@ -3239,18 +3277,54 @@ class _TasksScreenState extends State<TasksScreen>
 
   Future<void> _finalizeTask(TaskModel task) async {
     final unitLabel = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
-    final paints = await _collectInkUsageForWriteoff(task);
-    if (paints == null) return;
-
+    List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
     _QuantityInput? qtyInput;
-    while (true) {
-      qtyInput = await _askQuantity(
+    if (_isInkConfirmationStage(task)) {
+      final initialPaints = await OrdersRepository().getPaints(task.orderId);
+      if (initialPaints.isNotEmpty) {
+        var mutablePaints = initialPaints;
+        while (true) {
+          final dialogResult = await _showInkAdjustDialog(
+            mutablePaints,
+            unitLabel,
+            allowPaperEdit: true,
+          );
+          if (dialogResult == null) return;
+          if (dialogResult.quantityInput.openPaperEditor) {
+            final order = _orderById(task.orderId);
+            if (order == null) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Не удалось найти заказ для редактирования бумаги.'),
+                  ),
+                );
+              }
+              return;
+            }
+            await _openPaperEditDialog(order);
+            continue;
+          }
+          mutablePaints = dialogResult.paints;
+          await _validateInkAvailability(mutablePaints);
+          paints = mutablePaints;
+          qtyInput = dialogResult.quantityInput;
+          break;
+        }
+      }
+    }
+
+    while (qtyInput == null) {
+      final result = await _askQuantity(
         context,
         unit: unitLabel,
         allowPaperEdit: true,
       );
-      if (qtyInput == null) return;
-      if (!qtyInput.openPaperEditor) break;
+      if (result == null) return;
+      if (!result.openPaperEditor) {
+        qtyInput = result;
+        break;
+      }
       final order = _orderById(task.orderId);
       if (order == null) {
         if (context.mounted) {
@@ -3265,7 +3339,6 @@ class _TasksScreenState extends State<TasksScreen>
       await _openPaperEditDialog(order);
     }
 
-    if (qtyInput == null) return;
     final qtyText = qtyInput.displayText;
 
     final tp = context.read<TaskProvider>();
