@@ -3061,44 +3061,54 @@ class _TasksScreenState extends State<TasksScreen>
               ),
               const SizedBox(height: 12),
               Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: mutable.length,
-                  itemBuilder: (context, index) {
-                    final row = mutable[index];
-                    final name = (row['paint_name'] ?? row['name'] ?? 'Краска')
-                        .toString();
-                    final orderedQty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          Expanded(flex: 3, child: Text(name)),
-                          Expanded(
-                            flex: 2,
-                            child: Text(
-                              'По заказу: ${orderedQty.toStringAsFixed(3)} кг',
-                              textAlign: TextAlign.end,
+                child: mutable.isEmpty
+                    ? const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'В заказе не указаны краски. При необходимости вернитесь и добавьте их в заказ.',
+                        ),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: mutable.length,
+                        itemBuilder: (context, index) {
+                          final row = mutable[index];
+                          final name =
+                              (row['paint_name'] ?? row['name'] ?? 'Краска')
+                                  .toString();
+                          final orderedQty =
+                              (row['qty_kg'] as num?)?.toDouble() ?? 0;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Expanded(flex: 3, child: Text(name)),
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    'По заказу: ${orderedQty.toStringAsFixed(3)} кг',
+                                    textAlign: TextAlign.end,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  flex: 2,
+                                  child: TextField(
+                                    controller: ctrls[index],
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Факт, кг',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 2,
-                            child: TextField(
-                              controller: ctrls[index],
-                              keyboardType: const TextInputType.numberWithOptions(
-                                  decimal: true),
-                              decoration: const InputDecoration(
-                                labelText: 'Факт, кг',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                        ],
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
               ),
             ],
           ),
@@ -3291,37 +3301,45 @@ class _TasksScreenState extends State<TasksScreen>
     List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
     _QuantityInput? qtyInput;
     if (_isInkConfirmationStage(task)) {
-      final initialPaints = await OrdersRepository().getPaints(task.orderId);
-      if (initialPaints.isNotEmpty) {
-        var mutablePaints = initialPaints;
-        while (true) {
-          final dialogResult = await _showInkAdjustDialog(
-            mutablePaints,
-            unitLabel,
-            allowPaperEdit: true,
+      List<Map<String, dynamic>> initialPaints = const <Map<String, dynamic>>[];
+      try {
+        initialPaints = await OrdersRepository().getPaints(task.orderId);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось загрузить краски заказа: $e')),
           );
-          if (dialogResult == null) return;
-          if (dialogResult.quantityInput.openPaperEditor) {
-            final order = _orderById(task.orderId);
-            if (order == null) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Не удалось найти заказ для редактирования бумаги.'),
-                  ),
-                );
-              }
-              return;
-            }
-            await _openPaperEditDialog(order);
-            continue;
-          }
-          mutablePaints = dialogResult.paints;
-          await _validateInkAvailability(mutablePaints);
-          paints = mutablePaints;
-          qtyInput = dialogResult.quantityInput;
-          break;
         }
+        return;
+      }
+      var mutablePaints = initialPaints;
+      while (true) {
+        final dialogResult = await _showInkAdjustDialog(
+          mutablePaints,
+          unitLabel,
+          allowPaperEdit: true,
+        );
+        if (dialogResult == null) return;
+        if (dialogResult.quantityInput.openPaperEditor) {
+          final order = _orderById(task.orderId);
+          if (order == null) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Не удалось найти заказ для редактирования бумаги.'),
+                ),
+              );
+            }
+            return;
+          }
+          await _openPaperEditDialog(order);
+          continue;
+        }
+        mutablePaints = dialogResult.paints;
+        await _validateInkAvailability(mutablePaints);
+        paints = mutablePaints;
+        qtyInput = dialogResult.quantityInput;
+        break;
       }
     }
 
