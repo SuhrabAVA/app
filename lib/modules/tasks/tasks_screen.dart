@@ -2940,10 +2940,16 @@ class _TasksScreenState extends State<TasksScreen>
 
   bool _isInkConfirmationStage(TaskModel task) {
     final stageId = task.stageId.trim().toLowerCase();
-    if (stageId.contains('flexo') ||
-        stageId.contains('флекс') ||
-        stageId.contains('печать') ||
-        stageId.contains('print')) {
+    const flexoStageAliases = {
+      '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+      'w_flexoprint',
+      'w_flexo',
+      'position:print',
+      'print',
+    };
+    if (flexoStageAliases.contains(stageId) ||
+        stageId.contains('flexo') ||
+        stageId.contains('флекс')) {
       return true;
     }
     final personnel = context.read<PersonnelProvider>();
@@ -2959,9 +2965,7 @@ class _TasksScreenState extends State<TasksScreen>
       task.stageId,
     ).toLowerCase();
     return label.contains('флекс') ||
-        label.contains('flexo') ||
-        label.contains('печать') ||
-        label.contains('print');
+        label.contains('flexo');
   }
 
   String _orderDisplayNameForWriteoff(OrderModel order) {
@@ -2974,6 +2978,13 @@ class _TasksScreenState extends State<TasksScreen>
       return customer;
     }
     return 'Без названия';
+  }
+
+  String _orderReferenceForWriteoff(OrderModel order) {
+    final baseName = _orderDisplayNameForWriteoff(order);
+    final orderId = order.id.trim();
+    if (orderId.isEmpty) return baseName;
+    return '$baseName (ID: $orderId)';
   }
 
   bool _looksLikeOrderCode(String value) {
@@ -3217,7 +3228,7 @@ class _TasksScreenState extends State<TasksScreen>
       final stageName = _stageLabel(task).trim().isEmpty
           ? 'Этап'
           : _stageLabel(task).trim();
-      final orderName = _orderDisplayNameForWriteoff(order);
+      final orderRef = _orderReferenceForWriteoff(order);
       for (final row in paints) {
         final paintId = (row['paint_id'] ?? '').toString();
         final paintName =
@@ -3230,7 +3241,7 @@ class _TasksScreenState extends State<TasksScreen>
         }
 
         final reason =
-            'Заказ: $orderName | Списание краски: $paintName | Кол-во: ${qtyKg.toStringAsFixed(3)} кг | Этап: $stageName';
+            'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${qtyKg.toStringAsFixed(3)} кг | Этап: $stageName';
         await warehouse.registerShipment(
           id: paintId,
           type: 'paint',
