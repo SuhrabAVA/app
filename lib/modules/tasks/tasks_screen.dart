@@ -3008,7 +3008,7 @@ class _TasksScreenState extends State<TasksScreen>
     List<Map<String, dynamic>> paints,
     String? unit, {
     bool allowPaperEdit = false,
-  ) async {
+  }) async {
     final mutable = paints
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: true);
