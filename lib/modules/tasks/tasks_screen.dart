@@ -3225,12 +3225,11 @@ class _TasksScreenState extends State<TasksScreen>
     try {
       final warehouse = context.read<WarehouseProvider>();
       final taskProvider = context.read<TaskProvider>();
-      final stageName = _stageLabel(task).trim().isEmpty
-          ? 'Этап'
-          : _stageLabel(task).trim();
       final order = _orderById(task.orderId);
-      final orderRef =
+      final normalizedOrderLabel =
           order != null ? _orderReferenceForWriteoff(order) : task.orderId;
+      final humanReadableReason =
+          'Списание после завершения заказа $normalizedOrderLabel';
       for (final row in paints) {
         final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
             ? (row['paint_id'] ?? '').toString().trim()
@@ -3249,19 +3248,17 @@ class _TasksScreenState extends State<TasksScreen>
               'Для краски «$paintName» не удалось определить складскую позицию.');
         }
 
-        final reason =
-            'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${(qtyKg * 1000).toStringAsFixed(0)} г | Этап: $stageName';
         final qtyForStock = qtyKg * 1000;
         await warehouse.registerShipment(
           id: paintId,
           type: 'paint',
           qty: qtyForStock,
-          reason: reason,
+          reason: humanReadableReason,
         );
         await taskProvider.addCommentAutoUser(
           taskId: task.id,
           type: 'ink_writeoff',
-          text: reason,
+          text: humanReadableReason,
           userIdOverride: widget.employeeId,
         );
       }
