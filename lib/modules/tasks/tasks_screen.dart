@@ -3285,11 +3285,14 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
-  Future<void> _finalizeTask(TaskModel task) async {
+  Future<void> _finalizeTask(
+    TaskModel task, {
+    _QuantityInput? initialQtyInput,
+  }) async {
     final unitLabel =
         _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
     List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
-    _QuantityInput? qtyInput;
+    _QuantityInput? qtyInput = initialQtyInput;
     if (_isInkConfirmationStage(task)) {
       List<Map<String, dynamic>> initialPaints = const <Map<String, dynamic>>[];
       try {
@@ -4031,7 +4034,7 @@ class _TasksScreenState extends State<TasksScreen>
                         final _secs = _elapsed(latestTask).inSeconds;
                         final shouldCloseStage = jointGroup != null || separateAllDone;
                         if (_isInkConfirmationStage(task)) {
-                          await _finalizeTask(task);
+                          await _finalizeTask(task, initialQtyInput: qtyInput);
                           return;
                         }
                         final nextStatus =
@@ -4669,7 +4672,8 @@ class _TasksScreenState extends State<TasksScreen>
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
-              if (task.assignees.isNotEmpty)
+              if (task.assignees.isNotEmpty &&
+                  stageMode == ExecutionMode.separate)
                 Align(
                   alignment: Alignment.centerRight,
                   child: ElevatedButton.icon(
