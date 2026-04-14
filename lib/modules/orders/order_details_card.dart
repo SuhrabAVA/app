@@ -292,9 +292,7 @@ class OrderDetailsCard extends StatelessWidget {
       if (m.grammage != null && m.grammage!.isNotEmpty) {
         parts.add('(${m.grammage})Гр');
       }
-      if (m.quantity > 0) {
-        parts.add('${m.quantity.toStringAsFixed(2)} ${m.unit}');
-      }
+      
       if (parts.isNotEmpty) lines.add('Бумага №${i + 1}: ${parts.join(' ')}');
     }
     return lines.isEmpty ? '—' : lines.join('\n');
@@ -735,4 +733,4 @@ class OrderDetailsCard extends StatelessWidget {
       ),
     );
   }
-}
+}  
