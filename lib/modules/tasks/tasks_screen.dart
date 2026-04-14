@@ -3155,8 +3155,16 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _validateInkAvailability(List<Map<String, dynamic>> paints) async {
+    final warehouse = context.read<WarehouseProvider>();
     final ids = paints
-        .map((row) => (row['paint_id'] ?? '').toString())
+        .map((row) {
+          final directId = (row['paint_id'] ?? '').toString().trim();
+          if (directId.isNotEmpty) return directId;
+          final paintName =
+              (row['paint_name'] ?? row['name'] ?? '').toString().trim();
+          if (paintName.isEmpty) return '';
+          return warehouse.getPaintByName(paintName)?.id ?? '';
+        })
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList(growable: false);
@@ -3176,7 +3184,14 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     for (final row in paints) {
-      final paintId = (row['paint_id'] ?? '').toString();
+      final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
+          ? (row['paint_id'] ?? '').toString().trim()
+          : (warehouse
+                  .getPaintByName(
+                    (row['paint_name'] ?? row['name'] ?? '').toString().trim(),
+                  )
+                  ?.id ??
+              '');
       final paintName =
           (row['paint_name'] ?? row['name'] ?? 'Краска').toString();
       final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
@@ -3207,7 +3222,14 @@ class _TasksScreenState extends State<TasksScreen>
           : _stageLabel(task).trim();
       final orderRef = _orderReferenceForWriteoff(order);
       for (final row in paints) {
-        final paintId = (row['paint_id'] ?? '').toString();
+        final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
+            ? (row['paint_id'] ?? '').toString().trim()
+            : (warehouse
+                    .getPaintByName(
+                      (row['paint_name'] ?? row['name'] ?? '').toString().trim(),
+                    )
+                    ?.id ??
+                '');
         final paintName =
             (row['paint_name'] ?? row['name'] ?? 'Краска').toString();
         final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
