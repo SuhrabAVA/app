@@ -4230,7 +4230,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 },
               ),
               const SizedBox(height: 4),
-              if (_stockExtraAutoloaded) _buildStockExtraResults(),
+              if (_stockExtraAutoloaded &&
+                  (_stockExtraFocusNode.hasFocus ||
+                      _stockExtraSearchController.text.trim().isNotEmpty))
+                _buildStockExtraResults(),
             ],
           ),
           const SizedBox.shrink(),

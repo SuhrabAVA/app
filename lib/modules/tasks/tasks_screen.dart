@@ -778,6 +778,7 @@ class _TasksScreenState extends State<TasksScreen>
   bool _selectionUpdateScheduled = false;
   String? _lastQueueSyncGroupId;
   String? _lastQueueSyncIdsSignature;
+  final Set<String> _startingTaskIds = <String>{};
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
     final normalized = value?.trim();
@@ -1133,7 +1134,7 @@ class _TasksScreenState extends State<TasksScreen>
                                       decimal: true,
                                     ),
                                     decoration: const InputDecoration(
-                                      labelText: 'Количество (м)',
+                                      labelText: 'Длина L (м)',
                                     ),
                                     validator: (value) {
                                       final normalized =
@@ -1209,10 +1210,12 @@ class _TasksScreenState extends State<TasksScreen>
                             errorText = null;
                           });
                           final nextMaterials = <MaterialModel>[];
+                          double? nextLengthL;
                           for (var i = 0; i < selected.length; i++) {
                             final qty = double.parse(
                               qtyControllers[i].text.trim().replaceAll(',', '.'),
                             );
+                            nextLengthL ??= qty;
                             nextMaterials.add(selected[i].copyWith(quantity: qty));
                           }
 
@@ -1224,6 +1227,7 @@ class _TasksScreenState extends State<TasksScreen>
                             orderId: latest.id,
                             paperMaterials: nextMaterials,
                             reason: reasonController.text,
+                            lengthL: nextLengthL,
                           );
                           if (!mounted) return;
                           if (error != null) {
@@ -1665,20 +1669,20 @@ class _TasksScreenState extends State<TasksScreen>
     final stageTasksAll = _selectedWorkplaceId == null
         ? const <TaskModel>[]
         : taskProvider.tasks.where((t) => t.stageId == _selectedWorkplaceId).toList();
-    final stageOrderIds =
-        stageTasksAll.map((task) => task.orderId).toSet().toList();
+    final stageQueueIds =
+        stageTasksAll.map((task) => task.id.trim()).where((id) => id.isNotEmpty).toSet().toList();
 
     _scheduleQueueSyncIfNeeded(
       queue: queue,
       groupId: queueGroupId,
-      ids: _selectedWorkplaceId == null ? orderIds : stageOrderIds,
+      ids: _selectedWorkplaceId == null ? orderIds : stageQueueIds,
     );
 
     final sectionedTasks = tasksForWorkplace.toList();
     sectionedTasks.sort((a, b) =>
         queue
-            .priorityOf(a.orderId, groupId: queueGroupId)
-            .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
+            .priorityOf(a.id, groupId: queueGroupId)
+            .compareTo(queue.priorityOf(b.id, groupId: queueGroupId)));
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
             (t) => t.id == _selectedTask!.id,
@@ -3470,8 +3474,8 @@ class _TasksScreenState extends State<TasksScreen>
     final queueGroupId = _selectedWorkplaceId!.trim();
     final queued = _tasksForWorkplace(taskProvider)
       ..sort((a, b) => queue
-          .priorityOf(a.orderId, groupId: queueGroupId)
-          .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
+          .priorityOf(a.id, groupId: queueGroupId)
+          .compareTo(queue.priorityOf(b.id, groupId: queueGroupId)));
 
     final index = queued.indexWhere((t) => t.id == task.id);
     if (index <= 0) return true;
@@ -3672,6 +3676,7 @@ class _TasksScreenState extends State<TasksScreen>
                             task.comments.any((c) => c.type == 'shift_resume');
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
+                        !_startingTaskIds.contains(task.id) &&
                         !requiresSetupBeforeStart &&
                         !stageStartedBeforeShiftResume &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
@@ -3769,136 +3774,137 @@ class _TasksScreenState extends State<TasksScreen>
                     final personnel = context.read<PersonnelProvider>();
 
                     Future<void> onStart() async {
-                      final taskProvider = context.read<TaskProvider>();
-                      final personnelProvider = personnel;
-                      // Sequential stage guard
-                      if (!_isFirstPendingStage(
-                          taskProvider, personnelProvider, task,
-                          groupResolver: _stageGroupKey)) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text(
-                                  'Сначала выполните предыдущий этап заказа')));
+                      if (_startingTaskIds.contains(task.id)) return;
+                      setState(() => _startingTaskIds.add(task.id));
+                      try {
+                        final taskProvider = context.read<TaskProvider>();
+                        final personnelProvider = personnel;
+                        // Sequential stage guard
+                        if (!_isFirstPendingStage(
+                            taskProvider, personnelProvider, task,
+                            groupResolver: _stageGroupKey)) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content: Text(
+                                    'Сначала выполните предыдущий этап заказа')));
+                          }
+                          return;
                         }
-                        return;
-                      }
 
-
-                      if (!_isUnlockedByWorkplaceQueue(
-                        task,
-                        taskProvider,
-                        context.read<ProductionQueueProvider>(),
-                        stage,
-                      )) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text(
-                                  'Сначала начните предыдущие задания в очереди')));
+                        if (!_isUnlockedByWorkplaceQueue(
+                          task,
+                          taskProvider,
+                          context.read<ProductionQueueProvider>(),
+                          stage,
+                        )) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content: Text(
+                                    'Сначала начните предыдущие задания в очереди')));
+                          }
+                          return;
                         }
-                        return;
-                      }
 
-
-                      if (_hasBlockingActiveOrder(taskProvider, task)) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('Сначала завершите текущий активный заказ')));
+                        if (_hasBlockingActiveOrder(taskProvider, task)) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content:
+                                    Text('Сначала завершите текущий активный заказ')));
+                          }
+                          return;
                         }
-                        return;
-                      }
 
-                      if (_isStageGroupLocked(tp, task)) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('Уже выполняется альтернативный этап')));
+                        if (_isStageGroupLocked(tp, task)) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content: Text('Уже выполняется альтернативный этап')));
+                          }
+                          return;
                         }
-                        return;
-                      }
 
-                      if (_hasMachineForStage(stage) &&
-                          !_hasPendingSetupForStage(task) &&
-                          !_isSetupCompletedForStage(task) &&
-                          !_hasProductionStartedForStage(task)) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text(
-                                  'Сначала начните наладку, затем запускайте этап')));
+                        if (_hasMachineForStage(stage) &&
+                            !_hasPendingSetupForStage(task) &&
+                            !_isSetupCompletedForStage(task) &&
+                            !_hasProductionStartedForStage(task)) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content: Text(
+                                    'Сначала начните наладку, затем запускайте этап')));
+                          }
+                          return;
                         }
-                        return;
-                      }
 
-                      final bool setupInProgressForCurrentUser =
-                          _isSetupInProgressForUser(task, widget.employeeId) &&
-                              !_hasProductionStartedForStage(task);
+                        final bool setupInProgressForCurrentUser =
+                            _isSetupInProgressForUser(task, widget.employeeId) &&
+                                !_hasProductionStartedForStage(task);
 
-                      ExecutionMode? selectedMode = stageExecMode;
-                      final alreadyAssigned =
-                          task.assignees.contains(widget.employeeId);
-                      if (explicitStageMode == null) {
-                        await taskProvider.addComment(
-                              taskId: task.id,
-                              type: 'exec_mode_stage',
-                              text: _executionModeCode(stageExecMode),
-                              userId: widget.employeeId,
-                            );
-                      }
-
-                      if (!alreadyAssigned) {
-                        final newAssignees = List<String>.from(task.assignees)
-                          ..add(widget.employeeId);
-                        await taskProvider.updateAssignees(task.id, newAssignees);
-                      }
-
-                      if (selectedMode != null &&
-                          _needsExecModeRecord(
-                              task, widget.employeeId, selectedMode)) {
-                        await taskProvider.addComment(
-                              taskId: task.id,
-                              type: 'exec_mode',
-                              text: _executionModeCode(selectedMode),
-                              userId: widget.employeeId,
-                            );
-                      }
-                      // Обновляем статус задачи. Не сбрасываем startedAt, если этап уже
-                      // находится в работе – используем существующее значение. В
-                      // состоянии паузы или проблемы возобновляем работу с тем же
-                      // startedAt, чтобы таймер продолжал считаться корректно.
-                      // Всегда обновляем статус: переводим этап в работу и
-                      // сохраняем начальное время. Если этап ещё не начинался,
-                      // фиксируем текущий момент; иначе используем существующий
-                      // startedAt, чтобы не обнулять таймер.
-                      if (_hasMachineForStage(stage) &&
-                          !_isSetupCompletedForUser(
-                              task, widget.employeeId) &&
-                          !setupInProgressForCurrentUser) {
-                        await _finishSetup(task, provider);
-                      }
-                      final startedAtTs = task.startedAt ??
-                          DateTime.now().millisecondsSinceEpoch;
-                      await taskProvider.updateStatus(
-                            task.id,
-                            TaskStatus.inProgress,
-                            startedAt: startedAtTs,
+                        final ExecutionMode? selectedMode = stageExecMode;
+                        final alreadyAssigned =
+                            task.assignees.contains(widget.employeeId);
+                        if (explicitStageMode == null) {
+                          await taskProvider.addComment(
+                            taskId: task.id,
+                            type: 'exec_mode_stage',
+                            text: _executionModeCode(stageExecMode),
+                            userId: widget.employeeId,
                           );
-                      await taskProvider.addCommentAutoUser(
+                        }
+
+                        if (!alreadyAssigned) {
+                          final newAssignees = List<String>.from(task.assignees)
+                            ..add(widget.employeeId);
+                          await taskProvider.updateAssignees(task.id, newAssignees);
+                        }
+
+                        if (selectedMode != null &&
+                            _needsExecModeRecord(
+                                task, widget.employeeId, selectedMode)) {
+                          await taskProvider.addComment(
+                            taskId: task.id,
+                            type: 'exec_mode',
+                            text: _executionModeCode(selectedMode),
+                            userId: widget.employeeId,
+                          );
+                        }
+
+                        if (_hasMachineForStage(stage) &&
+                            !_isSetupCompletedForUser(task, widget.employeeId) &&
+                            !setupInProgressForCurrentUser) {
+                          await _finishSetup(task, provider);
+                        }
+                        final startedAtTs =
+                            task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
+                        await taskProvider.updateStatus(
+                          task.id,
+                          TaskStatus.inProgress,
+                          startedAt: startedAtTs,
+                        );
+                        await taskProvider.addCommentAutoUser(
                           taskId: task.id,
                           type: 'start',
                           text: 'Начал(а) этап',
-                          userIdOverride: widget.employeeId);
-                      if (setupInProgressForCurrentUser) {
-                        // Бизнес-правило: после "Наладка" -> "Пауза/Проблема"
-                        // продолжение возвращает именно в наладку.
-                        await taskProvider.addCommentAutoUser(
+                          userIdOverride: widget.employeeId,
+                        );
+                        if (setupInProgressForCurrentUser) {
+                          await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'setup_resume',
                             text: 'Продолжил(а) наладку',
-                            userIdOverride: widget.employeeId);
-                        await recordTimeEventForUser(
-                          TaskTimeType.setup,
-                          note: 'setup_resume',
-                        );
-                      } else {
-                        await recordTimeEventForUser(TaskTimeType.production);
+                            userIdOverride: widget.employeeId,
+                          );
+                          await recordTimeEventForUser(
+                            TaskTimeType.setup,
+                            note: 'setup_resume',
+                          );
+                        } else {
+                          await recordTimeEventForUser(TaskTimeType.production);
+                        }
+                      } finally {
+                        if (mounted) {
+                          setState(() => _startingTaskIds.remove(task.id));
+                        } else {
+                          _startingTaskIds.remove(task.id);
+                        }
                       }
                     }
 

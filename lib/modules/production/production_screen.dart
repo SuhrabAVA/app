@@ -86,14 +86,14 @@ TaskStatus _groupStatus(List<TaskModel> tasks) {
   if (tasks.any((t) => t.status == TaskStatus.problem)) {
     return TaskStatus.problem;
   }
+  if (tasks.any((t) => t.status == TaskStatus.completed)) {
+    return TaskStatus.completed;
+  }
   if (tasks.any((t) => t.status == TaskStatus.inProgress)) {
     return TaskStatus.inProgress;
   }
   if (tasks.any((t) => t.status == TaskStatus.paused)) {
     return TaskStatus.paused;
-  }
-  if (tasks.any((t) => t.status == TaskStatus.completed)) {
-    return TaskStatus.completed;
   }
   return TaskStatus.waiting;
 }

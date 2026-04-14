@@ -509,6 +509,7 @@ class OrdersProvider with ChangeNotifier {
     required String orderId,
     required List<MaterialModel> paperMaterials,
     required String reason,
+    double? lengthL,
   }) async {
     await _ensureAuthed();
 
@@ -538,7 +539,13 @@ class OrdersProvider with ChangeNotifier {
       return 'Заказ не найден в локальном кеше.';
     }
     final prev = _orders[index];
+    final normalizedLength = lengthL != null && lengthL > 0 ? lengthL : null;
+    final nextProduct = ProductModel.fromMap(prev.product.toMap());
+    if (normalizedLength != null) {
+      nextProduct.length = normalizedLength;
+    }
     final updated = prev.copyWith(
+      product: nextProduct,
       paperMaterials: prepared,
       material: prepared.first,
       comments: trimmedReason,
