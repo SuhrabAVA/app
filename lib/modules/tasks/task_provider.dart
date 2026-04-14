@@ -932,6 +932,11 @@ class TaskProvider with ChangeNotifier {
     }
     try {
       await _supabase.from('tasks').update(updates).eq('id', id);
+      await _syncProdPlanStageStatus(
+        orderId: updated.orderId,
+        stageId: updated.stageId,
+        status: status,
+      );
       // if this task just became completed — check last-stage and update actual_qty
       if (status == TaskStatus.completed) {
         final orderId = updated.orderId;
@@ -961,6 +966,59 @@ class TaskProvider with ChangeNotifier {
               .update({'status': OrderStatus.completed.name}).eq('id', orderId);
         }
       } catch (_) {}
+    }
+  }
+
+  Future<void> _syncProdPlanStageStatus({
+    required String orderId,
+    required String stageId,
+    required TaskStatus status,
+  }) async {
+    final normalizedOrderId = orderId.trim();
+    final normalizedStageId = stageId.trim();
+    if (normalizedOrderId.isEmpty || normalizedStageId.isEmpty) return;
+
+    String? mapped;
+    switch (status) {
+      case TaskStatus.waiting:
+        mapped = 'waiting';
+        break;
+      case TaskStatus.inProgress:
+        mapped = 'inProgress';
+        break;
+      case TaskStatus.paused:
+        mapped = 'paused';
+        break;
+      case TaskStatus.problem:
+        mapped = 'problem';
+        break;
+      case TaskStatus.completed:
+        mapped = 'completed';
+        break;
+    }
+
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', normalizedOrderId)
+          .maybeSingle();
+      final planId = plan?['id']?.toString().trim() ?? '';
+      if (planId.isEmpty) return;
+
+      final payload = <String, dynamic>{'status': mapped};
+      if (status == TaskStatus.completed) {
+        payload['completed_at'] = DateTime.now().toIso8601String();
+      } else {
+        payload['completed_at'] = null;
+      }
+      await _supabase
+          .from('prod_plan_stages')
+          .update(payload)
+          .eq('plan_id', planId)
+          .eq('stage_id', normalizedStageId);
+    } catch (e, st) {
+      debugPrint('⚠️ sync prod_plan_stages status failed: $e\n$st');
     }
   }
 

@@ -3171,7 +3171,7 @@ class _TasksScreenState extends State<TasksScreen>
           final paintName =
               (row['paint_name'] ?? row['name'] ?? '').toString().trim();
           if (paintName.isEmpty) return '';
-          return warehouse.getPaintByName(paintName)?.id ?? '';
+          return _resolvePaintIdForWriteoff(warehouse, paintName) ?? '';
         })
         .where((id) => id.isNotEmpty)
         .toSet()
@@ -3195,11 +3195,10 @@ class _TasksScreenState extends State<TasksScreen>
     for (final row in paints) {
       final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
           ? (row['paint_id'] ?? '').toString().trim()
-          : (warehouse
-                  .getPaintByName(
-                    (row['paint_name'] ?? row['name'] ?? '').toString().trim(),
-                  )
-                  ?.id ??
+          : (_resolvePaintIdForWriteoff(
+                  warehouse,
+                  (row['paint_name'] ?? row['name'] ?? '').toString().trim(),
+                ) ??
               '');
       final paintName =
           (row['paint_name'] ?? row['name'] ?? 'Краска').toString();
@@ -3218,6 +3217,29 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
+  String? _resolvePaintIdForWriteoff(
+      WarehouseProvider warehouse, String paintName) {
+    final normalized = paintName.trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    final exact = warehouse.getPaintByName(normalized);
+    if (exact != null) return exact.id;
+
+    final compactName = normalized.replaceAll(RegExp(r'\\s+'), '');
+    for (final item in warehouse.allTmc) {
+      if (item.type != 'paint') continue;
+      final desc = (item.description ?? '').trim().toLowerCase();
+      if (desc.isEmpty) continue;
+      final compactDesc = desc.replaceAll(RegExp(r'\\s+'), '');
+      if (desc == normalized ||
+          compactDesc == compactName ||
+          desc.contains(normalized) ||
+          normalized.contains(desc)) {
+        return item.id;
+      }
+    }
+    return null;
+  }
+
   Future<bool> _writeoffInks(TaskModel task, List<Map<String, dynamic>> paints) async {
     if (paints.isEmpty) return true;
     final order = _orderById(task.orderId);
@@ -3234,11 +3256,10 @@ class _TasksScreenState extends State<TasksScreen>
       for (final row in paints) {
         final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
             ? (row['paint_id'] ?? '').toString().trim()
-            : (warehouse
-                    .getPaintByName(
-                      (row['paint_name'] ?? row['name'] ?? '').toString().trim(),
-                    )
-                    ?.id ??
+            : (_resolvePaintIdForWriteoff(
+                    warehouse,
+                    (row['paint_name'] ?? row['name'] ?? '').toString().trim(),
+                  ) ??
                 '');
         final paintName =
             (row['paint_name'] ?? row['name'] ?? 'Краска').toString();
@@ -3389,8 +3410,30 @@ class _TasksScreenState extends State<TasksScreen>
       orElse: () => task,
     );
     final secs = _elapsed(latest).inSeconds;
-    await tp.updateStatus(task.id, TaskStatus.completed,
-        spentSeconds: secs, startedAt: null);
+    final groupKey = latest.stageGroupKey.trim().isNotEmpty
+        ? latest.stageGroupKey.trim()
+        : latest.stageId;
+    final relatedTasks = tp.tasks.where((candidate) {
+      if (candidate.orderId != latest.orderId) return false;
+      final candidateGroupKey = candidate.stageGroupKey.trim().isNotEmpty
+          ? candidate.stageGroupKey.trim()
+          : candidate.stageId;
+      return candidateGroupKey == groupKey;
+    }).toList(growable: false);
+
+    if (relatedTasks.isEmpty) {
+      await tp.updateStatus(task.id, TaskStatus.completed,
+          spentSeconds: secs, startedAt: null);
+    } else {
+      for (final stageTask in relatedTasks) {
+        await tp.updateStatus(
+          stageTask.id,
+          TaskStatus.completed,
+          spentSeconds: secs,
+          startedAt: null,
+        );
+      }
+    }
 
     if (!mounted) return;
     final note = await _askFinishNote();
@@ -3695,9 +3738,7 @@ class _TasksScreenState extends State<TasksScreen>
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
                             (stateRowUser == UserRunState.finished &&
-                                stageExecMode == ExecutionMode.separate) ||
-                            (stateRowUser == UserRunState.active &&
-                                isSetupActiveForRow));
+                                stageExecMode == ExecutionMode.separate));
                     final bool shouldShowContinueLabel =
                         stateRowUser == UserRunState.finished &&
                             stageExecMode == ExecutionMode.separate;
