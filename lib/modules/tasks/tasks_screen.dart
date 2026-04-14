@@ -2988,10 +2988,7 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   String _orderReferenceForWriteoff(OrderModel order) {
-    final baseName = _orderDisplayNameForWriteoff(order);
-    final orderId = order.id.trim();
-    if (orderId.isEmpty) return baseName;
-    return '$baseName (ID: $orderId)';
+    return _orderDisplayNameForWriteoff(order);
   }
 
   bool _looksLikeOrderCode(String value) {
@@ -3002,6 +2999,13 @@ class _TasksScreenState extends State<TasksScreen>
       return true;
     }
     if (RegExp(r'^(заказ\s*)?#?\d+$').hasMatch(normalized)) {
+      return true;
+    }
+    if (RegExp(r'^зк[-\\s]?\\d{4}(?:[.\\-/]\\d{1,2}){1,2}[-\\s]?\\d+$')
+        .hasMatch(normalized)) {
+      return true;
+    }
+    if (RegExp(r'^ord[-\\s]?\\d{4}[-\\s]?\\d+$').hasMatch(normalized)) {
       return true;
     }
     return false;
@@ -3182,7 +3186,8 @@ class _TasksScreenState extends State<TasksScreen>
     if (rows is List) {
       for (final raw in rows.whereType<Map>()) {
         final map = Map<String, dynamic>.from(raw);
-        stockById[(map['id'] ?? '').toString()] =
+        final id = (map['id'] ?? '').toString();
+        stockById[id] =
             (map['quantity'] as num?)?.toDouble() ?? 0;
       }
     }
@@ -3203,10 +3208,11 @@ class _TasksScreenState extends State<TasksScreen>
       if (paintId.isEmpty) {
         throw Exception('Для краски «$paintName» не указан складской идентификатор.');
       }
+      final qtyForStock = qtyKg * 1000;
       final current = stockById[paintId] ?? 0;
-      if (qtyKg > current) {
+      if (qtyForStock > current) {
         throw Exception(
-          'Недостаточно краски «$paintName» на складе: доступно ${current.toStringAsFixed(3)} кг, требуется ${qtyKg.toStringAsFixed(3)} кг.',
+          'Недостаточно краски «$paintName» на складе: доступно ${current.toStringAsFixed(0)} г, требуется ${qtyForStock.toStringAsFixed(0)} г.',
         );
       }
     }
@@ -3245,10 +3251,11 @@ class _TasksScreenState extends State<TasksScreen>
 
         final reason =
             'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${(qtyKg * 1000).toStringAsFixed(0)} г | Этап: $stageName';
+        final qtyForStock = qtyKg * 1000;
         await warehouse.registerShipment(
           id: paintId,
           type: 'paint',
-          qty: qtyKg,
+          qty: qtyForStock,
           reason: reason,
         );
         await taskProvider.addCommentAutoUser(
