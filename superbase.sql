@@ -61,6 +61,67 @@ begin
   end if;
 end $$;
 
+create table if not exists public.production_analytics_rates (
+  workplace_id text primary key,
+  unit_price numeric not null default 0,
+  setup_price numeric not null default 0,
+  updated_at timestamptz not null default now()
+);
+alter table public.production_analytics_rates enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'production_analytics_rates'
+      and policyname = 'production_analytics_rates_read'
+  ) then
+    create policy production_analytics_rates_read on public.production_analytics_rates
+      for select
+      using (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'production_analytics_rates'
+      and policyname = 'production_analytics_rates_insert'
+  ) then
+    create policy production_analytics_rates_insert on public.production_analytics_rates
+      for insert
+      with check (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'production_analytics_rates'
+      and policyname = 'production_analytics_rates_update'
+  ) then
+    create policy production_analytics_rates_update on public.production_analytics_rates
+      for update
+      using (auth.uid() is not null)
+      with check (auth.uid() is not null);
+  end if;
+end $$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'production_analytics_rates'
+      and policyname = 'production_analytics_rates_delete'
+  ) then
+    create policy production_analytics_rates_delete on public.production_analytics_rates
+      for delete
+      using (auth.uid() is not null);
+  end if;
+end $$;
+
 create table if not exists public.employee_photos (
   id text primary key,
   data jsonb default '{}'::jsonb,
@@ -1045,4 +1106,3 @@ begin
       using (auth.uid() is not null);
   end if;
 end $$;
-
