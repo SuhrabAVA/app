@@ -404,27 +404,47 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   Future<void> _loadAll() async {
     if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    final typeKey = _normalizeType(widget.type);
+
+    void applySnapshot({
+      required List<TmcModel> items,
+      WarehouseLogsBundle? bundle,
+    }) {
+      final writeoffs =
+          bundle == null ? _writeoffs : _mapBundleLogs(bundle.writeoffs);
+      final inventories =
+          bundle == null ? _inventories : _mapBundleLogs(bundle.inventories);
+      final arrivals = bundle == null ? _arrivals : _mapBundleLogs(bundle.arrivals);
+
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _writeoffs = writeoffs;
+        _inventories = inventories;
+        _arrivals = arrivals;
+      });
+      _notifyThresholds();
+      _resort();
+    }
+
+    // 1) Мгновенно показываем то, что уже есть в памяти.
+    final cachedItems = provider.getTmcByType(widget.type);
+    final cachedBundle = provider.logsBundle(typeKey);
+    applySnapshot(items: cachedItems, bundle: cachedBundle);
+
+    // 2) Затем обновляем данные из БД и перерисовываем экран.
     try {
       await provider.fetchTmc();
     } catch (_) {}
 
-    final items = provider.getTmcByType(widget.type);
-    final typeKey = _normalizeType(widget.type);
-    final bundle = await provider.fetchLogsBundle(typeKey, forceRefresh: true);
-
-    final writeoffs = _mapBundleLogs(bundle.writeoffs);
-    final inventories = _mapBundleLogs(bundle.inventories);
-    final arrivals = _mapBundleLogs(bundle.arrivals);
-
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _writeoffs = writeoffs;
-      _inventories = inventories;
-      _arrivals = arrivals;
-    });
-    _notifyThresholds();
-    _resort();
+    final freshItems = provider.getTmcByType(widget.type);
+    WarehouseLogsBundle? freshBundle;
+    try {
+      freshBundle = await provider.fetchLogsBundle(typeKey, forceRefresh: true);
+    } catch (_) {
+      freshBundle = provider.logsBundle(typeKey);
+    }
+    applySnapshot(items: freshItems, bundle: freshBundle);
   }
 
   List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
