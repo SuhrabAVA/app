@@ -396,50 +396,18 @@ class WarehouseProvider with ChangeNotifier {
   Future<void> fetchTmc({bool factual = false}) async {
     try {
       await _ensureAuthed();
-
-      final p = await _sb.from('paints').select().order('description');
-      final m = await _sb.from('materials').select().order('description');
-      final pr = await _sb.from('papers').select().order('description');
-
-      // --- Stationery (pens use dedicated table) ---
-      List<Map<String, dynamic>> pensRows = [];
-      try {
-        final pensTable = await _resolvePensTable();
-        final pensRaw =
-            await _sb.from(pensTable).select().order('created_at');
-        pensRows = (pensRaw as List)
-            .map((e) => Map<String, dynamic>.from(e))
-            .map((row) {
-          row['__force_type__'] = 'pens';
-          return row;
-        }).toList();
-      } catch (e) {
-        debugPrint('⚠️ load pens failed: $e');
-        pensRows = [];
-      }
-
-      List<Map<String, dynamic>> stationeryRows = [];
-      try {
-        final keyLc = (_stationeryKey).toLowerCase().trim();
-        final isPens =
-            keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
-        if (!isPens) {
-          final sRaw = await _sb
-              .from('warehouse_stationery')
-              .select()
-              .order('description');
-          final filtered = (sRaw as List)
-              .where((row) =>
-                  ((row['table_key'] ?? '').toString().toLowerCase().trim() ==
-                      keyLc))
-              .toList();
-          stationeryRows =
-              filtered.map((e) => Map<String, dynamic>.from(e)).toList();
-        }
-      } catch (e) {
-        debugPrint('⚠️ load stationery failed: $e');
-        stationeryRows = [];
-      }
+      final results = await Future.wait<dynamic>([
+        _sb.from('paints').select().order('description'),
+        _sb.from('materials').select().order('description'),
+        _sb.from('papers').select().order('description'),
+        _loadPensRows(),
+        _loadStationeryRows(),
+      ]);
+      final p = results[0] as List;
+      final m = results[1] as List;
+      final pr = results[2] as List;
+      final pensRows = results[3] as List<Map<String, dynamic>>;
+      final stationeryRows = results[4] as List<Map<String, dynamic>>;
       final List<TmcModel> merged = [];
       for (final e in p) {
         merged.add(_fromRow(type: 'paint', row: Map<String, dynamic>.from(e)));
@@ -473,6 +441,42 @@ class WarehouseProvider with ChangeNotifier {
     } catch (e) {
       debugPrint('❌ fetchTmc: $e');
       rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadPensRows() async {
+    try {
+      final pensTable = await _resolvePensTable();
+      final pensRaw = await _sb.from(pensTable).select().order('created_at');
+      return (pensRaw as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .map((row) {
+        row['__force_type__'] = 'pens';
+        return row;
+      }).toList(growable: false);
+    } catch (e) {
+      debugPrint('⚠️ load pens failed: $e');
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadStationeryRows() async {
+    try {
+      final keyLc = _stationeryKey.toLowerCase().trim();
+      final isPens = keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
+      if (isPens) return const <Map<String, dynamic>>[];
+      final sRaw =
+          await _sb.from('warehouse_stationery').select().order('description');
+      final filtered = (sRaw as List)
+          .where((row) =>
+              ((row['table_key'] ?? '').toString().toLowerCase().trim() ==
+                  keyLc))
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList(growable: false);
+      return filtered;
+    } catch (e) {
+      debugPrint('⚠️ load stationery failed: $e');
+      return const <Map<String, dynamic>>[];
     }
   }
 
@@ -1751,6 +1755,23 @@ class WarehouseProvider with ChangeNotifier {
     return false;
   }
 
+  Future<void> _setQuantity({
+    required String typeKey,
+    required String itemId,
+    required double quantity,
+  }) async {
+    final baseTable = _tableByType(typeKey);
+    var query =
+        _sb.from(baseTable).update({'quantity': quantity}).eq('id', itemId);
+    if (typeKey == 'stationery') {
+      query = query.eq('table_key', _stationeryKey);
+    }
+    final response = await query.select();
+    if (!_hasAffectedRows(response)) {
+      throw Exception('Не удалось обновить остаток по позиции склада');
+    }
+  }
+
   Future<void> cancelWriteoff({
     required String logId,
     required String itemId,
@@ -1765,13 +1786,7 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     final currentQty = await _fetchCurrentQuantity(typeKey, itemId);
-    final baseTable = _tableByType(typeKey);
-    var updateQuery =
-        _sb.from(baseTable).update({'quantity': currentQty + qty}).eq('id', itemId);
-    if (typeKey == 'stationery') {
-      updateQuery = updateQuery.eq('table_key', _stationeryKey);
-    }
-    await updateQuery;
+    await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty + qty);
 
     final tables = <String>[
       if (sourceTable != null) sourceTable,
@@ -1789,6 +1804,9 @@ class WarehouseProvider with ChangeNotifier {
       ],
     );
     if (!marked) {
+      try {
+        await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty);
+      } catch (_) {}
       throw Exception('Не удалось пометить списание как отменённое');
     }
 
@@ -1814,13 +1832,7 @@ class WarehouseProvider with ChangeNotifier {
       throw Exception('Недостаточно материала для отмены приходов');
     }
 
-    final baseTable = _tableByType(typeKey);
-    var updateQuery =
-        _sb.from(baseTable).update({'quantity': currentQty - qty}).eq('id', itemId);
-    if (typeKey == 'stationery') {
-      updateQuery = updateQuery.eq('table_key', _stationeryKey);
-    }
-    await updateQuery;
+    await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty - qty);
 
     final tables = <String>[
       if (sourceTable != null) sourceTable,
@@ -1838,6 +1850,9 @@ class WarehouseProvider with ChangeNotifier {
       ],
     );
     if (!marked) {
+      try {
+        await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty);
+      } catch (_) {}
       throw Exception('Не удалось пометить приход как отменённый');
     }
 
