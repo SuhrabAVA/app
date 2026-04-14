@@ -3221,7 +3221,6 @@ class _TasksScreenState extends State<TasksScreen>
   Future<bool> _writeoffInks(TaskModel task, List<Map<String, dynamic>> paints) async {
     if (paints.isEmpty) return true;
     final order = _orderById(task.orderId);
-    if (order == null) return true;
     final repo = OrdersRepository();
 
     try {
@@ -3230,7 +3229,9 @@ class _TasksScreenState extends State<TasksScreen>
       final stageName = _stageLabel(task).trim().isEmpty
           ? 'Этап'
           : _stageLabel(task).trim();
-      final orderRef = _orderReferenceForWriteoff(order);
+      final orderRef = order != null
+          ? _orderReferenceForWriteoff(order)
+          : task.orderId;
       for (final row in paints) {
         final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
             ? (row['paint_id'] ?? '').toString().trim()
@@ -3691,11 +3692,10 @@ class _TasksScreenState extends State<TasksScreen>
                         // "Завершить задание").
                         // Для совместного режима после user_done повторный запуск
                         // через эту строку недоступен.
-                        (((stateRowUser == UserRunState.idle)) ||
+                        ((((stateRowUser == UserRunState.idle) &&
+                                !userParticipatedInStage)) ||
                             (stateRowUser == UserRunState.paused) ||
                             (stateRowUser == UserRunState.problem) ||
-                            (stateRowUser == UserRunState.finished &&
-                                stageExecMode == ExecutionMode.separate) ||
                             (stateRowUser == UserRunState.active &&
                                 isSetupActiveForRow));
                     final bool shouldShowContinueLabel =
@@ -4043,7 +4043,8 @@ class _TasksScreenState extends State<TasksScreen>
                         (t) => t.id == task.id,
                         orElse: () => task,
                       );
-                      if (!_anyUserActive(latestTask)) {
+                      if (!_anyUserActive(latestTask,
+                          exceptUserId: currentRowUserId)) {
                         final _secs = _elapsed(latestTask).inSeconds;
                         final shouldCloseStage = jointGroup != null || separateAllDone;
                         if (_isInkConfirmationStage(task)) {
