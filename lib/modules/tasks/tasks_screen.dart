@@ -3001,11 +3001,11 @@ class _TasksScreenState extends State<TasksScreen>
     if (RegExp(r'^(заказ\s*)?#?\d+$').hasMatch(normalized)) {
       return true;
     }
-    if (RegExp(r'^зк[-\\s]?\\d{4}(?:[.\\-/]\\d{1,2}){1,2}[-\\s]?\\d+$')
+    if (RegExp(r'^зк[-\s]?\d{4}(?:[.\-/]\d{1,2}){1,2}[-\s]?\d+$')
         .hasMatch(normalized)) {
       return true;
     }
-    if (RegExp(r'^ord[-\\s]?\\d{4}[-\\s]?\\d+$').hasMatch(normalized)) {
+    if (RegExp(r'^ord[-\s]?\d{4}[-\s]?\d+$').hasMatch(normalized)) {
       return true;
     }
     return false;
