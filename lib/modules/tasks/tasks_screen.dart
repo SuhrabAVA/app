@@ -2934,6 +2934,9 @@ class _TasksScreenState extends State<TasksScreen>
   bool _canFinalizeTask(TaskModel task) {
     if (task.status == TaskStatus.completed) return false;
     if (_anyUserActive(task)) return false;
+    if (_isInkConfirmationStage(task)) {
+      return true;
+    }
     if (!_allPerformersFinished(task)) return false;
     return true;
   }
@@ -4041,6 +4044,10 @@ class _TasksScreenState extends State<TasksScreen>
                       if (!_anyUserActive(latestTask)) {
                         final _secs = _elapsed(latestTask).inSeconds;
                         final shouldCloseStage = jointGroup != null || separateAllDone;
+                        if (_isInkConfirmationStage(task)) {
+                          await _finalizeTask(task);
+                          return;
+                        }
                         final nextStatus =
                             shouldCloseStage && !_isInkConfirmationStage(task)
                                 ? TaskStatus.completed
@@ -4676,8 +4683,7 @@ class _TasksScreenState extends State<TasksScreen>
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
-              if (task.assignees.isNotEmpty &&
-                  stageMode == ExecutionMode.separate)
+              if (task.assignees.isNotEmpty)
                 Align(
                   alignment: Alignment.centerRight,
                   child: ElevatedButton.icon(
