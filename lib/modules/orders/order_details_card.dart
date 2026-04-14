@@ -267,12 +267,7 @@ class OrderDetailsCard extends StatelessWidget {
 
   String _lengthValue() {
     final p = order.product;
-    final hasQty = p.blQuantity != null && p.blQuantity!.isNotEmpty;
-    if (p.length != null && hasQty) {
-      return '${p.blQuantity}*${_fmtNum(p.length)}';
-    }
     if (p.length != null) return _fmtNum(p.length);
-    if (hasQty) return p.blQuantity!;
     return '';
   }
 
