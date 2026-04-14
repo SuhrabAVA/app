@@ -3220,8 +3220,6 @@ class _TasksScreenState extends State<TasksScreen>
 
   Future<bool> _writeoffInks(TaskModel task, List<Map<String, dynamic>> paints) async {
     if (paints.isEmpty) return true;
-    final order = _orderById(task.orderId);
-    if (order == null) return true;
     final repo = OrdersRepository();
 
     try {
@@ -3230,7 +3228,9 @@ class _TasksScreenState extends State<TasksScreen>
       final stageName = _stageLabel(task).trim().isEmpty
           ? 'Этап'
           : _stageLabel(task).trim();
-      final orderRef = _orderReferenceForWriteoff(order);
+      final order = _orderById(task.orderId);
+      final orderRef =
+          order != null ? _orderReferenceForWriteoff(order) : task.orderId;
       for (final row in paints) {
         final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
             ? (row['paint_id'] ?? '').toString().trim()
@@ -3391,6 +3391,21 @@ class _TasksScreenState extends State<TasksScreen>
     final secs = _elapsed(latest).inSeconds;
     await tp.updateStatus(task.id, TaskStatus.completed,
         spentSeconds: secs, startedAt: null);
+    final sameStageTasks = tp.tasks
+        .where((t) =>
+            t.id != task.id &&
+            t.orderId == task.orderId &&
+            t.stageId == task.stageId &&
+            t.status != TaskStatus.completed)
+        .toList(growable: false);
+    for (final related in sameStageTasks) {
+      await tp.updateStatus(
+        related.id,
+        TaskStatus.completed,
+        spentSeconds: related.spentSeconds,
+        startedAt: null,
+      );
+    }
 
     if (!mounted) return;
     final note = await _askFinishNote();
@@ -3681,11 +3696,14 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool stageStartedBeforeShiftResume =
                         _hasProductionStartedForStage(task) &&
                             task.comments.any((c) => c.type == 'shift_resume');
+                    final bool hasOpenStartIntentForRowUser =
+                        _hasOpenStartIntentForUser(task, currentRowUserId);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !_startingTaskIds.contains(task.id) &&
                         !requiresSetupBeforeStart &&
                         !stageStartedBeforeShiftResume &&
+                        !hasOpenStartIntentForRowUser &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
                         // после личного завершения (до финальной кнопки
                         // "Завершить задание").
@@ -4963,6 +4981,25 @@ class _TasksScreenState extends State<TasksScreen>
         ? 0
         : dones.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
     return lastStartTs > lastDoneTs;
+  }
+
+  bool _hasOpenStartIntentForUser(TaskModel task, String userId) {
+    final events = task.comments
+        .where((c) =>
+            c.userId == userId &&
+            (c.type == 'start' ||
+                c.type == 'resume' ||
+                c.type == 'setup_resume' ||
+                c.type == 'pause' ||
+                c.type == 'problem' ||
+                c.type == 'user_done'))
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    if (events.isEmpty) return false;
+    final lastType = events.last.type;
+    return lastType == 'start' ||
+        lastType == 'resume' ||
+        lastType == 'setup_resume';
   }
 
   bool _hasPendingSetupForStage(TaskModel task) {
