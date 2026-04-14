@@ -757,11 +757,11 @@ final Map<String, _TaskSelectionState> _selectionCache = {};
 
 class _InkUsageDialogResult {
   final List<Map<String, dynamic>> paints;
-  final _QuantityInput quantityInput;
+  final bool openPaperEditor;
 
   const _InkUsageDialogResult({
     required this.paints,
-    required this.quantityInput,
+    this.openPaperEditor = false,
   });
 }
 
@@ -3020,19 +3020,17 @@ class _TasksScreenState extends State<TasksScreen>
 
   Future<_InkUsageDialogResult?> _showInkAdjustDialog(
     List<Map<String, dynamic>> paints,
-    String? unit, {
+    String? _unit, {
     bool allowPaperEdit = false,
   }) async {
     final mutable = paints
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: true);
     final ctrls = <TextEditingController>[];
-    final qtyCtrl = TextEditingController();
-    final unitLabel = (unit ?? '').trim();
     const paperEditValue = '__open_paper_edit__';
     for (final row in mutable) {
       final qty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
-      ctrls.add(TextEditingController(text: qty.toString()));
+      ctrls.add(TextEditingController(text: (qty * 1000).toStringAsFixed(0)));
     }
     final result = await showDialog<Object?>(
       context: context,
@@ -3047,19 +3045,7 @@ class _TasksScreenState extends State<TasksScreen>
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Проверьте расход по каждой краске и укажите фактическое количество.',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: qtyCtrl,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: unitLabel.isNotEmpty
-                      ? 'Количество выполнено ($unitLabel)'
-                      : 'Количество выполнено',
-                  border: const OutlineInputBorder(),
+                  'Проверьте расход по каждой краске и укажите фактический расход в граммах.',
                 ),
               ),
               const SizedBox(height: 12),
@@ -3089,7 +3075,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 Expanded(
                                   flex: 2,
                                   child: Text(
-                                    'По заказу: ${orderedQty.toStringAsFixed(3)} кг',
+                                    'По заказу: ${(orderedQty * 1000).toStringAsFixed(0)} г',
                                     textAlign: TextAlign.end,
                                   ),
                                 ),
@@ -3102,7 +3088,7 @@ class _TasksScreenState extends State<TasksScreen>
                                         const TextInputType.numberWithOptions(
                                             decimal: true),
                                     decoration: const InputDecoration(
-                                      labelText: 'Факт, кг',
+                                      labelText: 'Факт, г',
                                       border: OutlineInputBorder(),
                                     ),
                                   ),
@@ -3140,28 +3126,11 @@ class _TasksScreenState extends State<TasksScreen>
                   );
                   return;
                 }
-                mutable[i]['qty_kg'] = parsed;
+                mutable[i]['qty_kg'] = parsed / 1000;
               }
-              final quantity = int.tryParse(qtyCtrl.text.trim());
-              if (quantity == null || quantity < 0) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(
-                    content:
-                        Text('Укажите корректное количество выполненной продукции.'),
-                  ),
-                );
-                return;
-              }
-              final qtyDisplay = unitLabel.isNotEmpty
-                  ? '$quantity $unitLabel'
-                  : quantity.toString();
               Navigator.of(ctx).pop(
                 _InkUsageDialogResult(
                   paints: mutable,
-                  quantityInput: _QuantityInput(
-                    quantity: quantity,
-                    displayText: qtyDisplay,
-                  ),
                 ),
               );
             },
@@ -3173,15 +3142,10 @@ class _TasksScreenState extends State<TasksScreen>
     for (final c in ctrls) {
       c.dispose();
     }
-    qtyCtrl.dispose();
     if (result == paperEditValue) {
       return const _InkUsageDialogResult(
         paints: <Map<String, dynamic>>[],
-        quantityInput: _QuantityInput(
-          quantity: 0,
-          displayText: '',
-          openPaperEditor: true,
-        ),
+        openPaperEditor: true,
       );
     }
     if (result is _InkUsageDialogResult) {
@@ -3254,7 +3218,7 @@ class _TasksScreenState extends State<TasksScreen>
         }
 
         final reason =
-            'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${qtyKg.toStringAsFixed(3)} кг | Этап: $stageName';
+            'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${(qtyKg * 1000).toStringAsFixed(0)} г | Этап: $stageName';
         await warehouse.registerShipment(
           id: paintId,
           type: 'paint',
@@ -3300,7 +3264,8 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _finalizeTask(TaskModel task) async {
-    final unitLabel = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
+    final unitLabel =
+        _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
     List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
     _QuantityInput? qtyInput;
     if (_isInkConfirmationStage(task)) {
@@ -3323,7 +3288,7 @@ class _TasksScreenState extends State<TasksScreen>
           allowPaperEdit: true,
         );
         if (dialogResult == null) return;
-        if (dialogResult.quantityInput.openPaperEditor) {
+        if (dialogResult.openPaperEditor) {
           final order = _orderById(task.orderId);
           if (order == null) {
             if (context.mounted) {
@@ -3341,7 +3306,6 @@ class _TasksScreenState extends State<TasksScreen>
         mutablePaints = dialogResult.paints;
         await _validateInkAvailability(mutablePaints);
         paints = mutablePaints;
-        qtyInput = dialogResult.quantityInput;
         break;
       }
     }
