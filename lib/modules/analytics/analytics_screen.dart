@@ -6,11 +6,13 @@ import '../personnel/personnel_provider.dart';
 import '../personnel/employee_model.dart';
 import '../orders/orders_provider.dart';
 import '../orders/order_model.dart';
+import '../tasks/task_provider.dart';
 import '../warehouse/warehouse_table_styles.dart';
 
 import 'analytics_provider.dart';
 import 'analytics_record.dart';
 import 'warehouse_analytics_tab.dart';
+import 'piecework_analytics_tab.dart';
 
 /// Экран отображения аналитики для разных категорий сотрудников.
 /// Вверху — фильтры по сотруднику и периоду, ниже — вкладки:
@@ -220,9 +222,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final analytics = context.watch<AnalyticsProvider>();
     final personnel = context.watch<PersonnelProvider>();
     final orders = context.watch<OrdersProvider>();
+    final taskProvider = context.watch<TaskProvider>();
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Builder(
         builder: (context) {
           final TabController controller = DefaultTabController.of(context)!;
@@ -235,6 +238,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   Tab(text: 'Производство'),
                   Tab(text: 'Менеджеры'),
                   Tab(text: 'Склад'),
+                  Tab(text: 'Сдельная оплата'),
                 ],
               ),
             ),
@@ -255,6 +259,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       _buildTable('production', analytics.logs, personnel, orders),
                       _buildTable('manager', analytics.logs, personnel, orders),
                       const WarehouseAnalyticsTab(),
+                      PieceworkAnalyticsTab(
+                        selectedEmployeeId: _employeeId,
+                        range: _range,
+                        personnel: personnel,
+                        taskProvider: taskProvider,
+                      ),
                     ],
                   ),
                 ),
