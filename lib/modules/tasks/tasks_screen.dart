@@ -2983,11 +2983,26 @@ class _TasksScreenState extends State<TasksScreen>
     return 'Без названия';
   }
 
-  String _orderReferenceForWriteoff(OrderModel order) {
-    final baseName = _orderDisplayNameForWriteoff(order);
-    final orderId = order.id.trim();
-    if (orderId.isEmpty) return baseName;
-    return '$baseName (ID: $orderId)';
+  TmcModel? _paintStockItemById(WarehouseProvider warehouse, String paintId) {
+    if (paintId.trim().isEmpty) return null;
+    for (final item in warehouse.allTmc) {
+      if (item.id == paintId && item.type == 'paint') return item;
+    }
+    return null;
+  }
+
+  bool _paintUnitIsKilograms(String unitRaw) {
+    final unit = unitRaw.trim().toLowerCase();
+    if (unit.isEmpty) return false;
+    return unit == 'кг' ||
+        unit == 'kg' ||
+        unit == 'килограмм' ||
+        unit == 'килограммы';
+  }
+
+  double _convertInkQtyKgToWarehouseUnits(double qtyKg, String unitRaw) {
+    if (_paintUnitIsKilograms(unitRaw)) return qtyKg;
+    return qtyKg * 1000.0;
   }
 
   bool _looksLikeOrderCode(String value) {
@@ -3199,10 +3214,13 @@ class _TasksScreenState extends State<TasksScreen>
       if (paintId.isEmpty) {
         throw Exception('Для краски «$paintName» не указан складской идентификатор.');
       }
+      final paintStockItem = _paintStockItemById(warehouse, paintId);
+      final stockUnit = paintStockItem?.unit ?? '';
+      final qtyForWarehouse = _convertInkQtyKgToWarehouseUnits(qtyKg, stockUnit);
       final current = stockById[paintId] ?? 0;
-      if (qtyKg > current) {
+      if (qtyForWarehouse > current) {
         throw Exception(
-          'Недостаточно краски «$paintName» на складе: доступно ${current.toStringAsFixed(3)} кг, требуется ${qtyKg.toStringAsFixed(3)} кг.',
+          'Недостаточно краски «$paintName» на складе: доступно ${current.toStringAsFixed(2)} ${stockUnit.isEmpty ? 'ед.' : stockUnit}, требуется ${qtyForWarehouse.toStringAsFixed(2)} ${stockUnit.isEmpty ? 'ед.' : stockUnit}.',
         );
       }
     }
@@ -3220,7 +3238,7 @@ class _TasksScreenState extends State<TasksScreen>
       final stageName = _stageLabel(task).trim().isEmpty
           ? 'Этап'
           : _stageLabel(task).trim();
-      final orderRef = _orderReferenceForWriteoff(order);
+      final orderRef = _orderDisplayNameForWriteoff(order);
       for (final row in paints) {
         final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
             ? (row['paint_id'] ?? '').toString().trim()
@@ -3239,12 +3257,15 @@ class _TasksScreenState extends State<TasksScreen>
               'Для краски «$paintName» не удалось определить складскую позицию.');
         }
 
+        final paintStockItem = _paintStockItemById(warehouse, paintId);
+        final stockUnit = paintStockItem?.unit ?? '';
+        final qtyForWarehouse = _convertInkQtyKgToWarehouseUnits(qtyKg, stockUnit);
         final reason =
-            'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${(qtyKg * 1000).toStringAsFixed(0)} г | Этап: $stageName';
+            'Заказ: $orderRef | Списание краски: $paintName | Кол-во: ${qtyForWarehouse.toStringAsFixed(_paintUnitIsKilograms(stockUnit) ? 3 : 0)} ${stockUnit.isEmpty ? 'ед.' : stockUnit} | Этап: $stageName';
         await warehouse.registerShipment(
           id: paintId,
           type: 'paint',
-          qty: qtyKg,
+          qty: qtyForWarehouse,
           reason: reason,
         );
         await taskProvider.addCommentAutoUser(
