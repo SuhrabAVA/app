@@ -130,16 +130,29 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     List<String> stageIds,
     PersonnelProvider personnel,
   ) {
-    final names = _plannedStageNames(planned);
-    if (names.isNotEmpty) {
-      return names.join(' / ');
+    final normalized = <String>[];
+    final seen = <String>{};
+
+    void addParts(Iterable<String> values) {
+      for (final value in values) {
+        for (final rawPart in value.split(RegExp(r'[/,]'))) {
+          final cleaned = rawPart.trim().replaceAll(RegExp(r'^\(+|\)+$'), '');
+          if (cleaned.isEmpty) continue;
+          final key = cleaned.toLowerCase();
+          if (!seen.add(key)) continue;
+          normalized.add(cleaned);
+        }
+      }
     }
+
+    addParts(_plannedStageNames(planned));
+    if (normalized.isNotEmpty) {
+      return normalized.join(' / ');
+    }
+
     if (stageIds.isEmpty) return planned.stageName;
-    final resolved = stageIds
-        .map((id) => _resolveStageName(id, personnel))
-        .where((name) => name.trim().isNotEmpty)
-        .toList();
-    return resolved.isEmpty ? planned.stageName : resolved.toSet().join(' / ');
+    addParts(stageIds.map((id) => _resolveStageName(id, personnel)));
+    return normalized.isEmpty ? planned.stageName : normalized.join(' / ');
   }
 
   Future<void> _skipStageForTesting(List<TaskModel> stageTasks) async {
