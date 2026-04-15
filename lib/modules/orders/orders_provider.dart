@@ -518,15 +518,14 @@ class OrdersProvider with ChangeNotifier {
       return 'Укажите причину изменения бумаги.';
     }
 
-    final prepared = paperMaterials
-        .where((paper) => (paper.id ?? '').trim().isNotEmpty)
-        .map((paper) {
-          final double qty = paper.quantity > 0
-              ? paper.quantity
-              : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0);
-          return paper.copyWith(quantity: qty);
-        })
-        .toList(growable: false);
+    final prepared = <MaterialModel>[];
+    for (final paper in paperMaterials) {
+      final normalizedPaper = await _normalizePaperForReservation(paper);
+      if ((normalizedPaper.id ?? '').trim().isEmpty) {
+        continue;
+      }
+      prepared.add(normalizedPaper);
+    }
     if (prepared.isEmpty) {
       return 'Добавьте хотя бы один тип бумаги.';
     }
@@ -1222,6 +1221,47 @@ class OrdersProvider with ChangeNotifier {
     return 0;
   }
 
+  Future<MaterialModel> _normalizePaperForReservation(MaterialModel paper) async {
+    final double qty = paper.quantity > 0
+        ? paper.quantity
+        : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0);
+    final normalized = paper.copyWith(quantity: qty);
+    final currentId = (normalized.id ?? '').trim();
+    if (currentId.isNotEmpty) {
+      return normalized;
+    }
+    final resolvedId = await _resolvePaperIdByAttributes(normalized);
+    if (resolvedId == null) {
+      return normalized;
+    }
+    return normalized.copyWith(id: resolvedId);
+  }
+
+  Future<String?> _resolvePaperIdByAttributes(MaterialModel paper) async {
+    final name = paper.name.trim();
+    final format = (paper.format ?? '').trim();
+    final grammage = (paper.grammage ?? '').trim();
+    if (name.isEmpty || format.isEmpty || grammage.isEmpty) {
+      return null;
+    }
+    try {
+      final row = await _supabase
+          .from('papers')
+          .select('id')
+          .eq('description', name)
+          .eq('format', format)
+          .eq('grammage', grammage)
+          .maybeSingle();
+      if (row is Map) {
+        final id = (row['id'] ?? '').toString().trim();
+        return id.isEmpty ? null : id;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
   Future<String?> _syncPaperReservationsForOrder(OrderModel order) async {
     final papers = _resolveOrderPapers(order)
         .where((paper) => (paper.id ?? '').trim().isNotEmpty)
@@ -1473,11 +1513,18 @@ class OrdersProvider with ChangeNotifier {
     required OrderModel previous,
     required OrderModel updated,
   }) {
+    bool textChanged(String? a, String? b) {
+      return (a ?? '').trim().toLowerCase() != (b ?? '').trim().toLowerCase();
+    }
+
     final before = _resolveOrderPapers(previous);
     final after = _resolveOrderPapers(updated);
     if (before.length != after.length) return true;
     for (var i = 0; i < before.length; i++) {
       if (before[i].id != after[i].id ||
+          textChanged(before[i].name, after[i].name) ||
+          textChanged(before[i].format, after[i].format) ||
+          textChanged(before[i].grammage, after[i].grammage) ||
           (before[i].quantity - after[i].quantity).abs() > 0.0001) {
         return true;
       }
