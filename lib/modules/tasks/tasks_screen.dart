@@ -3346,13 +3346,13 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   String _orderDisplayNameForWriteoff(OrderModel order) {
-    final productName = order.product.type.trim();
-    if (productName.isNotEmpty && !_looksLikeOrderCode(productName)) {
-      return productName;
-    }
     final customer = order.customer.trim();
     if (customer.isNotEmpty && !_looksLikeOrderCode(customer)) {
       return customer;
+    }
+    final productName = order.product.type.trim();
+    if (productName.isNotEmpty && !_looksLikeOrderCode(productName)) {
+      return productName;
     }
     return 'Без названия';
   }
