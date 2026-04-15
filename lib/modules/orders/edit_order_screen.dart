@@ -2469,7 +2469,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _product.parameters = p.trim();
   }
 
-  Future<void> _saveOrder({bool closeImmediately = false}) async {
+  Future<void> _saveOrder() async {
     // Флаг: создаём новый заказ или редактируем
     final bool isCreating = (widget.order == null);
     final navigator = Navigator.of(context);
@@ -2506,7 +2506,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         );
       return;
     }
-    if (closeImmediately && mounted) navigator.pop();
     final managerName = widget.order != null
         ? widget.order!.manager
         : (_selectedManager?.trim().isNotEmpty ?? false)
@@ -3031,6 +3030,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
     }
+    // Сначала синхронизируем список красок, чтобы в просмотре заказа
+    // изменения были видны сразу после сохранения.
+    await _persistPaints(createdOrUpdatedOrder.id);
+
     // === Обработка формы ===
     await _processFormAssignment(
       createdOrUpdatedOrder,
@@ -3038,7 +3041,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     // === Конец обработки формы ===
 
-    if (!mounted && !closeImmediately) return;
+    if (!mounted) return;
 
     // Бизнес-правило: в создании/редактировании заказа списание бумаги отключено полностью.
 
@@ -3077,10 +3080,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     // Списание лишнего выполняется на этапе отгрузки.
 
-// Независимо от создания/редактирования - синхронизируем список красок
-// c полем product.parameters и таблицей order_paints.
-    await _persistPaints(createdOrUpdatedOrder.id);
-    if (!closeImmediately && mounted) navigator.pop();
+    if (mounted) navigator.pop();
   }
 
   String _formatDecimal(double value, {int fractionDigits = 2}) {
@@ -3464,7 +3464,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               ),
-              onPressed: () => _saveOrder(closeImmediately: true),
+              onPressed: _saveOrder,
               icon: const Icon(Icons.save_outlined, size: 18),
               label: const Text('Сохранить'),
             ),
