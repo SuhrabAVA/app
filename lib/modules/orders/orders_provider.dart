@@ -1245,17 +1245,15 @@ class OrdersProvider with ChangeNotifier {
       return null;
     }
     try {
-      final row = await _supabase
+      final Map<String, dynamic>? row = await _supabase
           .from('papers')
           .select('id')
           .eq('description', name)
           .eq('format', format)
           .eq('grammage', grammage)
           .maybeSingle();
-      if (row is Map) {
-        final id = (row['id'] ?? '').toString().trim();
-        return id.isEmpty ? null : id;
-      }
+      final id = (row?['id'] ?? '').toString().trim();
+      return id.isEmpty ? null : id;
     } catch (_) {
       return null;
     }
