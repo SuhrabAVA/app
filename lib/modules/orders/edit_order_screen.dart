@@ -3810,6 +3810,49 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildExtraPaperSelectors() {
     if (_extraPaperMaterials.isEmpty) return const SizedBox.shrink();
 
+    final papers = _paperItems();
+    final nameSet = <String>{};
+    for (final t in papers) {
+      final n = t.description.trim();
+      if (n.isNotEmpty) nameSet.add(n);
+    }
+    final allNames = nameSet.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    List<String> formatsFor(String name) {
+      final formats = <String>{};
+      for (final t in papers) {
+        if (t.description.trim().toLowerCase() == name.trim().toLowerCase()) {
+          final format = (t.format ?? '').trim();
+          if (format.isNotEmpty) formats.add(format);
+        }
+      }
+      final sorted = formats.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return sorted;
+    }
+
+    List<String> gramsFor(String name, String format) {
+      final grammages = <String>{};
+      for (final t in papers) {
+        if (t.description.trim().toLowerCase() == name.trim().toLowerCase() &&
+            (t.format ?? '').trim().toLowerCase() ==
+                format.trim().toLowerCase()) {
+          final grammage = (t.grammage ?? '').trim();
+          if (grammage.isNotEmpty) grammages.add(grammage);
+        }
+      }
+      final sorted = grammages.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return sorted;
+    }
+
+    Iterable<String> filter(Iterable<String> source, String query) {
+      final q = query.trim().toLowerCase();
+      if (q.isEmpty) return source;
+      return source.where((item) => item.toLowerCase().contains(q));
+    }
+
     InputDecoration paperDecoration(String label, bool active) {
       return InputDecoration(
         labelText: label,
@@ -3844,34 +3887,172 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ),
               child: Column(
                 children: [
-                  TextField(
-                    controller:
-                        TextEditingController(text: _extraPaperMaterials[i].name),
-                    readOnly: true,
-                    decoration: paperDecoration(
-                      'Материал (бумага №${i + 2})',
-                      _activePaperSlotIndex == i + 1,
-                    ),
+                  Autocomplete<String>(
+                    optionsBuilder: (text) => filter(allNames, text.text),
+                    displayStringForOption: (value) => value,
+                    fieldViewBuilder:
+                        (ctx, controller, focusNode, onFieldSubmitted) {
+                      final currentName = _extraPaperMaterials[i].name;
+                      if (controller.text != currentName) {
+                        controller.value = TextEditingValue(
+                          text: currentName,
+                          selection:
+                              TextSelection.collapsed(offset: currentName.length),
+                        );
+                      }
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: paperDecoration(
+                          'Материал (бумага №${i + 2})',
+                          _activePaperSlotIndex == i + 1,
+                        ),
+                        onChanged: (value) {
+                          setState(() {
+                            _activePaperSlotIndex = i + 1;
+                            _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
+                              name: value,
+                              format: null,
+                              grammage: null,
+                            );
+                          });
+                          _scheduleStagePreviewUpdate();
+                        },
+                        onSubmitted: (_) => onFieldSubmitted(),
+                      );
+                    },
+                    onSelected: (value) {
+                      setState(() {
+                        _activePaperSlotIndex = i + 1;
+                        _extraPaperMaterials[i] =
+                            _extraPaperMaterials[i].copyWith(
+                          name: value,
+                          format: null,
+                          grammage: null,
+                        );
+                      });
+                      _scheduleStagePreviewUpdate();
+                    },
                   ),
                   const SizedBox(height: 4),
-                  TextField(
-                    controller: TextEditingController(
-                        text: _extraPaperMaterials[i].format ?? ''),
-                    readOnly: true,
-                    decoration: paperDecoration(
-                      'Формат',
-                      _activePaperSlotIndex == i + 1,
-                    ),
+                  Autocomplete<String>(
+                    optionsBuilder: (text) {
+                      final name = _extraPaperMaterials[i].name.trim();
+                      if (name.isEmpty) return const Iterable<String>.empty();
+                      return filter(formatsFor(name), text.text);
+                    },
+                    displayStringForOption: (value) => value,
+                    fieldViewBuilder:
+                        (ctx, controller, focusNode, onFieldSubmitted) {
+                      final currentFormat = _extraPaperMaterials[i].format ?? '';
+                      if (controller.text != currentFormat) {
+                        controller.value = TextEditingValue(
+                          text: currentFormat,
+                          selection: TextSelection.collapsed(
+                            offset: currentFormat.length,
+                          ),
+                        );
+                      }
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        enabled: _extraPaperMaterials[i].name.trim().isNotEmpty,
+                        decoration: paperDecoration(
+                          'Формат',
+                          _activePaperSlotIndex == i + 1,
+                        ).copyWith(
+                          helperText: _extraPaperMaterials[i].name.trim().isNotEmpty
+                              ? null
+                              : 'Сначала выберите материал',
+                        ),
+                        onChanged: (value) {
+                          setState(() {
+                            _activePaperSlotIndex = i + 1;
+                            _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
+                              format: value,
+                              grammage: null,
+                            );
+                          });
+                          _scheduleStagePreviewUpdate();
+                        },
+                        onSubmitted: (_) => onFieldSubmitted(),
+                      );
+                    },
+                    onSelected: (value) {
+                      setState(() {
+                        _activePaperSlotIndex = i + 1;
+                        _extraPaperMaterials[i] =
+                            _extraPaperMaterials[i].copyWith(
+                          format: value,
+                          grammage: null,
+                        );
+                      });
+                      _scheduleStagePreviewUpdate();
+                    },
                   ),
                   const SizedBox(height: 4),
-                  TextField(
-                    controller: TextEditingController(
-                        text: _extraPaperMaterials[i].grammage ?? ''),
-                    readOnly: true,
-                    decoration: paperDecoration(
-                      'Грамаж',
-                      _activePaperSlotIndex == i + 1,
-                    ),
+                  Autocomplete<String>(
+                    optionsBuilder: (text) {
+                      final name = _extraPaperMaterials[i].name.trim();
+                      final format = (_extraPaperMaterials[i].format ?? '').trim();
+                      if (name.isEmpty || format.isEmpty) {
+                        return const Iterable<String>.empty();
+                      }
+                      return filter(gramsFor(name, format), text.text);
+                    },
+                    displayStringForOption: (value) => value,
+                    fieldViewBuilder:
+                        (ctx, controller, focusNode, onFieldSubmitted) {
+                      final currentGrammage = _extraPaperMaterials[i].grammage ?? '';
+                      if (controller.text != currentGrammage) {
+                        controller.value = TextEditingValue(
+                          text: currentGrammage,
+                          selection: TextSelection.collapsed(
+                            offset: currentGrammage.length,
+                          ),
+                        );
+                      }
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        enabled: _extraPaperMaterials[i].name.trim().isNotEmpty &&
+                            (_extraPaperMaterials[i].format ?? '')
+                                .trim()
+                                .isNotEmpty,
+                        decoration: paperDecoration(
+                          'Грамаж',
+                          _activePaperSlotIndex == i + 1,
+                        ).copyWith(
+                          helperText: _extraPaperMaterials[i].name.trim().isNotEmpty &&
+                                  (_extraPaperMaterials[i].format ?? '')
+                                      .trim()
+                                      .isNotEmpty
+                              ? null
+                              : 'Сначала выберите формат',
+                        ),
+                        onChanged: (value) {
+                          setState(() {
+                            _activePaperSlotIndex = i + 1;
+                            _extraPaperMaterials[i] =
+                                _extraPaperMaterials[i].copyWith(
+                              grammage: value,
+                            );
+                          });
+                          _scheduleStagePreviewUpdate();
+                        },
+                        onSubmitted: (_) => onFieldSubmitted(),
+                      );
+                    },
+                    onSelected: (value) {
+                      setState(() {
+                        _activePaperSlotIndex = i + 1;
+                        _extraPaperMaterials[i] =
+                            _extraPaperMaterials[i].copyWith(
+                          grammage: value,
+                        );
+                      });
+                      _scheduleStagePreviewUpdate();
+                    },
                   ),
                   const SizedBox(height: 4),
                   Align(
