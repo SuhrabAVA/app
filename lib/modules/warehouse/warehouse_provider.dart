@@ -181,11 +181,13 @@ class WarehouseProvider with ChangeNotifier {
               : <String, dynamic>{};
 
           final primaryLabel = _firstNotEmpty([
+            row['assignment_id'],
             row['title'],
             row['name'],
             row['order_name'],
             row['product_name'],
             data['title'],
+            data['assignment_id'],
             data['name'],
             data['order_name'],
             data['product_name'],
