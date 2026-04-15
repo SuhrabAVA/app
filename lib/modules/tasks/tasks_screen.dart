@@ -1043,15 +1043,6 @@ class _TasksScreenState extends State<TasksScreen>
     return papers;
   }
 
-  String _paperLabel(TmcModel paper) {
-    final details = <String>[
-      if ((paper.format ?? '').trim().isNotEmpty) 'Формат: ${paper.format}',
-      if ((paper.grammage ?? '').trim().isNotEmpty) 'Грамаж: ${paper.grammage}',
-    ];
-    if (details.isEmpty) return paper.description;
-    return '${paper.description} (${details.join(', ')})';
-  }
-
   bool _matchPaperSearch(TmcModel paper, String query) {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return true;
@@ -1068,6 +1059,100 @@ class _TasksScreenState extends State<TasksScreen>
       if (!searchable.contains(token)) return false;
     }
     return true;
+  }
+
+  String _paperFormatText(String? format) {
+    final value = (format ?? '').trim();
+    return value.isEmpty ? '—' : value;
+  }
+
+  String _paperGrammageText(String? grammage) {
+    final value = (grammage ?? '').trim();
+    return value.isEmpty ? '—' : value;
+  }
+
+  Future<TmcModel?> _pickPaperForSlot({
+    required BuildContext context,
+    required List<TmcModel> papers,
+    required Set<String> excludedIds,
+  }) async {
+    final searchController = TextEditingController();
+    var search = '';
+    return showDialog<TmcModel>(
+      context: context,
+      builder: (pickerContext) {
+        return StatefulBuilder(
+          builder: (pickerContext, setPickerState) {
+            final filtered = papers.where((paper) {
+              if (excludedIds.contains(paper.id)) return false;
+              return _matchPaperSearch(paper, search);
+            }).toList(growable: false);
+            return AlertDialog(
+              title: const Text('Выбор бумаги'),
+              content: SizedBox(
+                width: 540,
+                height: 420,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      decoration: InputDecoration(
+                        labelText: 'Поиск бумаги',
+                        hintText: 'Наименование, формат, грамаж',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: search.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  setPickerState(() {
+                                    search = '';
+                                    searchController.clear();
+                                  });
+                                },
+                                icon: const Icon(Icons.clear),
+                              ),
+                      ),
+                      onChanged: (value) =>
+                          setPickerState(() => search = value),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(
+                              child: Text('Ничего не найдено.'),
+                            )
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final paper = filtered[index];
+                                return ListTile(
+                                  title: Text(paper.description),
+                                  subtitle: Text(
+                                    'Формат: ${_paperFormatText(paper.format)} • '
+                                    'Грамаж: ${_paperGrammageText(paper.grammage)}',
+                                  ),
+                                  onTap: () =>
+                                      Navigator.of(pickerContext).pop(paper),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(pickerContext).pop(),
+                  child: const Text('Отмена'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _openPaperEditDialog(OrderModel baseOrder) async {
@@ -1118,22 +1203,9 @@ class _TasksScreenState extends State<TasksScreen>
         }(),
     ];
     final reasonController = TextEditingController();
-    final paperSearchController = TextEditingController();
     final formKey = GlobalKey<FormState>();
     String? errorText;
     bool saving = false;
-    String paperSearch = '';
-
-    List<TmcModel> papersForPicker() {
-      final selectedIds = selected
-          .map((item) => (item.id ?? '').trim())
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      return papers.where((paper) {
-        if (selectedIds.contains(paper.id)) return true;
-        return _matchPaperSearch(paper, paperSearch);
-      }).toList(growable: false);
-    }
 
     Future<void> addSlot(StateSetter setDialogState) async {
       if (selected.length >= 3) return;
@@ -1175,42 +1247,81 @@ class _TasksScreenState extends State<TasksScreen>
                               children: [
                                 Expanded(
                                   flex: 2,
-                                  child: DropdownButtonFormField<String>(
-                                    value: (selected[i].id ?? '').isEmpty
+                                  child: InkWell(
+                                    onTap: saving
                                         ? null
-                                        : selected[i].id,
-                                    decoration: InputDecoration(
-                                      labelText: 'Бумага №${i + 1}',
+                                        : () async {
+                                            final excludedIds = selected
+                                                .asMap()
+                                                .entries
+                                                .where((entry) => entry.key != i)
+                                                .map((entry) =>
+                                                    (entry.value.id ?? '').trim())
+                                                .where((id) => id.isNotEmpty)
+                                                .toSet();
+                                            final paper =
+                                                await _pickPaperForSlot(
+                                              context: dialogContext,
+                                              papers: papers,
+                                              excludedIds: excludedIds,
+                                            );
+                                            if (paper == null) return;
+                                            setDialogState(() {
+                                              selected[i] =
+                                                  selected[i].copyWith(
+                                                id: paper.id,
+                                                name: paper.description,
+                                                unit: paper.unit.isNotEmpty
+                                                    ? paper.unit
+                                                    : 'м',
+                                                format: paper.format,
+                                                grammage: paper.grammage,
+                                                weight: paper.weight,
+                                              );
+                                            });
+                                          },
+                                    child: InputDecorator(
+                                      decoration: InputDecoration(
+                                        labelText: 'Бумага №${i + 1}',
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              (selected[i].name).trim().isEmpty
+                                                  ? 'Выберите бумагу'
+                                                  : selected[i].name,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          const Icon(Icons.arrow_drop_down),
+                                        ],
+                                      ),
                                     ),
-                                    items: [
-                                      for (final paper in papersForPicker())
-                                        DropdownMenuItem<String>(
-                                          value: paper.id,
-                                          child: Text(_paperLabel(paper)),
-                                        ),
-                                    ],
-                                    validator: (value) =>
-                                        (value == null || value.trim().isEmpty)
-                                            ? 'Выберите бумагу'
-                                            : null,
-                                    onChanged: (value) {
-                                      if (value == null) return;
-                                      final paper = papers.firstWhere(
-                                        (item) => item.id == value,
-                                        orElse: () => papers.first,
-                                      );
-                                      setDialogState(() {
-                                        selected[i] = selected[i].copyWith(
-                                          id: paper.id,
-                                          name: paper.description,
-                                          unit:
-                                              paper.unit.isNotEmpty ? paper.unit : 'м',
-                                          format: paper.format,
-                                          grammage: paper.grammage,
-                                          weight: paper.weight,
-                                        );
-                                      });
-                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    initialValue: _paperFormatText(
+                                      selected[i].format,
+                                    ),
+                                    enabled: false,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Формат',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    initialValue: _paperGrammageText(
+                                      selected[i].grammage,
+                                    ),
+                                    enabled: false,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Грамаж',
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(width: 12),
@@ -1250,39 +1361,12 @@ class _TasksScreenState extends State<TasksScreen>
                           ),
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              TextField(
-                                controller: paperSearchController,
-                                decoration: InputDecoration(
-                                  labelText: 'Поиск бумаги',
-                                  hintText: 'Наименование, формат, грамаж',
-                                  prefixIcon: const Icon(Icons.search),
-                                  suffixIcon: paperSearch.isEmpty
-                                      ? null
-                                      : IconButton(
-                                          onPressed: () {
-                                            setDialogState(() {
-                                              paperSearch = '';
-                                              paperSearchController.clear();
-                                            });
-                                          },
-                                          icon: const Icon(Icons.clear),
-                                        ),
-                                ),
-                                onChanged: (value) =>
-                                    setDialogState(() => paperSearch = value),
-                              ),
-                              const SizedBox(height: 8),
-                              TextButton.icon(
-                                onPressed: selected.length >= 3 || saving
-                                    ? null
-                                    : () => addSlot(setDialogState),
-                                icon: const Icon(Icons.add),
-                                label: const Text('Добавить бумагу'),
-                              ),
-                            ],
+                          child: TextButton.icon(
+                            onPressed: selected.length >= 3 || saving
+                                ? null
+                                : () => addSlot(setDialogState),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Добавить бумагу'),
                           ),
                         ),
                         const SizedBox(height: 8),
