@@ -198,7 +198,6 @@ class _PaperTableState extends State<PaperTable> {
               : ListView(
                   shrinkWrap: true,
                   children: details.map((row) {
-                    final orderId = (row['order_id'] ?? '').toString();
                     final orderName = (row['order_name'] ?? '').toString().trim();
                     final hasOrderName = orderName.isNotEmpty &&
                         orderName.toLowerCase() != 'null' &&
@@ -208,14 +207,7 @@ class _PaperTableState extends State<PaperTable> {
                     final qty = (row['qty'] as num?)?.toDouble() ??
                         double.tryParse('${row['qty']}') ??
                         0;
-                    final normalizedOrderId = orderId.trim().isEmpty
-                        ? 'Без номера'
-                        : orderId.trim();
-                    final orderLabel = hasOrderName
-                        ? orderName
-                        : (normalizedOrderId == 'Без номера'
-                            ? 'Заказ без названия'
-                            : 'Заказ без названия ($normalizedOrderId)');
+                    final orderLabel = hasOrderName ? orderName : 'Заказ без названия';
                     return ListTile(
                       dense: true,
                       title: Text(orderLabel),
