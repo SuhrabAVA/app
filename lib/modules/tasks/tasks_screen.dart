@@ -4649,22 +4649,11 @@ class _TasksScreenState extends State<TasksScreen>
                             text: qtyText,
                             userIdOverride: widget.employeeId);
 
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'user_done',
-                            text: 'done',
-                            userIdOverride: widget.employeeId);
-
                         for (final helperId in helperIds) {
                           await taskProvider.addCommentAutoUser(
                               taskId: task.id,
                               type: 'quantity_share',
                               text: qtyText,
-                              userIdOverride: helperId);
-                          await taskProvider.addCommentAutoUser(
-                              taskId: task.id,
-                              type: 'user_done',
-                              text: 'done',
                               userIdOverride: helperId);
                           await taskProvider.closeOpenTimeEvent(
                             task: task,
