@@ -482,6 +482,7 @@ class OrdersProvider with ChangeNotifier {
           throw Exception(reserveError);
         }
       }
+      await _applyImmediateMaterialAvailabilityState(updated);
       final paperHistory = _describePaperChanges(
         previous: prev,
         updated: updated,
@@ -569,6 +570,7 @@ class OrdersProvider with ChangeNotifier {
       if (reserveError != null) {
         throw Exception(reserveError);
       }
+      await _applyImmediateMaterialAvailabilityState(updated);
       final paperHistory = _describePaperChanges(
         previous: prev,
         updated: updated,
@@ -1190,6 +1192,40 @@ class OrdersProvider with ChangeNotifier {
       orderId: updated.id,
       orderLabel: _buildOrderLabelForWriteoff(updated),
     );
+  }
+
+  Future<void> _applyImmediateMaterialAvailabilityState(OrderModel order) async {
+    final hasEnough = await _hasEnoughMaterialForLaunch(order);
+    final shortageMessage = hasEnough ? '' : await _materialShortageMessage(order);
+    final nextStatus = hasEnough
+        ? (order.statusEnum == OrderStatus.waiting_materials
+            ? OrderStatus.ready_to_start
+            : order.statusEnum)
+        : OrderStatus.waiting_materials;
+
+    if (order.statusEnum == nextStatus &&
+        order.hasMaterialShortage == !hasEnough &&
+        order.materialShortageMessage == shortageMessage) {
+      return;
+    }
+
+    final updatePayload = <String, dynamic>{
+      'status': nextStatus.name,
+      'has_material_shortage': !hasEnough,
+      'material_shortage_message': shortageMessage,
+    };
+
+    await _supabase.from('orders').update(updatePayload).eq('id', order.id);
+
+    final index = _orders.indexWhere((o) => o.id == order.id);
+    if (index != -1) {
+      _orders[index] = _orders[index].copyWith(
+        status: nextStatus.name,
+        hasMaterialShortage: !hasEnough,
+        materialShortageMessage: shortageMessage,
+      );
+      notifyListeners();
+    }
   }
 
   String _buildOrderLabelForWriteoff(OrderModel order) {
