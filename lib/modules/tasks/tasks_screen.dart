@@ -1454,7 +1454,7 @@ class _TasksScreenState extends State<TasksScreen>
     for (final controller in qtyControllers) {
       controller.dispose();
     }
-    paperSearchController.dispose();
+    searchController.dispose();
     reasonController.dispose();
   }
 
