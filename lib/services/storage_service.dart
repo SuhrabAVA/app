@@ -161,12 +161,65 @@ Future<void> deleteOrderFile(String objectPath) async {
 /// Список файлов заказа по метаданным
 Future<List<Map<String, dynamic>>> listOrderFiles(String orderId) async {
   _ensureAuthed();
-  final res = await _docDb.whereEq('order_files', 'orderId', orderId);
-  return res
-      .map((row) {
+  final normalizedOrderId = orderId.trim();
+  final matched = <Map<String, dynamic>>[];
+
+  // Текущий формат.
+  matched.addAll(await _docDb.whereEq('order_files', 'orderId', normalizedOrderId));
+
+  // Исторические/альтернативные форматы хранения идентификатора заказа.
+  matched.addAll(await _docDb.whereEq('order_files', 'order_id', normalizedOrderId));
+  matched.addAll(await _docDb.whereEq('order_files', 'orderid', normalizedOrderId));
+
+  // Для совместимости со старыми данными делаем мягкий fallback:
+  // иногда id заказа записывался в неожиданный ключ (или с пробелами).
+  if (matched.isEmpty) {
+    final allOrderFiles = await _docDb.list('order_files');
+    matched.addAll(
+      allOrderFiles.where((row) {
         final data = Map<String, dynamic>.from(row['data'] ?? {});
-        data['id'] = row['id'];
-        return data;
-      })
-      .toList();
+        final candidates = <String>[
+          (data['orderId'] ?? '').toString().trim(),
+          (data['order_id'] ?? '').toString().trim(),
+          (data['orderid'] ?? '').toString().trim(),
+          (data['orderCode'] ?? '').toString().trim(),
+          (data['order_code'] ?? '').toString().trim(),
+        ];
+        return candidates.contains(normalizedOrderId);
+      }),
+    );
+  }
+
+  // Дедупликация: один и тот же файл может встретиться из разных веток поиска.
+  final byIdentity = <String, Map<String, dynamic>>{};
+  for (final row in matched) {
+    final data = Map<String, dynamic>.from(row['data'] ?? {});
+    final id = row['id']?.toString() ?? '';
+    final objectPath = (data['objectPath'] ?? data['object_path'] ?? data['path'] ?? '')
+        .toString()
+        .trim();
+    final key = objectPath.isNotEmpty ? objectPath : id;
+    if (key.isEmpty) continue;
+    data['id'] = id;
+    final existingObjectPath = data['objectPath']?.toString().trim() ?? '';
+    if (!data.containsKey('objectPath') || existingObjectPath.isEmpty) {
+      data['objectPath'] = objectPath;
+    }
+    final existingFilename = data['filename']?.toString().trim() ?? '';
+    if (!data.containsKey('filename') || existingFilename.isEmpty) {
+      data['filename'] = (data['fileName'] ?? data['name'] ?? '').toString();
+    }
+    byIdentity[key] = data;
+  }
+
+  final files = byIdentity.values.toList();
+  files.sort((a, b) {
+    final at = DateTime.tryParse((a['createdAt'] ?? a['created_at'] ?? '').toString());
+    final bt = DateTime.tryParse((b['createdAt'] ?? b['created_at'] ?? '').toString());
+    if (at != null && bt != null) return bt.compareTo(at);
+    if (at != null) return -1;
+    if (bt != null) return 1;
+    return 0;
+  });
+  return files;
 }
