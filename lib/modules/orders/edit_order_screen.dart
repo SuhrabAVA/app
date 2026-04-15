@@ -89,6 +89,8 @@ class _StageRuleOutcome {
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
+  static const String _paintInfoParamLabel = 'Информация для красок:';
+
   String _trimTrailingFractionZeros(String value) {
     if (!value.contains('.')) return value;
     return value
@@ -2084,10 +2086,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_paintsRestored) return;
     final template = widget.order ?? widget.initialOrder;
     final params = template?.product.parameters ?? '';
-    if (params.isEmpty || !params.contains('Краска:')) {
+    if (params.isEmpty) {
       _paintsRestored = true;
       return;
     }
+    final infoMatch = RegExp(
+      r'Информация для красок:\s*([^;]+)',
+      caseSensitive: false,
+    ).firstMatch(params);
+    final infoFromParams = (infoMatch?.group(1) ?? '').trim();
     final paintTmcList = warehouse.getTmcByType('Краска');
     final reg = RegExp(
         r'Краска:\s*(.+?)\s+([0-9]+(?:[.,][0-9]+)?)\s*(кг|г)(?:\s*\(([^)]+)\))?',
@@ -2095,7 +2102,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         caseSensitive: false);
     final matches = reg.allMatches(params).toList();
     if (matches.isEmpty) {
-      _paintsRestored = true;
+      if (infoFromParams.isNotEmpty) {
+        setState(() {
+          _paintInfo = infoFromParams;
+          _paintInfoController.value = TextEditingValue(
+            text: infoFromParams,
+            selection: TextSelection.collapsed(offset: infoFromParams.length),
+          );
+          _paintsRestored = true;
+        });
+      } else {
+        _paintsRestored = true;
+      }
       return;
     }
     final restored = <_PaintEntry>[];
@@ -2123,7 +2141,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     }
     if (restored.isNotEmpty) {
-      final sharedInfo = _deriveSharedPaintInfo(restored);
+      final sharedInfo = infoFromParams.isNotEmpty
+          ? infoFromParams
+          : _deriveSharedPaintInfo(restored);
       setState(() {
         _paints
           ..clear()
@@ -2148,7 +2168,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   /// Сохраняет список красок в таблицу order_paints и синхронизирует product.parameters.
   Future<void> _persistPaints(String orderId) async {
     // 1) Всегда чистим строки "Краска: ..." в product.parameters
-    final cleanRe = RegExp(r'(?:^|;\s*)Краска:\s*.+?(?=(?:;\s*Краска:|$))');
+    final cleanRe = RegExp(
+      r'(?:^|;\s*)(?:Краска:\s*.+?(?=(?:;\s*Краска:|;\s*Информация для красок:|$))|'
+      r'Информация для красок:\s*.+?(?=(?:;\s*Краска:|;\s*Информация для красок:|$)))',
+      caseSensitive: false,
+    );
     var clean = _product.parameters.replaceAll(cleanRe, '').trim();
     if (clean.endsWith(';')) {
       clean = clean.substring(0, clean.length - 1).trim();
@@ -2180,6 +2204,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _product.parameters = clean.isEmpty ? joined : '$clean; $joined';
     } else {
       _product.parameters = clean;
+    }
+    if (sharedInfo.isNotEmpty) {
+      _product.parameters = _product.parameters.isEmpty
+          ? '$_paintInfoParamLabel $sharedInfo'
+          : '${_product.parameters}; $_paintInfoParamLabel $sharedInfo';
     }
 
     // 4) Перезаписываем таблицу order_paints
@@ -2503,7 +2532,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return true;
     }
 
-    final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
+    final bool hasStageQueueSelected =
+        _stageTemplateId != null && _stageTemplateId!.trim().isNotEmpty;
+    final bool canLaunchProductionNow =
+        hasStageQueueSelected && hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
     final bool stageQueueChangedForLaunchedOrder = wasAlreadyLaunched &&
         ((_stageTemplateId ?? '') != (widget.order?.stageTemplateId ?? '') ||
@@ -2523,17 +2555,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     final String nextOrderStatus = wasAlreadyLaunched
         ? widget.order!.status
-        : (canLaunchProductionNow
+        : (!hasStageQueueSelected
+            ? OrderStatus.draft.name
+            : (canLaunchProductionNow
             ? OrderStatus.ready_to_start.name
-            : OrderStatus.waiting_materials.name);
+            : OrderStatus.waiting_materials.name));
     final bool nextHasMaterialShortage = wasAlreadyLaunched
         ? widget.order!.hasMaterialShortage
-        : !canLaunchProductionNow;
+        : (hasStageQueueSelected ? !canLaunchProductionNow : false);
     final String shortageMessage = wasAlreadyLaunched
         ? widget.order!.materialShortageMessage
-        : (canLaunchProductionNow
+        : (!hasStageQueueSelected
             ? ''
-            : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.');
+            : (canLaunchProductionNow
+            ? ''
+            : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
     late OrderModel createdOrUpdatedOrder;
     bool resetForRelaunchAfterEdit = false;
     if (widget.order == null) {
@@ -3006,6 +3042,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         const SnackBar(
           content: Text(
             'Заказ обновлён и снят с производства. Для продолжения запустите его повторно.',
+          ),
+        ),
+      );
+    } else if (!createdOrUpdatedOrder.assignmentCreated && !hasStageQueueSelected) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Заказ сохранён в черновиках: выберите очередь этапов для подготовки к запуску.',
           ),
         ),
       );
@@ -4240,7 +4284,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
         const SizedBox(height: 3),
         TextFormField(
-          initialValue: product.widthB?.toString() ?? '',
+          initialValue: product.widthB != null ? _formatDecimal(product.widthB!) : '',
           decoration: const InputDecoration(
             labelText: 'Ширина b',
             border: OutlineInputBorder(),
@@ -4273,7 +4317,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: TextFormField(
-                initialValue: product.length?.toString() ?? '',
+                initialValue: product.length != null ? _formatDecimal(product.length!) : '',
                 decoration: InputDecoration(
                   labelText: 'Длина L',
                   border: const OutlineInputBorder(),
@@ -4614,7 +4658,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildMakereadyFields() {
     return _buildFieldGrid([
       TextFormField(
-        initialValue: _makeready > 0 ? '$_makeready' : '',
+        initialValue: _makeready > 0 ? _formatDecimal(_makeready) : '',
         decoration: const InputDecoration(
           labelText: 'Приладка',
           border: OutlineInputBorder(),
@@ -4626,7 +4670,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         },
       ),
       TextFormField(
-        initialValue: _val > 0 ? '$_val' : '',
+        initialValue: _val > 0 ? _formatDecimal(_val) : '',
         decoration: const InputDecoration(
           labelText: 'ВАЛ',
           border: OutlineInputBorder(),

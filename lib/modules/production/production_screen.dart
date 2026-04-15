@@ -628,6 +628,34 @@ class _ProductionTab extends StatelessWidget {
   final _ProductionSort sort;
   final String? productTypeFilter;
 
+  List<String> _normalizeLabelParts(Iterable<String> raw) {
+    final normalized = <String>[];
+    final seen = <String>{};
+    for (final value in raw) {
+      for (final part in value.split(RegExp(r'[/,]'))) {
+        final trimmed = part.trim();
+        final key = trimmed.toLowerCase();
+        if (trimmed.isEmpty || !seen.add(key)) continue;
+        normalized.add(trimmed);
+      }
+    }
+    if (normalized.length >= 4 && normalized.length.isEven) {
+      final half = normalized.length ~/ 2;
+      var mirrored = true;
+      for (var i = 0; i < half; i++) {
+        if (normalized[i].toLowerCase() !=
+            normalized[normalized.length - 1 - i].toLowerCase()) {
+          mirrored = false;
+          break;
+        }
+      }
+      if (mirrored) {
+        normalized.removeRange(half, normalized.length);
+      }
+    }
+    return normalized;
+  }
+
   Map<String, _StageGroupInfo> _stageGroupsForOrder(
     OrderModel order,
     List<TaskModel> orderTasks,
@@ -655,21 +683,18 @@ class _ProductionTab extends StatelessWidget {
 
       final key = groupKeyForIds(ids);
       if (groups.containsKey(key)) return;
-      final labels = <String>{};
+      final labels = <String>[];
       final explicit = explicitLabel?.trim();
       if (explicit != null && explicit.isNotEmpty) {
-        for (final chunk in explicit.split('/')) {
-          final normalized = chunk.trim();
-          if (normalized.isNotEmpty) {
-            labels.add(normalized);
-          }
-        }
+        labels.addAll(_normalizeLabelParts([explicit]));
       }
       for (final id in ids) {
         final resolved = _stageLabel(id, taskProvider, personnelProvider, order.id).trim();
-        if (resolved.isNotEmpty) labels.add(resolved);
+        if (resolved.isNotEmpty) {
+          labels.addAll(_normalizeLabelParts([resolved]));
+        }
       }
-      final label = labels.join(' / ');
+      final label = _normalizeLabelParts(labels).join(' / ');
       final normalizedLabelKey =
           (label.isEmpty ? key : label).trim().toLowerCase();
       if (normalizedLabelKey.isNotEmpty &&
@@ -870,6 +895,19 @@ class _ProductionTab extends StatelessWidget {
     return true;
   }
 
+  bool _isOrderLockedInCurrentWorkplace(
+    OrderModel order,
+    _OrderGroupingData grouping,
+  ) {
+    final group = grouping.stageGroups.values.firstWhere(
+      (entry) => entry.stageIds.contains(tab.id),
+      orElse: () => const _StageGroupInfo(key: '', stageIds: [], label: ''),
+    );
+    if (group.stageIds.isEmpty) return false;
+    final tasksForGroup = grouping.tasksByGroup[group.key] ?? const <TaskModel>[];
+    return tasksForGroup.any((task) => task.status == TaskStatus.inProgress);
+  }
+
   List<OrderModel> _sortOrders(List<OrderModel> source) {
     if (source.length < 2) return source;
     final sorted = List<OrderModel>.from(source);
@@ -993,6 +1031,29 @@ class _ProductionTab extends StatelessWidget {
                 itemCount: ordered.length,
                 onReorder: (oldIndex, newIndex) {
                   if (newIndex > oldIndex) newIndex -= 1;
+                  if (oldIndex < 0 ||
+                      oldIndex >= ordered.length ||
+                      newIndex < 0 ||
+                      newIndex >= ordered.length) {
+                    return;
+                  }
+                  final movedOrder = ordered[oldIndex];
+                  final movedGrouping = groupingByOrder[movedOrder.id];
+                  final movedLocked = movedGrouping != null &&
+                      _isOrderLockedInCurrentWorkplace(
+                        movedOrder,
+                        movedGrouping,
+                      );
+                  if (movedLocked) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Нельзя менять очередь: этот этап уже выполняется.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
                   final updated = List.of(ordered);
                   final item = updated.removeAt(oldIndex);
                   updated.insert(newIndex, item);
