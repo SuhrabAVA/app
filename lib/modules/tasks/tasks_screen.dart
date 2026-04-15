@@ -1028,9 +1028,46 @@ class _TasksScreenState extends State<TasksScreen>
 
     final papers = warehouse.allTmc.where(isPaperType).toList();
     papers.sort(
-      (a, b) => a.description.toLowerCase().compareTo(b.description.toLowerCase()),
+      (a, b) {
+        final byName =
+            a.description.toLowerCase().compareTo(b.description.toLowerCase());
+        if (byName != 0) return byName;
+        final byFormat =
+            (a.format ?? '').toLowerCase().compareTo((b.format ?? '').toLowerCase());
+        if (byFormat != 0) return byFormat;
+        return (a.grammage ?? '')
+            .toLowerCase()
+            .compareTo((b.grammage ?? '').toLowerCase());
+      },
     );
     return papers;
+  }
+
+  String _paperLabel(TmcModel paper) {
+    final details = <String>[
+      if ((paper.format ?? '').trim().isNotEmpty) 'Формат: ${paper.format}',
+      if ((paper.grammage ?? '').trim().isNotEmpty) 'Грамаж: ${paper.grammage}',
+    ];
+    if (details.isEmpty) return paper.description;
+    return '${paper.description} (${details.join(', ')})';
+  }
+
+  bool _matchPaperSearch(TmcModel paper, String query) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    final searchable = [
+      paper.description,
+      paper.format ?? '',
+      paper.grammage ?? '',
+      paper.id,
+    ].join(' ').toLowerCase();
+    final tokens = normalized
+        .split(RegExp(r'[\s,;]+'))
+        .where((token) => token.isNotEmpty);
+    for (final token in tokens) {
+      if (!searchable.contains(token)) return false;
+    }
+    return true;
   }
 
   Future<void> _openPaperEditDialog(OrderModel baseOrder) async {
@@ -1081,9 +1118,22 @@ class _TasksScreenState extends State<TasksScreen>
         }(),
     ];
     final reasonController = TextEditingController();
+    final paperSearchController = TextEditingController();
     final formKey = GlobalKey<FormState>();
     String? errorText;
     bool saving = false;
+    String paperSearch = '';
+
+    List<TmcModel> papersForPicker() {
+      final selectedIds = selected
+          .map((item) => (item.id ?? '').trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      return papers.where((paper) {
+        if (selectedIds.contains(paper.id)) return true;
+        return _matchPaperSearch(paper, paperSearch);
+      }).toList(growable: false);
+    }
 
     Future<void> addSlot(StateSetter setDialogState) async {
       if (selected.length >= 3) return;
@@ -1133,10 +1183,10 @@ class _TasksScreenState extends State<TasksScreen>
                                       labelText: 'Бумага №${i + 1}',
                                     ),
                                     items: [
-                                      for (final paper in papers)
+                                      for (final paper in papersForPicker())
                                         DropdownMenuItem<String>(
                                           value: paper.id,
-                                          child: Text(paper.description),
+                                          child: Text(_paperLabel(paper)),
                                         ),
                                     ],
                                     validator: (value) =>
@@ -1200,12 +1250,39 @@ class _TasksScreenState extends State<TasksScreen>
                           ),
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: selected.length >= 3 || saving
-                                ? null
-                                : () => addSlot(setDialogState),
-                            icon: const Icon(Icons.add),
-                            label: const Text('Добавить бумагу'),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TextField(
+                                controller: paperSearchController,
+                                decoration: InputDecoration(
+                                  labelText: 'Поиск бумаги',
+                                  hintText: 'Наименование, формат, грамаж',
+                                  prefixIcon: const Icon(Icons.search),
+                                  suffixIcon: paperSearch.isEmpty
+                                      ? null
+                                      : IconButton(
+                                          onPressed: () {
+                                            setDialogState(() {
+                                              paperSearch = '';
+                                              paperSearchController.clear();
+                                            });
+                                          },
+                                          icon: const Icon(Icons.clear),
+                                        ),
+                                ),
+                                onChanged: (value) =>
+                                    setDialogState(() => paperSearch = value),
+                              ),
+                              const SizedBox(height: 8),
+                              TextButton.icon(
+                                onPressed: selected.length >= 3 || saving
+                                    ? null
+                                    : () => addSlot(setDialogState),
+                                icon: const Icon(Icons.add),
+                                label: const Text('Добавить бумагу'),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -1293,6 +1370,7 @@ class _TasksScreenState extends State<TasksScreen>
     for (final controller in qtyControllers) {
       controller.dispose();
     }
+    paperSearchController.dispose();
     reasonController.dispose();
   }
 
