@@ -1663,7 +1663,7 @@ class _TasksScreenState extends State<TasksScreen>
         ? const <TaskModel>[]
         : taskProvider.tasks.where((t) => t.stageId == _selectedWorkplaceId).toList();
     final stageQueueIds =
-        stageTasksAll.map((task) => task.id.trim()).where((id) => id.isNotEmpty).toSet().toList();
+        stageTasksAll.map((task) => task.orderId.trim()).where((id) => id.isNotEmpty).toSet().toList();
 
     _scheduleQueueSyncIfNeeded(
       queue: queue,
@@ -1674,8 +1674,8 @@ class _TasksScreenState extends State<TasksScreen>
     final sectionedTasks = tasksForWorkplace.toList();
     sectionedTasks.sort((a, b) =>
         queue
-            .priorityOf(a.id, groupId: queueGroupId)
-            .compareTo(queue.priorityOf(b.id, groupId: queueGroupId)));
+            .priorityOf(a.orderId, groupId: queueGroupId)
+            .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
             (t) => t.id == _selectedTask!.id,
@@ -3486,8 +3486,8 @@ class _TasksScreenState extends State<TasksScreen>
     final queueGroupId = _selectedWorkplaceId!.trim();
     final queued = _tasksForWorkplace(taskProvider)
       ..sort((a, b) => queue
-          .priorityOf(a.id, groupId: queueGroupId)
-          .compareTo(queue.priorityOf(b.id, groupId: queueGroupId)));
+          .priorityOf(a.orderId, groupId: queueGroupId)
+          .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
 
     final index = queued.indexWhere((t) => t.id == task.id);
     if (index <= 0) return true;

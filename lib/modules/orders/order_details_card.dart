@@ -130,8 +130,8 @@ class OrderDetailsCard extends StatelessWidget {
   Widget _buildDimensionsValue({bool compact = false}) {
     final p = order.product;
     final dimensions = <({String label, String value})>[
-      if (p.height != null) (label: 'Д', value: _fmtNum(p.height)),
-      if (p.width != null) (label: 'Ш', value: _fmtNum(p.width)),
+      if (p.width != null) (label: 'Д', value: _fmtNum(p.width)),
+      if (p.height != null) (label: 'Ш', value: _fmtNum(p.height)),
       if (p.depth != null) (label: 'Г', value: _fmtNum(p.depth)),
     ];
 
@@ -304,6 +304,13 @@ class OrderDetailsCard extends StatelessWidget {
         .where((v) => v.isNotEmpty)
         .toSet()
         .join(', ');
+    final paintInfoFromParams = RegExp(
+      r'Информация для красок:\s*([^;]+)',
+      caseSensitive: false,
+    ).firstMatch(p.parameters);
+    final fallbackPaintInfo = (paintInfoFromParams?.group(1) ?? '').trim();
+    final paintInfoValue =
+        paintInfo.isNotEmpty ? paintInfo : fallbackPaintInfo;
     final paintsWidget = paints.isEmpty
         ? const Text('—')
         : Column(
@@ -460,8 +467,8 @@ class OrderDetailsCard extends StatelessWidget {
                           alignEnd: false,
                           compact: true,
                         ),
-                        if (paintInfo.isNotEmpty)
-                          _buildInfoRow('Комментарий', paintInfo, compact: true),
+                        if (paintInfoValue.isNotEmpty)
+                          _buildInfoRow('Комментарий', paintInfoValue, compact: true),
                       ],
                     ),
                   ),
