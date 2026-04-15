@@ -1046,16 +1046,29 @@ class _TasksScreenState extends State<TasksScreen>
   bool _matchPaperSearch(TmcModel paper, String query) {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return true;
-    final searchable = [
+    final searchableParts = [
       paper.description,
       paper.format ?? '',
       paper.grammage ?? '',
       paper.id,
-    ].join(' ').toLowerCase();
+    ];
+    final searchable = searchableParts.join(' ').toLowerCase();
+    final exactTokens = <String>{};
+    final tokenRegex = RegExp(r'[a-zа-яё0-9]+(?:[.,][a-zа-яё0-9]+)?');
+    for (final part in searchableParts) {
+      for (final match in tokenRegex.allMatches(part.toLowerCase())) {
+        exactTokens.add(match.group(0)!.replaceAll(',', '.'));
+      }
+    }
+    final numericTokenRegex = RegExp(r'^\d+(?:[.,]\d+)?$');
     final tokens = normalized
         .split(RegExp(r'[\s,;]+'))
         .where((token) => token.isNotEmpty);
     for (final token in tokens) {
+      if (numericTokenRegex.hasMatch(token)) {
+        if (!exactTokens.contains(token.replaceAll(',', '.'))) return false;
+        continue;
+      }
       if (!searchable.contains(token)) return false;
     }
     return true;
@@ -1206,6 +1219,14 @@ class _TasksScreenState extends State<TasksScreen>
           );
         }(),
     ];
+    final formatControllers = <TextEditingController>[
+      for (final item in selected)
+        TextEditingController(text: _paperFormatText(item.format)),
+    ];
+    final grammageControllers = <TextEditingController>[
+      for (final item in selected)
+        TextEditingController(text: _paperGrammageText(item.grammage)),
+    ];
     final reasonController = TextEditingController();
     final formKey = GlobalKey<FormState>();
     String? errorText;
@@ -1225,6 +1246,12 @@ class _TasksScreenState extends State<TasksScreen>
           weight: pick.weight,
         ));
         qtyControllers.add(TextEditingController());
+        formatControllers.add(
+          TextEditingController(text: _paperFormatText(pick.format)),
+        );
+        grammageControllers.add(
+          TextEditingController(text: _paperGrammageText(pick.grammage)),
+        );
       });
     }
 
@@ -1282,6 +1309,12 @@ class _TasksScreenState extends State<TasksScreen>
                                                 grammage: paper.grammage,
                                                 weight: paper.weight,
                                               );
+                                              formatControllers[i].text =
+                                                  _paperFormatText(paper.format);
+                                              grammageControllers[i].text =
+                                                  _paperGrammageText(
+                                                    paper.grammage,
+                                                  );
                                             });
                                           },
                                     child: InputDecorator(
@@ -1307,10 +1340,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: TextFormField(
-                                    initialValue: _paperFormatText(
-                                      selected[i].format,
-                                    ),
-                                    enabled: false,
+                                    controller: formatControllers[i],
                                     decoration: const InputDecoration(
                                       labelText: 'Формат',
                                     ),
@@ -1319,10 +1349,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: TextFormField(
-                                    initialValue: _paperGrammageText(
-                                      selected[i].grammage,
-                                    ),
-                                    enabled: false,
+                                    controller: grammageControllers[i],
                                     decoration: const InputDecoration(
                                       labelText: 'Грамаж',
                                     ),
@@ -1356,6 +1383,10 @@ class _TasksScreenState extends State<TasksScreen>
                                       setDialogState(() {
                                         selected.removeAt(i);
                                         qtyControllers.removeAt(i).dispose();
+                                        formatControllers.removeAt(i).dispose();
+                                        grammageControllers
+                                            .removeAt(i)
+                                            .dispose();
                                       });
                                     },
                                     icon: const Icon(Icons.delete_outline),
@@ -1417,8 +1448,18 @@ class _TasksScreenState extends State<TasksScreen>
                             final qty = double.parse(
                               qtyControllers[i].text.trim().replaceAll(',', '.'),
                             );
+                            final editedFormat =
+                                formatControllers[i].text.trim();
+                            final editedGrammage =
+                                grammageControllers[i].text.trim();
                             nextLengthL ??= qty;
-                            nextMaterials.add(selected[i].copyWith(quantity: qty));
+                            nextMaterials.add(
+                              selected[i].copyWith(
+                                quantity: qty,
+                                format: editedFormat,
+                                grammage: editedGrammage,
+                              ),
+                            );
                           }
 
                           final orders = context.read<OrdersProvider>();
@@ -1456,6 +1497,12 @@ class _TasksScreenState extends State<TasksScreen>
     );
 
     for (final controller in qtyControllers) {
+      controller.dispose();
+    }
+    for (final controller in formatControllers) {
+      controller.dispose();
+    }
+    for (final controller in grammageControllers) {
       controller.dispose();
     }
     reasonController.dispose();
