@@ -2219,6 +2219,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (rows.isNotEmpty) {
         await _sb.from('order_paints').insert(rows);
       }
+      // Сохраняем актуальные product.parameters даже когда красок нет:
+      // в этом случае "Информация для красок" должна оставаться в заказе.
+      await _sb.from('orders').update({
+        'product': _product.toMap(),
+      }).eq('id', orderId);
     } catch (e) {
       // не блокируем сохранение заказа, просто сообщим в консоль
       debugPrint('❌ persist paints error: ' + e.toString());
