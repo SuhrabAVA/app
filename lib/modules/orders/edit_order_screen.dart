@@ -3874,47 +3874,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          initialValue: _extraPaperMaterials[i].quantity > 0
-                              ? _formatDecimal(_extraPaperMaterials[i].quantity)
-                              : '',
-                          decoration: const InputDecoration(
-                            labelText: 'Метраж, м',
-                            border: OutlineInputBorder(),
-                          ),
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          onChanged: (value) {
-                            final parsed =
-                                double.tryParse(value.replaceAll(',', '.'));
-                            setState(() {
-                              _extraPaperMaterials[i] =
-                                  _extraPaperMaterials[i].copyWith(
-                                quantity: parsed == null || parsed < 0 ? 0 : parsed,
-                                unit: 'м',
-                              );
-                            });
-                          },
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Удалить бумагу',
-                        onPressed: () {
-                          setState(() {
-                            _extraPaperMaterials.removeAt(i);
-                            if (_activePaperSlotIndex > _extraPaperMaterials.length) {
-                              _activePaperSlotIndex = _extraPaperMaterials.isEmpty
-                                  ? 0
-                                  : _extraPaperMaterials.length;
-                            }
-                          });
-                        },
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ],
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      tooltip: 'Удалить бумагу',
+                      onPressed: () {
+                        setState(() {
+                          _extraPaperMaterials.removeAt(i);
+                          if (_activePaperSlotIndex > _extraPaperMaterials.length) {
+                            _activePaperSlotIndex = _extraPaperMaterials.isEmpty
+                                ? 0
+                                : _extraPaperMaterials.length;
+                          }
+                        });
+                      },
+                      icon: const Icon(Icons.delete_outline),
+                    ),
                   ),
                   const SizedBox(height: 4),
                   TextFormField(
@@ -4411,17 +4386,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             );
           },
         ),
-        _buildExtraPaperSelectors(),
-        if (_extraPaperMaterials.length < 2)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _addExtraPaperSlot,
-              icon: const Icon(Icons.add),
-              label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
-            ),
-          ),
-        const SizedBox(height: 3),
         TextFormField(
           initialValue: product.widthB != null ? _formatDecimal(product.widthB!) : '',
           decoration: const InputDecoration(
@@ -4491,6 +4455,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
           ],
         ),
+        const SizedBox(height: 3),
+        _buildExtraPaperSelectors(),
+        if (_extraPaperMaterials.length < 2)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _addExtraPaperSlot,
+              icon: const Icon(Icons.add),
+              label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
+            ),
+          ),
         const SizedBox(height: 3),
       ],
     );
