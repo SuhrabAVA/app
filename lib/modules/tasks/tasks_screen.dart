@@ -1078,16 +1078,17 @@ class _TasksScreenState extends State<TasksScreen>
   }) async {
     final searchController = TextEditingController();
     var search = '';
-    return showDialog<TmcModel>(
-      context: context,
-      builder: (pickerContext) {
-        return StatefulBuilder(
-          builder: (pickerContext, setPickerState) {
-            final filtered = papers.where((paper) {
-              if (excludedIds.contains(paper.id)) return false;
-              return _matchPaperSearch(paper, search);
-            }).toList(growable: false);
-            return AlertDialog(
+    try {
+      return showDialog<TmcModel>(
+        context: context,
+        builder: (pickerContext) {
+          return StatefulBuilder(
+            builder: (pickerContext, setPickerState) {
+              final filtered = papers.where((paper) {
+                if (excludedIds.contains(paper.id)) return false;
+                return _matchPaperSearch(paper, search);
+              }).toList(growable: false);
+              return AlertDialog(
               title: const Text('Выбор бумаги'),
               content: SizedBox(
                 width: 540,
@@ -1151,8 +1152,11 @@ class _TasksScreenState extends State<TasksScreen>
             );
           },
         );
-      },
-    );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
   }
 
   Future<void> _openPaperEditDialog(OrderModel baseOrder) async {
@@ -1454,7 +1458,6 @@ class _TasksScreenState extends State<TasksScreen>
     for (final controller in qtyControllers) {
       controller.dispose();
     }
-    searchController.dispose();
     reasonController.dispose();
   }
 
