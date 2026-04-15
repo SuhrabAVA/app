@@ -1043,6 +1043,15 @@ class _TasksScreenState extends State<TasksScreen>
     return papers;
   }
 
+  Future<List<TmcModel>> _workspacePaperItemsFresh() async {
+    final warehouse = context.read<WarehouseProvider>();
+    // На первом открытии диалога склад может быть ещё не загружен:
+    // выполняем принудительное обновление, чтобы избежать ложного
+    // "бумага не найдена" и корректно открыть выбор с первого раза.
+    await warehouse.fetchTmc();
+    return _workspacePaperItems();
+  }
+
   bool _matchPaperSearch(TmcModel paper, String query) {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return true;
@@ -1082,6 +1091,51 @@ class _TasksScreenState extends State<TasksScreen>
   String _paperGrammageText(String? grammage) {
     final value = (grammage ?? '').trim();
     return value.isEmpty ? '—' : value;
+  }
+
+  String? _validatePaperRow({
+    required MaterialModel selected,
+    required String editedFormat,
+    required String editedGrammage,
+    required double qty,
+    required List<TmcModel> papers,
+  }) {
+    final selectedId = (selected.id ?? '').trim();
+    final matchedById = selectedId.isEmpty
+        ? null
+        : papers.cast<TmcModel?>().firstWhere(
+              (paper) => paper?.id == selectedId,
+              orElse: () => null,
+            );
+    final matchedByName = papers.cast<TmcModel?>().firstWhere(
+          (paper) => paper?.description.trim().toLowerCase() ==
+              selected.name.trim().toLowerCase(),
+          orElse: () => null,
+        );
+    final matchedPaper = matchedById ?? matchedByName;
+    if (matchedPaper == null) {
+      return 'Выбранная бумага «${selected.name}» отсутствует на складе.';
+    }
+
+    final normalizedEditedFormat = editedFormat.trim();
+    final normalizedEditedGrammage = editedGrammage.trim();
+    final paperFormat = (matchedPaper.format ?? '').trim();
+    final paperGrammage = (matchedPaper.grammage ?? '').trim();
+
+    if (paperFormat.isNotEmpty &&
+        normalizedEditedFormat.toLowerCase() != paperFormat.toLowerCase()) {
+      return 'Формат для «${matchedPaper.description}» должен быть "$paperFormat".';
+    }
+    if (paperGrammage.isNotEmpty &&
+        normalizedEditedGrammage.toLowerCase() != paperGrammage.toLowerCase()) {
+      return 'Грамаж для «${matchedPaper.description}» должен быть "$paperGrammage".';
+    }
+    if (qty > matchedPaper.quantity) {
+      return 'Недостаточно бумаги «${matchedPaper.description}»: '
+          'доступно ${matchedPaper.quantity.toStringAsFixed(2)} ${matchedPaper.unit}.';
+    }
+
+    return null;
   }
 
   Future<TmcModel?> _pickPaperForSlot({
@@ -1179,7 +1233,7 @@ class _TasksScreenState extends State<TasksScreen>
         : <MaterialModel>[
             if (latest.material != null) latest.material!,
           ];
-    final papers = _workspacePaperItems();
+    final papers = await _workspacePaperItemsFresh();
     if (!mounted) return;
     if (papers.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1452,6 +1506,20 @@ class _TasksScreenState extends State<TasksScreen>
                                 formatControllers[i].text.trim();
                             final editedGrammage =
                                 grammageControllers[i].text.trim();
+                            final rowValidationError = _validatePaperRow(
+                              selected: selected[i],
+                              editedFormat: editedFormat,
+                              editedGrammage: editedGrammage,
+                              qty: qty,
+                              papers: papers,
+                            );
+                            if (rowValidationError != null) {
+                              setDialogState(() {
+                                saving = false;
+                                errorText = rowValidationError;
+                              });
+                              return;
+                            }
                             nextLengthL ??= qty;
                             nextMaterials.add(
                               selected[i].copyWith(
