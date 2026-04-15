@@ -1980,14 +1980,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_activePaperSlotIndex > 0) {
       final extraIndex = _activePaperSlotIndex - 1;
       if (extraIndex >= 0 && extraIndex < _extraPaperMaterials.length) {
+        final currentExtra = _extraPaperMaterials[extraIndex];
         setState(() {
-          _extraPaperMaterials[extraIndex] = MaterialModel(
+          _extraPaperMaterials[extraIndex] = currentExtra.copyWith(
             id: paper.id,
             name: paper.description,
             format: paper.format ?? '',
             grammage: paper.grammage ?? '',
-            quantity: _extraPaperMaterials[extraIndex].quantity > 0
-                ? _extraPaperMaterials[extraIndex].quantity
+            quantity: currentExtra.quantity > 0
+                ? currentExtra.quantity
                 : (_product.length ?? 0).toDouble(),
             unit: 'м',
           );
@@ -2036,9 +2037,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     for (final paper in _extraPaperMaterials) {
       final id = (paper.id ?? '').trim();
       if (id.isEmpty) continue;
+      final extraLength = _paperExtraDouble(paper, 'lengthL');
+      final resolvedQty =
+          extraLength != null && extraLength > 0 ? extraLength : fallbackQty;
       selected.add(
         paper.copyWith(
-          quantity: paper.quantity > 0 ? paper.quantity : fallbackQty,
+          quantity: paper.quantity > 0 ? paper.quantity : resolvedQty,
           unit: 'м',
         ),
       );
@@ -2058,10 +2062,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           name: '',
           quantity: (_product.length ?? 0).toDouble(),
           unit: 'м',
+          extra: <String, dynamic>{
+            if (_product.widthB != null) 'widthB': _product.widthB,
+            if ((_product.blQuantity ?? '').trim().isNotEmpty)
+              'blQuantity': _product.blQuantity!.trim(),
+            if (_product.length != null) 'lengthL': _product.length,
+          },
         ),
       );
       _activePaperSlotIndex = _extraPaperMaterials.length;
     });
+  }
+
+  double? _paperExtraDouble(MaterialModel paper, String key) {
+    final value = paper.extra?[key];
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final normalized = value.trim().replaceAll(',', '.');
+      if (normalized.isEmpty) return null;
+      return double.tryParse(normalized);
+    }
+    return null;
+  }
+
+  String? _paperExtraString(MaterialModel paper, String key) {
+    final value = paper.extra?[key];
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : text;
   }
 
   void _addPaintFromTmc(TmcModel paint) {
@@ -2702,6 +2729,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           handle: createdOrUpdatedOrder.handle,
           cardboard: createdOrUpdatedOrder.cardboard,
           material: createdOrUpdatedOrder.material,
+          paperMaterials: createdOrUpdatedOrder.paperMaterials,
           makeready: createdOrUpdatedOrder.makeready,
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
@@ -3888,6 +3916,112 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  TextFormField(
+                    initialValue: _paperExtraDouble(
+                              _extraPaperMaterials[i],
+                              'widthB',
+                            ) !=
+                            null
+                        ? _formatDecimal(
+                            _paperExtraDouble(_extraPaperMaterials[i], 'widthB')!)
+                        : '',
+                    decoration: const InputDecoration(
+                      labelText: 'Ширина b',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (value) {
+                      final parsed = double.tryParse(value.replaceAll(',', '.'));
+                      setState(() {
+                        final nextExtra = Map<String, dynamic>.from(
+                          _extraPaperMaterials[i].extra ?? const {},
+                        );
+                        if (parsed == null) {
+                          nextExtra.remove('widthB');
+                        } else {
+                          nextExtra['widthB'] = parsed;
+                        }
+                        _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
+                          extra: nextExtra.isEmpty ? null : nextExtra,
+                        );
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          initialValue:
+                              _paperExtraString(_extraPaperMaterials[i], 'blQuantity') ??
+                                  '',
+                          decoration: const InputDecoration(
+                            labelText: 'Количество',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) {
+                            final trimmed = value.trim();
+                            setState(() {
+                              final nextExtra = Map<String, dynamic>.from(
+                                _extraPaperMaterials[i].extra ?? const {},
+                              );
+                              if (trimmed.isEmpty) {
+                                nextExtra.remove('blQuantity');
+                              } else {
+                                nextExtra['blQuantity'] = trimmed;
+                              }
+                              _extraPaperMaterials[i] =
+                                  _extraPaperMaterials[i].copyWith(
+                                extra: nextExtra.isEmpty ? null : nextExtra,
+                              );
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextFormField(
+                          initialValue: _paperExtraDouble(
+                                    _extraPaperMaterials[i],
+                                    'lengthL',
+                                  ) !=
+                                  null
+                              ? _formatDecimal(_paperExtraDouble(
+                                  _extraPaperMaterials[i], 'lengthL')!)
+                              : '',
+                          decoration: const InputDecoration(
+                            labelText: 'Длина L',
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          onChanged: (value) {
+                            final parsed =
+                                double.tryParse(value.replaceAll(',', '.'));
+                            setState(() {
+                              final nextExtra = Map<String, dynamic>.from(
+                                _extraPaperMaterials[i].extra ?? const {},
+                              );
+                              if (parsed == null) {
+                                nextExtra.remove('lengthL');
+                              } else {
+                                nextExtra['lengthL'] = parsed;
+                              }
+                              _extraPaperMaterials[i] =
+                                  _extraPaperMaterials[i].copyWith(
+                                quantity: parsed != null && parsed > 0
+                                    ? parsed
+                                    : _extraPaperMaterials[i].quantity,
+                                extra: nextExtra.isEmpty ? null : nextExtra,
+                              );
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -3900,9 +4034,107 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   /// Дополнительные параметры продукта: материал, складские остатки и вложения
   Widget _buildProductMaterialAndExtras(ProductModel product) {
+    final stockExtraWidget = _buildStockExtraLayout(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _stockExtraSearchController,
+            focusNode: _stockExtraFocusNode,
+            onTap: () {
+              if (_stockExtraAutoloaded) return;
+              setState(() => _stockExtraAutoloaded = true);
+              _updateStockExtra(includeAllResults: true);
+            },
+            decoration: InputDecoration(
+              labelText: 'Лишнее на складе',
+              border: const OutlineInputBorder(),
+              suffixIcon: _loadingStockExtra
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : (_stockExtraSearchController.text.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _stockExtraSearchController.clear();
+                            _onStockExtraSearchChanged('');
+                          },
+                        )),
+            ),
+            onChanged: _onStockExtraSearchChanged,
+          ),
+          const SizedBox(height: 3),
+          Text(
+            _stockExtra != null
+                ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
+                : 'Доступно: —',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _stockExtraQtyController,
+            decoration: InputDecoration(
+              labelText: 'Количество для списания',
+              border: const OutlineInputBorder(),
+              helperText: _selectedStockExtraRow != null
+                  ? null
+                  : 'Сначала выберите позицию из списка',
+            ),
+            enabled: _selectedStockExtraRow != null,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            onChanged: (value) {
+              final normalized = value.replaceAll(',', '.');
+              final parsed = double.tryParse(normalized);
+              double? nextValue = parsed != null && parsed >= 0 ? parsed : null;
+              if (nextValue != null && _stockExtra != null) {
+                final double available = _stockExtra!;
+                if (available >= 0 && nextValue > available) {
+                  nextValue = available;
+                  final text = _formatDecimal(available);
+                  _stockExtraQtyController.value = TextEditingValue(
+                    text: text,
+                    selection: TextSelection.collapsed(offset: text.length),
+                  );
+                }
+              }
+              setState(() {
+                _stockExtraQtyTouched = true;
+                _stockExtraSelectedQty = nextValue;
+                _product.leftover =
+                    _stockExtraSelectedQty != null && _stockExtraSelectedQty! > 0
+                        ? _stockExtraSelectedQty
+                        : null;
+                if (_writeOffStockExtra &&
+                    (_stockExtraSelectedQty == null ||
+                        _stockExtraSelectedQty! <= 0)) {
+                  _writeOffStockExtra = false;
+                }
+              });
+            },
+          ),
+          const SizedBox(height: 4),
+          if (_stockExtraAutoloaded &&
+              (_stockExtraFocusNode.hasFocus ||
+                  _stockExtraSearchController.text.trim().isNotEmpty))
+            _buildStockExtraResults(),
+        ],
+      ),
+      const SizedBox.shrink(),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        stockExtraWidget,
+        const SizedBox(height: 3),
         Builder(
           builder: (context) {
             final papers = _paperItems();
@@ -4189,104 +4421,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
             ),
           ),
-        const SizedBox(height: 3),
-        _buildStockExtraLayout(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _stockExtraSearchController,
-                focusNode: _stockExtraFocusNode,
-                onTap: () {
-                  if (_stockExtraAutoloaded) return;
-                  setState(() => _stockExtraAutoloaded = true);
-                  _updateStockExtra(includeAllResults: true);
-                },
-                decoration: InputDecoration(
-                  labelText: 'Лишнее на складе',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: _loadingStockExtra
-                      ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : (_stockExtraSearchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _stockExtraSearchController.clear();
-                                _onStockExtraSearchChanged('');
-                              },
-                            )),
-                ),
-                onChanged: _onStockExtraSearchChanged,
-              ),
-              const SizedBox(height: 3),
-              Text(
-                _stockExtra != null
-                    ? 'Доступно: ${_stockExtra!.toStringAsFixed(2)}'
-                    : 'Доступно: —',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: _stockExtraQtyController,
-                decoration: InputDecoration(
-                  labelText: 'Количество для списания',
-                  border: const OutlineInputBorder(),
-                  helperText: _selectedStockExtraRow != null
-                      ? null
-                      : 'Сначала выберите позицию из списка',
-                ),
-                enabled: _selectedStockExtraRow != null,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                onChanged: (value) {
-                  final normalized = value.replaceAll(',', '.');
-                  final parsed = double.tryParse(normalized);
-                  double? nextValue =
-                      parsed != null && parsed >= 0 ? parsed : null;
-                  if (nextValue != null && _stockExtra != null) {
-                    final double available = _stockExtra!;
-                    if (available >= 0 && nextValue > available) {
-                      nextValue = available;
-                      final text = _formatDecimal(available);
-                      _stockExtraQtyController.value = TextEditingValue(
-                        text: text,
-                        selection: TextSelection.collapsed(offset: text.length),
-                      );
-                    }
-                  }
-                  setState(() {
-                    _stockExtraQtyTouched = true;
-                    _stockExtraSelectedQty = nextValue;
-                    _product.leftover = _stockExtraSelectedQty != null &&
-                            _stockExtraSelectedQty! > 0
-                        ? _stockExtraSelectedQty
-                        : null;
-                    if (_writeOffStockExtra &&
-                        (_stockExtraSelectedQty == null ||
-                            _stockExtraSelectedQty! <= 0)) {
-                      _writeOffStockExtra = false;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 4),
-              if (_stockExtraAutoloaded &&
-                  (_stockExtraFocusNode.hasFocus ||
-                      _stockExtraSearchController.text.trim().isNotEmpty))
-                _buildStockExtraResults(),
-            ],
-          ),
-          const SizedBox.shrink(),
-        ),
         const SizedBox(height: 3),
         TextFormField(
           initialValue: product.widthB != null ? _formatDecimal(product.widthB!) : '',
