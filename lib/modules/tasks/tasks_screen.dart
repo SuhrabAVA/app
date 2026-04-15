@@ -975,6 +975,22 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
+  String _queueOrderIdForTask(TaskModel task, OrdersProvider ordersProvider) {
+    final rawOrderId = task.orderId.trim();
+    if (rawOrderId.isEmpty) return rawOrderId;
+
+    final direct = ordersProvider.orders.any((order) => order.id == rawOrderId);
+    if (direct) return rawOrderId;
+
+    for (final order in ordersProvider.orders) {
+      final assignmentId = order.assignmentId?.trim() ?? '';
+      if (assignmentId.isNotEmpty && assignmentId == rawOrderId) {
+        return order.id;
+      }
+    }
+    return rawOrderId;
+  }
+
   List<TmcModel> _workspacePaperItems() {
     final warehouse = context.read<WarehouseProvider>();
     bool isPaperType(TmcModel item) {
@@ -1662,8 +1678,11 @@ class _TasksScreenState extends State<TasksScreen>
     final stageTasksAll = _selectedWorkplaceId == null
         ? const <TaskModel>[]
         : taskProvider.tasks.where((t) => t.stageId == _selectedWorkplaceId).toList();
-    final stageQueueIds =
-        stageTasksAll.map((task) => task.orderId.trim()).where((id) => id.isNotEmpty).toSet().toList();
+    final stageQueueIds = stageTasksAll
+        .map((task) => _queueOrderIdForTask(task, ordersProvider))
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
 
     _scheduleQueueSyncIfNeeded(
       queue: queue,
@@ -1674,8 +1693,14 @@ class _TasksScreenState extends State<TasksScreen>
     final sectionedTasks = tasksForWorkplace.toList();
     sectionedTasks.sort((a, b) =>
         queue
-            .priorityOf(a.orderId, groupId: queueGroupId)
-            .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
+            .priorityOf(
+              _queueOrderIdForTask(a, ordersProvider),
+              groupId: queueGroupId,
+            )
+            .compareTo(queue.priorityOf(
+                  _queueOrderIdForTask(b, ordersProvider),
+                  groupId: queueGroupId,
+                )));
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
             (t) => t.id == _selectedTask!.id,
@@ -3484,10 +3509,17 @@ class _TasksScreenState extends State<TasksScreen>
     if (_selectedWorkplaceId?.trim().isEmpty ?? true) return true;
 
     final queueGroupId = _selectedWorkplaceId!.trim();
+    final ordersProvider = context.read<OrdersProvider>();
     final queued = _tasksForWorkplace(taskProvider)
       ..sort((a, b) => queue
-          .priorityOf(a.orderId, groupId: queueGroupId)
-          .compareTo(queue.priorityOf(b.orderId, groupId: queueGroupId)));
+          .priorityOf(
+            _queueOrderIdForTask(a, ordersProvider),
+            groupId: queueGroupId,
+          )
+          .compareTo(queue.priorityOf(
+                _queueOrderIdForTask(b, ordersProvider),
+                groupId: queueGroupId,
+              )));
 
     final index = queued.indexWhere((t) => t.id == task.id);
     if (index <= 0) return true;
