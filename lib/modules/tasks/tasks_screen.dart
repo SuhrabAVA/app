@@ -991,6 +991,34 @@ class _TasksScreenState extends State<TasksScreen>
     return rawOrderId;
   }
 
+  String _orderLabelForTask(TaskModel task, OrdersProvider ordersProvider) {
+    final queueOrderId = _queueOrderIdForTask(task, ordersProvider);
+    final order = ordersProvider.orders.cast<OrderModel?>().firstWhere(
+          (candidate) => candidate?.id == queueOrderId,
+          orElse: () => null,
+        );
+    final assignmentId = order?.assignmentId?.trim() ?? '';
+    if (assignmentId.isNotEmpty) return assignmentId;
+    return queueOrderId;
+  }
+
+  TaskModel? _activeTaskForEmployee(TaskProvider taskProvider) {
+    final candidates = taskProvider.tasks.where((task) {
+      if (!task.assignees.contains(widget.employeeId)) return false;
+      if (_isEffectivelyCompleted(task)) return false;
+      final state = _userRunState(task, widget.employeeId);
+      return state == UserRunState.active;
+    }).toList(growable: false);
+
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) {
+      final aStarted = a.startedAt ?? 0;
+      final bStarted = b.startedAt ?? 0;
+      return bStarted.compareTo(aStarted);
+    });
+    return candidates.first;
+  }
+
   List<TmcModel> _workspacePaperItems() {
     final warehouse = context.read<WarehouseProvider>();
     bool isPaperType(TmcModel item) {
@@ -1718,6 +1746,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final selectedOrder =
         currentTask != null ? findOrder(currentTask.orderId) : null;
+    final activeTask = _activeTaskForEmployee(taskProvider);
 
     Widget buildLeftPanel({required bool scrollable}) {
       final String workplaceLabel = _selectedWorkplaceId == null
@@ -1797,6 +1826,45 @@ class _TasksScreenState extends State<TasksScreen>
         );
       }
 
+      Widget buildActiveTaskShortcut() {
+        if (activeTask == null) return const SizedBox.shrink();
+
+        final workplace = personnel.workplaceById(activeTask.stageId);
+        final workplaceName = workplace?.name.trim().isNotEmpty == true
+            ? workplace!.name.trim()
+            : activeTask.stageId;
+        final orderLabel = _orderLabelForTask(activeTask, ordersProvider);
+
+        return Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: () {
+              _persistWorkplace(activeTask.stageId);
+              _persistTask(activeTask.id);
+              setState(() {
+                _selectedWorkplaceId = activeTask.stageId;
+                _selectedTask = activeTask;
+                _selectedStatus = _sectionForTask(activeTask);
+              });
+            },
+            child: Text(
+              '↩ $workplaceName · заказ $orderLabel',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: scaled(11.5),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        );
+      }
+
       Widget content = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1829,6 +1897,10 @@ class _TasksScreenState extends State<TasksScreen>
               buildWorkplaceSelector(),
             ],
           ),
+          if (activeTask != null) ...[
+            SizedBox(height: smallSpacing),
+            buildActiveTaskShortcut(),
+          ],
           SizedBox(height: sectionSpacing * 0.6),
           SizedBox(height: sectionSpacing),
           if (sectionedTasks.isEmpty)
