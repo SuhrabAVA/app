@@ -1252,7 +1252,10 @@ class OrdersProvider with ChangeNotifier {
           .eq('format', format)
           .eq('grammage', grammage)
           .maybeSingle();
-      final id = (row?['id'] ?? '').toString().trim();
+      if (row == null) {
+        return null;
+      }
+      final id = (row['id'] ?? '').toString().trim();
       return id.isEmpty ? null : id;
     } catch (_) {
       return null;
