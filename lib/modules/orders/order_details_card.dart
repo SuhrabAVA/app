@@ -259,46 +259,58 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
-  String _additionalDimensions() {
-    final p = order.product;
-    if (p.widthB == null) return '';
-    return _fmtNum(p.widthB);
-  }
-
-  String _lengthValue() {
-    final p = order.product;
-    if (p.length != null) return _fmtNum(p.length);
-    return '';
-  }
-
-  String _materialSummary() {
-    final materials = order.paperMaterials.isNotEmpty
-        ? order.paperMaterials
-        : <MaterialModel>[
-            if (order.material != null) order.material!,
-          ];
-    if (materials.isEmpty) return '—';
-    final lines = <String>[];
-    for (var i = 0; i < materials.length; i++) {
-      final m = materials[i];
-      final parts = <String>[];
-      if (m.name.isNotEmpty) parts.add(m.name);
-      if (m.format != null && m.format!.isNotEmpty) parts.add('(${m.format})Ф');
-      if (m.grammage != null && m.grammage!.isNotEmpty) {
-        parts.add('(${m.grammage})Гр');
-      }
-      
-      if (parts.isNotEmpty) lines.add('Бумага №${i + 1}: ${parts.join(' ')}');
+  double? _paperExtraDouble(MaterialModel material, String key) {
+    final value = material.extra?[key];
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final normalized = value.trim().replaceAll(',', '.');
+      if (normalized.isEmpty) return null;
+      return double.tryParse(normalized);
     }
-    return lines.isEmpty ? '—' : lines.join('\n');
+    return null;
+  }
+
+  String? _paperExtraString(MaterialModel material, String key) {
+    final value = material.extra?[key];
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : text;
+  }
+
+  String _paperWidthValue(MaterialModel material, int index) {
+    if (index == 0) {
+      final value = order.product.widthB;
+      return value == null ? '' : _fmtNum(value);
+    }
+    final value = _paperExtraDouble(material, 'widthB');
+    return value == null ? '' : _fmtNum(value);
+  }
+
+  String _paperLengthValue(MaterialModel material, int index) {
+    if (index == 0) {
+      final value = order.product.length;
+      return value == null ? '' : _fmtNum(value);
+    }
+    final value = _paperExtraDouble(material, 'lengthL');
+    return value == null ? '' : _fmtNum(value);
+  }
+
+  String _paperQuantityValue(MaterialModel material, int index) {
+    if (index == 0) {
+      final value = order.product.blQuantity?.trim() ?? '';
+      return value;
+    }
+    return _paperExtraString(material, 'blQuantity') ?? '';
   }
 
   @override
   Widget build(BuildContext context) {
     final o = order;
     final p = o.product;
-    final widthBValue = _additionalDimensions();
-    final lengthValue = _lengthValue();
+    final materials = o.paperMaterials.isNotEmpty
+        ? o.paperMaterials
+        : <MaterialModel>[
+            if (o.material != null) o.material!,
+          ];
     final paintInfo = paints
         .map((e) => (e['info'] ?? '').toString().trim())
         .where((v) => v.isNotEmpty)
@@ -482,11 +494,63 @@ class OrderDetailsCard extends StatelessWidget {
                     accentColor: const Color(0xFF7A4CF0),
                     child: Column(
                       children: [
-                        _buildInfoRow('Материал', _materialSummary(), compact: true),
-                        if (widthBValue.isNotEmpty)
-                          _buildInfoRow('Ширина B', widthBValue, compact: true),
-                        if (lengthValue.isNotEmpty)
-                          _buildInfoRow('Длина L', lengthValue, compact: true),
+                        if (materials.isEmpty)
+                          _buildInfoRow('Материал', '—', compact: true)
+                        else
+                          ...materials.asMap().entries.expand((entry) {
+                            final index = entry.key;
+                            final material = entry.value;
+                            final parts = <String>[];
+                            if (material.name.isNotEmpty) parts.add(material.name);
+                            if (material.format != null &&
+                                material.format!.isNotEmpty) {
+                              parts.add('(${material.format})Ф');
+                            }
+                            if (material.grammage != null &&
+                                material.grammage!.isNotEmpty) {
+                              parts.add('(${material.grammage})Гр');
+                            }
+                            final materialLine =
+                                parts.isEmpty ? '—' : parts.join(' ');
+                            final rows = <Widget>[
+                              _buildInfoRow(
+                                'Бумага №${index + 1}',
+                                materialLine,
+                                compact: true,
+                              ),
+                            ];
+                            final widthValue = _paperWidthValue(material, index);
+                            if (widthValue.isNotEmpty) {
+                              rows.add(
+                                _buildInfoRow(
+                                  'Ширина B №${index + 1}',
+                                  widthValue,
+                                  compact: true,
+                                ),
+                              );
+                            }
+                            final qtyValue = _paperQuantityValue(material, index);
+                            if (qtyValue.isNotEmpty) {
+                              rows.add(
+                                _buildInfoRow(
+                                  'Количество №${index + 1}',
+                                  qtyValue,
+                                  compact: true,
+                                ),
+                              );
+                            }
+                            final lenValue = _paperLengthValue(material, index);
+                            if (lenValue.isNotEmpty) {
+                              rows.add(
+                                _buildInfoRow(
+                                  'Длина L №${index + 1}',
+                                  lenValue,
+                                  compact: true,
+                                ),
+                              );
+                            }
+                            return rows;
+                          }),
                         _buildInfoRow('Приладка',
                             o.makeready > 0 ? _fmtNum(o.makeready) : '—',
                             compact: true),
