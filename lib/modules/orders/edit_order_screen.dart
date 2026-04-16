@@ -2120,6 +2120,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       _activePaperSlotIndex = _extraPaperMaterials.length;
     });
+    _scheduleStagePreviewUpdate();
   }
 
   double? _paperExtraDouble(MaterialModel paper, String key) {
@@ -3879,6 +3880,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (_extraPaperMaterials.isEmpty) return const SizedBox.shrink();
 
     final papers = _paperItems();
+    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     final nameSet = <String>{};
     for (final t in papers) {
       final n = t.description.trim();
@@ -3913,6 +3915,38 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final sorted = grammages.toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       return sorted;
+    }
+
+    TmcModel? resolveExtraPaper(MaterialModel paper) {
+      final name = paper.name.trim().toLowerCase();
+      final format = (paper.format ?? '').trim().toLowerCase();
+      final grammage = (paper.grammage ?? '').trim().toLowerCase();
+      if (name.isEmpty || format.isEmpty || grammage.isEmpty) {
+        return null;
+      }
+      for (final t in papers) {
+        if (t.description.trim().toLowerCase() == name &&
+            (t.format ?? '').trim().toLowerCase() == format &&
+            (t.grammage ?? '').trim().toLowerCase() == grammage) {
+          return t;
+        }
+      }
+      return null;
+    }
+
+    bool extraLengthExceeded(MaterialModel paper) {
+      final length = _paperExtraDouble(paper, 'lengthL');
+      if (length == null || length <= 0) return false;
+      final resolved = resolveExtraPaper(paper);
+      if (resolved == null) return false;
+      var available = resolved.quantity;
+      for (final t in warehouse.allTmc) {
+        if (t.id == resolved.id) {
+          available = t.quantity;
+          break;
+        }
+      }
+      return length > available;
     }
 
     Iterable<String> filter(Iterable<String> source, String query) {
@@ -4136,6 +4170,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                 : _extraPaperMaterials.length;
                           }
                         });
+                        _scheduleStagePreviewUpdate();
                       },
                       icon: const Icon(Icons.delete_outline),
                     ),
@@ -4171,6 +4206,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           extra: nextExtra.isEmpty ? null : nextExtra,
                         );
                       });
+                      _scheduleStagePreviewUpdate();
                     },
                   ),
                   const SizedBox(height: 4),
@@ -4201,6 +4237,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                 extra: nextExtra.isEmpty ? null : nextExtra,
                               );
                             });
+                            _scheduleStagePreviewUpdate();
                           },
                         ),
                       ),
@@ -4218,6 +4255,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           decoration: const InputDecoration(
                             labelText: 'Длина L',
                             border: OutlineInputBorder(),
+                          ).copyWith(
+                            errorText: extraLengthExceeded(_extraPaperMaterials[i])
+                                ? 'Недостаточно'
+                                : null,
                           ),
                           keyboardType: const TextInputType.numberWithOptions(
                               decimal: true),
@@ -4241,6 +4282,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                 extra: nextExtra.isEmpty ? null : nextExtra,
                               );
                             });
+                            _scheduleStagePreviewUpdate();
                           },
                         ),
                       ),
