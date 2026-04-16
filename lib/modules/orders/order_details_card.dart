@@ -504,52 +504,33 @@ class OrderDetailsCard extends StatelessWidget {
                             if (material.name.isNotEmpty) parts.add(material.name);
                             if (material.format != null &&
                                 material.format!.isNotEmpty) {
-                              parts.add(' ${material.format}/');
+                              parts.add(material.format!);
                             }
                             if (material.grammage != null &&
                                 material.grammage!.isNotEmpty) {
-                              parts.add('${material.grammage}Гр');
+                              parts.add('${material.grammage} гр');
                             }
                             final materialLine =
                                 parts.isEmpty ? '—' : parts.join(' ');
-                            final rows = <Widget>[
+                            final widthValue = _paperWidthValue(material, index);
+                            final qtyValue = _paperQuantityValue(material, index);
+                            final lenValue = _paperLengthValue(material, index);
+                            final details = <String>[materialLine];
+                            if (widthValue.isNotEmpty) {
+                              details.add('Ш: $widthValue');
+                            }
+                            if (qtyValue.isNotEmpty || lenValue.isNotEmpty) {
+                              final left = qtyValue.isEmpty ? '—' : qtyValue;
+                              final right = lenValue.isEmpty ? '—' : lenValue;
+                              details.add('Д: $left * $right L');
+                            }
+                            return <Widget>[
                               _buildInfoRow(
                                 'Бумага №${index + 1}',
-                                materialLine,
+                                details.join('\n'),
                                 compact: true,
                               ),
                             ];
-                            final widthValue = _paperWidthValue(material, index);
-                            if (widthValue.isNotEmpty) {
-                              rows.add(
-                                _buildInfoRow(
-                                  'Ширина B №${index + 1}',
-                                  widthValue,
-                                  compact: true,
-                                ),
-                              );
-                            }
-                            final qtyValue = _paperQuantityValue(material, index);
-                            if (qtyValue.isNotEmpty) {
-                              rows.add(
-                                _buildInfoRow(
-                                  'Количество №${index + 1}',
-                                  qtyValue,
-                                  compact: true,
-                                ),
-                              );
-                            }
-                            final lenValue = _paperLengthValue(material, index);
-                            if (lenValue.isNotEmpty) {
-                              rows.add(
-                                _buildInfoRow(
-                                  'Длина L №${index + 1}',
-                                  lenValue,
-                                  compact: true,
-                                ),
-                              );
-                            }
-                            return rows;
                           }),
                         _buildInfoRow('Приладка',
                             o.makeready > 0 ? _fmtNum(o.makeready) : '—',
