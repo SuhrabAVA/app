@@ -5,6 +5,7 @@ import 'dart:async';
 import '../../services/app_auth.dart';
 
 import '../orders/order_model.dart';
+import 'task_completion_rules.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
 
@@ -944,18 +945,18 @@ class TaskProvider with ChangeNotifier {
       debugPrint('❌ tasks.updateStatus error: $e\n$st');
     }
 
-    // If all tasks for order are completed — close the order
+    // If all stage groups for order are finally completed — close the order
     final orderId = updated.orderId;
     if (orderId != null && orderId.isNotEmpty) {
       try {
         final rows = await _supabase
             .from('tasks')
-            .select('status')
+            .select('*')
             .eq('order_id', orderId);
-        final list = List<Map<String, dynamic>>.from(rows as List);
-        final allCompleted = list.isNotEmpty &&
-            list.every((r) => (r['status'] ?? '') == 'completed');
-        if (allCompleted) {
+        final list = List<Map<String, dynamic>>.from(rows as List)
+            .map(_rowToTask)
+            .toList(growable: false);
+        if (isOrderFinallyCompleted(list)) {
           await _supabase
               .from('orders')
               .update({'status': OrderStatus.completed.name}).eq('id', orderId);

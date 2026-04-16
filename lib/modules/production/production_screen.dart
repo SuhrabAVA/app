@@ -9,6 +9,7 @@ import '../personnel/personnel_provider.dart';
 import '../production/production_queue_provider.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
+import '../tasks/task_completion_rules.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../production_planning/planned_stage_model.dart';
@@ -83,11 +84,11 @@ class _OrderGroupingData {
 }
 
 TaskStatus _groupStatus(List<TaskModel> tasks) {
+  if (isStageGroupFinallyCompleted(tasks)) {
+    return TaskStatus.completed;
+  }
   if (tasks.any((t) => t.status == TaskStatus.problem)) {
     return TaskStatus.problem;
-  }
-  if (tasks.any((t) => t.status == TaskStatus.completed)) {
-    return TaskStatus.completed;
   }
   if (tasks.any((t) => t.status == TaskStatus.inProgress)) {
     return TaskStatus.inProgress;
@@ -99,7 +100,7 @@ TaskStatus _groupStatus(List<TaskModel> tasks) {
 }
 
 bool _groupCompleted(List<TaskModel> tasks) =>
-    tasks.any((t) => t.status == TaskStatus.completed);
+    isStageGroupFinallyCompleted(tasks);
 
 bool _orderCompletedByGroups(
   Map<String, _StageGroupInfo> stageGroups,

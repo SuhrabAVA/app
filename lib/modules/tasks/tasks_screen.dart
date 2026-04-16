@@ -21,6 +21,7 @@ import '../production_planning/planned_stage_model.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
 import 'task_model.dart';
+import 'task_completion_rules.dart';
 import 'task_provider.dart';
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
@@ -462,27 +463,7 @@ bool _containsBobbin(String text) {
 }
 
 bool _isEffectivelyCompleted(TaskModel task) {
-  if (task.status == TaskStatus.completed) return true;
-  if (task.assignees.isEmpty) return false;
-
-  final mode = _stageExecutionMode(task);
-  if (mode == ExecutionMode.joint || mode == ExecutionMode.solo) {
-    final ownerId = task.assignees.first;
-    return _userRunState(task, ownerId) == UserRunState.finished;
-  }
-
-  final performers = task.assignees
-      .where((id) => _execModeForUser(task, id) == ExecutionMode.separate)
-      .toList();
-  if (performers.isEmpty) return false;
-  // Для отдельного режима считаем этап завершённым, когда каждый
-  // исполнитель явно зафиксировал личное завершение (comment: user_done).
-  for (final id in performers) {
-    final hasDone = task.comments
-        .any((c) => c.type == 'user_done' && c.userId == id);
-    if (!hasDone) return false;
-  }
-  return true;
+  return isTaskFinallyCompleted(task);
 }
 
 String _workplaceName(PersonnelProvider personnel, String stageId,
