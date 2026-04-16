@@ -504,11 +504,11 @@ class OrderDetailsCard extends StatelessWidget {
                             if (material.name.isNotEmpty) parts.add(material.name);
                             if (material.format != null &&
                                 material.format!.isNotEmpty) {
-                              parts.add('(${material.format})Ф');
+                              parts.add(' ${material.format}/');
                             }
                             if (material.grammage != null &&
                                 material.grammage!.isNotEmpty) {
-                              parts.add('(${material.grammage})Гр');
+                              parts.add('${material.grammage}Гр');
                             }
                             final materialLine =
                                 parts.isEmpty ? '—' : parts.join(' ');
