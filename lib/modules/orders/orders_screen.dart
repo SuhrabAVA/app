@@ -500,8 +500,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
       debugPrint('⚠️ shipment leftover snapshot error: $e\n$st');
     }
 
-    double customQty = plannedQty;
-    ShipmentQuantityMode mode = ShipmentQuantityMode.tirage;
+    final bool actualLessThanPlanned = safeActual < plannedQty;
+    final double suggestedWriteoff =
+        actualLessThanPlanned ? safeActual : plannedQty;
+    double customQty = suggestedWriteoff;
+    ShipmentQuantityMode mode = actualLessThanPlanned
+        ? ShipmentQuantityMode.actual
+        : ShipmentQuantityMode.tirage;
     final TextEditingController customController =
         TextEditingController(text: _formatQuantity(customQty));
     bool updatingCustomText = false;
