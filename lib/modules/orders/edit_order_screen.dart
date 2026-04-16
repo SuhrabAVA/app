@@ -3978,63 +3978,93 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             onTap: () => setState(() => _activePaperSlotIndex = i + 1),
             borderRadius: BorderRadius.circular(8),
             child: Container(
-              padding: const EdgeInsets.all(4),
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: _activePaperSlotIndex == i + 1
                       ? Theme.of(context).colorScheme.primary
-                      : Colors.transparent,
+                      : Theme.of(context).dividerColor.withOpacity(0.8),
+                  width: _activePaperSlotIndex == i + 1 ? 1.4 : 1,
                 ),
               ),
               child: Column(
                 children: [
-                  Autocomplete<String>(
-                    optionsBuilder: (text) => filter(allNames, text.text),
-                    displayStringForOption: (value) => value,
-                    fieldViewBuilder:
-                        (ctx, controller, focusNode, onFieldSubmitted) {
-                      final currentName = _extraPaperMaterials[i].name;
-                      if (controller.text != currentName) {
-                        controller.value = TextEditingValue(
-                          text: currentName,
-                          selection:
-                              TextSelection.collapsed(offset: currentName.length),
-                        );
-                      }
-                      return TextField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        decoration: paperDecoration(
-                          'Материал (бумага №${i + 2})',
-                          _activePaperSlotIndex == i + 1,
-                        ),
-                        onChanged: (value) {
-                          setState(() {
-                            _activePaperSlotIndex = i + 1;
-                            _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
-                              name: value,
-                              format: null,
-                              grammage: null,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Autocomplete<String>(
+                          optionsBuilder: (text) => filter(allNames, text.text),
+                          displayStringForOption: (value) => value,
+                          fieldViewBuilder:
+                              (ctx, controller, focusNode, onFieldSubmitted) {
+                            final currentName = _extraPaperMaterials[i].name;
+                            if (controller.text != currentName) {
+                              controller.value = TextEditingValue(
+                                text: currentName,
+                                selection: TextSelection.collapsed(
+                                  offset: currentName.length,
+                                ),
+                              );
+                            }
+                            return TextField(
+                              controller: controller,
+                              focusNode: focusNode,
+                              decoration: paperDecoration(
+                                'Материал (бумага №${i + 2})',
+                                _activePaperSlotIndex == i + 1,
+                              ),
+                              onChanged: (value) {
+                                setState(() {
+                                  _activePaperSlotIndex = i + 1;
+                                  _extraPaperMaterials[i] =
+                                      _extraPaperMaterials[i].copyWith(
+                                    name: value,
+                                    format: null,
+                                    grammage: null,
+                                  );
+                                });
+                                _scheduleStagePreviewUpdate();
+                              },
+                              onSubmitted: (_) => onFieldSubmitted(),
                             );
+                          },
+                          onSelected: (value) {
+                            setState(() {
+                              _activePaperSlotIndex = i + 1;
+                              _extraPaperMaterials[i] =
+                                  _extraPaperMaterials[i].copyWith(
+                                name: value,
+                                format: null,
+                                grammage: null,
+                              );
+                            });
+                            _scheduleStagePreviewUpdate();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Удалить бумагу',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () {
+                          setState(() {
+                            _extraPaperMaterials.removeAt(i);
+                            if (_activePaperSlotIndex >
+                                _extraPaperMaterials.length) {
+                              _activePaperSlotIndex =
+                                  _extraPaperMaterials.isEmpty
+                                      ? 0
+                                      : _extraPaperMaterials.length;
+                            }
                           });
                           _scheduleStagePreviewUpdate();
                         },
-                        onSubmitted: (_) => onFieldSubmitted(),
-                      );
-                    },
-                    onSelected: (value) {
-                      setState(() {
-                        _activePaperSlotIndex = i + 1;
-                        _extraPaperMaterials[i] =
-                            _extraPaperMaterials[i].copyWith(
-                          name: value,
-                          format: null,
-                          grammage: null,
-                        );
-                      });
-                      _scheduleStagePreviewUpdate();
-                    },
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Autocomplete<String>(
@@ -4157,25 +4187,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     },
                   ),
                   const SizedBox(height: 4),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: IconButton(
-                      tooltip: 'Удалить бумагу',
-                      onPressed: () {
-                        setState(() {
-                          _extraPaperMaterials.removeAt(i);
-                          if (_activePaperSlotIndex > _extraPaperMaterials.length) {
-                            _activePaperSlotIndex = _extraPaperMaterials.isEmpty
-                                ? 0
-                                : _extraPaperMaterials.length;
-                          }
-                        });
-                        _scheduleStagePreviewUpdate();
-                      },
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
                   TextFormField(
                     initialValue: _paperExtraDouble(
                               _extraPaperMaterials[i],
@@ -4292,7 +4303,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 6),
         ],
       ],
     );
