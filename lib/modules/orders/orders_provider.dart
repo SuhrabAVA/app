@@ -511,8 +511,7 @@ class OrdersProvider with ChangeNotifier {
     required List<MaterialModel> paperMaterials,
     required String reason,
     double? lengthL,
-    double? width,
-    int? quantity,
+    double? widthB,
   }) async {
     await _ensureAuthed();
 
@@ -542,18 +541,13 @@ class OrdersProvider with ChangeNotifier {
     }
     final prev = _orders[index];
     final normalizedLength = lengthL != null && lengthL > 0 ? lengthL : null;
-    final normalizedWidth = width != null && width > 0 ? width : null;
-    final normalizedQuantity =
-        quantity != null && quantity > 0 ? quantity : null;
+    final normalizedWidthB = widthB != null && widthB > 0 ? widthB : null;
     final nextProduct = ProductModel.fromMap(prev.product.toMap());
     if (normalizedLength != null) {
       nextProduct.length = normalizedLength;
     }
-    if (normalizedWidth != null) {
-      nextProduct.width = normalizedWidth;
-    }
-    if (normalizedQuantity != null) {
-      nextProduct.quantity = normalizedQuantity;
+    if (normalizedWidthB != null) {
+      nextProduct.widthB = normalizedWidthB;
     }
     final updated = prev.copyWith(
       product: nextProduct,
