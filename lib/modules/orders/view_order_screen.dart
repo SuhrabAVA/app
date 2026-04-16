@@ -43,19 +43,37 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       final paints = await repo.getPaints(widget.order.id);
       final files = await storage.listOrderFiles(widget.order.id);
       String? formImageUrl;
-      final formSeries = widget.order.formSeries;
+      final formCode = widget.order.formCode?.trim();
+      final formSeries = widget.order.formSeries?.trim();
       final formNo = widget.order.newFormNo;
-      if (formSeries != null && formSeries.isNotEmpty && formNo != null) {
-        final form = await Supabase.instance.client
+      Map<String, dynamic>? form;
+      if (formCode != null && formCode.isNotEmpty) {
+        final res = await Supabase.instance.client
+            .from('forms')
+            .select('image_url')
+            .eq('code', formCode)
+            .maybeSingle();
+        if (res != null && res is Map) {
+          form = Map<String, dynamic>.from(res);
+        }
+      }
+      if (form == null &&
+          formSeries != null &&
+          formSeries.isNotEmpty &&
+          formNo != null) {
+        final res = await Supabase.instance.client
             .from('forms')
             .select('image_url')
             .eq('series', formSeries)
             .eq('number', formNo)
             .maybeSingle();
-        final imageUrl = (form?['image_url'] ?? '').toString().trim();
-        if (imageUrl.isNotEmpty) {
-          formImageUrl = imageUrl;
+        if (res != null && res is Map) {
+          form = Map<String, dynamic>.from(res);
         }
+      }
+      final imageUrl = (form?['image_url'] ?? '').toString().trim();
+      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        formImageUrl = imageUrl;
       }
       String? stageTemplateName;
       final tplId = widget.order.stageTemplateId;
