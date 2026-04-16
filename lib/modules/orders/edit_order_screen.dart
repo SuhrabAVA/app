@@ -4480,281 +4480,316 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     ? gramsFor(_matSelectedName!, _matSelectedFormat!)
                     : const <String>[];
 
+            InputDecoration mainPaperDecoration(String label) {
+              final bool active = _activePaperSlotIndex == 0;
+              return InputDecoration(
+                labelText: label,
+                border: const OutlineInputBorder(),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(
+                    color: active
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).dividerColor,
+                  ),
+                ),
+              );
+            }
+
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Autocomplete<String>(
-                  optionsBuilder: (text) => filter(allNames, text.text),
-                  displayStringForOption: (s) => s,
-                  fieldViewBuilder:
-                      (ctx, controller, focusNode, onFieldSubmitted) {
-                    controller.text = _matNameCtl.text;
-                    controller.selection = _matNameCtl.selection;
-                    controller.addListener(() {
-                      if (controller.text != _matNameCtl.text) {
-                        setState(() {
-                          _activePaperSlotIndex = 0;
-                          _matNameCtl.text = controller.text;
-                          _matNameCtl.selection = controller.selection;
-                          _matSelectedName = null;
-                          _matSelectedFormat = null;
-                          _matSelectedGrammage = null;
-                          _matFormatCtl.text = '';
-                          _matGramCtl.text = '';
-                          _matNameError = (_matNameCtl.text.trim().isEmpty ||
-                                  allNames.map((e) => e.toLowerCase()).contains(
-                                      _matNameCtl.text.trim().toLowerCase()))
-                              ? null
-                              : 'Выберите материал из списка';
-                          _matFormatError = null;
-                          _matGramError = null;
-                          final lowerNames =
-                              allNames.map((e) => e.toLowerCase()).toList();
-                          final typed = _matNameCtl.text.trim().toLowerCase();
-                          if (lowerNames.contains(typed)) {
-                            _matSelectedName =
-                                allNames[lowerNames.indexOf(typed)];
-                          }
-                        });
-                        _scheduleStagePreviewUpdate();
-                      }
-                    });
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      decoration: InputDecoration(
-                        labelText: 'Материал',
-                        border: const OutlineInputBorder(),
-                        errorText: _matNameError,
+                InkWell(
+                  onTap: () => setState(() => _activePaperSlotIndex = 0),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _activePaperSlotIndex == 0
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).dividerColor.withOpacity(0.8),
+                        width: _activePaperSlotIndex == 0 ? 1.4 : 1,
                       ),
-                      onSubmitted: (_) => onFieldSubmitted(),
-                    );
-                  },
-                  onSelected: (value) {
-                    setState(() {
-                      _activePaperSlotIndex = 0;
-                      _matNameCtl.text = value;
-                      _matSelectedName = value;
-                      _matSelectedFormat = null;
-                      _matSelectedGrammage = null;
-                      _matFormatCtl.text = '';
-                      _matGramCtl.text = '';
-                      _matNameError = null;
-                      _matFormatError = null;
-                      _matGramError = null;
-                      _selectedMaterialTmc = null;
-                      _selectedMaterial = null;
-                    });
-                    _scheduleStagePreviewUpdate();
-                  },
-                ),
-                const SizedBox(height: 4),
-                Autocomplete<String>(
-                  optionsBuilder: (text) => filter(formatOptions, text.text),
-                  displayStringForOption: (s) => s,
-                  fieldViewBuilder:
-                      (ctx, controller, focusNode, onFieldSubmitted) {
-                    controller.text = _matFormatCtl.text;
-                    controller.selection = _matFormatCtl.selection;
-                    controller.addListener(() {
-                      if (controller.text != _matFormatCtl.text) {
-                        setState(() {
-                          _activePaperSlotIndex = 0;
-                          _matFormatCtl.text = controller.text;
-                          _matFormatCtl.selection = controller.selection;
-                          _matSelectedFormat = null;
-                          _matSelectedGrammage = null;
-                          _matGramCtl.text = '';
-                          _matFormatError =
-                              (_matFormatCtl.text.trim().isEmpty ||
-                                      formatOptions
-                                          .map((e) => e.toLowerCase())
-                                          .contains(_matFormatCtl.text
-                                              .trim()
-                                              .toLowerCase()))
-                                  ? null
-                                  : 'Выберите формат из списка';
-                          final lowerF = formatOptions
-                              .map((e) => e.toLowerCase())
-                              .toList();
-                          final typed = _matFormatCtl.text.trim().toLowerCase();
-                          if (lowerF.contains(typed)) {
-                            _matSelectedFormat =
-                                formatOptions[lowerF.indexOf(typed)];
-                          }
-                        });
-                        _scheduleStagePreviewUpdate();
-                      }
-                    });
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      enabled: _matSelectedName != null,
-                      decoration: InputDecoration(
-                        labelText: 'Формат',
-                        border: const OutlineInputBorder(),
-                        helperText: _matSelectedName != null
-                            ? null
-                            : 'Сначала выберите материал',
-                        errorText:
-                            _matSelectedName != null ? _matFormatError : null,
-                      ),
-                      onSubmitted: (_) => onFieldSubmitted(),
-                    );
-                  },
-                  onSelected: (value) {
-                    setState(() {
-                      _activePaperSlotIndex = 0;
-                      _matFormatCtl.text = value;
-                      _matSelectedFormat = value;
-                      _matSelectedGrammage = null;
-                      _matGramCtl.text = '';
-                      _matFormatError = null;
-                      _matGramError = null;
-                    });
-                    _scheduleStagePreviewUpdate();
-                  },
-                ),
-                const SizedBox(height: 4),
-                Autocomplete<String>(
-                  optionsBuilder: (text) => filter(gramOptions, text.text),
-                  displayStringForOption: (s) => s,
-                  fieldViewBuilder:
-                      (ctx, controller, focusNode, onFieldSubmitted) {
-                    controller.text = _matGramCtl.text;
-                    controller.selection = _matGramCtl.selection;
-                    controller.addListener(() {
-                      if (controller.text != _matGramCtl.text) {
-                        setState(() {
-                          _activePaperSlotIndex = 0;
-                          _matGramCtl.text = controller.text;
-                          _matGramCtl.selection = controller.selection;
-                          _matSelectedGrammage = null;
-                          _matGramError = (_matGramCtl.text.trim().isEmpty ||
-                                  gramOptions
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Autocomplete<String>(
+                          optionsBuilder: (text) => filter(allNames, text.text),
+                          displayStringForOption: (s) => s,
+                          fieldViewBuilder:
+                              (ctx, controller, focusNode, onFieldSubmitted) {
+                            controller.text = _matNameCtl.text;
+                            controller.selection = _matNameCtl.selection;
+                            controller.addListener(() {
+                              if (controller.text != _matNameCtl.text) {
+                                setState(() {
+                                  _activePaperSlotIndex = 0;
+                                  _matNameCtl.text = controller.text;
+                                  _matNameCtl.selection = controller.selection;
+                                  _matSelectedName = null;
+                                  _matSelectedFormat = null;
+                                  _matSelectedGrammage = null;
+                                  _matFormatCtl.text = '';
+                                  _matGramCtl.text = '';
+                                  _matNameError = (_matNameCtl.text.trim().isEmpty ||
+                                          allNames
+                                              .map((e) => e.toLowerCase())
+                                              .contains(_matNameCtl.text
+                                                  .trim()
+                                                  .toLowerCase()))
+                                      ? null
+                                      : 'Выберите материал из списка';
+                                  _matFormatError = null;
+                                  _matGramError = null;
+                                  final lowerNames =
+                                      allNames.map((e) => e.toLowerCase()).toList();
+                                  final typed =
+                                      _matNameCtl.text.trim().toLowerCase();
+                                  if (lowerNames.contains(typed)) {
+                                    _matSelectedName =
+                                        allNames[lowerNames.indexOf(typed)];
+                                  }
+                                });
+                                _scheduleStagePreviewUpdate();
+                              }
+                            });
+                            return TextField(
+                              controller: controller,
+                              focusNode: focusNode,
+                              decoration:
+                                  mainPaperDecoration('Материал').copyWith(
+                                errorText: _matNameError,
+                              ),
+                              onSubmitted: (_) => onFieldSubmitted(),
+                            );
+                          },
+                          onSelected: (value) {
+                            setState(() {
+                              _activePaperSlotIndex = 0;
+                              _matNameCtl.text = value;
+                              _matSelectedName = value;
+                              _matSelectedFormat = null;
+                              _matSelectedGrammage = null;
+                              _matFormatCtl.text = '';
+                              _matGramCtl.text = '';
+                              _matNameError = null;
+                              _matFormatError = null;
+                              _matGramError = null;
+                              _selectedMaterialTmc = null;
+                              _selectedMaterial = null;
+                            });
+                            _scheduleStagePreviewUpdate();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Autocomplete<String>(
+                          optionsBuilder: (text) => filter(formatOptions, text.text),
+                          displayStringForOption: (s) => s,
+                          fieldViewBuilder:
+                              (ctx, controller, focusNode, onFieldSubmitted) {
+                            controller.text = _matFormatCtl.text;
+                            controller.selection = _matFormatCtl.selection;
+                            controller.addListener(() {
+                              if (controller.text != _matFormatCtl.text) {
+                                setState(() {
+                                  _activePaperSlotIndex = 0;
+                                  _matFormatCtl.text = controller.text;
+                                  _matFormatCtl.selection = controller.selection;
+                                  _matSelectedFormat = null;
+                                  _matSelectedGrammage = null;
+                                  _matGramCtl.text = '';
+                                  _matFormatError =
+                                      (_matFormatCtl.text.trim().isEmpty ||
+                                              formatOptions
+                                                  .map((e) => e.toLowerCase())
+                                                  .contains(_matFormatCtl.text
+                                                      .trim()
+                                                      .toLowerCase()))
+                                          ? null
+                                          : 'Выберите формат из списка';
+                                  final lowerF = formatOptions
                                       .map((e) => e.toLowerCase())
-                                      .contains(_matGramCtl.text
-                                          .trim()
-                                          .toLowerCase()))
-                              ? null
-                              : 'Выберите грамаж из списка';
-                          final lowerG =
-                              gramOptions.map((e) => e.toLowerCase()).toList();
-                          final typed = _matGramCtl.text.trim().toLowerCase();
-                          if (lowerG.contains(typed)) {
-                            _matSelectedGrammage =
-                                gramOptions[lowerG.indexOf(typed)];
-                          }
-                        });
-                        _scheduleStagePreviewUpdate();
-                      }
-                    });
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      enabled: _matSelectedName != null &&
-                          _matSelectedFormat != null,
-                      decoration: InputDecoration(
-                        labelText: 'Грамаж',
-                        border: const OutlineInputBorder(),
-                        helperText: (_matSelectedName != null &&
-                                _matSelectedFormat != null)
-                            ? null
-                            : 'Сначала выберите формат',
-                        errorText: (_matSelectedName != null &&
-                                _matSelectedFormat != null)
-                            ? _matGramError
-                            : null,
-                      ),
-                      onSubmitted: (_) => onFieldSubmitted(),
-                    );
-                  },
-                  onSelected: (value) {
-                    setState(() {
-                      _activePaperSlotIndex = 0;
-                      _matGramCtl.text = value;
-                      _matSelectedGrammage = value;
-                      _matGramError = null;
-                      final tmc = findExact(
-                          _matSelectedName!, _matSelectedFormat!, value);
-                      if (tmc != null) {
-                        _selectMaterial(tmc);
-                      }
-                    });
-                  },
+                                      .toList();
+                                  final typed =
+                                      _matFormatCtl.text.trim().toLowerCase();
+                                  if (lowerF.contains(typed)) {
+                                    _matSelectedFormat =
+                                        formatOptions[lowerF.indexOf(typed)];
+                                  }
+                                });
+                                _scheduleStagePreviewUpdate();
+                              }
+                            });
+                            return TextField(
+                              controller: controller,
+                              focusNode: focusNode,
+                              enabled: _matSelectedName != null,
+                              decoration:
+                                  mainPaperDecoration('Формат').copyWith(
+                                helperText: _matSelectedName != null
+                                    ? null
+                                    : 'Сначала выберите материал',
+                                errorText:
+                                    _matSelectedName != null ? _matFormatError : null,
+                              ),
+                              onSubmitted: (_) => onFieldSubmitted(),
+                            );
+                          },
+                          onSelected: (value) {
+                            setState(() {
+                              _activePaperSlotIndex = 0;
+                              _matFormatCtl.text = value;
+                              _matSelectedFormat = value;
+                              _matSelectedGrammage = null;
+                              _matGramCtl.text = '';
+                              _matFormatError = null;
+                              _matGramError = null;
+                            });
+                            _scheduleStagePreviewUpdate();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Autocomplete<String>(
+                          optionsBuilder: (text) => filter(gramOptions, text.text),
+                          displayStringForOption: (s) => s,
+                          fieldViewBuilder:
+                              (ctx, controller, focusNode, onFieldSubmitted) {
+                            controller.text = _matGramCtl.text;
+                            controller.selection = _matGramCtl.selection;
+                            controller.addListener(() {
+                              if (controller.text != _matGramCtl.text) {
+                                setState(() {
+                                  _activePaperSlotIndex = 0;
+                                  _matGramCtl.text = controller.text;
+                                  _matGramCtl.selection = controller.selection;
+                                  _matSelectedGrammage = null;
+                                  _matGramError = (_matGramCtl.text.trim().isEmpty ||
+                                          gramOptions
+                                              .map((e) => e.toLowerCase())
+                                              .contains(_matGramCtl.text
+                                                  .trim()
+                                                  .toLowerCase()))
+                                      ? null
+                                      : 'Выберите грамаж из списка';
+                                  final lowerG =
+                                      gramOptions.map((e) => e.toLowerCase()).toList();
+                                  final typed =
+                                      _matGramCtl.text.trim().toLowerCase();
+                                  if (lowerG.contains(typed)) {
+                                    _matSelectedGrammage =
+                                        gramOptions[lowerG.indexOf(typed)];
+                                  }
+                                });
+                                _scheduleStagePreviewUpdate();
+                              }
+                            });
+                            return TextField(
+                              controller: controller,
+                              focusNode: focusNode,
+                              enabled: _matSelectedName != null &&
+                                  _matSelectedFormat != null,
+                              decoration:
+                                  mainPaperDecoration('Грамаж').copyWith(
+                                helperText: (_matSelectedName != null &&
+                                        _matSelectedFormat != null)
+                                    ? null
+                                    : 'Сначала выберите формат',
+                                errorText: (_matSelectedName != null &&
+                                        _matSelectedFormat != null)
+                                    ? _matGramError
+                                    : null,
+                              ),
+                              onSubmitted: (_) => onFieldSubmitted(),
+                            );
+                          },
+                          onSelected: (value) {
+                            setState(() {
+                              _activePaperSlotIndex = 0;
+                              _matGramCtl.text = value;
+                              _matSelectedGrammage = value;
+                              _matGramError = null;
+                              final tmc = findExact(
+                                  _matSelectedName!, _matSelectedFormat!, value);
+                              if (tmc != null) {
+                                _selectMaterial(tmc);
+                              }
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        TextFormField(
+                          initialValue:
+                              product.widthB != null ? _formatDecimal(product.widthB!) : '',
+                          decoration: mainPaperDecoration('Ширина b'),
+                          keyboardType: TextInputType.number,
+                          onChanged: (val) {
+                            final normalized = val.replaceAll(',', '.');
+                            product.widthB = double.tryParse(normalized);
+                            _scheduleStagePreviewUpdate();
+                          },
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: product.blQuantity?.toString() ?? '',
+                                decoration: mainPaperDecoration('Количество'),
+                                keyboardType: TextInputType.text,
+                                onChanged: (val) {
+                                  final trimmed = val.trim();
+                                  product.blQuantity = trimmed.isEmpty ? null : trimmed;
+                                  _scheduleStagePreviewUpdate();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextFormField(
+                                initialValue:
+                                    product.length != null ? _formatDecimal(product.length!) : '',
+                                decoration: mainPaperDecoration('Длина L').copyWith(
+                                  errorText: _lengthExceeded ? 'Недостаточно' : null,
+                                ),
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) {
+                                  final normalized = val.replaceAll(',', '.');
+                                  final d = double.tryParse(normalized);
+                                  setState(() {
+                                    product.length = d;
+                                    final materialTmc =
+                                        _selectedMaterialTmc ?? _resolvePaperByText();
+                                    if (materialTmc != null && d != null) {
+                                      _lengthExceeded = () {
+                                        final current = Provider.of<WarehouseProvider>(
+                                                context,
+                                                listen: false)
+                                            .allTmc
+                                            .where((t) => t.id == materialTmc.id)
+                                            .toList();
+                                        final available = current.isNotEmpty
+                                            ? current.first.quantity
+                                            : materialTmc.quantity;
+                                        return d > available;
+                                      }();
+                                    } else {
+                                      _lengthExceeded = false;
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             );
           },
-        ),
-        TextFormField(
-          initialValue: product.widthB != null ? _formatDecimal(product.widthB!) : '',
-          decoration: const InputDecoration(
-            labelText: 'Ширина b',
-            border: OutlineInputBorder(),
-          ),
-          keyboardType: TextInputType.number,
-          onChanged: (val) {
-            final normalized = val.replaceAll(',', '.');
-            product.widthB = double.tryParse(normalized);
-            _scheduleStagePreviewUpdate();
-          },
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                initialValue: product.blQuantity?.toString() ?? '',
-                decoration: const InputDecoration(
-                  labelText: 'Количество',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.text,
-                onChanged: (val) {
-                  final trimmed = val.trim();
-                  product.blQuantity = trimmed.isEmpty ? null : trimmed;
-                  _scheduleStagePreviewUpdate();
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                initialValue: product.length != null ? _formatDecimal(product.length!) : '',
-                decoration: InputDecoration(
-                  labelText: 'Длина L',
-                  border: const OutlineInputBorder(),
-                  errorText: _lengthExceeded ? 'Недостаточно' : null,
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (val) {
-                  final normalized = val.replaceAll(',', '.');
-                  final d = double.tryParse(normalized);
-                  setState(() {
-                    product.length = d;
-                    final materialTmc =
-                        _selectedMaterialTmc ?? _resolvePaperByText();
-                    if (materialTmc != null && d != null) {
-                      _lengthExceeded = () {
-                        final current =
-                            Provider.of<WarehouseProvider>(context, listen: false)
-                                .allTmc
-                                .where((t) => t.id == materialTmc.id)
-                                .toList();
-                        final available = current.isNotEmpty
-                            ? current.first.quantity
-                            : materialTmc.quantity;
-                        return d > available;
-                      }();
-                    } else {
-                      _lengthExceeded = false;
-                    }
-                  });
-                },
-              ),
-            ),
-          ],
         ),
         const SizedBox(height: 3),
         _buildExtraPaperSelectors(),
