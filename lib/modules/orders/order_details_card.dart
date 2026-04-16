@@ -185,6 +185,14 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
+  String _formDisplayValue(OrderModel order) {
+    if (!order.hasForm) return 'Форма не используется';
+    final type = order.isOldForm ? 'Старая форма' : 'Новая форма';
+    final code = (order.formCode ?? '').trim();
+    final number = order.newFormNo?.toString() ?? (code.isNotEmpty ? code : '—');
+    return '$type: $number';
+  }
+
   /// Builds a combined row for the "Картон" and "Подрезка" properties. In the
   /// updated design these two fields should appear on one line, separated
   /// evenly across the width of the card. Each side includes its own label
@@ -429,30 +437,22 @@ class OrderDetailsCard extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${o.isOldForm ? 'Старая форма' : 'Новая форма'}: ${o.newFormNo?.toString() ?? '—'}',
+                                _formDisplayValue(o),
                               ),
                               if (formImageUrl != null &&
                                   formImageUrl!.trim().isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 8),
-                                  child: InkWell(
-                                    onTap: () => _showImagePreview(
+                                  child: TextButton.icon(
+                                    onPressed: () => _showImagePreview(
                                       context,
                                       formImageUrl!,
-                                      title: 'Форма ${o.newFormNo?.toString() ?? ''}'
-                                          .trim(),
+                                      title:
+                                          'Форма ${o.newFormNo?.toString() ?? ''}'
+                                              .trim(),
                                     ),
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Image.network(
-                                        formImageUrl!,
-                                        height: 90,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) =>
-                                            const Text('Изображение формы недоступно'),
-                                      ),
-                                    ),
+                                    icon: const Icon(Icons.image_outlined),
+                                    label: const Text('Открыть изображение формы'),
                                   ),
                                 ),
                             ],
@@ -464,11 +464,6 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (loadingFiles)
-                                const Padding(
-                                  padding: EdgeInsets.only(bottom: 8.0),
-                                  child: LinearProgressIndicator(),
-                                ),
                               if (!loadingFiles && files.isEmpty)
                                 const Text('Нет приложенных файлов'),
                               ...files
