@@ -15,7 +15,7 @@ import 'order_model.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
-import '../production/production_screen.dart';
+import '../orders/orders_screen.dart';
 
 import '../production_planning/template_provider.dart';
 import '../warehouse/warehouse_provider.dart';
@@ -96,10 +96,10 @@ class _ExtraPaperEntry {
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
-  Future<void> _goToProductionModuleHome() async {
+  Future<void> _goToOrdersModuleHome() async {
     if (!mounted) return;
     await Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const ProductionScreen()),
+      MaterialPageRoute(builder: (_) => const OrdersScreen()),
       (route) => route.isFirst,
     );
   }
@@ -2274,7 +2274,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 // Независимо от создания/редактирования - синхронизируем список красок
 // c полем product.parameters и таблицей order_paints.
     await _persistPaints(createdOrUpdatedOrder.id);
-    await _goToProductionModuleHome();
+    await _goToOrdersModuleHome();
   }
 
   @override
