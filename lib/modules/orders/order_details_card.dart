@@ -520,9 +520,13 @@ class OrderDetailsCard extends StatelessWidget {
                               details.add('Ш: $widthValue');
                             }
                             if (qtyValue.isNotEmpty || lenValue.isNotEmpty) {
-                              final left = qtyValue.isEmpty ? '—' : qtyValue;
-                              final right = lenValue.isEmpty ? '—' : lenValue;
-                              details.add('Д: $left * $right L');
+                              if (qtyValue.isNotEmpty && lenValue.isNotEmpty) {
+                                details.add('Д: $qtyValue * $lenValue L');
+                              } else if (qtyValue.isNotEmpty) {
+                                details.add('Д: $qtyValue');
+                              } else {
+                                details.add('Д: $lenValue L');
+                              }
                             }
                             return <Widget>[
                               _buildInfoRow(
