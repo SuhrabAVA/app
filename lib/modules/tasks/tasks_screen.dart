@@ -1144,29 +1144,28 @@ class _TasksScreenState extends State<TasksScreen>
     required BuildContext context,
     required List<TmcModel> papers,
   }) async {
-    final searchController = TextEditingController();
     var search = '';
-    try {
-      return showDialog<TmcModel>(
-        context: context,
-        builder: (pickerContext) {
-          return StatefulBuilder(
-            builder: (pickerContext, setPickerState) {
-              final filtered = papers.where((paper) {
-                // В рабочем пространстве разрешаем повторно выбирать ту же бумагу
-                // в разных слотах (например, как дополнительную бумагу того же типа).
-                // Поэтому intentionally НЕ исключаем уже выбранные id.
-                return _matchPaperSearch(paper, search);
-              }).toList(growable: false);
-              return AlertDialog(
+    return showDialog<TmcModel>(
+      context: context,
+      builder: (pickerContext) {
+        return StatefulBuilder(
+          builder: (pickerContext, setPickerState) {
+            final filtered = papers.where((paper) {
+              // В рабочем пространстве разрешаем повторно выбирать ту же бумагу
+              // в разных слотах (например, как дополнительную бумагу того же типа).
+              // Поэтому intentionally НЕ исключаем уже выбранные id.
+              return _matchPaperSearch(paper, search);
+            }).toList(growable: false);
+            return AlertDialog(
               title: const Text('Выбор бумаги'),
               content: SizedBox(
                 width: 540,
                 height: 420,
                 child: Column(
                   children: [
-                    TextField(
-                      controller: searchController,
+                    TextFormField(
+                      key: ValueKey(search.isEmpty),
+                      initialValue: search,
                       decoration: InputDecoration(
                         labelText: 'Поиск бумаги',
                         hintText: 'Наименование, формат, грамаж',
@@ -1177,7 +1176,6 @@ class _TasksScreenState extends State<TasksScreen>
                                 onPressed: () {
                                   setPickerState(() {
                                     search = '';
-                                    searchController.clear();
                                   });
                                 },
                                 icon: const Icon(Icons.clear),
@@ -1222,11 +1220,8 @@ class _TasksScreenState extends State<TasksScreen>
             );
           },
         );
-        },
-      );
-    } finally {
-      searchController.dispose();
-    }
+      },
+    );
   }
 
   String _buildWorkspacePaperChangeComment({
