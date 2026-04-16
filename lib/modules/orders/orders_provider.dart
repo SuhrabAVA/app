@@ -812,6 +812,9 @@ class OrdersProvider with ChangeNotifier {
         id.trim(),
         if (assignmentId.isNotEmpty) assignmentId,
       }..removeWhere((value) => value.isEmpty);
+      final dbOrderRefs = relatedOrderIds
+          .where(_looksLikeUuid)
+          .toList(growable: false);
 
       // Фикс: логируем удаление до фактического удаления заказа, иначе
       // вставка в order_events ломается по FK order_events_order_id_fkey.
@@ -821,7 +824,7 @@ class OrdersProvider with ChangeNotifier {
       // в модуле производственных заданий и рабочем пространстве.
       // Если этап уже запущен, сначала принудительно завершаем его, затем удаляем,
       // чтобы в очереди не оставались "висящие" назначения.
-      for (final orderRef in relatedOrderIds) {
+      for (final orderRef in dbOrderRefs) {
         try {
           await _supabase
               .from('tasks')
@@ -869,6 +872,15 @@ class OrdersProvider with ChangeNotifier {
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
     }
+  }
+
+  bool _looksLikeUuid(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return false;
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+    );
+    return uuidPattern.hasMatch(normalized);
   }
 
   Future<void> _cleanupProductionQueueState(Set<String> removedOrderIds) async {
