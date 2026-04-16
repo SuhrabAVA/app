@@ -4681,7 +4681,10 @@ class _TasksScreenState extends State<TasksScreen>
                       );
                       if (!_anyUserActive(latestTask)) {
                         final _secs = _elapsed(latestTask).inSeconds;
-                        final shouldCloseStage = jointGroup != null || separateAllDone;
+                        // Для режима "Отдельный исполнитель" финальное закрытие
+                        // этапа выполняется только через отдельную кнопку
+                        // "Завершить задание" (ниже в карточке этапа).
+                        final shouldCloseStage = jointGroup != null;
                         if (_isInkConfirmationStage(task)) {
                           await _finalizeTask(task, initialQtyInput: qtyInput);
                           return;
@@ -4694,7 +4697,15 @@ class _TasksScreenState extends State<TasksScreen>
                             task.id, nextStatus,
                             spentSeconds: _secs,
                             startedAt: null);
-                        if (shouldCloseStage &&
+                        if (context.mounted && separateAllDone && jointGroup == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Все исполнители завершили работу. Нажмите «Завершить задание» для закрытия этапа.',
+                              ),
+                            ),
+                          );
+                        } else if (shouldCloseStage &&
                             nextStatus != TaskStatus.completed &&
                             context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
