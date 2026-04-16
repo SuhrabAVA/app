@@ -1513,17 +1513,31 @@ class _TasksScreenState extends State<TasksScreen>
                                   IconButton(
                                     tooltip: 'Удалить бумагу',
                                     onPressed: () {
+                                      final removedQtyController =
+                                          qtyControllers[i];
+                                      final removedFormatController =
+                                          formatControllers[i];
+                                      final removedGrammageController =
+                                          grammageControllers[i];
+                                      final removedWidthBController =
+                                          widthBControllers[i];
+                                      final removedBlQuantityController =
+                                          blQuantityControllers[i];
                                       setDialogState(() {
                                         selected.removeAt(i);
-                                        qtyControllers.removeAt(i).dispose();
-                                        formatControllers.removeAt(i).dispose();
-                                        grammageControllers
-                                            .removeAt(i)
-                                            .dispose();
-                                        widthBControllers.removeAt(i).dispose();
-                                        blQuantityControllers
-                                            .removeAt(i)
-                                            .dispose();
+                                        qtyControllers.removeAt(i);
+                                        formatControllers.removeAt(i);
+                                        grammageControllers.removeAt(i);
+                                        widthBControllers.removeAt(i);
+                                        blQuantityControllers.removeAt(i);
+                                      });
+                                      WidgetsBinding.instance
+                                          .addPostFrameCallback((_) {
+                                        removedQtyController.dispose();
+                                        removedFormatController.dispose();
+                                        removedGrammageController.dispose();
+                                        removedWidthBController.dispose();
+                                        removedBlQuantityController.dispose();
                                       });
                                     },
                                     icon: const Icon(Icons.delete_outline),
