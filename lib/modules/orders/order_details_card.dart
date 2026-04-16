@@ -428,9 +428,7 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                '${o.isOldForm ? 'Старая форма' : 'Новая форма'}: ${o.newFormNo?.toString() ?? '—'}',
-                              ),
+                              Text(_formDisplayText(o)),
                               if (formImageUrl != null &&
                                   formImageUrl!.trim().isNotEmpty)
                                 Padding(
@@ -464,11 +462,6 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (loadingFiles)
-                                const Padding(
-                                  padding: EdgeInsets.only(bottom: 8.0),
-                                  child: LinearProgressIndicator(),
-                                ),
                               if (!loadingFiles && files.isEmpty)
                                 const Text('Нет приложенных файлов'),
                               ...files
@@ -784,4 +777,22 @@ class OrderDetailsCard extends StatelessWidget {
       ),
     );
   }
-}  
+
+  String _formDisplayText(OrderModel order) {
+    if (!order.hasForm) return 'Форма не используется';
+    final typeLabel = order.isOldForm ? 'Старая форма' : 'Новая форма';
+    final formNo = order.newFormNo?.toString();
+    if (formNo != null && formNo.isNotEmpty) {
+      return '$typeLabel: $formNo';
+    }
+    final code = order.formCode?.trim();
+    if (code != null && code.isNotEmpty) {
+      return '$typeLabel: $code';
+    }
+    final series = order.formSeries?.trim();
+    if (series != null && series.isNotEmpty) {
+      return '$typeLabel: $series';
+    }
+    return '$typeLabel: —';
+  }
+}
