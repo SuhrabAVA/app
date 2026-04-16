@@ -504,7 +504,7 @@ class OrdersProvider with ChangeNotifier {
   ///
   /// Бизнес-правила:
   /// - причина изменения обязательна;
-  /// - допускается до 3 типов бумаги;
+  /// - количество типов бумаги не ограничено искусственным лимитом;
   /// - при запущенном заказе пересчитываем только резерв (без списания).
   Future<String?> updateOrderPapersFromWorkspace({
     required String orderId,
@@ -534,10 +534,6 @@ class OrdersProvider with ChangeNotifier {
     if (prepared.isEmpty) {
       return 'Добавьте хотя бы один тип бумаги.';
     }
-    if (prepared.length > 3) {
-      return 'Допускается не более 3 типов бумаги в заказе.';
-    }
-
     final index = _orders.indexWhere((o) => o.id == orderId);
     if (index == -1) {
       return 'Заказ не найден в локальном кеше.';
@@ -955,6 +951,21 @@ class OrdersProvider with ChangeNotifier {
     }
     if (writeoffQty < 0) {
       writeoffQty = 0;
+    }
+    if (writeoffQty <= 0) {
+      throw Exception('Количество для списания должно быть больше нуля.');
+    }
+
+    final snapshot = await loadCategoryItemSnapshot(orderData);
+    final double? snapshotQty = _toDoubleNullable(snapshot?['quantity']);
+    final double availableQty = snapshotQty != null
+        ? (snapshotQty < 0 ? 0 : snapshotQty)
+        : safeActual;
+    if (writeoffQty > availableQty) {
+      throw Exception(
+        'Итоговое количество (${_formatQty(writeoffQty)}) превышает '
+        'доступный остаток (${_formatQty(availableQty)}).',
+      );
     }
 
     final double leftoverQty =
