@@ -286,8 +286,20 @@ class OrderModel {
 
     final isOldFormBool =
         _asBool(_pickAny(map, const ['is_old_form', 'isOldForm'])) ?? false;
+    int? _parseInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) {
+        final s = value.trim();
+        if (s.isEmpty) return null;
+        return int.tryParse(s);
+      }
+      return null;
+    }
+
     final int? newFormNoVal =
-        (_pickAny(map, const ['new_form_no', 'newFormNo']) as num?)?.toInt();
+        _parseInt(_pickAny(map, const ['new_form_no', 'newFormNo']));
     final String? formSeriesVal =
         (_pickAny(map, const ['form_series', 'formSeries']) as String?);
     final String? formCodeVal =
