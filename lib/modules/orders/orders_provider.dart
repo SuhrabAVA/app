@@ -1248,8 +1248,12 @@ class OrdersProvider with ChangeNotifier {
   }
 
   double _requiredPaperReserveQty(OrderModel order, MaterialModel paper) {
-    final double length =
-        (order.product.length ?? 0).toDouble();
+    final double? perPaperLength = _paperExtraLength(paper);
+    if (perPaperLength != null && perPaperLength > 0) {
+      return perPaperLength;
+    }
+
+    final double length = (order.product.length ?? 0).toDouble();
     if (length > 0) return length;
 
     if (paper.quantity > 0) return paper.quantity;
@@ -1258,9 +1262,12 @@ class OrdersProvider with ChangeNotifier {
   }
 
   Future<MaterialModel> _normalizePaperForReservation(MaterialModel paper) async {
+    final double? perPaperLength = _paperExtraLength(paper);
     final double qty = paper.quantity > 0
         ? paper.quantity
-        : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0);
+        : (perPaperLength != null && perPaperLength > 0
+            ? perPaperLength
+            : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0));
     final normalized = paper.copyWith(quantity: qty);
     final currentId = (normalized.id ?? '').trim();
     if (currentId.isNotEmpty) {
@@ -1295,6 +1302,17 @@ class OrdersProvider with ChangeNotifier {
       return id.isEmpty ? null : id;
     } catch (_) {
       return null;
+    }
+    return null;
+  }
+
+  double? _paperExtraLength(MaterialModel paper) {
+    final dynamic value = paper.extra?['lengthL'];
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final normalized = value.trim().replaceAll(',', '.');
+      if (normalized.isEmpty) return null;
+      return double.tryParse(normalized);
     }
     return null;
   }
