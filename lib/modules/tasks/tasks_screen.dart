@@ -1491,6 +1491,8 @@ class _TasksScreenState extends State<TasksScreen>
                             Expanded(
                               child: TextFormField(
                                 controller: widthController,
+                                readOnly: true,
+                                enabled: false,
                                 keyboardType:
                                     const TextInputType.numberWithOptions(
                                   decimal: true,
@@ -1498,32 +1500,18 @@ class _TasksScreenState extends State<TasksScreen>
                                 decoration: const InputDecoration(
                                   labelText: 'Ширина заказа (мм)',
                                 ),
-                                validator: (value) {
-                                  final normalized =
-                                      (value ?? '').trim().replaceAll(',', '.');
-                                  final width = double.tryParse(normalized);
-                                  if (width == null || width <= 0) {
-                                    return 'Введите > 0';
-                                  }
-                                  return null;
-                                },
                               ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: TextFormField(
                                 controller: quantityController,
+                                readOnly: true,
+                                enabled: false,
                                 keyboardType: TextInputType.number,
                                 decoration: const InputDecoration(
                                   labelText: 'Количество по заказу',
                                 ),
-                                validator: (value) {
-                                  final qty = int.tryParse((value ?? '').trim());
-                                  if (qty == null || qty <= 0) {
-                                    return 'Введите > 0';
-                                  }
-                                  return null;
-                                },
                               ),
                             ),
                           ],
@@ -1601,12 +1589,8 @@ class _TasksScreenState extends State<TasksScreen>
                           }
 
                           final orders = context.read<OrdersProvider>();
-                          final nextWidth = double.parse(
-                            widthController.text.trim().replaceAll(',', '.'),
-                          );
-                          final nextQuantity = int.parse(
-                            quantityController.text.trim(),
-                          );
+                          final nextWidth = latest.product.width;
+                          final nextQuantity = latest.product.quantity;
                           // Бизнес-логика рабочего пространства: изменение бумаги
                           // обязательно сопровождается причиной и сразу
                           // синхронизируется с заказом/управлением/резервом.
