@@ -22,13 +22,13 @@ import 'order_model.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
-import '../production/production_screen.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
+import 'orders_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
 
@@ -92,10 +92,10 @@ class _StageRuleOutcome {
 class _EditOrderScreenState extends State<EditOrderScreen> {
   static const String _paintInfoParamLabel = 'Информация для красок:';
 
-  Future<void> _goToProductionModuleHome() async {
+  Future<void> _goToOrdersModuleHome() async {
     if (!mounted) return;
     await Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const ProductionScreen()),
+      MaterialPageRoute(builder: (_) => const OrdersScreen()),
       (route) => route.isFirst,
     );
   }
@@ -3158,7 +3158,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     // Списание лишнего выполняется на этапе отгрузки.
 
-    await _goToProductionModuleHome();
+    await _goToOrdersModuleHome();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
