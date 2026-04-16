@@ -797,6 +797,8 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, Future<String?>> _formImagePending = {};
   final Map<String, List<Map<String, dynamic>>> _orderPaintsCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending = {};
+  final Map<String, List<Map<String, dynamic>>> _orderFilesCache = {};
+  final Map<String, Future<List<Map<String, dynamic>>>> _orderFilesPending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
@@ -1297,6 +1299,16 @@ class _TasksScreenState extends State<TasksScreen>
         TextEditingController(text: _paperGrammageText(item.grammage)),
     ];
     final reasonController = TextEditingController();
+    final widthController = TextEditingController(
+      text: latest.product.width > 0
+          ? latest.product.width.toStringAsFixed(
+              latest.product.width % 1 == 0 ? 0 : 2,
+            )
+          : '',
+    );
+    final quantityController = TextEditingController(
+      text: latest.product.quantity > 0 ? latest.product.quantity.toString() : '',
+    );
     final formKey = GlobalKey<FormState>();
     String? errorText;
     bool saving = false;
@@ -1474,6 +1486,49 @@ class _TasksScreenState extends State<TasksScreen>
                           ),
                         ),
                         const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: widthController,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: const InputDecoration(
+                                  labelText: 'Ширина заказа (мм)',
+                                ),
+                                validator: (value) {
+                                  final normalized =
+                                      (value ?? '').trim().replaceAll(',', '.');
+                                  final width = double.tryParse(normalized);
+                                  if (width == null || width <= 0) {
+                                    return 'Введите > 0';
+                                  }
+                                  return null;
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextFormField(
+                                controller: quantityController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Количество по заказу',
+                                ),
+                                validator: (value) {
+                                  final qty = int.tryParse((value ?? '').trim());
+                                  if (qty == null || qty <= 0) {
+                                    return 'Введите > 0';
+                                  }
+                                  return null;
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
                         TextFormField(
                           controller: reasonController,
                           maxLines: 3,
@@ -1546,6 +1601,12 @@ class _TasksScreenState extends State<TasksScreen>
                           }
 
                           final orders = context.read<OrdersProvider>();
+                          final nextWidth = double.parse(
+                            widthController.text.trim().replaceAll(',', '.'),
+                          );
+                          final nextQuantity = int.parse(
+                            quantityController.text.trim(),
+                          );
                           // Бизнес-логика рабочего пространства: изменение бумаги
                           // обязательно сопровождается причиной и сразу
                           // синхронизируется с заказом/управлением/резервом.
@@ -1554,6 +1615,8 @@ class _TasksScreenState extends State<TasksScreen>
                             paperMaterials: nextMaterials,
                             reason: reasonController.text,
                             lengthL: nextLengthL,
+                            width: nextWidth,
+                            quantity: nextQuantity,
                           );
                           if (!mounted) return;
                           if (error != null) {
@@ -1589,6 +1652,8 @@ class _TasksScreenState extends State<TasksScreen>
       controller.dispose();
     }
     reasonController.dispose();
+    widthController.dispose();
+    quantityController.dispose();
   }
 
   List<String> _stageGroupMembers(String orderId, String stageId) {
@@ -3021,10 +3086,12 @@ class _TasksScreenState extends State<TasksScreen>
         future: Future.wait<dynamic>([
           _getFormImageFuture(order),
           _getOrderPaintsFuture(order.id),
+          _getOrderFilesFuture(order.id),
         ]),
         initialData: <dynamic>[
           cachedFormImageUrl,
           _orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[],
+          _orderFilesCache[order.id] ?? const <Map<String, dynamic>>[],
         ],
         builder: (context, snapshot) {
           final data = snapshot.data;
@@ -3036,14 +3103,21 @@ class _TasksScreenState extends State<TasksScreen>
                       ? data[1] as List<Map<String, dynamic>>
                       : null) ??
                   (_orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[]);
+          final resolvedFiles =
+              (data != null && data.length > 2
+                      ? data[2] as List<Map<String, dynamic>>
+                      : null) ??
+                  (_orderFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               OrderDetailsCard(
                 order: order,
                 paints: resolvedPaints,
-                files: const [],
-                loadingFiles: false,
+                files: resolvedFiles,
+                loadingFiles:
+                    snapshot.connectionState == ConnectionState.waiting &&
+                        resolvedFiles.isEmpty,
                 stageTemplateName: templateName,
                 formImageUrl: resolvedFormImageUrl,
                 extraSections: [
@@ -3079,6 +3153,35 @@ class _TasksScreenState extends State<TasksScreen>
     });
 
     _orderPaintsPending[normalizedOrderId] = future;
+    return future;
+  }
+
+  Future<List<Map<String, dynamic>>> _getOrderFilesFuture(String orderId) {
+    final normalizedOrderId = orderId.trim();
+    if (normalizedOrderId.isEmpty) {
+      return Future.value(const <Map<String, dynamic>>[]);
+    }
+
+    final pending = _orderFilesPending[normalizedOrderId];
+    if (pending != null) {
+      return pending;
+    }
+
+    final future = listOrderFiles(normalizedOrderId)
+        .then((files) {
+          final normalizedFiles = List<Map<String, dynamic>>.from(files);
+          _orderFilesCache[normalizedOrderId] = normalizedFiles;
+          return normalizedFiles;
+        })
+        .catchError((_) {
+          return _orderFilesCache[normalizedOrderId] ??
+              const <Map<String, dynamic>>[];
+        })
+        .whenComplete(() {
+          _orderFilesPending.remove(normalizedOrderId);
+        });
+
+    _orderFilesPending[normalizedOrderId] = future;
     return future;
   }
 
@@ -4511,12 +4614,9 @@ class _TasksScreenState extends State<TasksScreen>
                           userIdOverride: widget.employeeId);
                       await recordTimeEventForUser(TaskTimeType.problem,
                           note: comment);
-                      if (!_anyUserActive(task,
-                          exceptUserId: widget.employeeId)) {
-                        await context
-                            .read<TaskProvider>()
-                            .updateStatus(task.id, TaskStatus.problem);
-                      }
+                      await context
+                          .read<TaskProvider>()
+                          .updateStatus(task.id, TaskStatus.problem);
                     }
 
                     Future<void> onAddHelper() async {
@@ -4656,7 +4756,11 @@ class _TasksScreenState extends State<TasksScreen>
                         final unitLabel =
                             _workplaceUnit(personnel, task.stageId);
                         final qtyInput =
-                            await _askQuantity(context, unit: unitLabel);
+                            await _askQuantity(
+                          context,
+                          unit: unitLabel,
+                          allowPaperEdit: true,
+                        );
                         if (qtyInput == null) return;
                         final qtyText = qtyInput.displayText;
                         final helperIds = jointGroup != null && isMyRow
