@@ -744,7 +744,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: Text(
-                          
+                          'Количество пачек и количество в пачке должны быть больше нуля.',
                           style: TextStyle(color: Colors.red),
                         ),
                       ),
