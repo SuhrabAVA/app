@@ -448,9 +448,31 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
   }
 
+  String _formatQuantityDisplay(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '0';
+    final value = double.tryParse(trimmed.replaceAll(',', '.'));
+    if (value == null) return trimmed;
+    if ((value - value.round()).abs() < 0.0001) {
+      return value.round().toString();
+    }
+    return value.toStringAsFixed(2);
+  }
+
   String _renderCommentText(TaskComment comment, List<EmployeeModel> employees) {
     final rawText = comment.text.trim();
-    if (rawText.isEmpty) return 'Без комментария';
+    if (rawText.isEmpty) {
+      switch (comment.type) {
+        case 'shift_pause':
+          return 'Пересмена: этап приостановлен';
+        case 'shift_resume':
+          return 'Пересмена: работа возобновлена';
+        case 'ink_writeoff':
+          return 'Зафиксировано списание краски';
+        default:
+          return 'Без комментария';
+      }
+    }
 
     final parsed = TaskTimeEvent.fromPayload(
       rawText,
@@ -468,6 +490,36 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       final note = parsed.note?.trim();
       final notePart = (note != null && note.isNotEmpty) ? ' · $note' : '';
       return '${_timeTypeLabel(parsed.type)}: $periodStart — $periodEnd · $subject$notePart';
+    }
+
+    switch (comment.type) {
+      case 'start':
+        return 'Начал(а) этап';
+      case 'pause':
+        return 'Пауза: $rawText';
+      case 'problem':
+        return 'Проблема: $rawText';
+      case 'setup_start':
+        return 'Начал(а) наладку';
+      case 'setup_resume':
+        return 'Продолжил(а) наладку';
+      case 'setup_done':
+        return 'Завершил(а) наладку';
+      case 'quantity_done':
+        return 'Выполнил(а): ${_formatQuantityDisplay(rawText)} шт.';
+      case 'quantity_team_total':
+        return 'Команда выполнила: ${_formatQuantityDisplay(rawText)} шт.';
+      case 'quantity_share':
+        return 'Личный вклад: ${_formatQuantityDisplay(rawText)} шт.';
+      case 'shift_pause':
+      case 'shift_resume':
+      case 'finish_note':
+      case 'ink_writeoff':
+        return rawText;
+      case 'shift_pause_state':
+      case 'exec_mode':
+      case 'exec_mode_stage':
+        return 'Служебная отметка этапа';
     }
 
     if (rawText.startsWith('{') && rawText.endsWith('}')) {
@@ -514,8 +566,17 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     required PersonnelProvider personnel,
   }) {
     final comments = <TaskComment>[];
+    const hiddenTypes = <String>{
+      'shift_pause_state',
+      'exec_mode',
+      'exec_mode_stage',
+    };
     for (final t in tasks) {
-      comments.addAll(t.comments);
+      comments.addAll(
+        t.comments.where(
+          (comment) => !hiddenTypes.contains(comment.type.trim().toLowerCase()),
+        ),
+      );
     }
     comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 

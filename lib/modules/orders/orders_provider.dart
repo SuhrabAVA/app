@@ -1612,9 +1612,12 @@ class OrdersProvider with ChangeNotifier {
       final next = i < after.length ? after[i] : null;
       final slot = i + 1;
       if (old != null && next != null) {
+        final delta = next.quantity - old.quantity;
+        final deltaPrefix = delta >= 0 ? '+' : '';
         buffer.writeln(
           'Бумага №$slot: было ${materialName(old)} — ${old.quantity.toStringAsFixed(2)} м, '
-          'стало ${materialName(next)} — ${next.quantity.toStringAsFixed(2)} м',
+          'стало ${materialName(next)} — ${next.quantity.toStringAsFixed(2)} м '
+          '($deltaPrefix${delta.toStringAsFixed(2)} м)',
         );
       } else if (old == null && next != null) {
         buffer.writeln(

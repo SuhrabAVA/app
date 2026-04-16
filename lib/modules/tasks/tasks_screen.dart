@@ -1679,6 +1679,8 @@ class _TasksScreenState extends State<TasksScreen>
             : 'Проблема: ${comment.text}';
       case 'setup_start':
         return 'Начал(а) наладку';
+      case 'setup_resume':
+        return 'Продолжил(а) наладку';
       case 'setup_done':
         return 'Завершил(а) наладку';
       case 'quantity_done':
@@ -1708,6 +1710,12 @@ class _TasksScreenState extends State<TasksScreen>
         return comment.text.isNotEmpty
             ? comment.text
             : 'Пересмена: работа возобновлена';
+      case 'shift_pause_state':
+        return 'Состояние для пересмены сохранено';
+      case 'ink_writeoff':
+        return comment.text.isNotEmpty
+            ? comment.text
+            : 'Зафиксировано списание краски';
       default:
         return comment.text;
     }
@@ -3640,10 +3648,12 @@ class _TasksScreenState extends State<TasksScreen>
           qty: qtyForStock,
           reason: humanReadableReason,
         );
+        final qtyText = qtyForStock.toStringAsFixed(0);
         await taskProvider.addCommentAutoUser(
           taskId: task.id,
           type: 'ink_writeoff',
-          text: humanReadableReason,
+          text: 'Изменение краски: «$paintName» списано на $qtyText г. '
+              'Причина: $humanReadableReason',
           userIdOverride: widget.employeeId,
         );
       }
@@ -4286,6 +4296,18 @@ class _TasksScreenState extends State<TasksScreen>
                             !setupInProgressForCurrentUser) {
                           await _finishSetup(task, provider);
                         }
+                        final latestTaskAfterStartPrep = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final shouldResumeSetup =
+                            _isSetupInProgressForUser(
+                                  latestTaskAfterStartPrep,
+                                  widget.employeeId,
+                                ) &&
+                                !_hasProductionStartedForStage(
+                                  latestTaskAfterStartPrep,
+                                );
                         final startedAtTs =
                             task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
                         await taskProvider.updateStatus(
@@ -4299,7 +4321,7 @@ class _TasksScreenState extends State<TasksScreen>
                           text: 'Начал(а) этап',
                           userIdOverride: widget.employeeId,
                         );
-                        if (setupInProgressForCurrentUser) {
+                        if (shouldResumeSetup) {
                           await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'setup_resume',
@@ -4648,9 +4670,12 @@ class _TasksScreenState extends State<TasksScreen>
                           latestTask,
                           currentRowUserId,
                         );
-                        final shiftResumeState = (isSetupActiveForRow ||
-                                isSetupInProgress ||
-                                hasPendingSetup)
+                        final stageProductionStarted =
+                            _hasProductionStartedForStage(latestTask);
+                        final shiftResumeState = (!stageProductionStarted &&
+                                (isSetupActiveForRow ||
+                                    isSetupInProgress ||
+                                    hasPendingSetup))
                             ? 'setup'
                             : stateRowUser == UserRunState.paused
                                 ? 'paused'
