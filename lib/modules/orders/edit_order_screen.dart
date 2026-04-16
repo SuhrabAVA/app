@@ -22,6 +22,7 @@ import 'order_model.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
+import '../production/production_screen.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../warehouse/warehouse_provider.dart';
@@ -90,6 +91,14 @@ class _StageRuleOutcome {
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
   static const String _paintInfoParamLabel = 'Информация для красок:';
+
+  Future<void> _goToProductionModuleHome() async {
+    if (!mounted) return;
+    await Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const ProductionScreen()),
+      (route) => route.isFirst,
+    );
+  }
 
   String _trimTrailingFractionZeros(String value) {
     if (!value.contains('.')) return value;
@@ -2541,7 +2550,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     try {
     // Флаг: создаём новый заказ или редактируем
     final bool isCreating = (widget.order == null);
-    final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     if (!_formKey.currentState!.validate()) return;
     _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
@@ -3150,7 +3158,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     // Списание лишнего выполняется на этапе отгрузки.
 
-    if (mounted) navigator.pop();
+    await _goToProductionModuleHome();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
