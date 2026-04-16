@@ -1143,7 +1143,6 @@ class _TasksScreenState extends State<TasksScreen>
   Future<TmcModel?> _pickPaperForSlot({
     required BuildContext context,
     required List<TmcModel> papers,
-    required Set<String> excludedIds,
   }) async {
     final searchController = TextEditingController();
     var search = '';
@@ -1154,7 +1153,9 @@ class _TasksScreenState extends State<TasksScreen>
           return StatefulBuilder(
             builder: (pickerContext, setPickerState) {
               final filtered = papers.where((paper) {
-                if (excludedIds.contains(paper.id)) return false;
+                // В рабочем пространстве разрешаем повторно выбирать ту же бумагу
+                // в разных слотах (например, как дополнительную бумагу того же типа).
+                // Поэтому intentionally НЕ исключаем уже выбранные id.
                 return _matchPaperSearch(paper, search);
               }).toList(growable: false);
               return AlertDialog(
@@ -1226,6 +1227,78 @@ class _TasksScreenState extends State<TasksScreen>
     } finally {
       searchController.dispose();
     }
+  }
+
+  String _buildWorkspacePaperChangeComment({
+    required List<MaterialModel> before,
+    required List<MaterialModel> after,
+    required String reason,
+  }) {
+    String paperLabel(MaterialModel material) {
+      final parts = <String>[
+        material.name.trim().isEmpty ? 'Без названия' : material.name.trim(),
+        if ((material.format ?? '').trim().isNotEmpty)
+          'формат ${(material.format ?? '').trim()}',
+        if ((material.grammage ?? '').trim().isNotEmpty)
+          'грамаж ${(material.grammage ?? '').trim()}',
+      ];
+      return parts.join(', ');
+    }
+
+    String qtyText(MaterialModel material) =>
+        '${material.quantity.toStringAsFixed(2)} м';
+
+    final lines = <String>[
+      'Изменение бумаги из рабочего пространства.',
+    ];
+    final maxLen = before.length > after.length ? before.length : after.length;
+    for (var i = 0; i < maxLen; i++) {
+      final oldMaterial = i < before.length ? before[i] : null;
+      final newMaterial = i < after.length ? after[i] : null;
+      final slot = i + 1;
+      if (oldMaterial != null && newMaterial != null) {
+        final delta = newMaterial.quantity - oldMaterial.quantity;
+        final deltaPrefix = delta >= 0 ? '+' : '';
+        lines.add(
+          'Бумага №$slot: было ${paperLabel(oldMaterial)} (${qtyText(oldMaterial)}), '
+          'стало ${paperLabel(newMaterial)} (${qtyText(newMaterial)}), '
+          'изменение $deltaPrefix${delta.toStringAsFixed(2)} м.',
+        );
+      } else if (oldMaterial == null && newMaterial != null) {
+        lines.add(
+          'Бумага №$slot добавлена: ${paperLabel(newMaterial)} (${qtyText(newMaterial)}).',
+        );
+      } else if (oldMaterial != null && newMaterial == null) {
+        lines.add(
+          'Бумага №$slot удалена: ${paperLabel(oldMaterial)} (${qtyText(oldMaterial)}).',
+        );
+      }
+    }
+    lines.add('Причина: ${reason.trim()}');
+    return lines.join('\n');
+  }
+
+  Future<void> _addWorkspacePaperChangeComment({
+    required String orderId,
+    required String text,
+  }) async {
+    final taskProvider = context.read<TaskProvider>();
+    final candidates = taskProvider.tasks.where((task) => task.orderId == orderId).toList();
+    if (candidates.isEmpty) return;
+    candidates.sort((a, b) {
+      final aPriority = (a.stageId == _selectedWorkplaceId ? 0 : 1) +
+          (_isEffectivelyCompleted(a) ? 10 : 0);
+      final bPriority = (b.stageId == _selectedWorkplaceId ? 0 : 1) +
+          (_isEffectivelyCompleted(b) ? 10 : 0);
+      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
+      return a.id.compareTo(b.id);
+    });
+    await taskProvider.addCommentAutoUser(
+      taskId: candidates.first.id,
+      type: 'paper_change',
+      text: text,
+      userIdOverride: widget.employeeId,
+    );
   }
 
   Future<void> _openPaperEditDialog(OrderModel baseOrder) async {
@@ -1394,19 +1467,10 @@ class _TasksScreenState extends State<TasksScreen>
                                     onTap: saving
                                         ? null
                                         : () async {
-                                            final excludedIds = selected
-                                                .asMap()
-                                                .entries
-                                                .where((entry) => entry.key != i)
-                                                .map((entry) =>
-                                                    (entry.value.id ?? '').trim())
-                                                .where((id) => id.isNotEmpty)
-                                                .toSet();
                                             final paper =
                                                 await _pickPaperForSlot(
                                               context: dialogContext,
                                               papers: papers,
-                                              excludedIds: excludedIds,
                                             );
                                             if (paper == null) return;
                                             setDialogState(() {
@@ -1664,6 +1728,15 @@ class _TasksScreenState extends State<TasksScreen>
                             });
                             return;
                           }
+                          final paperComment = _buildWorkspacePaperChangeComment(
+                            before: currentMaterials,
+                            after: nextMaterials,
+                            reason: reasonController.text,
+                          );
+                          await _addWorkspacePaperChangeComment(
+                            orderId: latest.id,
+                            text: paperComment,
+                          );
                           Navigator.of(dialogContext).pop();
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
