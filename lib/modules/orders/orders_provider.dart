@@ -793,13 +793,41 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final assignmentId = (removed.assignmentId ?? '').trim();
+      final relatedOrderIds = <String>{
+        id.trim(),
+        if (assignmentId.isNotEmpty) assignmentId,
+      }..removeWhere((value) => value.isEmpty);
+
       // Фикс: логируем удаление до фактического удаления заказа, иначе
       // вставка в order_events ломается по FK order_events_order_id_fkey.
       await _logOrderEvent(id, 'Удаление', 'Удалён заказ');
 
       // Важно: удаляем связанные сущности синхронно, чтобы заказ не "висел"
       // в модуле производственных заданий и рабочем пространстве.
-      await _supabase.from('tasks').delete().eq('order_id', id);
+      // Если этап уже запущен, сначала принудительно завершаем его, затем удаляем,
+      // чтобы в очереди не оставались "висящие" назначения.
+      for (final orderRef in relatedOrderIds) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update({
+                'status': 'done',
+                'completed_at': DateTime.now().toUtc().toIso8601String(),
+              })
+              .eq('order_id', orderRef)
+              .neq('status', 'done');
+        } catch (_) {
+          // На старых схемах может отсутствовать completed_at.
+          await _supabase
+              .from('tasks')
+              .update({'status': 'done'})
+              .eq('order_id', orderRef)
+              .neq('status', 'done');
+        }
+        await _supabase.from('tasks').delete().eq('order_id', orderRef);
+      }
+      await _cleanupProductionQueueState(relatedOrderIds);
       // Бизнес-правило: удаление заказа освобождает весь резерв бумаги.
       await _releasePaperReservations(orderId: id);
       await _supabase.from('order_paints').delete().eq('order_id', id);
@@ -826,6 +854,48 @@ class OrdersProvider with ChangeNotifier {
       _orders.insert(index, removed);
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
+    }
+  }
+
+  Future<void> _cleanupProductionQueueState(Set<String> removedOrderIds) async {
+    if (removedOrderIds.isEmpty) return;
+
+    try {
+      final rows = await _supabase
+          .from('production_queue_state')
+          .select('group_id, order_sequence, hidden_order_ids');
+      if (rows is! List) return;
+
+      for (final row in rows.whereType<Map>()) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final groupId = (map['group_id'] ?? '').toString();
+        final originalSequence = (map['order_sequence'] as List? ?? const [])
+            .map((e) => e?.toString() ?? '')
+            .toList(growable: false);
+        final originalHidden = (map['hidden_order_ids'] as List? ?? const [])
+            .map((e) => e?.toString() ?? '')
+            .toList(growable: false);
+
+        final nextSequence = originalSequence
+            .where((value) => !removedOrderIds.contains(value.trim()))
+            .toList(growable: false);
+        final nextHidden = originalHidden
+            .where((value) => !removedOrderIds.contains(value.trim()))
+            .toList(growable: false);
+
+        final changed =
+            nextSequence.length != originalSequence.length || nextHidden.length != originalHidden.length;
+        if (!changed) continue;
+
+        await _supabase.from('production_queue_state').upsert({
+          'group_id': groupId,
+          'order_sequence': nextSequence,
+          'hidden_order_ids': nextHidden,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        });
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ cleanup production_queue_state failed: $e\n$st');
     }
   }
 
