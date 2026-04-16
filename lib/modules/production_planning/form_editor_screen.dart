@@ -187,14 +187,76 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     try {
       final wp = WarehouseProvider();
       // Не фильтруем по _formSeries, поскольку series теперь хранит полное название
-      _formResults = await wp.searchForms(
+      final fetchedForms = await wp.searchForms(
         query: search ?? _formSearchCtl.text,
         limit: 50,
+      );
+      _formResults = _prioritizeFormsByCustomer(
+        fetchedForms,
+        customerName: _customerController.text,
       );
     } catch (_) {
     } finally {
       if (mounted) setState(() => _loadingForms = false);
     }
+  }
+
+  List<Map<String, dynamic>> _prioritizeFormsByCustomer(
+    List<Map<String, dynamic>> forms, {
+    required String customerName,
+  }) {
+    if (forms.isEmpty) return forms;
+    final customer = _normalizeSearch(customerName);
+    if (customer.isEmpty) return forms;
+
+    final scored = forms.map((row) {
+      final series = _normalizeSearch((row['series'] ?? '').toString());
+      final title = _normalizeSearch((row['title'] ?? '').toString());
+      final description = _normalizeSearch((row['description'] ?? '').toString());
+      final code = _normalizeSearch((row['code'] ?? '').toString());
+
+      int score = 0;
+      if (series == customer || title == customer) {
+        score += 1000;
+      }
+      if (series.contains(customer) || customer.contains(series)) {
+        score += 400;
+      }
+      if (title.contains(customer) || customer.contains(title)) {
+        score += 300;
+      }
+      if (description.contains(customer) || customer.contains(description)) {
+        score += 200;
+      }
+      if (code.contains(customer)) {
+        score += 80;
+      }
+
+      final customerTokens = customer.split(' ').where((e) => e.isNotEmpty);
+      for (final token in customerTokens) {
+        if (token.length < 3) continue;
+        if (series.contains(token)) score += 50;
+        if (title.contains(token)) score += 40;
+        if (description.contains(token)) score += 20;
+      }
+
+      return (row: row, score: score);
+    }).toList();
+
+    scored.sort((a, b) {
+      if (a.score != b.score) return b.score.compareTo(a.score);
+      final aNumber = (a.row['number'] as num?)?.toInt() ?? 0;
+      final bNumber = (b.row['number'] as num?)?.toInt() ?? 0;
+      return bNumber.compareTo(aNumber);
+    });
+
+    return scored.map((e) => e.row).toList(growable: false);
+  }
+
+  String _normalizeSearch(String value) {
+    final lower = value.toLowerCase().trim();
+    if (lower.isEmpty) return '';
+    return lower.replaceAll(RegExp(r'\s+'), ' ');
   }
 
   final _formKey = GlobalKey<FormState>();
@@ -352,7 +414,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     super.initState();
 
-    _reloadForms();
     // order передан при редактировании, initialOrder - при создании на основе шаблона
     final template = widget.order ?? widget.initialOrder;
     // Текущий менеджер будет выбран позже в didChangeDependencies, когда загрузится список менеджеров.
@@ -443,6 +504,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
     }
     _customerController.addListener(_updateStockExtra);
+    _reloadForms();
     // ensure at least one paint row only for new orders (not editing)
     if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
     _loadCategoriesForProduct();
@@ -2406,7 +2468,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 labelText: 'Заказчик',
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) => _updateStockExtra(),
+              onChanged: (_) {
+                _updateStockExtra();
+                if (_isOldForm) {
+                  _reloadForms();
+                }
+              },
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
                   return 'Введите заказчика';

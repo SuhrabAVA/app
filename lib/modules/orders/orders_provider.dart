@@ -948,14 +948,6 @@ class OrdersProvider with ChangeNotifier {
     final double actualQty =
         orderData.actualQty ?? orderData.product.quantity.toDouble();
     final double safeActual = actualQty < 0 ? 0 : actualQty;
-    if (safeActual < plannedQty) {
-      // Бизнес-правило отгрузки: нельзя отгружать меньше тиража.
-      throw Exception(
-        'Отгрузка запрещена: фактическое количество '
-        '(${_formatQty(safeActual)}) меньше тиража (${_formatQty(plannedQty)}).',
-      );
-    }
-
     double writeoffQty = writeoffOverride ??
         (safeActual < plannedQty ? safeActual : plannedQty.toDouble());
     if (writeoffQty.isNaN || writeoffQty.isInfinite) {
