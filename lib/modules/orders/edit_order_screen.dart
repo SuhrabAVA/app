@@ -4187,42 +4187,46 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     },
                   ),
                   const SizedBox(height: 4),
-                  TextFormField(
-                    initialValue: _paperExtraDouble(
-                              _extraPaperMaterials[i],
-                              'widthB',
-                            ) !=
-                            null
-                        ? _formatDecimal(
-                            _paperExtraDouble(_extraPaperMaterials[i], 'widthB')!)
-                        : '',
-                    decoration: const InputDecoration(
-                      labelText: 'Ширина b',
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    onChanged: (value) {
-                      final parsed = double.tryParse(value.replaceAll(',', '.'));
-                      setState(() {
-                        final nextExtra = Map<String, dynamic>.from(
-                          _extraPaperMaterials[i].extra ?? const {},
-                        );
-                        if (parsed == null) {
-                          nextExtra.remove('widthB');
-                        } else {
-                          nextExtra['widthB'] = parsed;
-                        }
-                        _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
-                          extra: nextExtra.isEmpty ? null : nextExtra,
-                        );
-                      });
-                      _scheduleStagePreviewUpdate();
-                    },
-                  ),
-                  const SizedBox(height: 4),
                   Row(
                     children: [
+                      Expanded(
+                        child: TextFormField(
+                          initialValue: _paperExtraDouble(
+                                    _extraPaperMaterials[i],
+                                    'widthB',
+                                  ) !=
+                                  null
+                              ? _formatDecimal(_paperExtraDouble(
+                                  _extraPaperMaterials[i], 'widthB')!)
+                              : '',
+                          decoration: const InputDecoration(
+                            labelText: 'Ширина b',
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          onChanged: (value) {
+                            final parsed =
+                                double.tryParse(value.replaceAll(',', '.'));
+                            setState(() {
+                              final nextExtra = Map<String, dynamic>.from(
+                                _extraPaperMaterials[i].extra ?? const {},
+                              );
+                              if (parsed == null) {
+                                nextExtra.remove('widthB');
+                              } else {
+                                nextExtra['widthB'] = parsed;
+                              }
+                              _extraPaperMaterials[i] =
+                                  _extraPaperMaterials[i].copyWith(
+                                extra: nextExtra.isEmpty ? null : nextExtra,
+                              );
+                            });
+                            _scheduleStagePreviewUpdate();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: TextFormField(
                           initialValue:
@@ -4718,21 +4722,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                             });
                           },
                         ),
-                        const SizedBox(height: 4),
-                        TextFormField(
-                          initialValue:
-                              product.widthB != null ? _formatDecimal(product.widthB!) : '',
-                          decoration: mainPaperDecoration('Ширина b'),
-                          keyboardType: TextInputType.number,
-                          onChanged: (val) {
-                            final normalized = val.replaceAll(',', '.');
-                            product.widthB = double.tryParse(normalized);
-                            _scheduleStagePreviewUpdate();
-                          },
-                        ),
-                        const SizedBox(height: 6),
                         Row(
                           children: [
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: product.widthB != null
+                                    ? _formatDecimal(product.widthB!)
+                                    : '',
+                                decoration: mainPaperDecoration('Ширина b'),
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) {
+                                  final normalized = val.replaceAll(',', '.');
+                                  product.widthB = double.tryParse(normalized);
+                                  _scheduleStagePreviewUpdate();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: TextFormField(
                                 initialValue: product.blQuantity?.toString() ?? '',
