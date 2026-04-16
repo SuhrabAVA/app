@@ -1256,18 +1256,33 @@ class _TasksScreenState extends State<TasksScreen>
             ),
           ];
 
-    double initialPaperQty(MaterialModel item) {
+    double? paperLengthFromExtra(MaterialModel item) {
+      final raw = item.extra?['lengthL'];
+      if (raw is num) return raw.toDouble();
+      if (raw is String) {
+        final normalized = raw.trim().replaceAll(',', '.');
+        if (normalized.isEmpty) return null;
+        return double.tryParse(normalized);
+      }
+      return null;
+    }
+
+    double initialPaperQty(MaterialModel item, int index) {
       final fromCurrent = item.quantity > 0 ? item.quantity : 0.0;
+      final fromExtra = paperLengthFromExtra(item) ?? 0.0;
       final orderLength = (latest.product.length ?? 0).toDouble();
+
+      if (index == 0 && orderLength > 0) return orderLength;
+      if (fromExtra > 0) return fromExtra;
       if (fromCurrent > 0) return fromCurrent;
       if (orderLength > 0) return orderLength;
-      return fromCurrent;
+      return 0.0;
     }
 
     final qtyControllers = <TextEditingController>[
-      for (final item in selected)
+      for (var i = 0; i < selected.length; i++)
         () {
-          final qty = initialPaperQty(item);
+          final qty = initialPaperQty(selected[i], i);
           return TextEditingController(
             text: qty > 0 ? qty.toStringAsFixed(2) : '',
           );
