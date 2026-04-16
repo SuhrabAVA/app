@@ -3090,12 +3090,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       displayStringForOption: (s) => s,
                       fieldViewBuilder:
                           (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matNameCtl.text;
-                        controller.selection = _matNameCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matNameCtl.text) {
+                        if (controller.text != _matNameCtl.text) {
+                          controller.text = _matNameCtl.text;
+                          controller.selection = _matNameCtl.selection;
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: 'Материал',
+                            border: const OutlineInputBorder(),
+                            errorText: _matNameError,
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              _matNameCtl.text = controller.text;
+                              _matNameCtl.text = value;
                               _matNameCtl.selection = controller.selection;
                               // Сбрасываем выбор, пока не будет выбран вариант из списка
                               _matSelectedName = null;
@@ -3124,16 +3133,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                     allNames[lowerNames.indexOf(typed)];
                               }
                             });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: 'Материал',
-                            border: const OutlineInputBorder(),
-                            errorText: _matNameError,
-                          ),
+                          },
                           onSubmitted: (_) => onFieldSubmitted(),
                         );
                       },
@@ -3162,12 +3162,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       displayStringForOption: (s) => s,
                       fieldViewBuilder:
                           (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matFormatCtl.text;
-                        controller.selection = _matFormatCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matFormatCtl.text) {
+                        if (controller.text != _matFormatCtl.text) {
+                          controller.text = _matFormatCtl.text;
+                          controller.selection = _matFormatCtl.selection;
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          enabled: _matSelectedName != null,
+                          decoration: InputDecoration(
+                            labelText: 'Формат',
+                            border: const OutlineInputBorder(),
+                            helperText: _matSelectedName != null
+                                ? null
+                                : 'Сначала выберите материал',
+                            errorText: _matSelectedName != null
+                                ? _matFormatError
+                                : null,
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              _matFormatCtl.text = controller.text;
+                              _matFormatCtl.text = value;
                               _matFormatCtl.selection = controller.selection;
                               _matSelectedFormat = null;
                               _matSelectedGrammage = null;
@@ -3192,22 +3207,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                     formatOptions[lowerF.indexOf(typedF)];
                               }
                             });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null,
-                          decoration: InputDecoration(
-                            labelText: 'Формат',
-                            border: const OutlineInputBorder(),
-                            helperText: _matSelectedName != null
-                                ? null
-                                : 'Сначала выберите материал',
-                            errorText: _matSelectedName != null
-                                ? _matFormatError
-                                : null,
-                          ),
+                          },
                           onSubmitted: (_) => onFieldSubmitted(),
                         );
                       },
@@ -3231,12 +3231,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       displayStringForOption: (s) => s,
                       fieldViewBuilder:
                           (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matGramCtl.text;
-                        controller.selection = _matGramCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matGramCtl.text) {
+                        if (controller.text != _matGramCtl.text) {
+                          controller.text = _matGramCtl.text;
+                          controller.selection = _matGramCtl.selection;
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          enabled: _matSelectedName != null &&
+                              _matSelectedFormat != null,
+                          decoration: InputDecoration(
+                            labelText: 'Грамаж',
+                            border: const OutlineInputBorder(),
+                            helperText: (_matSelectedName != null &&
+                                    _matSelectedFormat != null)
+                                ? null
+                                : 'Сначала выберите формат',
+                            errorText: (_matSelectedName != null &&
+                                    _matSelectedFormat != null)
+                                ? _matGramError
+                                : null,
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              _matGramCtl.text = controller.text;
+                              _matGramCtl.text = value;
                               _matGramCtl.selection = controller.selection;
                               _matSelectedGrammage = null;
                               _matGramError = null; // обновится при выборе
@@ -3281,25 +3299,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                 }
                               }
                             });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null &&
-                              _matSelectedFormat != null,
-                          decoration: InputDecoration(
-                            labelText: 'Грамаж',
-                            border: const OutlineInputBorder(),
-                            helperText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? null
-                                : 'Сначала выберите формат',
-                            errorText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? _matGramError
-                                : null,
-                          ),
+                          },
                           onSubmitted: (_) => onFieldSubmitted(),
                         );
                       },
