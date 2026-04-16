@@ -2163,6 +2163,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
           stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
+          hasForm: createdOrUpdatedOrder.hasForm,
+          isOldForm: createdOrUpdatedOrder.isOldForm,
+          newFormNo: createdOrUpdatedOrder.newFormNo,
+          formSeries: createdOrUpdatedOrder.formSeries,
+          formCode: createdOrUpdatedOrder.formCode,
           contractSigned: createdOrUpdatedOrder.contractSigned,
           paymentDone: createdOrUpdatedOrder.paymentDone,
           comments: createdOrUpdatedOrder.comments,
@@ -2179,92 +2184,120 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // === Обработка формы ===
     if (isCreating) {
       try {
-        final wp = WarehouseProvider();
-        int? selectedFormNumber;
-        String series;
-        String? formCodeToSave;
-
-        if (_isOldForm) {
-          // При выборе старой формы копируем данные из выбранной строки
-          series = (_formSeries is String && _formSeries.isNotEmpty)
-              ? _formSeries
-              : 'F';
-          if (_selectedOldFormRow != null) {
-            selectedFormNumber =
-                ((_selectedOldFormRow!['number'] ?? 0) as num).toInt();
-            final s = (_selectedOldFormRow!['series'] ?? '').toString();
-            if (s.isNotEmpty) series = s;
-            final c = (_selectedOldFormRow!['code'] ?? '').toString();
-            if (c.isNotEmpty) formCodeToSave = c;
-          } else if (_selectedOldForm != null &&
-              _selectedOldForm!.trim().isNotEmpty) {
-            final code = _selectedOldForm!.trim();
-            final mDigits = RegExp(r'\d+').firstMatch(code);
-            final String digits = mDigits != null ? mDigits.group(0)! : code;
-            selectedFormNumber = int.tryParse(digits);
-            final mSeries = RegExp(r'^[A-Za-zА-Яа-я]+').firstMatch(code);
-            if (mSeries != null) series = mSeries.group(0)!;
-            formCodeToSave = code;
-          }
-        } else {
-          // Создание новой формы: используем введённые данные
-          final name = _newFormNameCtl.text.trim();
-          final size = _newFormSizeCtl.text.trim();
-          final colors = _newFormColorsCtl.text.trim();
-          series = name.isNotEmpty ? name : 'F';
-          final created = await wp.createFormAndReturn(
-            series: series,
-            title: size.isNotEmpty ? size : null,
-            description: colors.isNotEmpty ? colors : null,
-            imageBytes: _newFormImageBytes,
-          );
-          selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
-          final s = (created['series'] ?? '').toString();
-          if (s.isNotEmpty) series = s;
-          final c = (created['code'] ?? '').toString();
-          if (c.isNotEmpty) formCodeToSave = c;
-          try {
-            await _reloadForms();
-          } catch (_) {}
-        }
-
-        if (selectedFormNumber != null) {
-          await _sb.from('orders').update({
-            'is_old_form': _isOldForm,
-            'new_form_no': selectedFormNumber,
-            'form_series': series,
-            'form_code': formCodeToSave,
-          }).eq('id', createdOrUpdatedOrder.id);
-          try {
-            final upd = await _sb
-                .from('orders')
-                .update({
-                  'is_old_form': _isOldForm,
-                  'new_form_no': selectedFormNumber,
-                  'form_series': series,
-                  'form_code': formCodeToSave,
-                })
-                .eq('id', createdOrUpdatedOrder.id)
-                .select()
-                .maybeSingle();
-            if (upd == null) throw 'empty response';
-          } catch (e) {
-            if (mounted) {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                    content: Text(
-                        'Не удалось сохранить номер формы: ' + e.toString())),
-              );
-            }
-          }
-
+        final persistedOrderForm = await _sb
+            .from('orders')
+            .select('is_old_form, new_form_no, form_series, form_code')
+            .eq('id', createdOrUpdatedOrder.id)
+            .maybeSingle();
+        final persistedSeries =
+            (persistedOrderForm?['form_series'] ?? '').toString().trim();
+        final persistedCode =
+            (persistedOrderForm?['form_code'] ?? '').toString().trim();
+        final persistedNoRaw = persistedOrderForm?['new_form_no'];
+        final persistedNo = persistedNoRaw is num
+            ? persistedNoRaw.toInt()
+            : int.tryParse((persistedNoRaw ?? '').toString());
+        final hasPersistedForm = persistedCode.isNotEmpty ||
+            (persistedSeries.isNotEmpty && persistedNo != null);
+        if (hasPersistedForm) {
           if (mounted) {
             setState(() {
-              _orderFormDisplay = (formCodeToSave != null &&
-                      formCodeToSave.isNotEmpty)
-                  ? formCodeToSave
-                  : (series + selectedFormNumber!.toString().padLeft(4, '0'));
+              _orderFormDisplay = persistedCode.isNotEmpty
+                  ? persistedCode
+                  : (persistedSeries +
+                      persistedNo!.toString().padLeft(4, '0'));
             });
+          }
+          // Форма уже сохранена (вручную или автоматически), не пересоздаём и не перезаписываем.
+        } else {
+          final wp = WarehouseProvider();
+          int? selectedFormNumber;
+          String series;
+          String? formCodeToSave;
+
+          if (_isOldForm) {
+            // При выборе старой формы копируем данные из выбранной строки
+            series = (_formSeries is String && _formSeries.isNotEmpty)
+                ? _formSeries
+                : 'F';
+            if (_selectedOldFormRow != null) {
+              selectedFormNumber =
+                  ((_selectedOldFormRow!['number'] ?? 0) as num).toInt();
+              final s = (_selectedOldFormRow!['series'] ?? '').toString();
+              if (s.isNotEmpty) series = s;
+              final c = (_selectedOldFormRow!['code'] ?? '').toString();
+              if (c.isNotEmpty) formCodeToSave = c;
+            } else if (_selectedOldForm != null &&
+                _selectedOldForm!.trim().isNotEmpty) {
+              final code = _selectedOldForm!.trim();
+              final mDigits = RegExp(r'\d+').firstMatch(code);
+              final String digits = mDigits != null ? mDigits.group(0)! : code;
+              selectedFormNumber = int.tryParse(digits);
+              final mSeries = RegExp(r'^[A-Za-zА-Яа-я]+').firstMatch(code);
+              if (mSeries != null) series = mSeries.group(0)!;
+              formCodeToSave = code;
+            }
+          } else {
+            // Создание новой формы: используем введённые данные
+            final name = _newFormNameCtl.text.trim();
+            final size = _newFormSizeCtl.text.trim();
+            final colors = _newFormColorsCtl.text.trim();
+            series = name.isNotEmpty ? name : 'F';
+            final created = await wp.createFormAndReturn(
+              series: series,
+              title: size.isNotEmpty ? size : null,
+              description: colors.isNotEmpty ? colors : null,
+              imageBytes: _newFormImageBytes,
+            );
+            selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
+            final s = (created['series'] ?? '').toString();
+            if (s.isNotEmpty) series = s;
+            final c = (created['code'] ?? '').toString();
+            if (c.isNotEmpty) formCodeToSave = c;
+            try {
+              await _reloadForms();
+            } catch (_) {}
+          }
+
+          if (selectedFormNumber != null) {
+            await _sb.from('orders').update({
+              'is_old_form': _isOldForm,
+              'new_form_no': selectedFormNumber,
+              'form_series': series,
+              'form_code': formCodeToSave,
+            }).eq('id', createdOrUpdatedOrder.id);
+            try {
+              final upd = await _sb
+                  .from('orders')
+                  .update({
+                    'is_old_form': _isOldForm,
+                    'new_form_no': selectedFormNumber,
+                    'form_series': series,
+                    'form_code': formCodeToSave,
+                  })
+                  .eq('id', createdOrUpdatedOrder.id)
+                  .select()
+                  .maybeSingle();
+              if (upd == null) throw 'empty response';
+            } catch (e) {
+              if (mounted) {
+                if (mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text(
+                            'Не удалось сохранить номер формы: ' + e.toString())),
+                  );
+              }
+            }
+
+            if (mounted) {
+              setState(() {
+                _orderFormDisplay = (formCodeToSave != null &&
+                        formCodeToSave.isNotEmpty)
+                    ? formCodeToSave
+                    : (series + selectedFormNumber!.toString().padLeft(4, '0'));
+              });
+            }
           }
         }
       } catch (_) {}
