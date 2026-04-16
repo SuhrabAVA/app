@@ -495,7 +495,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _lastPreviewPaintsFilled = false;
   MaterialModel? _selectedMaterial;
   TmcModel? _selectedMaterialTmc;
-  // Бизнес-правило: заказ может содержать до 3 видов бумаги.
+  // Дополнительные типы бумаги в заказе (без искусственного лимита).
   final List<MaterialModel> _extraPaperMaterials = <MaterialModel>[];
   int _activePaperSlotIndex = 0;
   // === Каскадный выбор Материал → Формат → Грамаж (строгий) ===
@@ -653,7 +653,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _selectedMaterial = initialPapers.isNotEmpty ? initialPapers.first : null;
     _extraPaperMaterials
       ..clear()
-      ..addAll(initialPapers.skip(1).take(2));
+      ..addAll(initialPapers.skip(1));
     _hasForm = template?.hasForm ?? false;
 
     // Инициализация каскадных полей (если есть материал в шаблоне)
@@ -2079,7 +2079,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
       );
     }
-    // Бизнес-правило: поддерживаем второй/третий тип бумаги как отдельные позиции.
+    // Дополнительные типы бумаги сохраняем отдельными позициями.
     for (final paper in _extraPaperMaterials) {
       final resolved = resolvePaperByMaterial(paper);
       final id = (resolved?.id ?? paper.id ?? '').trim();
@@ -2095,14 +2095,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
       );
     }
-    if (selected.length > 3) {
-      return selected.take(3).toList(growable: false);
-    }
     return selected;
   }
 
   void _addExtraPaperSlot() {
-    if (_extraPaperMaterials.length >= 2) return;
     setState(() {
       _extraPaperMaterials.add(
         MaterialModel(
@@ -2594,7 +2590,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _upsertPensInParameters(penName);
     final provider = Provider.of<OrdersProvider>(context, listen: false);
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
-    // Бизнес-правило: бумага хранится списком (до 3 позиций).
+    // Бумага хранится динамическим списком без жёсткого лимита.
     final List<MaterialModel> selectedPapers = _collectSelectedPapers();
     bool hasEnoughPaperForLaunch() {
       if (selectedPapers.isEmpty) return true;
@@ -4799,15 +4795,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
         const SizedBox(height: 3),
         _buildExtraPaperSelectors(),
-        if (_extraPaperMaterials.length < 2)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _addExtraPaperSlot,
-              icon: const Icon(Icons.add),
-              label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
-            ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _addExtraPaperSlot,
+            icon: const Icon(Icons.add),
+            label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
           ),
+        ),
         const SizedBox(height: 3),
       ],
     );

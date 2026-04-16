@@ -1294,7 +1294,7 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     final selected = currentMaterials.isNotEmpty
-        ? currentMaterials.take(3).toList()
+        ? currentMaterials.toList()
         : <MaterialModel>[
             MaterialModel(
               id: papers.first.id,
@@ -1392,7 +1392,6 @@ class _TasksScreenState extends State<TasksScreen>
     bool saving = false;
 
     Future<void> addSlot(StateSetter setDialogState) async {
-      if (selected.length >= 3) return;
       final pick = papers.first;
       setDialogState(() {
         selected.add(MaterialModel(
@@ -1588,7 +1587,7 @@ class _TasksScreenState extends State<TasksScreen>
                         Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
-                            onPressed: selected.length >= 3 || saving
+                            onPressed: saving
                                 ? null
                                 : () => addSlot(setDialogState),
                             icon: const Icon(Icons.add),
