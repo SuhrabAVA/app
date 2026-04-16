@@ -1076,11 +1076,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return double.tryParse(match.group(0)!);
     }
 
-    double? formatWidth() {
+    double? formatWidth(MaterialModel paper, {required bool isMain}) {
       final candidates = <String?>[
-        _selectedMaterial?.format,
-        _matSelectedFormat,
-        _selectedMaterialTmc?.format,
+        paper.format,
+        if (isMain &&
+            (paper.id ?? '').trim().isEmpty &&
+            (_matSelectedFormat ?? '').trim().isNotEmpty)
+          _matSelectedFormat,
       ];
       for (final candidate in candidates) {
         final fmtWidth = _parseLeadingNumber(candidate);
@@ -1089,8 +1091,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return null;
     }
 
-    double? productWidth() {
-      return (_product.widthB ?? _product.width).toDouble();
+    double? bobbinWidth(MaterialModel paper, {required bool isMain}) {
+      if (isMain) {
+        return (_product.widthB ?? _product.width).toDouble();
+      }
+      final fromExtra = _paperExtraDouble(paper, 'widthB');
+      return fromExtra ?? (_product.widthB ?? _product.width).toDouble();
     }
 
     bool paintsFilled = _hasAnyPaints();
@@ -1142,8 +1148,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     }
 
-    final fmtWidth = formatWidth();
-    final prodWidth = productWidth();
     const double epsilon = 0.001;
 
     void removeBobbinStageIfPresent() {
@@ -1197,14 +1201,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       bobbinId = fallbackId;
     }
 
-    if (fmtWidth != null && prodWidth != null && prodWidth > 0) {
-      final productIsNarrower = (prodWidth + epsilon) < fmtWidth;
-      final formatIsNarrower = (fmtWidth + epsilon) < prodWidth;
-      if (productIsNarrower) {
-        addBobbinStageIfMissing();
-      } else if (formatIsNarrower || (fmtWidth - prodWidth).abs() <= epsilon) {
-        removeBobbinStageIfPresent();
+    final papersForRules = _collectSelectedPapers();
+    var shouldUseBobbin = false;
+    for (var i = 0; i < papersForRules.length; i++) {
+      final paper = papersForRules[i];
+      final fmtWidth = formatWidth(paper, isMain: i == 0);
+      final prodWidth = bobbinWidth(paper, isMain: i == 0);
+      if (fmtWidth == null || prodWidth == null || prodWidth <= 0) {
+        continue;
       }
+      if ((prodWidth + epsilon) < fmtWidth) {
+        shouldUseBobbin = true;
+        break;
+      }
+    }
+    if (shouldUseBobbin) {
+      addBobbinStageIfMissing();
+    } else {
+      removeBobbinStageIfPresent();
     }
 
     final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
@@ -2024,9 +2038,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final List<MaterialModel> selected = <MaterialModel>[];
     final double fallbackQty =
         (_product.length ?? _selectedMaterial?.quantity ?? 0).toDouble();
+    TmcModel? resolvePaperByMaterial(MaterialModel paper) {
+      final paperId = (paper.id ?? '').trim();
+      if (paperId.isNotEmpty) {
+        for (final t in _paperItems()) {
+          if (t.id == paperId) return t;
+        }
+      }
+      final name = paper.name.trim().toLowerCase();
+      final format = (paper.format ?? '').trim().toLowerCase();
+      final grammage = (paper.grammage ?? '').trim().toLowerCase();
+      if (name.isEmpty || format.isEmpty || grammage.isEmpty) return null;
+      for (final t in _paperItems()) {
+        if (t.description.trim().toLowerCase() == name &&
+            (t.format ?? '').trim().toLowerCase() == format &&
+            (t.grammage ?? '').trim().toLowerCase() == grammage) {
+          return t;
+        }
+      }
+      return null;
+    }
     if (_selectedMaterial != null) {
+      final resolved = resolvePaperByMaterial(_selectedMaterial!);
       selected.add(
         _selectedMaterial!.copyWith(
+          id: resolved?.id ?? _selectedMaterial!.id,
           quantity: _selectedMaterial!.quantity > 0
               ? _selectedMaterial!.quantity
               : fallbackQty,
@@ -2036,13 +2072,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     // Бизнес-правило: поддерживаем второй/третий тип бумаги как отдельные позиции.
     for (final paper in _extraPaperMaterials) {
-      final id = (paper.id ?? '').trim();
+      final resolved = resolvePaperByMaterial(paper);
+      final id = (resolved?.id ?? paper.id ?? '').trim();
       if (id.isEmpty) continue;
       final extraLength = _paperExtraDouble(paper, 'lengthL');
       final resolvedQty =
           extraLength != null && extraLength > 0 ? extraLength : fallbackQty;
       selected.add(
         paper.copyWith(
+          id: id,
           quantity: paper.quantity > 0 ? paper.quantity : resolvedQty,
           unit: 'м',
         ),
