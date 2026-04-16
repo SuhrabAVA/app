@@ -1298,17 +1298,46 @@ class _TasksScreenState extends State<TasksScreen>
       for (final item in selected)
         TextEditingController(text: _paperGrammageText(item.grammage)),
     ];
+    double? paperWidthBFromExtra(MaterialModel item) {
+      final raw = item.extra?['widthB'];
+      if (raw is num) return raw.toDouble();
+      if (raw is String) {
+        final normalized = raw.trim().replaceAll(',', '.');
+        if (normalized.isEmpty) return null;
+        return double.tryParse(normalized);
+      }
+      return null;
+    }
+
+    String? paperBlQuantityFromExtra(MaterialModel item) {
+      final value = item.extra?['blQuantity'];
+      final text = value?.toString().trim() ?? '';
+      return text.isEmpty ? null : text;
+    }
+
+    String _formatEditableDouble(double value) {
+      if (value <= 0) return '';
+      return value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+    }
+
     final reasonController = TextEditingController();
-    final widthController = TextEditingController(
-      text: latest.product.width > 0
-          ? latest.product.width.toStringAsFixed(
-              latest.product.width % 1 == 0 ? 0 : 2,
-            )
-          : '',
-    );
-    final quantityController = TextEditingController(
-      text: latest.product.quantity > 0 ? latest.product.quantity.toString() : '',
-    );
+    final widthBControllers = <TextEditingController>[
+      for (var i = 0; i < selected.length; i++)
+        () {
+          final widthB = i == 0
+              ? (latest.product.widthB ?? 0)
+              : (paperWidthBFromExtra(selected[i]) ?? 0);
+          return TextEditingController(text: _formatEditableDouble(widthB));
+        }(),
+    ];
+    final blQuantityControllers = <TextEditingController>[
+      for (var i = 0; i < selected.length; i++)
+        TextEditingController(
+          text: i == 0
+              ? (latest.product.blQuantity?.trim() ?? '')
+              : (paperBlQuantityFromExtra(selected[i]) ?? ''),
+        ),
+    ];
     final formKey = GlobalKey<FormState>();
     String? errorText;
     bool saving = false;
@@ -1333,6 +1362,8 @@ class _TasksScreenState extends State<TasksScreen>
         grammageControllers.add(
           TextEditingController(text: _paperGrammageText(pick.grammage)),
         );
+        widthBControllers.add(TextEditingController());
+        blQuantityControllers.add(TextEditingController());
       });
     }
 
@@ -1457,6 +1488,27 @@ class _TasksScreenState extends State<TasksScreen>
                                     },
                                   ),
                                 ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: widthBControllers[i],
+                                    keyboardType: const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Ширина b',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: blQuantityControllers[i],
+                                    decoration: const InputDecoration(
+                                      labelText: 'Количество бумаги',
+                                    ),
+                                  ),
+                                ),
                                 if (i > 0)
                                   IconButton(
                                     tooltip: 'Удалить бумагу',
@@ -1466,6 +1518,10 @@ class _TasksScreenState extends State<TasksScreen>
                                         qtyControllers.removeAt(i).dispose();
                                         formatControllers.removeAt(i).dispose();
                                         grammageControllers
+                                            .removeAt(i)
+                                            .dispose();
+                                        widthBControllers.removeAt(i).dispose();
+                                        blQuantityControllers
                                             .removeAt(i)
                                             .dispose();
                                       });
@@ -1484,37 +1540,6 @@ class _TasksScreenState extends State<TasksScreen>
                             icon: const Icon(Icons.add),
                             label: const Text('Добавить бумагу'),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: widthController,
-                                readOnly: true,
-                                enabled: false,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
-                                decoration: const InputDecoration(
-                                  labelText: 'Ширина заказа (мм)',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                controller: quantityController,
-                                readOnly: true,
-                                enabled: false,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Количество по заказу',
-                                ),
-                              ),
-                            ),
-                          ],
                         ),
                         const SizedBox(height: 8),
                         TextFormField(
@@ -1556,6 +1581,8 @@ class _TasksScreenState extends State<TasksScreen>
                           });
                           final nextMaterials = <MaterialModel>[];
                           double? nextLengthL;
+                          double? primaryWidthB;
+                          String? primaryBlQuantity;
                           for (var i = 0; i < selected.length; i++) {
                             final qty = double.parse(
                               qtyControllers[i].text.trim().replaceAll(',', '.'),
@@ -1578,12 +1605,37 @@ class _TasksScreenState extends State<TasksScreen>
                               });
                               return;
                             }
+                            final parsedWidthB = double.tryParse(
+                              widthBControllers[i].text.trim().replaceAll(',', '.'),
+                            );
+                            final parsedBlQuantity =
+                                blQuantityControllers[i].text.trim();
+                            final nextExtra = Map<String, dynamic>.from(
+                              selected[i].extra ?? const {},
+                            );
+                            if (parsedWidthB == null || parsedWidthB <= 0) {
+                              nextExtra.remove('widthB');
+                            } else {
+                              nextExtra['widthB'] = parsedWidthB;
+                            }
+                            if (parsedBlQuantity.isEmpty) {
+                              nextExtra.remove('blQuantity');
+                            } else {
+                              nextExtra['blQuantity'] = parsedBlQuantity;
+                            }
                             nextLengthL ??= qty;
+                            if (i == 0) {
+                              primaryWidthB = parsedWidthB;
+                              primaryBlQuantity = parsedBlQuantity.isEmpty
+                                  ? null
+                                  : parsedBlQuantity;
+                            }
                             nextMaterials.add(
                               selected[i].copyWith(
                                 quantity: qty,
                                 format: editedFormat,
                                 grammage: editedGrammage,
+                                extra: nextExtra.isEmpty ? null : nextExtra,
                               ),
                             );
                           }
@@ -1601,6 +1653,8 @@ class _TasksScreenState extends State<TasksScreen>
                             lengthL: nextLengthL,
                             width: nextWidth,
                             quantity: nextQuantity,
+                            widthB: primaryWidthB,
+                            blQuantity: primaryBlQuantity,
                           );
                           if (!mounted) return;
                           if (error != null) {
@@ -1635,9 +1689,13 @@ class _TasksScreenState extends State<TasksScreen>
     for (final controller in grammageControllers) {
       controller.dispose();
     }
+    for (final controller in widthBControllers) {
+      controller.dispose();
+    }
+    for (final controller in blQuantityControllers) {
+      controller.dispose();
+    }
     reasonController.dispose();
-    widthController.dispose();
-    quantityController.dispose();
   }
 
   List<String> _stageGroupMembers(String orderId, String stageId) {

@@ -513,6 +513,8 @@ class OrdersProvider with ChangeNotifier {
     double? lengthL,
     double? width,
     int? quantity,
+    double? widthB,
+    String? blQuantity,
   }) async {
     await _ensureAuthed();
 
@@ -545,6 +547,8 @@ class OrdersProvider with ChangeNotifier {
     final normalizedWidth = width != null && width > 0 ? width : null;
     final normalizedQuantity =
         quantity != null && quantity > 0 ? quantity : null;
+    final normalizedWidthB = widthB != null && widthB > 0 ? widthB : null;
+    final normalizedBlQuantity = (blQuantity ?? '').trim();
     final nextProduct = ProductModel.fromMap(prev.product.toMap());
     if (normalizedLength != null) {
       nextProduct.length = normalizedLength;
@@ -555,6 +559,9 @@ class OrdersProvider with ChangeNotifier {
     if (normalizedQuantity != null) {
       nextProduct.quantity = normalizedQuantity;
     }
+    nextProduct.widthB = normalizedWidthB;
+    nextProduct.blQuantity =
+        normalizedBlQuantity.isEmpty ? null : normalizedBlQuantity;
     final updated = prev.copyWith(
       product: nextProduct,
       paperMaterials: prepared,
@@ -1658,13 +1665,27 @@ class OrdersProvider with ChangeNotifier {
 
     final before = _resolveOrderPapers(previous);
     final after = _resolveOrderPapers(updated);
+    if ((previous.product.widthB ?? 0) != (updated.product.widthB ?? 0)) {
+      return true;
+    }
+    final prevBlQuantity = previous.product.blQuantity?.trim() ?? '';
+    final nextBlQuantity = updated.product.blQuantity?.trim() ?? '';
+    if (prevBlQuantity != nextBlQuantity) {
+      return true;
+    }
     if (before.length != after.length) return true;
     for (var i = 0; i < before.length; i++) {
+      final beforeWidthB = _toDouble(before[i].extra?['widthB']);
+      final afterWidthB = _toDouble(after[i].extra?['widthB']);
+      final beforeBlQuantity = (before[i].extra?['blQuantity'] ?? '').toString().trim();
+      final afterBlQuantity = (after[i].extra?['blQuantity'] ?? '').toString().trim();
       if (before[i].id != after[i].id ||
           textChanged(before[i].name, after[i].name) ||
           textChanged(before[i].format, after[i].format) ||
           textChanged(before[i].grammage, after[i].grammage) ||
-          (before[i].quantity - after[i].quantity).abs() > 0.0001) {
+          (before[i].quantity - after[i].quantity).abs() > 0.0001 ||
+          (beforeWidthB - afterWidthB).abs() > 0.0001 ||
+          beforeBlQuantity != afterBlQuantity) {
         return true;
       }
     }
