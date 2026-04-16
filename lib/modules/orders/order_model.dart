@@ -205,41 +205,49 @@ class OrderModel {
   set statusEnum(OrderStatus s) => status = s.name;
 
   /// В БД пишем snake_case.
-  Map<String, dynamic> toMap() => {
+  ///
+  /// [includeNulls] нужен для UPDATE-сценариев, когда необходимо явно
+  /// сбросить значение колонки в `null` (например, при удалении очереди этапов).
+  Map<String, dynamic> toMap({bool includeNulls = false}) => {
         'id': id,
         'manager': manager,
         'customer': customer,
         'order_date': orderDate.toIso8601String(),
-        if (dueDate != null) 'due_date': dueDate!.toIso8601String(),
+        if (includeNulls || dueDate != null)
+          'due_date': dueDate?.toIso8601String(),
         'product': product.toMap(),
         'additional_params':
             additionalParams, // массив строк; БД примет и объект
         'handle': handle,
         'cardboard': cardboard,
-        if (material != null) 'material': material!.toMap(),
-        if (paperMaterials.isNotEmpty)
-          'material_list': paperMaterials.map((m) => m.toMap()).toList(),
+        if (includeNulls || material != null)
+          'material': material?.toMap(),
+        if (includeNulls || paperMaterials.isNotEmpty)
+          'material_list':
+              paperMaterials.isEmpty ? null : paperMaterials.map((m) => m.toMap()).toList(),
         'makeready': makeready,
         'val': val,
         'has_form': hasForm,
         'is_old_form': isOldForm,
-        if (newFormNo != null) 'new_form_no': newFormNo,
-        if (formSeries != null) 'form_series': formSeries,
-        if (formCode != null) 'form_code': formCode,
-        if (pdfUrl != null) 'pdf_url': pdfUrl,
-        if (stageTemplateId != null) 'stage_template_id': stageTemplateId,
+        if (includeNulls || newFormNo != null) 'new_form_no': newFormNo,
+        if (includeNulls || formSeries != null) 'form_series': formSeries,
+        if (includeNulls || formCode != null) 'form_code': formCode,
+        if (includeNulls || pdfUrl != null) 'pdf_url': pdfUrl,
+        if (includeNulls || stageTemplateId != null)
+          'stage_template_id': stageTemplateId,
         'contract_signed': contractSigned,
         'payment_done': paymentDone,
         'comments': comments,
         'status': normalizeStatus(status),
         'has_material_shortage': hasMaterialShortage,
         'material_shortage_message': materialShortageMessage,
-        if (assignmentId != null) 'assignment_id': assignmentId,
+        if (includeNulls || assignmentId != null) 'assignment_id': assignmentId,
         'assignment_created': assignmentCreated,
-        if (actualQty != null) 'actual_qty': actualQty,
-        if (shippedAt != null) 'shipped_at': shippedAt!.toIso8601String(),
-        if (shippedBy != null) 'shipped_by': shippedBy,
-        if (shippedQty != null) 'shipped_qty': shippedQty,
+        if (includeNulls || actualQty != null) 'actual_qty': actualQty,
+        if (includeNulls || shippedAt != null)
+          'shipped_at': shippedAt?.toIso8601String(),
+        if (includeNulls || shippedBy != null) 'shipped_by': shippedBy,
+        if (includeNulls || shippedQty != null) 'shipped_qty': shippedQty,
       };
 
   /// Парсим и camelCase, и snake_case.

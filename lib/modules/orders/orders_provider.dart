@@ -472,7 +472,7 @@ class OrdersProvider with ChangeNotifier {
       // В модулях оформления/редактирования заказа не блокируем сохранение.
       await _supabase
           .from('orders')
-          .update(updated.toMap()..remove('id'))
+          .update(updated.toMap(includeNulls: true)..remove('id'))
           .eq('id', updated.id);
       if (updated.assignmentCreated ||
           updated.statusEnum == OrderStatus.in_production) {
