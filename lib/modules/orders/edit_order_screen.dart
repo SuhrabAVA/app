@@ -558,6 +558,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _stockExtraAutoloaded = false;
   bool _launchedNoStartedStages = false;
   bool _launchedWithStartedStages = false;
+  bool _isSavingOrder = false;
 
   Future<void> _loadCategoriesForProduct() async {
     setState(() => _catsLoading = true);
@@ -2497,6 +2498,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Future<void> _saveOrder() async {
+    if (_isSavingOrder) return;
+    setState(() => _isSavingOrder = true);
+    try {
     // Флаг: создаём новый заказ или редактируем
     final bool isCreating = (widget.order == null);
     final navigator = Navigator.of(context);
@@ -3109,6 +3113,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Списание лишнего выполняется на этапе отгрузки.
 
     if (mounted) navigator.pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось сохранить заказ: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingOrder = false);
+      }
+    }
   }
 
   String _formatDecimal(double value, {int fractionDigits = 2}) {
@@ -3478,7 +3493,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed:
+              _isSavingOrder ? null : () => Navigator.of(context).pop(),
         ),
         title: Text(isEditing
             ? 'Редактирование заказа ${(widget.order!.assignmentId ?? widget.order!.id)}'
@@ -3492,9 +3508,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               ),
-              onPressed: _saveOrder,
-              icon: const Icon(Icons.save_outlined, size: 18),
-              label: const Text('Сохранить'),
+              onPressed: _isSavingOrder ? null : _saveOrder,
+              icon: _isSavingOrder
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined, size: 18),
+              label: Text(_isSavingOrder ? 'Сохранение…' : 'Сохранить'),
             ),
           ),
           if (isEditing)
