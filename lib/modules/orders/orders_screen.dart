@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_model.dart';
+import '../tasks/task_completion_rules.dart';
 import '../warehouse/warehouse_table_styles.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../personnel/personnel_provider.dart';
@@ -998,7 +999,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   _OrderStatusInfo _computeStatus(OrderModel order, List<TaskModel> allTasks) {
     final tasks = allTasks.where((t) => t.orderId == order.id).toList();
     if (tasks.isNotEmpty) {
-      if (tasks.every((t) => t.status == TaskStatus.completed)) {
+      if (isOrderFinallyCompleted(tasks)) {
         return const _OrderStatusInfo(Colors.green, 'Завершено');
       }
       if (tasks.any((t) => t.status == TaskStatus.inProgress)) {

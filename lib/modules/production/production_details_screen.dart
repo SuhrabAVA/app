@@ -22,6 +22,7 @@ import '../orders/orders_repository.dart';
 import '../orders/order_model.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
+import '../tasks/task_completion_rules.dart';
 // УДАЛЕНО: import '../production_planning/planned_stage_model.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
@@ -177,25 +178,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
   TaskStatus? _groupStatus(List<TaskModel> stageTasks) {
     if (stageTasks.isEmpty) return null;
-
-    bool isEffectivelyCompleted(TaskModel task) {
-      if (task.status == TaskStatus.completed) return true;
-      for (final comment in task.comments) {
-        final type = comment.type.trim().toLowerCase();
-        if (type == 'user_done' || type == 'finish_note') {
-          return true;
-        }
-
-        final text = comment.text.trim().toLowerCase();
-        if (text == 'done' || text == 'finish' || text == 'finished') {
-          return true;
-        }
-
-        if (text.startsWith('{') && text.contains('"endtime"')) {
-          return true;
-        }
-      }
-      return false;
+    if (isStageGroupFinallyCompleted(stageTasks)) {
+      return TaskStatus.completed;
     }
 
     if (stageTasks.any((t) => t.status == TaskStatus.problem)) {
@@ -206,9 +190,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
     if (stageTasks.any((t) => t.status == TaskStatus.paused)) {
       return TaskStatus.paused;
-    }
-    if (stageTasks.any(isEffectivelyCompleted)) {
-      return TaskStatus.completed;
     }
     return TaskStatus.waiting;
   }
