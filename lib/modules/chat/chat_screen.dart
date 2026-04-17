@@ -31,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late ChatProvider _chat;
   bool _chatReady = false;
   final _scroll = ScrollController();
+  int _lastRenderedMessageCount = 0;
 
   Future<void> _subscribeToRoom() async {
     if (!_chatReady) return;
@@ -76,6 +77,11 @@ class _ChatScreenState extends State<ChatScreen> {
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOut,
     );
+  }
+
+  void _scrollToEndImmediately() {
+    if (!mounted || !_scroll.hasClients) return;
+    _scroll.jumpTo(_scroll.position.maxScrollExtent);
   }
 
   Future<void> _handleMenu(String value) async {
@@ -125,11 +131,20 @@ class _ChatScreenState extends State<ChatScreen> {
     return Consumer<ChatProvider>(
       builder: (context, chat, _) {
         final list = chat.messages(widget.roomId);
-        // автопрокрутка вниз при новых сообщениях
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _scrollToEnd();
-        });
+        final hasNewMessages = list.length > _lastRenderedMessageCount;
+        _lastRenderedMessageCount = list.length;
+
+        // Автопрокрутка только когда добавились новые сообщения.
+        if (hasNewMessages) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _scrollToEndImmediately();
+            Future<void>.delayed(const Duration(milliseconds: 50), () {
+              if (!mounted) return;
+              _scrollToEnd();
+            });
+          });
+        }
 
         final media = MediaQuery.of(context);
         final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
