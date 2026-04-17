@@ -770,6 +770,9 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, List<Map<String, dynamic>>> _orderFilesCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderFilesPending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
+  String? _lastCommentsTaskId;
+  String _lastCommentsSignature = '';
+  int _lastCommentsCount = 0;
   String get _widKey => 'ws-${widget.employeeId}-wid';
   String get _tidKey => 'ws-${widget.employeeId}-tid';
   static const Map<TaskStatus, String> _statusLabels = {
@@ -809,6 +812,48 @@ class _TasksScreenState extends State<TasksScreen>
       _selectionUpdateScheduled = false;
       if (!mounted) return;
       update();
+    });
+  }
+
+  String _commentsSignature(List<_StageComment> comments) => comments
+      .map((entry) {
+        final c = entry.comment;
+        return '${entry.taskId}-${c.id}-${c.timestamp}-${c.type}-${c.userId}-${c.text}';
+      })
+      .join('|');
+
+  void _maybeAutoScrollComments(String taskId, List<_StageComment> comments) {
+    final signature = _commentsSignature(comments);
+    final count = comments.length;
+
+    if (_lastCommentsTaskId != taskId) {
+      _lastCommentsTaskId = taskId;
+      _lastCommentsSignature = signature;
+      _lastCommentsCount = count;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_commentsScrollController.hasClients) return;
+        _commentsScrollController.jumpTo(
+          _commentsScrollController.position.maxScrollExtent,
+        );
+      });
+      return;
+    }
+
+    if (signature == _lastCommentsSignature) return;
+
+    final hasNewComments = count > _lastCommentsCount;
+    _lastCommentsSignature = signature;
+    _lastCommentsCount = count;
+
+    if (!hasNewComments) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_commentsScrollController.hasClients) return;
+      _commentsScrollController.animateTo(
+        _commentsScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
     });
   }
 
@@ -2924,6 +2969,7 @@ class _TasksScreenState extends State<TasksScreen>
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.watch<TaskProvider>();
     final aggregated = _collectOrderComments(taskProvider, task);
+    _maybeAutoScrollComments(task.id, aggregated);
 
     Widget commentList() {
       if (aggregated.isEmpty) {

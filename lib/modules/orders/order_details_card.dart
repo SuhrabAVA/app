@@ -462,8 +462,12 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (!loadingFiles && files.isEmpty)
-                                const Text('Нет приложенных файлов'),
+                              if (files.isEmpty)
+                                Text(
+                                  loadingFiles
+                                      ? 'Загрузка файлов…'
+                                      : 'Нет приложенных файлов',
+                                ),
                               ...files
                                   .map((f) => _fileTile(context, f, compact: true))
                                   .toList(),

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -342,7 +343,112 @@ class _LoginScreenState extends State<LoginScreen> {
   /// выполняет навигацию в нужный модуль.
   Future<void> _promptPassword(BuildContext context, _UserItem user) async {
     final TextEditingController controller = TextEditingController();
+    final FocusNode passwordFocusNode = FocusNode();
     String? error;
+
+    Future<void> submitLogin(
+      BuildContext dialogContext,
+      StateSetter setState,
+      BuildContext ctx,
+    ) async {
+      final rootNavigator = Navigator.of(context);
+      final dialogNavigator = Navigator.of(ctx);
+      final personnel = dialogContext.read<PersonnelProvider>();
+      final password = controller.text.trim();
+      if (password == user.password) {
+        // Запоминаем пользователя
+        if (user.isTechLeader) {
+          AuthHelper.setTechLeader(name: user.name);
+        } else {
+          AuthHelper.setEmployee(id: user.id, name: user.name);
+        }
+
+        // Логируем вход
+        final analytics = dialogContext.read<AnalyticsProvider>();
+        String category;
+        if (user.isTechLeader) {
+          category = 'manager';
+        } else {
+          final emp = personnel.employees.firstWhere(
+            (e) => e.id == user.id,
+            orElse: () => EmployeeModel(
+              id: user.id,
+              lastName: '',
+              firstName: '',
+              patronymic: '',
+              iin: '',
+              photoUrl: null,
+              positionIds: const [],
+              isFired: false,
+              comments: '',
+              login: '',
+              password: '',
+            ),
+          );
+          if (isManagerUser(emp, personnel)) {
+            category = 'manager';
+          } else if (isWarehouseHeadUser(emp, personnel)) {
+            category = 'warehouse';
+          } else {
+            category = 'production';
+          }
+        }
+
+        await analytics.logEvent(
+          orderId: '',
+          stageId: '',
+          userId: user.id,
+          action: 'login',
+          category: category,
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        dialogNavigator.pop();
+
+        // Навигация
+        if (user.isTechLeader) {
+          rootNavigator.pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => const AdminPanelScreen(),
+            ),
+          );
+        } else {
+          final emp = personnel.employees.firstWhere(
+            (e) => e.id == user.id,
+            orElse: () => EmployeeModel(
+              id: user.id,
+              lastName: '',
+              firstName: '',
+              patronymic: '',
+              iin: '',
+              photoUrl: null,
+              positionIds: const [],
+              isFired: false,
+              comments: '',
+              login: '',
+              password: '',
+            ),
+          );
+
+          final screen = isManagerUser(emp, personnel)
+              ? ManagerWorkspaceScreen(employeeId: user.id)
+              : isWarehouseHeadUser(emp, personnel)
+                  ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
+                  : EmployeeWorkspaceScreen(employeeId: user.id);
+
+          rootNavigator.pushReplacement(
+            MaterialPageRoute(builder: (_) => screen),
+          );
+        }
+      } else {
+        setState(() {
+          error = 'Неверный пароль';
+        });
+      }
+    }
 
     await showDialog(
       context: context,
@@ -350,140 +456,72 @@ class _LoginScreenState extends State<LoginScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (dialogContext, setState) {
-            return AlertDialog(
-              title: Text('Введите пароль для ${user.name}'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Пароль'),
+            return Shortcuts(
+              shortcuts: <ShortcutActivator, Intent>{
+                const SingleActivator(LogicalKeyboardKey.escape):
+                    const DismissIntent(),
+                const SingleActivator(LogicalKeyboardKey.enter):
+                    const ActivateIntent(),
+                const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                    const ActivateIntent(),
+              },
+              child: Actions(
+                actions: <Type, Action<Intent>>{
+                  DismissIntent: CallbackAction<DismissIntent>(
+                    onInvoke: (_) {
+                      Navigator.pop(ctx);
+                      return null;
+                    },
                   ),
-                  if (error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      error!,
-                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                  ActivateIntent: CallbackAction<ActivateIntent>(
+                    onInvoke: (_) {
+                      submitLogin(dialogContext, setState, ctx);
+                      return null;
+                    },
+                  ),
+                },
+                child: AlertDialog(
+                  title: Text('Введите пароль для ${user.name}'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: controller,
+                        focusNode: passwordFocusNode,
+                        autofocus: true,
+                        obscureText: true,
+                        decoration: const InputDecoration(labelText: 'Пароль'),
+                        onSubmitted: (_) =>
+                            submitLogin(dialogContext, setState, ctx),
+                      ),
+                      if (error != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          error!,
+                          style: const TextStyle(color: Colors.red, fontSize: 12),
+                        ),
+                      ],
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Отмена'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => submitLogin(dialogContext, setState, ctx),
+                      child: const Text('Войти'),
                     ),
                   ],
-                ],
+                ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Отмена'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final rootNavigator = Navigator.of(context);
-                    final dialogNavigator = Navigator.of(ctx);
-                    final personnel = dialogContext.read<PersonnelProvider>();
-                    final password = controller.text.trim();
-                    if (password == user.password) {
-                      // Запоминаем пользователя
-                      if (user.isTechLeader) {
-                        AuthHelper.setTechLeader(name: user.name);
-                      } else {
-                        AuthHelper.setEmployee(id: user.id, name: user.name);
-                      }
-
-                      // Логируем вход
-                      final analytics =
-                          dialogContext.read<AnalyticsProvider>();
-                      String category;
-                      if (user.isTechLeader) {
-                        category = 'manager';
-                      } else {
-                        final emp = personnel.employees.firstWhere(
-                          (e) => e.id == user.id,
-                          orElse: () => EmployeeModel(
-                            id: user.id,
-                            lastName: '',
-                            firstName: '',
-                            patronymic: '',
-                            iin: '',
-                            photoUrl: null,
-                            positionIds: const [],
-                            isFired: false,
-                            comments: '',
-                            login: '',
-                            password: '',
-                          ),
-                        );
-                        if (isManagerUser(emp, personnel)) {
-                          category = 'manager';
-                        } else if (isWarehouseHeadUser(emp, personnel)) {
-                          category = 'warehouse';
-                        } else {
-                          category = 'production';
-                        }
-                      }
-
-                      await analytics.logEvent(
-                        orderId: '',
-                        stageId: '',
-                        userId: user.id,
-                        action: 'login',
-                        category: category,
-                      );
-
-                      if (!mounted) {
-                        return;
-                      }
-
-                      dialogNavigator.pop();
-
-                      // Навигация
-                      if (user.isTechLeader) {
-                        rootNavigator.pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => const AdminPanelScreen(),
-                          ),
-                        );
-                      } else {
-                        final emp = personnel.employees.firstWhere(
-                          (e) => e.id == user.id,
-                          orElse: () => EmployeeModel(
-                            id: user.id,
-                            lastName: '',
-                            firstName: '',
-                            patronymic: '',
-                            iin: '',
-                            photoUrl: null,
-                            positionIds: const [],
-                            isFired: false,
-                            comments: '',
-                            login: '',
-                            password: '',
-                          ),
-                        );
-
-                        final screen = isManagerUser(emp, personnel)
-                            ? ManagerWorkspaceScreen(employeeId: user.id)
-                            : isWarehouseHeadUser(emp, personnel)
-                                ? WarehouseManagerWorkspaceScreen(
-                                    employeeId: user.id)
-                                : EmployeeWorkspaceScreen(employeeId: user.id);
-
-                        rootNavigator.pushReplacement(
-                          MaterialPageRoute(builder: (_) => screen),
-                        );
-                      }
-                    } else {
-                      setState(() {
-                        error = 'Неверный пароль';
-                      });
-                    }
-                  },
-                  child: const Text('Войти'),
-                ),
-              ],
             );
           },
         );
       },
     );
+    controller.dispose();
+    passwordFocusNode.dispose();
   }
 }
 
