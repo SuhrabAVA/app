@@ -2685,6 +2685,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
       createdOrUpdatedOrder = _created;
     } else {
+      final bool effectivePersistedHasForm = (_orderFormNo != null) ||
+          (_orderFormCode != null && _orderFormCode!.trim().isNotEmpty) ||
+          ((_orderFormIsOld != null) &&
+              ((_orderFormNo != null) ||
+                  (_orderFormCode != null &&
+                      _orderFormCode!.trim().isNotEmpty))) ||
+          widget.order!.hasForm;
+      final bool effectivePersistedIsOldForm =
+          _orderFormIsOld ?? widget.order!.isOldForm;
+      final int? effectivePersistedFormNo =
+          _orderFormNo ?? widget.order!.newFormNo;
+      final String? effectivePersistedFormSeries =
+          _orderFormSeries ?? widget.order!.formSeries;
+      final String? effectivePersistedFormCode =
+          _orderFormCode ?? widget.order!.formCode;
+
       final List<MaterialModel> oldPapers =
           widget.order!.paperMaterials.isNotEmpty
               ? widget.order!.paperMaterials
@@ -2718,7 +2734,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
         stageTemplateId: _stageTemplateId,
-        hasForm: _hasForm,
+        // На этапе базового сохранения не перетираем уже привязанную форму.
+        // Фактическая запись формы всегда выполняется позже в _processFormAssignment.
+        hasForm: effectivePersistedHasForm,
+        isOldForm: effectivePersistedIsOldForm,
+        newFormNo: effectivePersistedFormNo,
+        formSeries: effectivePersistedFormSeries,
+        formCode: effectivePersistedFormCode,
         // Временно отключено в форме создания/редактирования заказа.
         contractSigned: false,
         paymentDone: false,
