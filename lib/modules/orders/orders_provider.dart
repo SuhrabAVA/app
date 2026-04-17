@@ -1075,12 +1075,10 @@ class OrdersProvider with ChangeNotifier {
       return;
     }
 
-    final sanitizedProduct = productName.replaceAll("'", "''");
-    final category = await _supabase
-        .from('warehouse_categories')
-        .select('id, has_subtables')
-        .or('title.eq.$sanitizedProduct,code.eq.$sanitizedProduct')
-        .maybeSingle();
+    final category = await _findWarehouseCategoryByProductName(
+      productName,
+      columns: 'id, has_subtables',
+    );
 
     if (category == null || category['id'] == null) {
       throw Exception('Категория для "$productName" не найдена');
@@ -1218,12 +1216,10 @@ class OrdersProvider with ChangeNotifier {
       return null;
     }
 
-    final String sanitizedProduct = productName.replaceAll("'", "''");
-    final dynamic category = await _supabase
-        .from('warehouse_categories')
-        .select('id, title, code, has_subtables')
-        .or('title.eq.$sanitizedProduct,code.eq.$sanitizedProduct')
-        .maybeSingle();
+    final dynamic category = await _findWarehouseCategoryByProductName(
+      productName,
+      columns: 'id, title, code, has_subtables',
+    );
 
     if (category == null || category['id'] == null) {
       return null;
@@ -1245,6 +1241,36 @@ class OrdersProvider with ChangeNotifier {
       if (raw is Map) {
         return Map<String, dynamic>.from(raw as Map);
       }
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _findWarehouseCategoryByProductName(
+    String productName, {
+    required String columns,
+  }) async {
+    final String normalized = productName.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    final dynamic byTitle = await _supabase
+        .from('warehouse_categories')
+        .select(columns)
+        .eq('title', normalized)
+        .maybeSingle();
+    if (byTitle is Map && byTitle['id'] != null) {
+      return Map<String, dynamic>.from(byTitle);
+    }
+
+    final dynamic byCode = await _supabase
+        .from('warehouse_categories')
+        .select(columns)
+        .eq('code', normalized)
+        .maybeSingle();
+    if (byCode is Map && byCode['id'] != null) {
+      return Map<String, dynamic>.from(byCode);
     }
 
     return null;
