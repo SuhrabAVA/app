@@ -3307,6 +3307,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Future<void> _processFormAssignment(OrderModel order,
       {required bool isCreating}) async {
+    final bool paintsFilled = _hasAnyPaints();
+    if (!_hasForm && paintsFilled) {
+      // Если добавлены краски, а форма не выбрана, автоматически создаём новую
+      // форму для текущего заказа по данным из заказа/красок.
+      _hasForm = true;
+      _isOldForm = false;
+    }
+
     final bool hadFormBefore = _hasAssignedForm();
     final bool shouldHandle = isCreating || _editingForm || !hadFormBefore;
     if (!shouldHandle) return;
@@ -6119,6 +6127,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final controls = <Widget>[];
     if (showFormSummary) {
       controls.add(_buildFormSummary(context));
+      if (isEditing && hasAssignedForm) {
+        controls.addAll([
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _startFormEditing,
+              icon: const Icon(Icons.edit),
+              label: const Text('Изменить форму'),
+            ),
+          ),
+        ]);
+      }
     }
     if (showFormEditor) {
       if (controls.isNotEmpty) {
