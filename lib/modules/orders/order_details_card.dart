@@ -289,7 +289,9 @@ class OrderDetailsCard extends StatelessWidget {
       return value == null ? '' : _fmtNum(value);
     }
     final value = _paperExtraDouble(material, 'lengthL');
-    return value == null ? '' : _fmtNum(value);
+    if (value != null) return _fmtNum(value);
+    if (material.quantity > 0) return _fmtNum(material.quantity);
+    return '';
   }
 
   String _paperQuantityValue(MaterialModel material, int index) {
@@ -501,7 +503,14 @@ class OrderDetailsCard extends StatelessWidget {
                             }
                             if (material.grammage != null &&
                                 material.grammage!.isNotEmpty) {
-                              parts.add('${material.grammage} гр');
+                              final formattedGrammage =
+                                  '${material.grammage} гр';
+                              if (parts.isNotEmpty) {
+                                final last = parts.removeLast();
+                                parts.add('$last / $formattedGrammage');
+                              } else {
+                                parts.add(formattedGrammage);
+                              }
                             }
                             final materialLine =
                                 parts.isEmpty ? '—' : parts.join(' ');
@@ -514,7 +523,7 @@ class OrderDetailsCard extends StatelessWidget {
                             }
                             if (qtyValue.isNotEmpty || lenValue.isNotEmpty) {
                               if (qtyValue.isNotEmpty && lenValue.isNotEmpty) {
-                                details.add('Д: $qtyValue * $lenValue L');
+                                details.add('Д: $qtyValue (L: $lenValue)');
                               } else if (qtyValue.isNotEmpty) {
                                 details.add('Д: $qtyValue');
                               } else {

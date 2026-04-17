@@ -1629,9 +1629,9 @@ class OrdersProvider with ChangeNotifier {
       final format = (m.format ?? '').trim();
       final grammage = (m.grammage ?? '').trim();
       final suffix = [
-        if (format.isNotEmpty) format,
-        if (grammage.isNotEmpty) grammage,
-      ].join(', ');
+        if (format.isNotEmpty) 'Ф $format',
+        if (grammage.isNotEmpty) 'Гр $grammage',
+      ].join(' / ');
       return suffix.isEmpty ? m.name : '${m.name} ($suffix)';
     }
 

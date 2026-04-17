@@ -1247,12 +1247,15 @@ class _TasksScreenState extends State<TasksScreen>
     required String reason,
   }) {
     String paperLabel(MaterialModel material) {
+      final format = (material.format ?? '').trim();
+      final grammage = (material.grammage ?? '').trim();
+      final shortMeta = <String>[
+        if (format.isNotEmpty) 'Ф $format',
+        if (grammage.isNotEmpty) 'Гр $grammage',
+      ].join(' / ');
       final parts = <String>[
         material.name.trim().isEmpty ? 'Без названия' : material.name.trim(),
-        if ((material.format ?? '').trim().isNotEmpty)
-          'формат ${(material.format ?? '').trim()}',
-        if ((material.grammage ?? '').trim().isNotEmpty)
-          'грамаж ${(material.grammage ?? '').trim()}',
+        if (shortMeta.isNotEmpty) shortMeta,
       ];
       return parts.join(', ');
     }
@@ -1711,6 +1714,11 @@ class _TasksScreenState extends State<TasksScreen>
                               nextExtra.remove('blQuantity');
                             } else {
                               nextExtra['blQuantity'] = parsedBlQuantity;
+                            }
+                            if (qty <= 0) {
+                              nextExtra.remove('lengthL');
+                            } else {
+                              nextExtra['lengthL'] = qty;
                             }
                             nextLengthL ??= qty;
                             if (i == 0) {
@@ -4911,12 +4919,30 @@ class _TasksScreenState extends State<TasksScreen>
                         );
                         final unitLabel =
                             _workplaceUnit(personnel, task.stageId);
-                        final qtyInput =
-                            await _askQuantity(
-                          context,
-                          unit: unitLabel,
-                          allowPaperEdit: true,
-                        );
+                        _QuantityInput? qtyInput;
+                        while (true) {
+                          qtyInput = await _askQuantity(
+                            context,
+                            unit: unitLabel,
+                            allowPaperEdit: true,
+                          );
+                          if (qtyInput == null) return;
+                          if (!qtyInput.openPaperEditor) break;
+                          final order = _orderById(task.orderId);
+                          if (order == null) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Не удалось найти заказ для редактирования бумаги.',
+                                  ),
+                                ),
+                              );
+                            }
+                            return;
+                          }
+                          await _openPaperEditDialog(order);
+                        }
                         if (qtyInput == null) return;
                         final qtyText = qtyInput.displayText;
                         final helperIds = jointGroup != null && isMyRow
@@ -4978,8 +5004,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 rel.id, TaskStatus.paused);
                           }
                         }
-                        await recordTimeEventForUser(TaskTimeType.shiftChange,
-                            includeHelpers: false);
+                        await recordTimeEventForUser(TaskTimeType.shiftChange);
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'shift_pause_state',
