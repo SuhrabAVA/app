@@ -6557,125 +6557,53 @@ Future<_QuantityInput?> _askQuantity(
   bool allowPaperEdit = false,
 }) async {
   final totalController = TextEditingController();
-  final packsController = TextEditingController();
-  final inPackController = TextEditingController();
   final unitLabel = (unit ?? '').trim();
   const paperEditValue = '__open_paper_edit__';
   final v = await showDialog<_QuantityInput?>(
     context: context,
     builder: (ctx) {
-      var usePacksMode = false;
-      return StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          title: const Text('Количество выполнено'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment<bool>(
-                    value: false,
-                    label: Text('Общее количество'),
-                  ),
-                  ButtonSegment<bool>(
-                    value: true,
-                    label: Text('Пачками'),
-                  ),
-                ],
-                selected: <bool>{usePacksMode},
-                onSelectionChanged: (selection) {
-                  setStateDialog(() {
-                    usePacksMode = selection.first;
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              if (!usePacksMode)
-                TextField(
-                  controller: totalController,
-                  autofocus: true,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    hintText: unitLabel.isNotEmpty
-                        ? 'Введите количество в $unitLabel'
-                        : 'Введите количество экземпляров',
-                    border: const OutlineInputBorder(),
-                  ),
-                )
-              else ...[
-                TextField(
-                  controller: packsController,
-                  autofocus: true,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Количество пачек',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: inPackController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Количество в пачке',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ],
+      return AlertDialog(
+        title: const Text('Количество выполнено'),
+        content: TextField(
+          controller: totalController,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            hintText: unitLabel.isNotEmpty
+                ? 'Введите количество в $unitLabel'
+                : 'Введите количество экземпляров',
+            border: const OutlineInputBorder(),
           ),
-          actions: [
-            if (allowPaperEdit)
-              TextButton(
-                onPressed: () => Navigator.pop(
-                  ctx,
-                  const _QuantityInput(
-                    quantity: 0,
-                    displayText: paperEditValue,
-                    openPaperEditor: true,
-                  ),
-                ),
-                child: const Text('Изменить бумагу'),
-              ),
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Отмена')),
-            ElevatedButton(
-              onPressed: () {
-                if (!usePacksMode) {
-                  final raw = totalController.text.trim();
-                  final n = int.tryParse(raw);
-                  if (n == null) return;
-                  final display =
-                      unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
-                  Navigator.pop(
-                    ctx,
-                    _QuantityInput(quantity: n, displayText: display),
-                  );
-                  return;
-                }
-
-                final packs = int.tryParse(packsController.text.trim());
-                final inPack = int.tryParse(inPackController.text.trim());
-                if (packs == null || inPack == null) return;
-                final total = packs * inPack;
-                final display =
-                    '$packs пачек × $inPack в пачке = $total ${unitLabel.isNotEmpty ? unitLabel : 'шт'}';
-                Navigator.pop(
-                  ctx,
-                  _QuantityInput(
-                    quantity: total,
-                    displayText: display,
-                    packsCount: packs,
-                    unitsPerPack: inPack,
-                  ),
-                );
-              },
-              child: const Text('OK'),
-            ),
-          ],
         ),
+        actions: [
+          if (allowPaperEdit)
+            TextButton(
+              onPressed: () => Navigator.pop(
+                ctx,
+                const _QuantityInput(
+                  quantity: 0,
+                  displayText: paperEditValue,
+                  openPaperEditor: true,
+                ),
+              ),
+              child: const Text('Изменить бумагу'),
+            ),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          ElevatedButton(
+            onPressed: () {
+              final raw = totalController.text.trim();
+              final n = int.tryParse(raw);
+              if (n == null) return;
+              final display = unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
+              Navigator.pop(
+                ctx,
+                _QuantityInput(quantity: n, displayText: display),
+              );
+            },
+            child: const Text('OK'),
+          ),
+        ],
       );
     },
   );
