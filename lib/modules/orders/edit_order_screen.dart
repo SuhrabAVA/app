@@ -580,7 +580,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
       names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       setState(() => _categoryTitles = names);
-    } catch (e) {
+    } catch (_) {
       debugPrint('load categories error: $e');
     } finally {
       if (mounted) setState(() => _catsLoading = false);
@@ -1622,7 +1622,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _stagePreviewInitialized = true;
         _stageOrderManuallyChanged = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _stagePreviewStages = <Map<String, dynamic>>[];
@@ -1940,7 +1940,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         });
         _updateStockExtraQtyController();
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _stockExtra = null;
@@ -2296,7 +2296,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       await _sb.from('orders').update({
         'product': _product.toMap(),
       }).eq('id', orderId);
-    } catch (e) {
+    } catch (_) {
       // не блокируем сохранение заказа, просто сообщим в консоль
       debugPrint('❌ persist paints error: ' + e.toString());
     }
@@ -2353,7 +2353,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return;
         }
       }
-    } catch (e) {
+    } catch (_) {
       debugPrint('❌ restore paints from DB error: ' + e.toString());
     }
     // Фолбэк к старому парсеру parameters
@@ -3156,7 +3156,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Списание лишнего выполняется на этапе отгрузки.
 
     await _goToOrdersModuleHome();
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Не удалось сохранить заказ: $e')),
@@ -3319,7 +3319,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             .from('orders')
             .update({
               'has_form': false,
-              'is_old_form': null,
+              'is_old_form': false,
               'new_form_no': null,
               'form_series': null,
               'form_code': null,
@@ -3487,10 +3487,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         _selectedOldFormImageUrl = null;
       });
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось сохранить форму: $e')),
+          const SnackBar(content: Text('Не удалось сохранить форму')),
         );
       }
     }
