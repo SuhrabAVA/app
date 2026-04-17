@@ -1266,8 +1266,20 @@ class _TasksScreenState extends State<TasksScreen>
       return parts.join(', ');
     }
 
-    String qtyText(MaterialModel material) =>
-        '${material.quantity.toStringAsFixed(2)} м';
+    String qtyText(MaterialModel material) {
+      double? asDouble(dynamic raw) {
+        if (raw is num) return raw.toDouble();
+        return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
+      }
+
+      final widthB = asDouble(material.extra?['widthB']);
+      final blQuantity = (material.extra?['blQuantity'] ?? '').toString().trim();
+      final widthText = widthB == null || widthB <= 0
+          ? '—'
+          : (widthB % 1 == 0 ? widthB.toStringAsFixed(0) : widthB.toStringAsFixed(2));
+      final quantityText = blQuantity.isEmpty ? '—' : blQuantity;
+      return 'Ш $widthText, К $quantityText, Длина L ${material.quantity.toStringAsFixed(2)} м';
+    }
 
     final lines = <String>[
       'Изменение бумаги из рабочего пространства.',
@@ -1554,27 +1566,6 @@ class _TasksScreenState extends State<TasksScreen>
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: TextFormField(
-                                    controller: qtyControllers[i],
-                                    keyboardType: const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                    decoration: const InputDecoration(
-                                      labelText: 'Длина L (м)',
-                                    ),
-                                    validator: (value) {
-                                      final normalized =
-                                          (value ?? '').trim().replaceAll(',', '.');
-                                      final qty = double.tryParse(normalized);
-                                      if (qty == null || qty <= 0) {
-                                        return 'Введите > 0';
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: TextFormField(
                                     controller: widthBControllers[i],
                                     keyboardType: const TextInputType.numberWithOptions(
                                       decimal: true,
@@ -1591,6 +1582,27 @@ class _TasksScreenState extends State<TasksScreen>
                                     decoration: const InputDecoration(
                                       labelText: 'Количество бумаги',
                                     ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: qtyControllers[i],
+                                    keyboardType: const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Длина L (м)',
+                                    ),
+                                    validator: (value) {
+                                      final normalized =
+                                          (value ?? '').trim().replaceAll(',', '.');
+                                      final qty = double.tryParse(normalized);
+                                      if (qty == null || qty <= 0) {
+                                        return 'Введите > 0';
+                                      }
+                                      return null;
+                                    },
                                   ),
                                 ),
                                 if (i > 0)
