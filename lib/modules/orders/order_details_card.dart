@@ -523,11 +523,11 @@ class OrderDetailsCard extends StatelessWidget {
                             }
                             if (qtyValue.isNotEmpty || lenValue.isNotEmpty) {
                               if (qtyValue.isNotEmpty && lenValue.isNotEmpty) {
-                                details.add('Д * $qtyValue  $lenValue');
+                                details.add(' $qtyValue * $lenValue');
                               } else if (qtyValue.isNotEmpty) {
-                                details.add('Д * $qtyValue');
+                                details.add(' $qtyValue');
                               } else {
-                                details.add('Д * $lenValue ');
+                                details.add(' $lenValue ');
                               }
                             }
                             return <Widget>[
