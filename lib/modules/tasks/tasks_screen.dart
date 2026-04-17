@@ -3945,43 +3945,50 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
 
-    while (qtyInput == null) {
-      final result = await _askQuantity(
-        context,
-        unit: unitLabel,
-        allowPaperEdit: true,
-      );
-      if (result == null) return;
-      if (!result.openPaperEditor) {
-        qtyInput = result;
-        break;
-      }
-      final order = _orderById(task.orderId);
-      if (order == null) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Не удалось найти заказ для редактирования бумаги.'),
-            ),
-          );
-        }
-        return;
-      }
-      await _openPaperEditDialog(order);
-    }
+    final stageMode = _execModeForUser(task, widget.employeeId);
+    final isSeparateFinalizeWithoutPrefilledQty =
+        stageMode == ExecutionMode.separate && qtyInput == null;
 
-    final qtyText = qtyInput.displayText;
+    if (!isSeparateFinalizeWithoutPrefilledQty) {
+      while (qtyInput == null) {
+        final result = await _askQuantity(
+          context,
+          unit: unitLabel,
+          allowPaperEdit: true,
+        );
+        if (result == null) return;
+        if (!result.openPaperEditor) {
+          qtyInput = result;
+          break;
+        }
+        final order = _orderById(task.orderId);
+        if (order == null) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Не удалось найти заказ для редактирования бумаги.'),
+              ),
+            );
+          }
+          return;
+        }
+        await _openPaperEditDialog(order);
+      }
+    }
 
     final tp = context.read<TaskProvider>();
     final wroteOff = await _writeoffInks(task, paints);
     if (!wroteOff) return;
 
-    await tp.addCommentAutoUser(
-      taskId: task.id,
-      type: 'quantity_done',
-      text: qtyText,
-      userIdOverride: widget.employeeId,
-    );
+    if (qtyInput != null) {
+      final qtyText = qtyInput.displayText;
+      await tp.addCommentAutoUser(
+        taskId: task.id,
+        type: 'quantity_done',
+        text: qtyText,
+        userIdOverride: widget.employeeId,
+      );
+    }
 
     final latest = tp.tasks.firstWhere(
       (t) => t.id == task.id,
