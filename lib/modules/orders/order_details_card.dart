@@ -12,7 +12,6 @@ class OrderDetailsCard extends StatelessWidget {
     required this.order,
     required this.paints,
     required this.files,
-    required this.loadingFiles,
     required this.stageTemplateName,
     this.formImageUrl,
     this.extraSections = const <Widget>[],
@@ -21,7 +20,6 @@ class OrderDetailsCard extends StatelessWidget {
   final OrderModel order;
   final List<Map<String, dynamic>> paints;
   final List<Map<String, dynamic>> files;
-  final bool loadingFiles;
   final String? stageTemplateName;
   final String? formImageUrl;
   final List<Widget> extraSections;
@@ -464,9 +462,7 @@ class OrderDetailsCard extends StatelessWidget {
                             children: [
                               if (files.isEmpty)
                                 Text(
-                                  loadingFiles
-                                      ? 'Загрузка файлов…'
-                                      : 'Нет приложенных файлов',
+                                  'Нет приложенных файлов',
                                 ),
                               ...files
                                   .map((f) => _fileTile(context, f, compact: true))
