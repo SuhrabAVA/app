@@ -524,9 +524,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!sliderEnabled) {
       sliderMax = 1;
     }
-    final double availableQty =
-        warehouseExtraQty != null ? math.max(0, warehouseExtraQty) : safeActual;
-
     final double? selectedWriteoff = await showDialog<double>(
       context: context,
       builder: (ctx) {
@@ -557,7 +554,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     qtyPerPackController.text.trim().isEmpty);
             final bool packsInvalid = mode == ShipmentQuantityMode.packs &&
                 (packsCount <= 0 || qtyPerPack <= 0 || currentWriteoff <= 0);
-            final bool exceedsStock = currentWriteoff > availableQty;
             final double leftoverQty =
                 safeActual > currentWriteoff ? (safeActual - currentWriteoff) : 0;
 
@@ -748,15 +744,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           style: TextStyle(color: Colors.red),
                         ),
                       ),
-                    if (exceedsStock)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          'Итоговое количество (${_formatQuantity(currentWriteoff)}) '
-                          'превышает доступный остаток (${_formatQuantity(availableQty)}).',
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -768,8 +755,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 ElevatedButton(
                   onPressed: (currentWriteoff <= 0 ||
                           (mode == ShipmentQuantityMode.packs &&
-                              (packsInputIncomplete || packsInvalid)) ||
-                          exceedsStock)
+                              (packsInputIncomplete || packsInvalid)))
                       ? null
                       : () => Navigator.pop(ctx, currentWriteoff),
                   style: ElevatedButton.styleFrom(

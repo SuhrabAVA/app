@@ -968,18 +968,6 @@ class OrdersProvider with ChangeNotifier {
       throw Exception('Количество для списания должно быть больше нуля.');
     }
 
-    final snapshot = await loadCategoryItemSnapshot(orderData);
-    final double? snapshotQty = _toDoubleNullable(snapshot?['quantity']);
-    final double availableQty = snapshotQty != null
-        ? (snapshotQty < 0 ? 0 : snapshotQty)
-        : safeActual;
-    if (writeoffQty > availableQty) {
-      throw Exception(
-        'Итоговое количество (${_formatQty(writeoffQty)}) превышает '
-        'доступный остаток (${_formatQty(availableQty)}).',
-      );
-    }
-
     final double leftoverQty =
         safeActual > writeoffQty ? (safeActual - writeoffQty) : 0;
 
