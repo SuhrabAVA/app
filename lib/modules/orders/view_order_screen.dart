@@ -24,6 +24,26 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
   String? _stageTemplateName;
   String? _formImageUrl;
 
+  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
+    final trimmed = rawUrl?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+
+    String resolvedUrl = trimmed;
+    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
+    }
+
+    final dt = DateTime.tryParse(updatedAt ?? '');
+    if (dt == null) return resolvedUrl;
+
+    final uri = Uri.tryParse(resolvedUrl);
+    if (uri == null) return resolvedUrl;
+
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['v'] = dt.millisecondsSinceEpoch.toString();
+    return uri.replace(queryParameters: query).toString();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -50,7 +70,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       if (formCode != null && formCode.isNotEmpty) {
         final res = await Supabase.instance.client
             .from('forms')
-            .select('image_url')
+            .select('image_url, updated_at')
             .eq('code', formCode)
             .maybeSingle();
         if (res != null && res is Map) {
@@ -63,7 +83,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
           formNo != null) {
         final res = await Supabase.instance.client
             .from('forms')
-            .select('image_url')
+            .select('image_url, updated_at')
             .eq('series', formSeries)
             .eq('number', formNo)
             .maybeSingle();
@@ -71,10 +91,10 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
           form = Map<String, dynamic>.from(res);
         }
       }
-      final imageUrl = (form?['image_url'] ?? '').toString().trim();
-      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        formImageUrl = imageUrl;
-      }
+      formImageUrl = _buildFormImageUrl(
+        form?['image_url']?.toString(),
+        updatedAt: form?['updated_at']?.toString(),
+      );
       String? stageTemplateName;
       final tplId = widget.order.stageTemplateId;
       if (tplId != null && tplId.isNotEmpty) {
