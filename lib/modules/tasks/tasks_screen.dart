@@ -4357,13 +4357,16 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool stageStartedBeforeShiftResume =
                         _hasProductionStartedForStage(task) &&
                             task.comments.any((c) => c.type == 'shift_resume');
+                    final bool blockedByShiftResumeLock =
+                        stageStartedBeforeShiftResume &&
+                            stateRowUser == UserRunState.idle;
                     final bool hasOpenStartIntentForRowUser =
                         _hasOpenStartIntentForUser(task, currentRowUserId);
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !_startingTaskIds.contains(task.id) &&
                         !requiresSetupBeforeStart &&
-                        !stageStartedBeforeShiftResume &&
+                        !blockedByShiftResumeLock &&
                         !hasOpenStartIntentForRowUser &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
                         // после личного завершения (до финальной кнопки
@@ -4560,11 +4563,20 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                         final startedAtTs =
                             task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
-                        await taskProvider.updateStatus(
+                        final started = await taskProvider.updateStatus(
                           task.id,
                           TaskStatus.inProgress,
                           startedAt: startedAtTs,
                         );
+                        if (!started) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Этап уже запущен другим сотрудником. Обновите список и продолжите работу в активном этапе.'),
+                            ));
+                          }
+                          return;
+                        }
                         final isResumeAction = stateRowUser == UserRunState.paused ||
                             stateRowUser == UserRunState.problem;
                         await taskProvider.addCommentAutoUser(
