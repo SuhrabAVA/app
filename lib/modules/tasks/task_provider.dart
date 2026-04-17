@@ -863,14 +863,14 @@ class TaskProvider with ChangeNotifier {
     }
   }
 
-  Future<void> updateStatus(
+  Future<bool> updateStatus(
     String id,
     TaskStatus status, {
     int? spentSeconds,
     int? startedAt,
   }) async {
     final index = _tasks.indexWhere((t) => t.id == id);
-    if (index == -1) return;
+    if (index == -1) return false;
 
     final current = _tasks[index];
     final updated = current.copyWith(
@@ -880,31 +880,67 @@ class TaskProvider with ChangeNotifier {
       comments: current.comments,
       assignees: current.assignees,
     );
-    _tasks[index] = updated;
-    notifyListeners();
 
     final updates = <String, dynamic>{
       'status': status.name,
       'spent_seconds': updated.spentSeconds,
       'started_at': updated.startedAt,
-      'updated_at': 'now()',
     };
     final bool becameInProgress =
-        current.status == TaskStatus.waiting && status == TaskStatus.inProgress;
-    if (becameInProgress) {
-      final capturedAt = DateTime.now().millisecondsSinceEpoch;
+        current.status != TaskStatus.inProgress && status == TaskStatus.inProgress;
+    final int? capturedAt =
+        becameInProgress ? DateTime.now().millisecondsSinceEpoch : null;
+    if (capturedAt != null) {
       updates['captured_by_workplace_id'] = current.stageId;
       updates['captured_at'] = capturedAt;
-      _tasks[index] = updated.copyWith(
-        capturedByWorkplaceId: current.stageId,
-        capturedAt: capturedAt,
-      );
-      notifyListeners();
+    }
+
+    Map<String, dynamic>? persistedRow;
+    try {
+      PostgrestFilterBuilder<List<Map<String, dynamic>>> query =
+          _supabase.from('tasks').update(updates).eq('id', id);
+      if (capturedAt != null) {
+        query = query.or(
+          'captured_by_workplace_id.is.null,captured_by_workplace_id.eq.${current.stageId}',
+        );
+      }
+      final rows = await query.select();
+      if (rows.isEmpty) return false;
+      persistedRow = Map<String, dynamic>.from(rows.first);
+    } catch (e, st) {
+      debugPrint('❌ tasks.updateStatus error: $e\n$st');
+      return false;
+    }
+
+    _tasks[index] = _rowToTask(persistedRow);
+    notifyListeners();
+
+    if (capturedAt != null) {
       // Если этап состоит из нескольких рабочих мест (одна группа),
-      // первый старт фиксирует "захват" для всех задач группы.
+      // первый старт фиксирует "захват" для всех задач группы
+      // и валидирует, что параллельного запуска конкурирующего места не произошло.
       final groupKey = current.stageGroupKey.trim();
       if (groupKey.isNotEmpty) {
         try {
+          final conflicts = await _supabase
+              .from('tasks')
+              .select('id')
+              .eq('order_id', current.orderId)
+              .eq('stage_group_key', groupKey)
+              .not('captured_by_workplace_id', 'is', null)
+              .neq('captured_by_workplace_id', current.stageId)
+              .limit(1);
+          if ((conflicts as List).isNotEmpty) {
+            await _supabase.from('tasks').update({
+              'status': current.status.name,
+              'started_at': current.startedAt,
+              'captured_by_workplace_id': current.capturedByWorkplaceId,
+              'captured_at': current.capturedAt,
+            }).eq('id', current.id);
+            await refresh();
+            return false;
+          }
+
           await _supabase
               .from('tasks')
               .update({
@@ -931,23 +967,19 @@ class TaskProvider with ChangeNotifier {
         }
       }
     }
-    try {
-      await _supabase.from('tasks').update(updates).eq('id', id);
-      // if this task just became completed — check last-stage and update actual_qty
-      if (status == TaskStatus.completed) {
-        final orderId = updated.orderId;
-        final stageId = updated.stageId;
-        if (orderId.isNotEmpty && stageId.isNotEmpty) {
-          await _maybeUpdateActualQtyAfterStage(orderId, stageId);
-        }
+
+    // if this task just became completed — check last-stage and update actual_qty
+    if (status == TaskStatus.completed) {
+      final orderId = updated.orderId;
+      final stageId = updated.stageId;
+      if (orderId.isNotEmpty && stageId.isNotEmpty) {
+        await _maybeUpdateActualQtyAfterStage(orderId, stageId);
       }
-    } catch (e, st) {
-      debugPrint('❌ tasks.updateStatus error: $e\n$st');
     }
 
     // If all stage groups for order are finally completed — close the order
     final orderId = updated.orderId;
-    if (orderId != null && orderId.isNotEmpty) {
+    if (orderId.isNotEmpty) {
       try {
         final rows = await _supabase
             .from('tasks')
@@ -963,6 +995,8 @@ class TaskProvider with ChangeNotifier {
         }
       } catch (_) {}
     }
+
+    return true;
   }
 
   Future<void> addComment(
