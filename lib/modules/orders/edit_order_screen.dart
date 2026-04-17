@@ -463,6 +463,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Клиент и комментарии
   late TextEditingController _customerController;
   late TextEditingController _commentsController;
+  late TextEditingController _packagingController;
   late final TextEditingController _lengthController;
   late final TextEditingController _widthController;
   late final TextEditingController _depthController;
@@ -626,6 +627,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _dueDate = template?.dueDate;
     // Поля "договор/оплата" временно исключены из сценария создания/редактирования.
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
+    _packagingController = TextEditingController(
+      text: _extractPackagingFromParams(_selectedParams),
+    );
     _trimming = _selectedParams.contains('Подрезка');
     final initialHandle = template?.handle?.trim();
     if (initialHandle != null &&
@@ -1759,6 +1763,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   void dispose() {
     _customerController.dispose();
     _commentsController.dispose();
+    _packagingController.dispose();
     _lengthController.dispose();
     _widthController.dispose();
     _depthController.dispose();
@@ -2541,6 +2546,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _product.parameters = p.trim();
   }
 
+  String _extractPackagingFromParams(List<String> params) {
+    for (final param in params) {
+      final normalized = param.trim();
+      if (normalized.toLowerCase().startsWith('упаковка:')) {
+        return normalized.substring('Упаковка:'.length).trim();
+      }
+    }
+    return '';
+  }
+
   Future<void> _saveOrder() async {
     if (_isSavingOrder) return;
     setState(() => _isSavingOrder = true);
@@ -2555,6 +2570,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       params.add('Подрезка');
     } else {
       params.remove('Подрезка');
+    }
+    params.removeWhere(
+      (value) => value.trim().toLowerCase().startsWith('упаковка:'),
+    );
+    final packaging = _packagingController.text.trim();
+    if (packaging.isNotEmpty) {
+      params.add('Упаковка: $packaging');
     }
     _selectedParams = params.toList();
     if (_orderDate == null) {
@@ -5381,6 +5403,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     }
                   });
                 },
+              ),
+              TextFormField(
+                controller: _packagingController,
+                decoration: const InputDecoration(
+                  labelText: 'Упаковка',
+                  hintText: 'Например: по 50 шт в термоусадке',
+                  border: OutlineInputBorder(),
+                ),
               ),
               extras,
             ],

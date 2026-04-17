@@ -257,6 +257,17 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
+  String _packagingValue() {
+    for (final value in order.additionalParams) {
+      final normalized = value.trim();
+      if (normalized.toLowerCase().startsWith('упаковка:')) {
+        final parsed = normalized.substring('Упаковка:'.length).trim();
+        if (parsed.isNotEmpty) return parsed;
+      }
+    }
+    return '—';
+  }
+
   double? _paperExtraDouble(MaterialModel material, String key) {
     final value = material.extra?[key];
     if (value is num) return value.toDouble();
@@ -403,6 +414,11 @@ class OrderDetailsCard extends StatelessWidget {
                         _buildInfoRowWidget(
                           'Ручки',
                           _buildSingleLineValue(o.handle.isEmpty ? '—' : o.handle),
+                          compact: true,
+                        ),
+                        _buildInfoRowWidget(
+                          'Упаковка',
+                          _buildSingleLineValue(_packagingValue()),
                           compact: true,
                         ),
                         // Use a combined row for "Картон" and "Подрезка" to align them on one

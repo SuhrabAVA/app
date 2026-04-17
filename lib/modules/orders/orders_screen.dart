@@ -25,7 +25,7 @@ enum SortOption {
   quantityDesc,
 }
 
-enum ShipmentQuantityMode { tirage, custom, actual, packs }
+enum ShipmentQuantityMode { tirage, custom, actual }
 
 /// Главный экран модуля оформления заказа. Показывает список заказов с
 /// возможностью фильтрации по статусам, поиска и создания нового заказа.
@@ -505,15 +505,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final double suggestedWriteoff =
         actualLessThanPlanned ? safeActual : plannedQty;
     double customQty = suggestedWriteoff;
-    double packsCount = 0;
-    double qtyPerPack = 0;
     ShipmentQuantityMode mode = actualLessThanPlanned
         ? ShipmentQuantityMode.actual
         : ShipmentQuantityMode.tirage;
     final TextEditingController customController =
         TextEditingController(text: _formatQuantity(customQty));
-    final TextEditingController packsCountController = TextEditingController();
-    final TextEditingController qtyPerPackController = TextEditingController();
     bool updatingCustomText = false;
 
     double sliderMax = math.max(plannedQty, safeActual);
@@ -532,7 +528,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
             final double effectiveCustom = sliderEnabled
                 ? math.max(0, math.min(customQty, sliderMax))
                 : math.max(0, customQty);
-            final double computedPacksQty = packsCount * qtyPerPack;
             double currentWriteoff;
             switch (mode) {
               case ShipmentQuantityMode.tirage:
@@ -544,16 +539,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
               case ShipmentQuantityMode.custom:
                 currentWriteoff = effectiveCustom;
                 break;
-              case ShipmentQuantityMode.packs:
-                currentWriteoff = computedPacksQty;
-                break;
             }
             if (currentWriteoff < 0) currentWriteoff = 0;
-            final bool packsInputIncomplete = mode == ShipmentQuantityMode.packs &&
-                (packsCountController.text.trim().isEmpty ||
-                    qtyPerPackController.text.trim().isEmpty);
-            final bool packsInvalid = mode == ShipmentQuantityMode.packs &&
-                (packsCount <= 0 || qtyPerPack <= 0 || currentWriteoff <= 0);
             final double leftoverQty =
                 safeActual > currentWriteoff ? (safeActual - currentWriteoff) : 0;
 
@@ -617,17 +604,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         });
                       },
                     ),
-                    RadioListTile<ShipmentQuantityMode>(
-                      title: const Text('Списать по пачкам'),
-                      value: ShipmentQuantityMode.packs,
-                      groupValue: mode,
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() {
-                          mode = value;
-                        });
-                      },
-                    ),
                     if (mode == ShipmentQuantityMode.custom) ...[
                       TextField(
                         controller: customController,
@@ -679,71 +655,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             : null,
                       ),
                     ],
-                    if (mode == ShipmentQuantityMode.packs) ...[
-                      TextField(
-                        controller: packsCountController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Количество пачек',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (value) {
-                          final parsed = double.tryParse(
-                            value.trim().replaceAll(',', '.'),
-                          );
-                          setDialogState(() {
-                            packsCount = parsed != null && parsed >= 0 ? parsed : 0;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: qtyPerPackController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Количество в одной пачке',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (value) {
-                          final parsed = double.tryParse(
-                            value.trim().replaceAll(',', '.'),
-                          );
-                          setDialogState(() {
-                            qtyPerPack = parsed != null && parsed >= 0 ? parsed : 0;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Итог к списанию: ${_formatQuantity(computedPacksQty)} '
-                        '(пачек: ${_formatQuantity(packsCount)} × '
-                        '${_formatQuantity(qtyPerPack)})',
-                      ),
-                    ],
                     const Divider(),
                     Text('К списанию: ${_formatQuantity(currentWriteoff)}'),
                     Text('Остаток после отгрузки: ${_formatQuantity(leftoverQty)}'),
-                    if (mode == ShipmentQuantityMode.packs &&
-                        packsInputIncomplete)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
-                        child: Text(
-                          'Заполните оба поля для списания по пачкам.',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ),
-                    if (mode == ShipmentQuantityMode.packs && packsInvalid)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
-                        child: Text(
-                          'Количество пачек и количество в пачке должны быть больше нуля.',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -753,9 +667,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   child: const Text('Отмена'),
                 ),
                 ElevatedButton(
-                  onPressed: (currentWriteoff <= 0 ||
-                          (mode == ShipmentQuantityMode.packs &&
-                              (packsInputIncomplete || packsInvalid)))
+                  onPressed: currentWriteoff <= 0
                       ? null
                       : () => Navigator.pop(ctx, currentWriteoff),
                   style: ElevatedButton.styleFrom(
@@ -772,8 +684,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
 
     customController.dispose();
-    packsCountController.dispose();
-    qtyPerPackController.dispose();
 
     if (selectedWriteoff == null) {
       return;
