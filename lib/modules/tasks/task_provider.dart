@@ -1458,10 +1458,28 @@ class TaskProvider with ChangeNotifier {
     if (v is num) return v.toDouble();
     if (v is String) {
       final normalized = v.replaceAll(',', '.').trim();
+      final totalFromFormula =
+          RegExp(r'=\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+      if (totalFromFormula != null) {
+        return double.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
+      }
+      final packsMatch =
+          RegExp(r'(-?\d+(?:\.\d+)?)\s*пач', caseSensitive: false)
+              .firstMatch(normalized);
+      final inPackMatch = RegExp(r'[x×*]\s*(-?\d+(?:\.\d+)?)')
+          .firstMatch(normalized);
+      if (packsMatch != null && inPackMatch != null) {
+        final packs = double.tryParse(packsMatch.group(1) ?? '') ?? 0;
+        final inPack = double.tryParse(inPackMatch.group(1) ?? '') ?? 0;
+        return packs * inPack;
+      }
       final parsed = double.tryParse(normalized);
       if (parsed != null) return parsed;
-      final digits = normalized.replaceAll(RegExp(r'[^0-9.-]'), '');
-      return double.tryParse(digits) ?? 0;
+      final firstNumber = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(normalized);
+      if (firstNumber != null) {
+        return double.tryParse(firstNumber.group(0) ?? '') ?? 0;
+      }
+      return 0;
     }
     return 0;
   }

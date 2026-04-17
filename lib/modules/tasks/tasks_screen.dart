@@ -709,11 +709,15 @@ class _QuantityInput {
   final int quantity;
   final String displayText;
   final bool openPaperEditor;
+  final int? packsCount;
+  final int? unitsPerPack;
 
   const _QuantityInput({
     required this.quantity,
     required this.displayText,
     this.openPaperEditor = false,
+    this.packsCount,
+    this.unitsPerPack,
   });
 }
 
@@ -2944,6 +2948,18 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   int _parseQuantity(String text) {
+    final totalFromFormula = RegExp(r'=\s*(\d+)').firstMatch(text);
+    if (totalFromFormula != null) {
+      return int.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
+    }
+    final packMatch =
+        RegExp(r'(\d+)\s*пач', caseSensitive: false).firstMatch(text);
+    final inPackMatch = RegExp(r'[x×*]\s*(\d+)').firstMatch(text);
+    if (packMatch != null && inPackMatch != null) {
+      final packs = int.tryParse(packMatch.group(1) ?? '') ?? 0;
+      final inPack = int.tryParse(inPackMatch.group(1) ?? '') ?? 0;
+      return packs * inPack;
+    }
     final match = RegExp(r'(\d+)').firstMatch(text);
     if (match == null) return 0;
     return int.tryParse(match.group(1) ?? '') ?? 0;
@@ -6540,50 +6556,138 @@ Future<_QuantityInput?> _askQuantity(
   String? unit,
   bool allowPaperEdit = false,
 }) async {
-  final controller = TextEditingController();
+  final totalController = TextEditingController();
+  final packsController = TextEditingController();
+  final inPackController = TextEditingController();
   final unitLabel = (unit ?? '').trim();
   const paperEditValue = '__open_paper_edit__';
-  final v = await showDialog<String>(
+  final v = await showDialog<_QuantityInput?>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Количество выполнено'),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        keyboardType: TextInputType.number,
-        decoration: InputDecoration(
-          hintText: unitLabel.isNotEmpty
-              ? 'Введите количество в ${unitLabel}'
-              : 'Введите количество экземпляров',
-          border: const OutlineInputBorder(),
-        ),
-      ),
-      actions: [
-        if (allowPaperEdit)
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, paperEditValue),
-            child: const Text('Изменить бумагу'),
+    builder: (ctx) {
+      var usePacksMode = false;
+      return StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: const Text('Количество выполнено'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment<bool>(
+                    value: false,
+                    label: Text('Общее количество'),
+                  ),
+                  ButtonSegment<bool>(
+                    value: true,
+                    label: Text('Пачками'),
+                  ),
+                ],
+                selected: <bool>{usePacksMode},
+                onSelectionChanged: (selection) {
+                  setStateDialog(() {
+                    usePacksMode = selection.first;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              if (!usePacksMode)
+                TextField(
+                  controller: totalController,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: unitLabel.isNotEmpty
+                        ? 'Введите количество в $unitLabel'
+                        : 'Введите количество экземпляров',
+                    border: const OutlineInputBorder(),
+                  ),
+                )
+              else ...[
+                TextField(
+                  controller: packsController,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Количество пачек',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: inPackController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Количество в пачке',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ],
           ),
-        TextButton(
-            onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-        ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('OK')),
-      ],
-    ),
+          actions: [
+            if (allowPaperEdit)
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  ctx,
+                  const _QuantityInput(
+                    quantity: 0,
+                    displayText: paperEditValue,
+                    openPaperEditor: true,
+                  ),
+                ),
+                child: const Text('Изменить бумагу'),
+              ),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Отмена')),
+            ElevatedButton(
+              onPressed: () {
+                if (!usePacksMode) {
+                  final raw = totalController.text.trim();
+                  final n = int.tryParse(raw);
+                  if (n == null) return;
+                  final display =
+                      unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
+                  Navigator.pop(
+                    ctx,
+                    _QuantityInput(quantity: n, displayText: display),
+                  );
+                  return;
+                }
+
+                final packs = int.tryParse(packsController.text.trim());
+                final inPack = int.tryParse(inPackController.text.trim());
+                if (packs == null || inPack == null) return;
+                final total = packs * inPack;
+                final display =
+                    '$packs пачек × $inPack в пачке = $total ${unitLabel.isNotEmpty ? unitLabel : 'шт'}';
+                Navigator.pop(
+                  ctx,
+                  _QuantityInput(
+                    quantity: total,
+                    displayText: display,
+                    packsCount: packs,
+                    unitsPerPack: inPack,
+                  ),
+                );
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    },
   );
-  if (v == null || v.isEmpty) return null;
-  if (v == paperEditValue) {
+  if (v == null) return null;
+  if (v.openPaperEditor || v.displayText == paperEditValue) {
     return const _QuantityInput(
       quantity: 0,
       displayText: '',
       openPaperEditor: true,
     );
   }
-  final n = int.tryParse(v);
-  if (n == null) return null;
-  final display = unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
-  return _QuantityInput(quantity: n, displayText: display);
+  return v;
 }
 
 Duration _setupElapsed(TaskModel task, String userId) {
