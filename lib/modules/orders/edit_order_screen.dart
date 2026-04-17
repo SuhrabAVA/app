@@ -580,7 +580,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
       names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       setState(() => _categoryTitles = names);
-    } catch (_) {
+    } catch (e) {
       debugPrint('load categories error: $e');
     } finally {
       if (mounted) setState(() => _catsLoading = false);
@@ -1622,7 +1622,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _stagePreviewInitialized = true;
         _stageOrderManuallyChanged = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _stagePreviewStages = <Map<String, dynamic>>[];
@@ -2296,7 +2296,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       await _sb.from('orders').update({
         'product': _product.toMap(),
       }).eq('id', orderId);
-    } catch (_) {
+    } catch (e) {
       // не блокируем сохранение заказа, просто сообщим в консоль
       debugPrint('❌ persist paints error: ' + e.toString());
     }
@@ -2353,7 +2353,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           return;
         }
       }
-    } catch (_) {
+    } catch (e) {
       debugPrint('❌ restore paints from DB error: ' + e.toString());
     }
     // Фолбэк к старому парсеру parameters
@@ -3156,7 +3156,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Списание лишнего выполняется на этапе отгрузки.
 
     await _goToOrdersModuleHome();
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Не удалось сохранить заказ: $e')),
