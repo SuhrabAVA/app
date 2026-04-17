@@ -562,7 +562,7 @@ class OrdersProvider with ChangeNotifier {
       product: nextProduct,
       paperMaterials: prepared,
       material: prepared.first,
-      comments: trimmedReason,
+      comments: prev.comments,
     );
 
     if (!_hasPaperCompositionChanged(previous: prev, updated: updated)) {
@@ -1635,6 +1635,33 @@ class OrdersProvider with ChangeNotifier {
       return suffix.isEmpty ? m.name : '${m.name} ($suffix)';
     }
 
+    double _paperWidthB(MaterialModel m) {
+      final raw = m.extra?['widthB'];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString().replaceAll(',', '.')) ?? 0;
+    }
+
+    String _paperBlQuantity(MaterialModel m, {String fallback = ''}) =>
+        (m.extra?['blQuantity'] ?? fallback).toString().trim();
+
+    String _paperMetrics(
+      MaterialModel m, {
+      double? fallbackWidthB,
+      String? fallbackBlQuantity,
+    }) {
+      final parsedWidthB = _paperWidthB(m);
+      final widthB = parsedWidthB > 0 ? parsedWidthB : (fallbackWidthB ?? 0);
+      final blQuantity = _paperBlQuantity(
+        m,
+        fallback: (fallbackBlQuantity ?? '').trim(),
+      );
+      final lengthL = m.quantity;
+      final widthText =
+          widthB > 0 ? widthB.toStringAsFixed(widthB % 1 == 0 ? 0 : 2) : '—';
+      final quantityText = blQuantity.isNotEmpty ? blQuantity : '—';
+      return 'Ш $widthText, К $quantityText, Длина L ${lengthL.toStringAsFixed(2)} м';
+    }
+
     final user = (AuthHelper.currentUserName ?? 'Сотрудник').trim();
     final timestamp = fmtDate(DateTime.now());
     final maxCount = before.length > after.length ? before.length : after.length;
@@ -1648,17 +1675,17 @@ class OrdersProvider with ChangeNotifier {
         final delta = next.quantity - old.quantity;
         final deltaPrefix = delta >= 0 ? '+' : '';
         buffer.writeln(
-          'Бумага №$slot: было ${materialName(old)} — ${old.quantity.toStringAsFixed(2)} м, '
-          'стало ${materialName(next)} — ${next.quantity.toStringAsFixed(2)} м '
+          'Бумага №$slot: было ${materialName(old)} — ${_paperMetrics(old, fallbackWidthB: i == 0 ? previous.product.widthB : null, fallbackBlQuantity: i == 0 ? previous.product.blQuantity : null)}, '
+          'стало ${materialName(next)} — ${_paperMetrics(next, fallbackWidthB: i == 0 ? updated.product.widthB : null, fallbackBlQuantity: i == 0 ? updated.product.blQuantity : null)} '
           '($deltaPrefix${delta.toStringAsFixed(2)} м)',
         );
       } else if (old == null && next != null) {
         buffer.writeln(
-          'Добавлена бумага №$slot: ${materialName(next)} — ${next.quantity.toStringAsFixed(2)} м',
+          'Добавлена бумага №$slot: ${materialName(next)} — ${_paperMetrics(next, fallbackWidthB: i == 0 ? updated.product.widthB : null, fallbackBlQuantity: i == 0 ? updated.product.blQuantity : null)}',
         );
       } else if (old != null && next == null) {
         buffer.writeln(
-          'Удалена бумага №$slot: ${materialName(old)} — ${old.quantity.toStringAsFixed(2)} м',
+          'Удалена бумага №$slot: ${materialName(old)} — ${_paperMetrics(old, fallbackWidthB: i == 0 ? previous.product.widthB : null, fallbackBlQuantity: i == 0 ? previous.product.blQuantity : null)}',
         );
       }
     }
