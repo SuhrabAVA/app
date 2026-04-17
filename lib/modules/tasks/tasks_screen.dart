@@ -4353,12 +4353,15 @@ class _TasksScreenState extends State<TasksScreen>
                             task.comments.any((c) => c.type == 'shift_resume');
                     final bool hasOpenStartIntentForRowUser =
                         _hasOpenStartIntentForUser(task, currentRowUserId);
+                    final bool shouldBlockStartByOpenIntent =
+                        hasOpenStartIntentForRowUser &&
+                            stateRowUser == UserRunState.idle;
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !_startingTaskIds.contains(task.id) &&
                         !requiresSetupBeforeStart &&
                         !stageStartedBeforeShiftResume &&
-                        !hasOpenStartIntentForRowUser &&
+                        !shouldBlockStartByOpenIntent &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
                         // после личного завершения (до финальной кнопки
                         // "Завершить задание").
