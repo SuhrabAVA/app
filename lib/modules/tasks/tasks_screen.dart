@@ -737,6 +737,8 @@ class _InkUsageDialogResult {
 
 class _TasksScreenState extends State<TasksScreen>
     with AutomaticKeepAliveClientMixin<TasksScreen> {
+  static const Duration _formImageCacheTtl = Duration(seconds: 10);
+
   @override
   bool get wantKeepAlive => true;
   // Compatibility shim: legacy takenByAnother flag removed
@@ -763,7 +765,7 @@ class _TasksScreenState extends State<TasksScreen>
     _selection.notifyListeners();
   }
   bool _detailsExpanded = true;
-  final Map<String, String?> _formImageCache = {};
+  final Map<String, _FormImageCacheEntry> _formImageCache = {};
   final Map<String, Future<String?>> _formImagePending = {};
   final Map<String, List<Map<String, dynamic>>> _orderPaintsCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending = {};
@@ -3205,7 +3207,7 @@ class _TasksScreenState extends State<TasksScreen>
         ? _resolveTemplateName(order.stageTemplateId, templates)
         : null;
 
-    final cachedFormImageUrl = _formImageCache[order.id];
+    final cachedFormImageUrl = _formImageCache[order.id]?.url;
 
     return Container(
       padding: EdgeInsets.all(10 * scale),
@@ -5939,7 +5941,7 @@ class _TasksScreenState extends State<TasksScreen>
       if (code != null && code.isNotEmpty) {
         final res = await client
             .from('forms')
-            .select('image_url')
+            .select('image_url, updated_at')
             .eq('code', code)
             .maybeSingle();
         if (res != null && res is Map) {
@@ -5954,7 +5956,7 @@ class _TasksScreenState extends State<TasksScreen>
           order.newFormNo != null) {
         final res = await client
             .from('forms')
-            .select('image_url')
+            .select('image_url, updated_at')
             .eq('series', order.formSeries!.trim())
             .eq('number', order.newFormNo!)
             .maybeSingle();
@@ -5962,23 +5964,47 @@ class _TasksScreenState extends State<TasksScreen>
           row = Map<String, dynamic>.from(res);
         }
       }
-      final raw = row?['image_url'];
-      final url = (raw is String && raw.trim().isNotEmpty) ? raw.trim() : null;
-      _formImageCache[key] = url;
+      final url = _buildFormImageUrl(
+        row?['image_url']?.toString(),
+        updatedAt: row?['updated_at']?.toString(),
+      );
+      _formImageCache[key] = _FormImageCacheEntry(url: url, fetchedAt: DateTime.now());
       return url;
     } catch (e) {
       debugPrint('❌ load form image error: $e');
-      _formImageCache[key] = null;
+      _formImageCache[key] = _FormImageCacheEntry(url: null, fetchedAt: DateTime.now());
       return null;
     } finally {
       _formImagePending.remove(key);
     }
   }
 
+  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
+    final trimmed = rawUrl?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+
+    String resolvedUrl = trimmed;
+    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
+    }
+
+    final dt = DateTime.tryParse(updatedAt ?? '');
+    if (dt == null) return resolvedUrl;
+
+    final uri = Uri.tryParse(resolvedUrl);
+    if (uri == null) return resolvedUrl;
+
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['v'] = dt.millisecondsSinceEpoch.toString();
+    return uri.replace(queryParameters: query).toString();
+  }
+
   Future<String?> _getFormImageFuture(OrderModel order) {
     final key = order.id;
-    if (_formImageCache.containsKey(key)) {
-      return Future.value(_formImageCache[key]);
+    final cached = _formImageCache[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.fetchedAt) <= _formImageCacheTtl) {
+      return Future.value(cached.url);
     }
     if (_formImagePending.containsKey(key)) {
       return _formImagePending[key]!;
@@ -6011,6 +6037,16 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
+}
+
+class _FormImageCacheEntry {
+  final String? url;
+  final DateTime fetchedAt;
+
+  const _FormImageCacheEntry({
+    required this.url,
+    required this.fetchedAt,
+  });
 }
 
 class _TaskCard extends StatelessWidget {
