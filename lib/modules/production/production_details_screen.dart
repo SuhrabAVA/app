@@ -864,7 +864,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                             order: widget.order,
                             paints: _paints,
                             files: _files,
-                            loadingFiles: _loadingFiles,
                             stageTemplateName: _stageTemplateName,
                           ),
                         ),
