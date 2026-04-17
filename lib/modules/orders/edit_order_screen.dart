@@ -3315,7 +3315,55 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _isOldForm = false;
     }
 
-    final bool hadFormBefore = _hasAssignedForm();
+    bool persistedHasForm = false;
+    bool? persistedIsOldForm;
+    int? persistedFormNo;
+    String? persistedFormSeries;
+    String? persistedFormCode;
+    try {
+      final persisted = await _sb
+          .from('orders')
+          .select('has_form, is_old_form, new_form_no, form_series, form_code')
+          .eq('id', order.id)
+          .maybeSingle();
+      final persistedHasFormFlag = persisted?['has_form'] as bool?;
+      persistedIsOldForm = persisted?['is_old_form'] as bool?;
+      persistedFormNo = ((persisted?['new_form_no'] as num?)?.toInt());
+      final persistedSeriesRaw = (persisted?['form_series'] ?? '').toString();
+      final persistedCodeRaw = (persisted?['form_code'] ?? '').toString();
+      persistedFormSeries =
+          persistedSeriesRaw.trim().isEmpty ? null : persistedSeriesRaw.trim();
+      persistedFormCode =
+          persistedCodeRaw.trim().isEmpty ? null : persistedCodeRaw.trim();
+      persistedHasForm = persistedHasFormFlag ??
+          (persistedIsOldForm != null ||
+              persistedFormNo != null ||
+              persistedFormCode != null);
+    } catch (_) {
+      persistedHasForm = false;
+    }
+
+    final bool hadFormBefore = _hasAssignedForm() || persistedHasForm;
+    if (!isCreating && !_editingForm && hadFormBefore) {
+      if (mounted &&
+          !_hasAssignedForm() &&
+          (persistedFormNo != null || persistedFormCode != null)) {
+        setState(() {
+          _hasForm = true;
+          _orderFormIsOld = persistedIsOldForm;
+          _orderFormNo = persistedFormNo;
+          _orderFormSeries = persistedFormSeries;
+          _orderFormCode = persistedFormCode;
+          _orderFormDisplay = _buildFormDisplayValue(
+            code: persistedFormCode,
+            series: persistedFormSeries,
+            number: persistedFormNo,
+          );
+        });
+      }
+      return;
+    }
+
     final bool shouldHandle = isCreating || _editingForm || !hadFormBefore;
     if (!shouldHandle) return;
 
