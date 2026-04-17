@@ -4552,18 +4552,6 @@ class _TasksScreenState extends State<TasksScreen>
                             !setupInProgressForCurrentUser) {
                           await _finishSetup(task, provider);
                         }
-                        final latestTaskAfterStartPrep = taskProvider.tasks.firstWhere(
-                          (t) => t.id == task.id,
-                          orElse: () => task,
-                        );
-                        final shouldResumeSetup =
-                            _isSetupInProgressForUser(
-                                  latestTaskAfterStartPrep,
-                                  widget.employeeId,
-                                ) &&
-                                !_hasProductionStartedForStage(
-                                  latestTaskAfterStartPrep,
-                                );
                         final startedAtTs =
                             task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
                         await taskProvider.updateStatus(
@@ -4571,26 +4559,17 @@ class _TasksScreenState extends State<TasksScreen>
                           TaskStatus.inProgress,
                           startedAt: startedAtTs,
                         );
+                        final isResumeAction = stateRowUser == UserRunState.paused ||
+                            stateRowUser == UserRunState.problem;
                         await taskProvider.addCommentAutoUser(
                           taskId: task.id,
-                          type: 'start',
-                          text: 'Начал(а) этап',
+                          type: isResumeAction ? 'resume' : 'start',
+                          text: isResumeAction
+                              ? 'Возобновил(а) этап'
+                              : 'Начал(а) этап',
                           userIdOverride: widget.employeeId,
                         );
-                        if (shouldResumeSetup) {
-                          await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'setup_resume',
-                            text: 'Продолжил(а) наладку',
-                            userIdOverride: widget.employeeId,
-                          );
-                          await recordTimeEventForUser(
-                            TaskTimeType.setup,
-                            note: 'setup_resume',
-                          );
-                        } else {
-                          await recordTimeEventForUser(TaskTimeType.production);
-                        }
+                        await recordTimeEventForUser(TaskTimeType.production);
                       } finally {
                         if (mounted) {
                           setState(() => _startingTaskIds.remove(task.id));
