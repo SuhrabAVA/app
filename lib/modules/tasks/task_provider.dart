@@ -897,14 +897,14 @@ class TaskProvider with ChangeNotifier {
 
     Map<String, dynamic>? persistedRow;
     try {
-      PostgrestFilterBuilder<List<Map<String, dynamic>>> query =
-          _supabase.from('tasks').update(updates).eq('id', id);
-      if (capturedAt != null) {
-        query = query.or(
-          'captured_by_workplace_id.is.null,captured_by_workplace_id.eq.${current.stageId}',
-        );
-      }
-      final rows = await query.select();
+      final baseQuery = _supabase.from('tasks').update(updates).eq('id', id);
+      final rows = await (capturedAt != null
+          ? baseQuery
+              .or(
+                'captured_by_workplace_id.is.null,captured_by_workplace_id.eq.${current.stageId}',
+              )
+              .select()
+          : baseQuery.select());
       if (rows.isEmpty) return false;
       persistedRow = Map<String, dynamic>.from(rows.first);
     } catch (e, st) {
