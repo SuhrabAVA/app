@@ -897,7 +897,13 @@ class TaskProvider with ChangeNotifier {
 
     Map<String, dynamic>? persistedRow;
     try {
-      final baseQuery = _supabase.from('tasks').update(updates).eq('id', id);
+      var baseQuery = _supabase.from('tasks').update(updates).eq('id', id);
+      // CAS-защита для старта этапа:
+      // если другой сотрудник успел поменять статус первым,
+      // повторный "старт" с устаревшего клиента не должен проходить.
+      if (becameInProgress) {
+        baseQuery = baseQuery.eq('status', current.status.name);
+      }
       final rows = await (capturedAt != null
           ? baseQuery
               .or(
@@ -905,7 +911,12 @@ class TaskProvider with ChangeNotifier {
               )
               .select()
           : baseQuery.select());
-      if (rows.isEmpty) return false;
+      if (rows.isEmpty) {
+        if (becameInProgress) {
+          await refresh();
+        }
+        return false;
+      }
       persistedRow = Map<String, dynamic>.from(rows.first);
     } catch (e, st) {
       debugPrint('❌ tasks.updateStatus error: $e\n$st');

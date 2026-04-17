@@ -5733,49 +5733,73 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
+    await provider.refresh();
+    final latestTask = provider.tasks.firstWhere(
+      (t) => t.id == task.id,
+      orElse: () => task,
+    );
+    if (_hasPendingSetupForStage(latestTask) ||
+        _isSetupCompletedForStage(latestTask) ||
+        _hasProductionStartedForStage(latestTask)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Наладка уже запущена другим сотрудником. Обновите список и продолжайте работу в активном этапе.'),
+      ));
+      return;
+    }
+
     await provider.addCommentAutoUser(
       taskId: task.id,
       type: 'setup_start',
       text: 'Начал(а) настройку станка',
       userIdOverride: widget.employeeId,
     );
-    if (task.status != TaskStatus.inProgress) {
+    if (latestTask.status != TaskStatus.inProgress) {
       final startedAtTs =
-          task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
-      await provider.updateStatus(task.id, TaskStatus.inProgress,
+          latestTask.startedAt ?? DateTime.now().millisecondsSinceEpoch;
+      final started = await provider.updateStatus(task.id, TaskStatus.inProgress,
           startedAt: startedAtTs);
+      if (!started) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Этап уже запущен другим сотрудником. Наладка недоступна для второго запуска.'),
+        ));
+        return;
+      }
     }
-    final participants = _participantsSnapshot(task, widget.employeeId);
-    final execMode = _stageExecutionMode(task);
+    final participants = _participantsSnapshot(latestTask, widget.employeeId);
+    final execMode = _stageExecutionMode(latestTask);
     await provider.recordTimeEvent(
-      task: task,
+      task: latestTask,
       type: TaskTimeType.setup,
       initiatedBy: widget.employeeId,
       subjectUserId: widget.employeeId,
-      workplaceId: task.stageId,
+      workplaceId: latestTask.stageId,
       participantsSnapshot: participants,
       executionMode: execMode != null ? _executionModeCode(execMode) : null,
     );
-    final helpers = _helperIds(task);
-    if (helpers.isNotEmpty && task.assignees.first == widget.employeeId) {
+    final helpers = _helperIds(latestTask);
+    if (helpers.isNotEmpty && latestTask.assignees.first == widget.employeeId) {
       for (final helperId in helpers) {
         await provider.recordTimeEvent(
-          task: task,
+          task: latestTask,
           type: TaskTimeType.setup,
           initiatedBy: widget.employeeId,
           subjectUserId: helperId,
-          workplaceId: task.stageId,
+          workplaceId: latestTask.stageId,
           participantsSnapshot: participants,
           executionMode: execMode != null ? _executionModeCode(execMode) : null,
           helperId: helperId,
         );
       }
     }
-    if (!task.assignees.contains(widget.employeeId)) {
+    if (!latestTask.assignees.contains(widget.employeeId)) {
       try {
         await (provider as dynamic).addAssignee(task.id, widget.employeeId);
       } catch (_) {
-        final newAssignees = List<String>.from(task.assignees)
+        final newAssignees = List<String>.from(latestTask.assignees)
           ..add(widget.employeeId);
         await provider.updateAssignees(task.id, newAssignees);
       }
