@@ -3254,9 +3254,6 @@ class _TasksScreenState extends State<TasksScreen>
                 order: order,
                 paints: resolvedPaints,
                 files: resolvedFiles,
-                loadingFiles:
-                    snapshot.connectionState == ConnectionState.waiting &&
-                        resolvedFiles.isEmpty,
                 stageTemplateName: templateName,
                 formImageUrl: resolvedFormImageUrl,
                 extraSections: [
