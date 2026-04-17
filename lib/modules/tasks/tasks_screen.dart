@@ -606,15 +606,19 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   // Сгруппировать по этапу; фиксируем и незавершённые, и уже завершённые
   // альтернативы, чтобы не блокировать последующие этапы, когда одна из
   // альтернатив завершена.
-  final stages = <String, Map<String, bool>>{}; // stageId -> {pending, completed}
+  final stages = <String, Map<String, bool>>{}; // stageId -> {pending, completed, problem}
   for (final t in all) {
     final completed = _isEffectivelyCompleted(t);
     final pending = !completed;
+    final problem = t.status == TaskStatus.problem ||
+        t.comments.any((c) => c.type == 'problem');
     final key = _groupKey(t.stageId);
-    final current = stages[key] ?? {'pending': false, 'completed': false};
+    final current = stages[key] ??
+        {'pending': false, 'completed': false, 'problem': false};
     stages[key] = {
       'pending': current['pending'] == true || pending,
       'completed': current['completed'] == true || completed,
+      'problem': current['problem'] == true || problem,
     };
   }
 
@@ -641,11 +645,13 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
 
       // Ищем ближайший реально существующий предыдущий этап.
       final hasPending = prevState['pending'] == true;
+      final hasProblem = prevState['problem'] == true;
       if (!hasPending && prevState['completed'] == true) {
         continue;
       }
-      // Следующий этап нельзя запускать, пока предыдущий не завершён.
-      return prevState['completed'] == true;
+      // Следующий этап нельзя запускать, пока предыдущий не завершён,
+      // кроме случаев, когда предыдущий переведён в "Проблему".
+      return prevState['completed'] == true || hasProblem;
     }
     return true;
   }
