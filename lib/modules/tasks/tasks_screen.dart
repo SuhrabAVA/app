@@ -618,18 +618,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     };
   }
 
-  // Для поэтапного старта: текущий этап можно запускать, если запущен
-  // предыдущий этап в очереди (или этап первый). Это позволяет сотруднику B
-  // начать следующий этап, когда сотрудник A уже начал предыдущий.
-  bool stageHasActivity(String groupKey) {
-    return all.any((t) {
-      if (_groupKey(t.stageId) != groupKey) return false;
-      if (t.status != TaskStatus.waiting) return true;
-      return t.comments.any((c) =>
-          c.type == 'start' || c.type == 'resume' || c.type == 'user_done');
-    });
-  }
-
   final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
   if (orderedStages.isNotEmpty) {
     final orderedKeys = <String>[];
@@ -656,7 +644,8 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
       if (!hasPending && prevState['completed'] == true) {
         continue;
       }
-      return stageHasActivity(prevKey) || prevState['completed'] == true;
+      // Следующий этап нельзя запускать, пока предыдущий не завершён.
+      return prevState['completed'] == true;
     }
     return true;
   }
