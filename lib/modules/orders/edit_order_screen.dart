@@ -5491,7 +5491,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 controller: _packagingController,
                 decoration: const InputDecoration(
                   labelText: 'Упаковка',
-                  hintText: 'Например: по 50 шт в термоусадке',
+                  hintText: 'Например: по 50 шт ',
                   border: OutlineInputBorder(),
                 ),
               ),
