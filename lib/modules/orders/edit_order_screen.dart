@@ -10,8 +10,6 @@ import 'package:uuid/uuid.dart';
 import '../../services/app_auth.dart';
 import '../../utils/auth_helper.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/storage_service.dart';
 import 'package:image_picker/image_picker.dart';
@@ -29,6 +27,7 @@ import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
+import '../common/pdf_view_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
 
@@ -2416,11 +2415,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Future<void> _openPdf() async {
-    if (_pickedPdf != null && _pickedPdf!.path != null) {
-      await OpenFilex.open(_pickedPdf!.path!);
+    if (_pickedPdf != null) {
+      final bytes = _pickedPdf!.bytes;
+      if (bytes == null) return;
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PdfViewScreen(
+            bytes: bytes,
+            title: _pickedPdf!.name.isEmpty ? 'PDF' : _pickedPdf!.name,
+          ),
+        ),
+      );
     } else if (widget.order?.pdfUrl != null) {
       final url = await getSignedUrl(widget.order!.pdfUrl!);
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PdfViewScreen(
+            url: url,
+            title: widget.order!.pdfUrl!.split('/').last,
+          ),
+        ),
+      );
     }
   }
 

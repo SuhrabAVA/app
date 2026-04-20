@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/storage_service.dart' as storage;
+import '../common/pdf_view_screen.dart';
 import 'material_model.dart';
 import 'order_model.dart';
 
@@ -768,30 +768,13 @@ class OrderDetailsCard extends StatelessWidget {
                       );
                       return;
                     }
-                    showDialog(
-                      context: context,
-                      builder: (_) => AlertDialog(
-                        title: Text(fileName),
-                        content:
-                            const Text('Открыть PDF во внешнем просмотрщике?'),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Отмена'),
-                          ),
-                          TextButton(
-                            onPressed: () async {
-                              Navigator.pop(context);
-                              try {
-                                await launchUrl(
-                                  Uri.parse(url),
-                                  mode: LaunchMode.externalApplication,
-                                );
-                              } catch (_) {}
-                            },
-                            child: const Text('Открыть'),
-                          ),
-                        ],
+                    if (!context.mounted) return;
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PdfViewScreen(
+                          url: url,
+                          title: fileName.isEmpty ? 'PDF' : fileName,
+                        ),
                       ),
                     );
                   },
