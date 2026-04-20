@@ -208,13 +208,10 @@ class OrdersProvider with ChangeNotifier {
 
     // Бизнес-правило: доступный остаток бумаги = складской остаток - активный резерв.
     try {
-      final reserveRows = await _supabase
-          .from('order_paper_reservations')
-          .select('qty')
-          .eq('paper_id', id);
-      if (reserveRows is List && reserveRows.isNotEmpty) {
+      final reserveRows = await _activePaperReservationsByPaper(id);
+      if (reserveRows.isNotEmpty) {
         double reserved = 0;
-        for (final raw in reserveRows.whereType<Map>()) {
+        for (final raw in reserveRows) {
           final value = raw['qty'];
           if (value is num) {
             reserved += value.toDouble();
@@ -228,6 +225,62 @@ class OrdersProvider with ChangeNotifier {
       // Если таблица резервов ещё не развёрнута, используем старый расчёт.
     }
     return baseQty;
+  }
+
+  Future<List<Map<String, dynamic>>> _activePaperReservationsByPaper(
+    String paperId,
+  ) async {
+    final normalizedId = paperId.trim();
+    if (normalizedId.isEmpty) return const [];
+    final reserveRows = await _supabase
+        .from('order_paper_reservations')
+        .select('order_id, qty')
+        .eq('paper_id', normalizedId);
+    if (reserveRows is! List || reserveRows.isEmpty) return const [];
+
+    final rows = reserveRows
+        .whereType<Map>()
+        .map((raw) => Map<String, dynamic>.from(raw as Map))
+        .toList(growable: false);
+    final orderIds = rows
+        .map((row) => (row['order_id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (orderIds.isEmpty) return rows;
+
+    final activeOrderIds = <String>{};
+    final orderRows = await _supabase
+        .from('orders')
+        .select('id, status, shipped_at')
+        .inFilter('id', orderIds);
+    if (orderRows is List) {
+      for (final raw in orderRows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final orderId = (row['id'] ?? '').toString().trim();
+        if (orderId.isEmpty) continue;
+        final status = (row['status'] ?? '').toString().toLowerCase().trim();
+        final shippedAt = row['shipped_at'];
+        final isClosed =
+            status == 'completed' || status == 'shipped' || shippedAt != null;
+        if (!isClosed) activeOrderIds.add(orderId);
+      }
+    }
+
+    final staleOrderIds = orderIds
+        .where((orderId) => !activeOrderIds.contains(orderId))
+        .toList(growable: false);
+    if (staleOrderIds.isNotEmpty) {
+      // Жёсткая проверка: чистим "зависший" резерв для закрытых заказов.
+      await _supabase
+          .from('order_paper_reservations')
+          .delete()
+          .inFilter('order_id', staleOrderIds);
+    }
+
+    return rows
+        .where((row) => activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
+        .toList(growable: false);
   }
 
   Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
