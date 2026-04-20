@@ -1255,6 +1255,10 @@ class _TasksScreenState extends State<TasksScreen>
     required List<MaterialModel> before,
     required List<MaterialModel> after,
     required String reason,
+    double? beforePrimaryWidthB,
+    String? beforePrimaryBlQuantity,
+    double? afterPrimaryWidthB,
+    String? afterPrimaryBlQuantity,
   }) {
     String paperLabel(MaterialModel material) {
       final format = (material.format ?? '').trim();
@@ -1270,19 +1274,26 @@ class _TasksScreenState extends State<TasksScreen>
       return parts.join(', ');
     }
 
-    String qtyText(MaterialModel material) {
+    String paperMetrics(
+      MaterialModel material, {
+      double? fallbackWidthB,
+      String? fallbackBlQuantity,
+    }) {
       double? asDouble(dynamic raw) {
         if (raw is num) return raw.toDouble();
         return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
       }
 
-      final widthB = asDouble(material.extra?['widthB']);
-      final blQuantity = (material.extra?['blQuantity'] ?? '').toString().trim();
-      final widthText = widthB == null || widthB <= 0
+      final parsedWidthB = asDouble(material.extra?['widthB']) ?? 0;
+      final widthB = parsedWidthB > 0 ? parsedWidthB : (fallbackWidthB ?? 0);
+      final blQuantity = (material.extra?['blQuantity'] ?? fallbackBlQuantity ?? '')
+          .toString()
+          .trim();
+      final widthText = widthB <= 0
           ? '—'
           : (widthB % 1 == 0 ? widthB.toStringAsFixed(0) : widthB.toStringAsFixed(2));
       final quantityText = blQuantity.isEmpty ? '—' : blQuantity;
-      return 'Ш $widthText, К $quantityText, Длина L ${material.quantity.toStringAsFixed(2)} м';
+      return 'Ш $widthText, К $quantityText, L ${material.quantity.toStringAsFixed(2)} м';
     }
 
     final lines = <String>[
@@ -1297,17 +1308,21 @@ class _TasksScreenState extends State<TasksScreen>
         final delta = newMaterial.quantity - oldMaterial.quantity;
         final deltaPrefix = delta >= 0 ? '+' : '';
         lines.add(
-          'Бумага №$slot: было ${paperLabel(oldMaterial)} (${qtyText(oldMaterial)}), '
-          'стало ${paperLabel(newMaterial)} (${qtyText(newMaterial)}), '
-          'изменение $deltaPrefix${delta.toStringAsFixed(2)} м.',
+          'Бумага №$slot Было: ${paperLabel(oldMaterial)} '
+          '${paperMetrics(oldMaterial, fallbackWidthB: i == 0 ? beforePrimaryWidthB : null, fallbackBlQuantity: i == 0 ? beforePrimaryBlQuantity : null)}. '
+          'Стало: ${paperLabel(newMaterial)} '
+          '${paperMetrics(newMaterial, fallbackWidthB: i == 0 ? afterPrimaryWidthB : null, fallbackBlQuantity: i == 0 ? afterPrimaryBlQuantity : null)}. '
+          'Δ $deltaPrefix${delta.toStringAsFixed(2)} м.',
         );
       } else if (oldMaterial == null && newMaterial != null) {
         lines.add(
-          'Бумага №$slot добавлена: ${paperLabel(newMaterial)} (${qtyText(newMaterial)}).',
+          'Бумага №$slot Добавлена: ${paperLabel(newMaterial)} '
+          '${paperMetrics(newMaterial, fallbackWidthB: i == 0 ? afterPrimaryWidthB : null, fallbackBlQuantity: i == 0 ? afterPrimaryBlQuantity : null)}.',
         );
       } else if (oldMaterial != null && newMaterial == null) {
         lines.add(
-          'Бумага №$slot удалена: ${paperLabel(oldMaterial)} (${qtyText(oldMaterial)}).',
+          'Бумага №$slot Удалена: ${paperLabel(oldMaterial)} '
+          '${paperMetrics(oldMaterial, fallbackWidthB: i == 0 ? beforePrimaryWidthB : null, fallbackBlQuantity: i == 0 ? beforePrimaryBlQuantity : null)}.',
         );
       }
     }
@@ -1787,6 +1802,11 @@ class _TasksScreenState extends State<TasksScreen>
                             before: currentMaterials,
                             after: nextMaterials,
                             reason: reasonController.text,
+                            beforePrimaryWidthB: latest.product.widthB,
+                            beforePrimaryBlQuantity: latest.product.blQuantity,
+                            afterPrimaryWidthB: primaryWidthB ?? latest.product.widthB,
+                            afterPrimaryBlQuantity:
+                                primaryBlQuantity ?? latest.product.blQuantity,
                           );
                           await _addWorkspacePaperChangeComment(
                             orderId: latest.id,
