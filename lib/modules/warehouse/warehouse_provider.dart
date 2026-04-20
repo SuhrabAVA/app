@@ -97,13 +97,10 @@ class WarehouseProvider with ChangeNotifier {
   Future<double> paperReservedQty(String paperId) async {
     final id = paperId.trim();
     if (id.isEmpty) return 0;
-    final rows = await _sb
-        .from('order_paper_reservations')
-        .select('qty')
-        .eq('paper_id', id);
-    if (rows is! List) return 0;
+    final rows = await _activePaperReservationRows(paperId: id);
+    if (rows.isEmpty) return 0;
     double total = 0;
-    for (final raw in rows.whereType<Map>()) {
+    for (final raw in rows) {
       final value = raw['qty'];
       if (value is num) {
         total += value.toDouble();
@@ -117,16 +114,7 @@ class WarehouseProvider with ChangeNotifier {
   Future<List<Map<String, dynamic>>> paperReserveDetails(String paperId) async {
     final id = paperId.trim();
     if (id.isEmpty) return const [];
-    final rows = await _sb
-        .from('order_paper_reservations')
-        .select('order_id, qty, created_at')
-        .eq('paper_id', id)
-        .order('created_at', ascending: false);
-    if (rows is! List) return const [];
-    final parsedRows = rows
-        .whereType<Map>()
-        .map((row) => Map<String, dynamic>.from(row as Map))
-        .toList(growable: false);
+    final parsedRows = await _activePaperReservationRows(paperId: id);
     final orderIds = parsedRows
         .map((row) => (row['order_id'] ?? '').toString().trim())
         .where((id) => id.isNotEmpty)
@@ -217,6 +205,70 @@ class WarehouseProvider with ChangeNotifier {
       }
       return next;
     }).toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _activePaperReservationRows({
+    String? paperId,
+  }) async {
+    var query = _sb
+        .from('order_paper_reservations')
+        .select('order_id, paper_id, qty, created_at');
+    final normalizedPaperId = (paperId ?? '').trim();
+    if (normalizedPaperId.isNotEmpty) {
+      query = query.eq('paper_id', normalizedPaperId);
+    }
+    final rows = await query.order('created_at', ascending: false);
+    if (rows is! List || rows.isEmpty) return const [];
+    final parsedRows = rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList(growable: false);
+
+    final orderIds = parsedRows
+        .map((row) => (row['order_id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (orderIds.isEmpty) return parsedRows;
+
+    final activeOrderIds = <String>{};
+    try {
+      final orderRows = await _sb
+          .from('orders')
+          .select('id, status, shipped_at')
+          .inFilter('id', orderIds);
+      if (orderRows is List) {
+        for (final raw in orderRows.whereType<Map>()) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          final orderId = (row['id'] ?? '').toString().trim();
+          if (orderId.isEmpty) continue;
+          final status = (row['status'] ?? '').toString().toLowerCase().trim();
+          final shippedAt = row['shipped_at'];
+          final isClosed =
+              status == 'completed' || status == 'shipped' || shippedAt != null;
+          if (!isClosed) activeOrderIds.add(orderId);
+        }
+      }
+    } catch (_) {
+      return parsedRows;
+    }
+
+    final staleOrderIds = orderIds
+        .where((orderId) => !activeOrderIds.contains(orderId))
+        .toList(growable: false);
+    if (staleOrderIds.isNotEmpty) {
+      try {
+        await _sb
+            .from('order_paper_reservations')
+            .delete()
+            .inFilter('order_id', staleOrderIds);
+      } catch (_) {}
+    }
+
+    return parsedRows
+        .where(
+            (row) => activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
+        .toList(growable: false);
   }
 
   static const Map<String, Map<String, String>> _arrMap = {

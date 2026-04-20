@@ -4729,6 +4729,12 @@ class _TasksScreenState extends State<TasksScreen>
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
+                        final doneUsers = latestTask.comments
+                            .where((c) => c.type == 'user_done')
+                            .map((c) => c.userId)
+                            .where((id) => id.isNotEmpty)
+                            .toSet();
+                        doneUsers.add(widget.employeeId);
                         final separateIds = latestTask.assignees
                             .where((id) {
                               final mode = _execModeForUser(latestTask, id);
@@ -4742,8 +4748,7 @@ class _TasksScreenState extends State<TasksScreen>
 
                         bool allDone = true;
                         for (final id in separateIds) {
-                          final has = latestTask.comments.any(
-                              (c) => c.type == 'user_done' && c.userId == id);
+                          final has = doneUsers.contains(id);
                           if (!has) {
                             allDone = false;
                             break;
