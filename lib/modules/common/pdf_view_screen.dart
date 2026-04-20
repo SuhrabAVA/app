@@ -2,13 +2,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:pdfx/pdfx.dart';
 
 class PdfViewScreen extends StatefulWidget {
-  final String url;
+  final String? url;
+  final Uint8List? bytes;
   final String title;
-  const PdfViewScreen({super.key, required this.url, required this.title});
+  const PdfViewScreen({
+    super.key,
+    this.url,
+    this.bytes,
+    required this.title,
+  }) : assert(url != null || bytes != null);
 
   @override
   State<PdfViewScreen> createState() => _PdfViewScreenState();
@@ -32,12 +39,17 @@ class _PdfViewScreenState extends State<PdfViewScreen> {
 
   Future<void> _load() async {
     try {
-      final res = await http.get(Uri.parse(widget.url));
-      if (res.statusCode != 200) {
-        setState(() => _error = 'HTTP ${res.statusCode}');
-        return;
+      final Future<PdfDocument> doc;
+      if (widget.bytes != null) {
+        doc = PdfDocument.openData(widget.bytes!);
+      } else {
+        final res = await http.get(Uri.parse(widget.url!));
+        if (res.statusCode != 200) {
+          setState(() => _error = 'HTTP ${res.statusCode}');
+          return;
+        }
+        doc = PdfDocument.openData(res.bodyBytes);
       }
-      final Future<PdfDocument> doc = PdfDocument.openData(res.bodyBytes);
       setState(() {
         if (_usePlainOnThisPlatform) {
           _plainController = PdfController(document: doc);

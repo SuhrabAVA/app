@@ -1930,6 +1930,12 @@ class _TasksScreenState extends State<TasksScreen>
             : 'Комментарий к завершению: ${comment.text}';
       case 'joined':
         return 'Присоединился(лась) к этапу';
+      case 'helper_removed':
+        return comment.text.isNotEmpty ? comment.text : 'Помощник удалён с этапа';
+      case 'helper_removed_qty':
+        return comment.text.isNotEmpty
+            ? 'Количество удалённого помощника: ${comment.text}'
+            : 'Количество удалённого помощника зафиксировано';
       case 'exec_mode':
       case 'exec_mode_stage':
         final parsed = _parseExecutionModeLabel(comment.text);
@@ -4673,8 +4679,15 @@ class _TasksScreenState extends State<TasksScreen>
                       final taskProvider = context.read<TaskProvider>();
                       var separateAllDone = false;
                       if (jointGroup != null) {
-                        final helperIds = jointGroup
-                            .where((id) => id != widget.employeeId)
+                        final latestTask = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final helperIds = latestTask.assignees
+                            .where((id) =>
+                                id != widget.employeeId &&
+                                _execModeForUser(latestTask, id) ==
+                                    ExecutionMode.joint)
                             .toList();
                         for (final id in helperIds) {
                           await taskProvider.addComment(
@@ -4758,7 +4771,8 @@ class _TasksScreenState extends State<TasksScreen>
                         // Для режима "Отдельный исполнитель" финальное закрытие
                         // этапа выполняется только через отдельную кнопку
                         // "Завершить задание" (ниже в карточке этапа).
-                        final shouldCloseStage = jointGroup != null;
+                        final shouldCloseStage =
+                            jointGroup != null || (jointGroup == null && separateAllDone);
                         if (_isInkConfirmationStage(task)) {
                           await _finalizeTask(task, initialQtyInput: qtyInput);
                           return;
@@ -4771,7 +4785,10 @@ class _TasksScreenState extends State<TasksScreen>
                             task.id, nextStatus,
                             spentSeconds: _secs,
                             startedAt: null);
-                        if (context.mounted && separateAllDone && jointGroup == null) {
+                        if (context.mounted &&
+                            separateAllDone &&
+                            jointGroup == null &&
+                            nextStatus != TaskStatus.completed) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
@@ -4899,6 +4916,84 @@ class _TasksScreenState extends State<TasksScreen>
                       );
                     }
 
+                    Future<void> onRemoveHelper(String helperId) async {
+                      final taskProvider = context.read<TaskProvider>();
+                      final latestTask = taskProvider.tasks.firstWhere(
+                        (t) => t.id == task.id,
+                        orElse: () => task,
+                      );
+                      final isOwner = latestTask.assignees.isNotEmpty &&
+                          latestTask.assignees.first == widget.employeeId;
+                      if (!isOwner) return;
+                      if (!latestTask.assignees.contains(helperId)) return;
+
+                      final helper = personnel.employees.firstWhere(
+                        (e) => e.id == helperId,
+                        orElse: () => EmployeeModel(
+                          id: helperId,
+                          firstName: 'Сотр.',
+                          lastName: helperId.substring(
+                              0, helperId.length > 4 ? 4 : helperId.length),
+                          patronymic: '',
+                          iin: '',
+                          positionIds: const [],
+                        ),
+                      );
+                      final helperName =
+                          '${helper.firstName} ${helper.lastName}'.trim();
+                      final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Удалить помощника'),
+                              content: Text(
+                                'Убрать сотрудника «$helperName» с этапа?',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(false),
+                                  child: const Text('Отмена'),
+                                ),
+                                FilledButton(
+                                  onPressed: () => Navigator.of(ctx).pop(true),
+                                  child: const Text('Удалить'),
+                                ),
+                              ],
+                            ),
+                          ) ??
+                          false;
+                      if (!confirmed) return;
+
+                      final unitLabel = _workplaceUnit(personnel, task.stageId);
+                      final qtyInput =
+                          await _askQuantity(context, unit: unitLabel);
+                      if (qtyInput == null) return;
+
+                      await taskProvider.closeOpenTimeEvent(
+                        task: latestTask,
+                        initiatedBy: widget.employeeId,
+                        subjectUserId: helperId,
+                        note: 'helper_removed',
+                      );
+
+                      final updatedAssignees = List<String>.from(
+                        latestTask.assignees.where((id) => id != helperId),
+                      );
+                      await taskProvider.updateAssignees(task.id, updatedAssignees);
+
+                      await taskProvider.addCommentAutoUser(
+                        taskId: task.id,
+                        type: 'helper_removed',
+                        text: 'Помощник удалён: $helperName',
+                        userIdOverride: widget.employeeId,
+                      );
+                      await taskProvider.addCommentAutoUser(
+                        taskId: task.id,
+                        type: 'helper_removed_qty',
+                        text: '$helperName: ${qtyInput.displayText}',
+                        userIdOverride: widget.employeeId,
+                      );
+                    }
+
                     Future<void> onShift() async {
                       final confirmed = await showDialog<bool>(
                             context: context,
@@ -4971,8 +5066,11 @@ class _TasksScreenState extends State<TasksScreen>
                         if (qtyInput == null) return;
                         final qtyText = qtyInput.displayText;
                         final helperIds = jointGroup != null && isMyRow
-                            ? jointGroup
-                                .where((id) => id != latestTask.assignees.first)
+                            ? latestTask.assignees
+                                .where((id) =>
+                                    id != latestTask.assignees.first &&
+                                    _execModeForUser(latestTask, id) ==
+                                        ExecutionMode.joint)
                                 .toList()
                             : const <String>[];
                         final hasPendingSetup =
@@ -4983,15 +5081,15 @@ class _TasksScreenState extends State<TasksScreen>
                         );
                         final stageProductionStarted =
                             _hasProductionStartedForStage(latestTask);
-                        final shiftResumeState = (!stageProductionStarted &&
-                                (isSetupActiveForRow ||
-                                    isSetupInProgress ||
-                                    hasPendingSetup))
-                            ? 'setup'
+                        final shiftResumeState = stateRowUser == UserRunState.problem
+                            ? 'problem'
                             : stateRowUser == UserRunState.paused
                                 ? 'paused'
-                                : stateRowUser == UserRunState.problem
-                                    ? 'problem'
+                                : (!stageProductionStarted &&
+                                        (isSetupActiveForRow ||
+                                            isSetupInProgress ||
+                                            hasPendingSetup))
+                                    ? 'setup'
                                     : 'production';
 
                         await taskProvider.addCommentAutoUser(
@@ -5300,6 +5398,25 @@ class _TasksScreenState extends State<TasksScreen>
                                       icon: const Icon(Icons.person_add_alt_1),
                                       label: const Text('Добавить помощника'),
                                     ),
+                                  if (stageExecMode == ExecutionMode.joint &&
+                                      task.assignees.isNotEmpty &&
+                                      task.assignees.first == widget.employeeId)
+                                    ...[
+                                      for (final helperId in _helperIds(task))
+                                        ElevatedButton.icon(
+                                          onPressed: shiftPaused
+                                              ? null
+                                              : () => onRemoveHelper(helperId),
+                                          style: ElevatedButton.styleFrom(
+                                            textStyle: TextStyle(
+                                                fontSize: scaled(11.5)),
+                                          ),
+                                          icon: const Icon(Icons.person_remove),
+                                          label: Text(
+                                            'Удалить ${nameFor(helperId)}',
+                                          ),
+                                        ),
+                                    ],
                                   SizedBox(width: gapMedium),
                                   // Обновляем отображение времени для каждой строки каждую секунду
                                   StreamBuilder<DateTime>(
