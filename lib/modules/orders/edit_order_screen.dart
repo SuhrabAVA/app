@@ -1535,6 +1535,43 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return hasNumber || hasCode;
   }
 
+  double? _parseLeadingNumber(String? source) {
+    if (source == null) return null;
+    final match = RegExp(r'[0-9]+(?:[.,][0-9]+)?')
+        .firstMatch(source.replaceAll(',', '.'));
+    if (match == null) return null;
+    return double.tryParse(match.group(0)!);
+  }
+
+  double? _paperFormatWidth(MaterialModel paper, {required bool isMain}) {
+    final candidates = <String?>[
+      paper.format,
+      if (isMain &&
+          (paper.id ?? '').trim().isEmpty &&
+          (_matSelectedFormat ?? '').trim().isNotEmpty)
+        _matSelectedFormat,
+    ];
+    for (final candidate in candidates) {
+      final width = _parseLeadingNumber(candidate);
+      if (width != null) return width;
+    }
+    return null;
+  }
+
+  String? _validatePaperWidthB({
+    required double? widthB,
+    required MaterialModel paper,
+    required bool isMain,
+  }) {
+    if (widthB == null || widthB <= 0) return null;
+    final formatWidth = _paperFormatWidth(paper, isMain: isMain);
+    if (formatWidth == null) return null;
+    if (widthB > formatWidth) {
+      return 'Ширина b не может быть больше формата ($formatWidth)';
+    }
+    return null;
+  }
+
   void _scheduleStagePreviewUpdate({bool immediate = false}) {
     if (!mounted) return;
     if (_stageTemplateId == null || _stageTemplateId!.isEmpty) return;
@@ -3495,10 +3532,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       } else {
         final formColors = _composeFormColors();
-        if (formColors != null && formColors.trim().isNotEmpty) {
+        final formSize = _composeFormSize();
+        final formProductType = _composeFormProductType();
+        final hasNewFormPayload = (formColors?.trim().isNotEmpty ?? false) ||
+            (formSize?.trim().isNotEmpty ?? false) ||
+            (formProductType?.trim().isNotEmpty ?? false) ||
+            (_newFormImageBytes?.isNotEmpty ?? false) ||
+            !hadFormBefore;
+        if (hasNewFormPayload) {
           final customer = _customerController.text.trim();
-          final formSize = _composeFormSize();
-          final formProductType = _composeFormProductType();
           String series = customer.isNotEmpty ? customer : 'F';
           wp ??= WarehouseProvider();
           final created = await wp.createFormAndReturn(
@@ -4295,12 +4337,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                               ? _formatDecimal(_paperExtraDouble(
                                   _extraPaperMaterials[i], 'widthB')!)
                               : '',
+                          autovalidateMode:
+                              AutovalidateMode.onUserInteraction,
                           decoration: const InputDecoration(
                             labelText: 'Ширина b',
                             border: OutlineInputBorder(),
                           ),
                           keyboardType: const TextInputType.numberWithOptions(
                               decimal: true),
+                          validator: (value) {
+                            final parsed =
+                                double.tryParse((value ?? '').replaceAll(',', '.'));
+                            return _validatePaperWidthB(
+                              widthB: parsed,
+                              paper: _extraPaperMaterials[i],
+                              isMain: false,
+                            );
+                          },
                           onChanged: (value) {
                             final parsed =
                                 double.tryParse(value.replaceAll(',', '.'));
@@ -4825,8 +4878,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                 initialValue: product.widthB != null
                                     ? _formatDecimal(product.widthB!)
                                     : '',
+                                autovalidateMode:
+                                    AutovalidateMode.onUserInteraction,
                                 decoration: mainPaperDecoration('Ширина b'),
                                 keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  final parsed = double.tryParse(
+                                      (value ?? '').replaceAll(',', '.'));
+                                  final paper =
+                                      _selectedMaterial ?? const MaterialModel(name: '');
+                                  return _validatePaperWidthB(
+                                    widthB: parsed,
+                                    paper: paper,
+                                    isMain: true,
+                                  );
+                                },
                                 onChanged: (val) {
                                   final normalized = val.replaceAll(',', '.');
                                   product.widthB = double.tryParse(normalized);
