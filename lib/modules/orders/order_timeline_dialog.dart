@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../personnel/personnel_provider.dart';
+import '../tasks/task_model.dart';
 import 'id_format.dart';
 import 'order_model.dart';
 
@@ -65,7 +66,62 @@ class OrderTimelineDialog extends StatelessWidget {
     return trimmed;
   }
 
-  String _describeComment(String type, String text, double? quantity) {
+  String _executionModeLabel(String? rawMode) {
+    final mode = (rawMode ?? '').trim().toLowerCase();
+    if (mode.contains('separ') || mode.contains('single') || mode.contains('отдель')) {
+      return 'отдельный исполнитель';
+    }
+    if (mode.contains('joint') || mode.contains('team') || mode.contains('совмест')) {
+      return 'совместная работа';
+    }
+    return '';
+  }
+
+  String _timeTypeLabel(TaskTimeType type) {
+    switch (type) {
+      case TaskTimeType.production:
+        return 'Производство';
+      case TaskTimeType.pause:
+        return 'Пауза';
+      case TaskTimeType.problem:
+        return 'Проблема';
+      case TaskTimeType.shiftChange:
+        return 'Пересмена';
+      case TaskTimeType.setup:
+        return 'Наладка';
+    }
+  }
+
+  String? _describeTaskTimePayload(String text, PersonnelProvider personnel) {
+    final parsed = TaskTimeEvent.fromPayload(text, '', 0, '');
+    if (parsed == null) return null;
+
+    final started = _formatTimestamp(parsed.startTime);
+    final ended = parsed.endTime == null ? 'в процессе' : _formatTimestamp(parsed.endTime);
+    final subject = _userDisplay(personnel, parsed.subjectUserId);
+    final initiator = _userDisplay(personnel, parsed.initiatedBy);
+    final mode = _executionModeLabel(parsed.executionMode);
+    final note = (parsed.note ?? '').trim();
+
+    final List<String> details = [
+      '${_timeTypeLabel(parsed.type)}: ${started.isEmpty ? '—' : started} — $ended',
+      if (subject.isNotEmpty) 'Исполнитель: $subject',
+      if (initiator.isNotEmpty && initiator != subject) 'Инициатор: $initiator',
+      if (mode.isNotEmpty) 'Режим: $mode',
+      if (note.isNotEmpty) 'Комментарий: $note',
+    ];
+    return details.join(' · ');
+  }
+
+  String _describeComment(
+    String type,
+    String text,
+    double? quantity,
+    PersonnelProvider personnel,
+  ) {
+    final taskTimeDescription = _describeTaskTimePayload(text, personnel);
+    if (taskTimeDescription != null) return taskTimeDescription;
+
     switch (type) {
       case 'start':
         return 'Начал(а) этап';
@@ -235,7 +291,7 @@ class OrderTimelineDialog extends StatelessWidget {
     final String bodyText = isChat
         ? (description.isEmpty ? 'Сообщение в чате' : description)
         : isComment
-        ? _describeComment(eventType, description, quantity)
+        ? _describeComment(eventType, description, quantity, personnel)
         : _describeOrderEvent(eventType, description);
 
     final List<Widget> subtitleWidgets = [];
