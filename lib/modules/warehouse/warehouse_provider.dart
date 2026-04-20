@@ -1481,6 +1481,7 @@ class WarehouseProvider with ChangeNotifier {
     final base = <String>[
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
+      if (typeKey == 'stationery') 'stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
       if (typeKey == 'pens' &&
           _resolvedPensTable != null &&
