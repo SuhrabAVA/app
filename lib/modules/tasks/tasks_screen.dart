@@ -4329,6 +4329,26 @@ class _TasksScreenState extends State<TasksScreen>
                       .where((id) =>
                           _execModeForUser(task, id) != ExecutionMode.separate)
                       .toList();
+                  final personnel = context.read<PersonnelProvider>();
+                  final nameFor = (String uid) {
+                    final emp = personnel.employees.firstWhere(
+                      (e) => e.id == uid,
+                      orElse: () => EmployeeModel(
+                          id: uid,
+                          firstName: 'Сотр.',
+                          lastName:
+                              uid.substring(0, uid.length > 4 ? 4 : uid.length),
+                          patronymic: '',
+                          iin: '',
+                          photoUrl: null,
+                          positionIds: const [],
+                          isFired: false,
+                          comments: '',
+                          login: '',
+                          password: ''),
+                    );
+                    return '${emp.firstName} ${emp.lastName}'.trim();
+                  };
 
                   Widget buildControlsFor(String? label,
                       {List<String>? jointGroup, String? userId}) {
@@ -5457,27 +5477,6 @@ class _TasksScreenState extends State<TasksScreen>
                       ],
                     );
                   }
-
-                  final personnel = context.read<PersonnelProvider>();
-                  final nameFor = (String uid) {
-                    final emp = personnel.employees.firstWhere(
-                      (e) => e.id == uid,
-                      orElse: () => EmployeeModel(
-                          id: uid,
-                          firstName: 'Сотр.',
-                          lastName:
-                              uid.substring(0, uid.length > 4 ? 4 : uid.length),
-                          patronymic: '',
-                          iin: '',
-                          photoUrl: null,
-                          positionIds: const [],
-                          isFired: false,
-                          comments: '',
-                          login: '',
-                          password: ''),
-                    );
-                    return '${emp.firstName} ${emp.lastName}'.trim();
-                  };
 
                   final rows = <Widget>[];
                   final shouldShowOnlyCurrentUserRow =
