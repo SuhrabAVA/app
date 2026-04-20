@@ -3405,14 +3405,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Future<void> _processFormAssignment(OrderModel order,
       {required bool isCreating}) async {
-    final bool paintsFilled = _hasAnyPaints();
-    if (!_hasForm && paintsFilled) {
-      // Если добавлены краски, а форма не выбрана, автоматически создаём новую
-      // форму для текущего заказа по данным из заказа/красок.
-      _hasForm = true;
-      _isOldForm = false;
-    }
-
     bool persistedHasForm = false;
     bool? persistedIsOldForm;
     int? persistedFormNo;

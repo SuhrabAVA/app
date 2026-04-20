@@ -52,6 +52,7 @@ class OrdersProvider with ChangeNotifier {
       _orders
         ..clear()
         ..addAll(rows.map((row) => OrderModel.fromMap(row)));
+      _dedupeOrdersById();
       notifyListeners();
     } catch (e, st) {
       debugPrint('❌ refresh orders error: $e\n$st');
@@ -134,6 +135,7 @@ class OrdersProvider with ChangeNotifier {
         _orders
           ..clear()
           ..addAll(rows.map((row) => OrderModel.fromMap(row)));
+        _dedupeOrdersById();
         notifyListeners();
       }
 
@@ -362,6 +364,7 @@ class OrdersProvider with ChangeNotifier {
         } else {
           _orders.add(updated);
         }
+        _dedupeOrdersById();
         notifyListeners();
         return;
       }
@@ -410,6 +413,7 @@ class OrdersProvider with ChangeNotifier {
       } else {
         _orders.add(newOrder);
       }
+      _dedupeOrdersById();
       notifyListeners();
 
       // Log creation (best effort)
@@ -491,6 +495,7 @@ class OrdersProvider with ChangeNotifier {
       // Replace optimistic row
       final idx = _orders.indexWhere((o) => o.id == tempLocalId);
       if (idx != -1) _orders[idx] = created;
+      _dedupeOrdersById();
       notifyListeners();
 
       // Log creation (best effort)
@@ -503,6 +508,19 @@ class OrdersProvider with ChangeNotifier {
       debugPrint('❌ createOrder error: $e\n$st');
       return null;
     }
+  }
+
+  void _dedupeOrdersById() {
+    final seen = <String>{};
+    _orders.removeWhere((order) {
+      final id = order.id.trim();
+      if (id.isEmpty) return false;
+      if (seen.contains(id)) {
+        return true;
+      }
+      seen.add(id);
+      return false;
+    });
   }
 
   /// Обновляет существующий заказ по ID (оптимистично).
