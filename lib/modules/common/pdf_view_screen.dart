@@ -93,12 +93,6 @@ class _PdfViewScreenState extends State<PdfViewScreen> {
               if (!mounted) return;
               setState(() => _pagesCount = document.pagesCount);
             },
-            renderer: (page) => page.render(
-              width: page.width * 2,
-              height: page.height * 2,
-              format: PdfPageImageFormat.png,
-              backgroundColor: '#FFFFFF',
-            ),
           )
         : (!_usePlainOnThisPlatform && controller != null
             ? PdfViewPinch(
@@ -112,12 +106,6 @@ class _PdfViewScreenState extends State<PdfViewScreen> {
                   if (!mounted) return;
                   setState(() => _pagesCount = document.pagesCount);
                 },
-                renderer: (page) => page.render(
-                  width: page.width * 2,
-                  height: page.height * 2,
-                  format: PdfPageImageFormat.png,
-                  backgroundColor: '#FFFFFF',
-                ),
               )
             : null);
 
@@ -176,7 +164,7 @@ class _PdfViewScreenState extends State<PdfViewScreen> {
         );
       } else if (_pinchController != null) {
         await _pinchController!.animateToPage(
-          target,
+          pageNumber: target,
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
         );
