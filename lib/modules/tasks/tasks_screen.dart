@@ -4555,6 +4555,22 @@ class _TasksScreenState extends State<TasksScreen>
                             _isSetupInProgressForUser(task, widget.employeeId) &&
                                 !_hasProductionStartedForStage(task);
 
+                        final startedAtTs =
+                            task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
+                        final started = await taskProvider.updateStatus(
+                          task.id,
+                          TaskStatus.inProgress,
+                          startedAt: startedAtTs,
+                        );
+                        if (!started) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Этап уже запущен другим сотрудником. Обновите список и продолжите работу в активном этапе.'),
+                            ));
+                          }
+                          return;
+                        }
                         final ExecutionMode? selectedMode = stageExecMode;
                         final alreadyAssigned =
                             task.assignees.contains(widget.employeeId);
@@ -4588,22 +4604,6 @@ class _TasksScreenState extends State<TasksScreen>
                             !_isSetupCompletedForUser(task, widget.employeeId) &&
                             !setupInProgressForCurrentUser) {
                           await _finishSetup(task, provider);
-                        }
-                        final startedAtTs =
-                            task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
-                        final started = await taskProvider.updateStatus(
-                          task.id,
-                          TaskStatus.inProgress,
-                          startedAt: startedAtTs,
-                        );
-                        if (!started) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text(
-                                  'Этап уже запущен другим сотрудником. Обновите список и продолжите работу в активном этапе.'),
-                            ));
-                          }
-                          return;
                         }
                         final isResumeAction = stateRowUser == UserRunState.paused ||
                             stateRowUser == UserRunState.problem;
@@ -5765,12 +5765,6 @@ class _TasksScreenState extends State<TasksScreen>
       return;
     }
 
-    await provider.addCommentAutoUser(
-      taskId: task.id,
-      type: 'setup_start',
-      text: 'Начал(а) настройку станка',
-      userIdOverride: widget.employeeId,
-    );
     if (latestTask.status != TaskStatus.inProgress) {
       final startedAtTs =
           latestTask.startedAt ?? DateTime.now().millisecondsSinceEpoch;
@@ -5785,6 +5779,12 @@ class _TasksScreenState extends State<TasksScreen>
         return;
       }
     }
+    await provider.addCommentAutoUser(
+      taskId: task.id,
+      type: 'setup_start',
+      text: 'Начал(а) настройку станка',
+      userIdOverride: widget.employeeId,
+    );
     final participants = _participantsSnapshot(latestTask, widget.employeeId);
     final execMode = _stageExecutionMode(latestTask);
     await provider.recordTimeEvent(
