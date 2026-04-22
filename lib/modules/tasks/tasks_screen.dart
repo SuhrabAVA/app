@@ -6789,3 +6789,4 @@ Duration _setupElapsedTotal(TaskModel task) {
           doneList.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b));
   return end.difference(start);
 }
+}
