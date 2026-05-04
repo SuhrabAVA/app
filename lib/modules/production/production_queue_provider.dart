@@ -296,7 +296,7 @@ class ProductionQueueProvider with ChangeNotifier {
     // This guarantees that a freshly created order never jumps to the top,
     // even if upstream lists are sorted by "newest first".
     final missingIds = <String>[];
-    for (final id in normalizedIds) {
+    for (final id in normalizedIds.reversed) {
       if (!sequence.contains(id)) {
         missingIds.add(id);
       }
