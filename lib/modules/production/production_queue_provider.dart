@@ -296,18 +296,15 @@ class ProductionQueueProvider with ChangeNotifier {
     // This guarantees that a freshly created order never jumps to the top,
     // even if upstream lists are sorted by "newest first".
     final missingIds = <String>[];
-    for (final id in normalizedIds.reversed) {
+    for (final id in normalizedIds) {
       if (!sequence.contains(id)) {
         missingIds.add(id);
       }
     }
 
-    final toRemove = sequence.where((id) => !set.contains(id)).toList();
-    if (toRemove.isNotEmpty) {
-      sequence.removeWhere((id) => toRemove.contains(id));
-      hidden.removeWhere((id) => toRemove.contains(id));
-      changed = true;
-    }
+    // Не удаляем id, которые временно отсутствуют в текущем наборе.
+    // Иначе очередь "схлопывается" на каждом фильтре/переключении вкладок,
+    // а затем id добавляются повторно и визуально скачут по списку.
 
     if (missingIds.isNotEmpty) {
       sequence.addAll(missingIds);
@@ -339,8 +336,34 @@ class ProductionQueueProvider with ChangeNotifier {
       {String groupId = _defaultGroup}) {
     unawaited(_bootstrapRemoteSync());
     final copy = [...items];
-    copy.sort((a, b) =>
-        priorityOf(idSelector(a), groupId: groupId).compareTo(priorityOf(idSelector(b), groupId: groupId)));
+    if (copy.length < 2) return copy;
+
+    final normalizedIds = <String>[];
+    final seen = <String>{};
+    for (final item in copy) {
+      final id = _normalizeOrderId(idSelector(item));
+      if (id.isEmpty || !seen.add(id)) continue;
+      normalizedIds.add(id);
+    }
+    if (normalizedIds.isNotEmpty) {
+      syncOrders(normalizedIds, groupId: groupId);
+    }
+
+    final sequence = _sequenceForGroup(groupId);
+    final indexById = <String, int>{};
+    for (var i = 0; i < sequence.length; i++) {
+      final id = _normalizeOrderId(sequence[i]);
+      if (id.isEmpty || indexById.containsKey(id)) continue;
+      indexById[id] = i;
+    }
+
+    copy.sort((a, b) {
+      final aId = _normalizeOrderId(idSelector(a));
+      final bId = _normalizeOrderId(idSelector(b));
+      final aPriority = indexById[aId] ?? (1 << 30);
+      final bPriority = indexById[bId] ?? (1 << 30);
+      return aPriority.compareTo(bPriority);
+    });
     return copy;
   }
 
