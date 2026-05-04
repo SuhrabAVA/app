@@ -359,9 +359,15 @@ class _ProductionScreenState extends State<ProductionScreen>
     final activeWorkplaceIds = <String>{};
     for (final order in orders) {
       final orderTasks = tasksByOrder[order.id] ?? const <TaskModel>[];
-      final grouping = _groupingForOrder(order, orderTasks);
-      if (grouping.isCompleted) continue;
-      activeWorkplaceIds.addAll(grouping.visibleWorkplaceIds);
+      final hasActiveTasks = orderTasks.any((task) => task.status != TaskStatus.completed);
+      if (!hasActiveTasks) continue;
+      for (final task in orderTasks) {
+        final stageId = task.stageId.trim();
+        if (stageId.isEmpty) continue;
+        if (task.status != TaskStatus.completed) {
+          activeWorkplaceIds.add(stageId);
+        }
+      }
     }
 
     final tabs = [
