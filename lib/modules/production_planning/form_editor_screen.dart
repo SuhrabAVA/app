@@ -370,6 +370,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final TextEditingController _newFormNameCtl = TextEditingController();
   final TextEditingController _newFormSizeCtl = TextEditingController();
   final TextEditingController _newFormColorsCtl = TextEditingController();
+  final TextEditingController _newFormExtraInfoCtl = TextEditingController();
   // Фото новой формы (при создании)
   Uint8List? _newFormImageBytes;
   // Выбранный номер старой формы
@@ -636,6 +637,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _newFormNameCtl.dispose();
     _newFormSizeCtl.dispose();
     _newFormColorsCtl.dispose();
+    _newFormExtraInfoCtl.dispose();
     super.dispose();
   }
 
@@ -2321,11 +2323,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final name = _newFormNameCtl.text.trim();
             final size = _newFormSizeCtl.text.trim();
             final colors = _newFormColorsCtl.text.trim();
-            series = name.isNotEmpty ? name : 'F';
+            final extraInfo = _newFormExtraInfoCtl.text.trim();
+            final customer = _customerController.text.trim();
+            final baseSeries = name.isNotEmpty ? name : (customer.isNotEmpty ? customer : 'F');
+            series = extraInfo.isNotEmpty ? '$baseSeries (${extraInfo})' : baseSeries;
             final created = await wp.createFormAndReturn(
               series: series,
               title: size.isNotEmpty ? size : null,
-              description: colors.isNotEmpty ? colors : null,
+              formColors: colors.isNotEmpty ? colors : null,
+              description: extraInfo.isNotEmpty ? extraInfo : null,
               imageBytes: _newFormImageBytes,
             );
             selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
@@ -2567,6 +2573,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       _newFormNameCtl.clear();
                       _newFormSizeCtl.clear();
                       _newFormColorsCtl.clear();
+                      _newFormExtraInfoCtl.clear();
                       _newFormNoCtl.clear();
                       _newFormImageBytes = null;
                     } else {
@@ -2582,7 +2589,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 TextField(
                   controller: _formSearchCtl,
                   decoration: const InputDecoration(
-                    hintText: 'Поиск формы (название или номер)',
+                    hintText: 'Поиск формы (название, номер, доп. инфо)',
                     prefixIcon: Icon(Icons.search),
                     border: OutlineInputBorder(),
                   ),
@@ -2647,6 +2654,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   controller: _newFormColorsCtl,
                   decoration: const InputDecoration(
                     labelText: 'Цвета',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _newFormExtraInfoCtl,
+                  decoration: const InputDecoration(
+                    labelText: 'Доп. информация',
+                    hintText: 'Необязательно',
                     border: OutlineInputBorder(),
                   ),
                 ),
