@@ -99,6 +99,8 @@ class _FormsScreenState extends State<FormsScreen> {
         TextEditingController(text: row?['title']?.toString() ?? '');
     final colorsCtl = TextEditingController(
         text: (row?['colors'] ?? row?['description'] ?? '').toString());
+    final extraInfoCtl =
+        TextEditingController(text: (row?['description'] ?? '').toString());
 // Существующее изображение (для режима редактирования)
     final String? existingImageUrl = (row?['image_url'] as String?);
     sizeCtl.text = ([
@@ -107,8 +109,7 @@ class _FormsScreenState extends State<FormsScreen> {
       if ((row?['product_type'] ?? '').toString().isNotEmpty)
         (" / " + (row?['product_type'] ?? '').toString())
     ].join('').toString());
-    colorsCtl.text =
-        ((row?['colors'] ?? row?['description'] ?? '')?.toString() ?? '');
+    colorsCtl.text = (row?['colors'] ?? '').toString();
     Uint8List? pickedImageBytes;
     bool numberManuallyEdited = isEditing;
 
@@ -213,6 +214,15 @@ class _FormsScreenState extends State<FormsScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
+                    TextField(
+                      controller: extraInfoCtl,
+                      decoration: const InputDecoration(
+                        labelText: 'Доп. информация',
+                        hintText: 'Необязательно',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
 
                     const SizedBox(height: 8),
                     // Предпросмотр изображения: если есть выбранное — показываем его; иначе для редактирования показываем существующее
@@ -263,6 +273,7 @@ class _FormsScreenState extends State<FormsScreen> {
                     final size = _sizeOnly ?? '';
                     final typeVal = _typeOnly ?? '';
                     final colors = colorsCtl.text.trim();
+                    final extraInfo = extraInfoCtl.text.trim();
                     if (name.isEmpty || numberText.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                           content: Text(
@@ -285,6 +296,7 @@ class _FormsScreenState extends State<FormsScreen> {
                           formSize: size.isNotEmpty ? size : null,
                           formProductType: typeVal.isNotEmpty ? typeVal : null,
                           formColors: colors.isNotEmpty ? colors : null,
+                          description: extraInfo.isNotEmpty ? extraInfo : '',
                           imageBytes: pickedImageBytes,
                         );
                       }
@@ -295,6 +307,7 @@ class _FormsScreenState extends State<FormsScreen> {
                         formSize: size.isNotEmpty ? size : null,
                         formProductType: typeVal.isNotEmpty ? typeVal : null,
                         formColors: colors.isNotEmpty ? colors : null,
+                        description: extraInfo.isNotEmpty ? extraInfo : '',
                         imageBytes: pickedImageBytes,
                       );
                     }
@@ -505,7 +518,7 @@ class _FormsScreenState extends State<FormsScreen> {
                 TextField(
                   controller: _searchCtl,
                   decoration: const InputDecoration(
-                    hintText: 'Поиск формы (название или номер)',
+                    hintText: 'Поиск формы (название, номер, доп. инфо)',
                     prefixIcon: Icon(Icons.search),
                     border: OutlineInputBorder(),
                   ),
@@ -615,10 +628,14 @@ class _FormsScreenState extends State<FormsScreen> {
                         _cleanSizeLabel((row['size'] ?? '').toString());
                     final typeStr = (row['product_type'] ?? '').toString();
                     final colorsStr = (row['colors'] ?? '').toString();
+                    final extraInfoStr = (row['description'] ?? '').toString();
                     final subtitleParts = <String>[];
                     if (sizeStr.isNotEmpty) subtitleParts.add('Размер: $sizeStr');
                     if (typeStr.isNotEmpty) subtitleParts.add('Тип: $typeStr');
                     if (colorsStr.isNotEmpty) subtitleParts.add('Цвета: $colorsStr');
+                    if (extraInfoStr.isNotEmpty) {
+                      subtitleParts.add('Доп. инфо: $extraInfoStr');
+                    }
                     final subtitleText =
                         subtitleParts.isEmpty ? null : subtitleParts.join('  |  ');
 

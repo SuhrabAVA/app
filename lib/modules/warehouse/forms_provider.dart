@@ -172,6 +172,8 @@ class FormsProvider with ChangeNotifier {
           ',series.ilike.' +
           ilike +
           ',code.ilike.' +
+          ilike +
+          ',description.ilike.' +
           ilike);
       final rows =
           await filtered.order('updated_at', ascending: false).limit(limit);
