@@ -1441,10 +1441,13 @@ class OrdersProvider with ChangeNotifier {
       return perPaperLength;
     }
 
+    // Приоритет: если в материале уже есть длина (например, из поля "Длина L"),
+    // используем её до общих размеров продукта.
+    if (paper.quantity > 0) return paper.quantity;
+
     final double length = (order.product.length ?? 0).toDouble();
     if (length > 0) return length;
 
-    if (paper.quantity > 0) return paper.quantity;
     if (paper.weight != null && paper.weight! > 0) return paper.weight!;
     return 0;
   }
