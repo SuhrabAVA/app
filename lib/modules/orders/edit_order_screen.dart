@@ -461,6 +461,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<String> _managerNames = [];
   // Клиент и комментарии
   late TextEditingController _customerController;
+  late TextEditingController _customerExtraInfoController;
   late TextEditingController _commentsController;
   late TextEditingController _packagingController;
   late final TextEditingController _lengthController;
@@ -621,6 +622,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     _updateManagerDisplayController();
     _customerController = TextEditingController(text: template?.customer ?? '');
+    _customerExtraInfoController = TextEditingController();
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
@@ -1798,6 +1800,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   @override
   void dispose() {
     _customerController.dispose();
+    _customerExtraInfoController.dispose();
     _commentsController.dispose();
     _packagingController.dispose();
     _lengthController.dispose();
@@ -3550,7 +3553,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             !hadFormBefore;
         if (hasNewFormPayload) {
           final customer = _customerController.text.trim();
+          final extraInfo = _customerExtraInfoController.text.trim();
           String series = customer.isNotEmpty ? customer : 'F';
+          if (extraInfo.isNotEmpty) {
+            series = '$series ($extraInfo)';
+          }
           wp ??= WarehouseProvider();
           final created = await wp.createFormAndReturn(
             series: series,
@@ -3887,6 +3894,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       label: 'Заказчик',
                       labelWidth: labelWidth,
                       child: _buildCustomerField(),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildCustomerExtraInfoField(),
                     ),
                     _buildLabelRow(
                       label: 'Тип',
@@ -5325,6 +5336,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _buildFieldGrid([
           _buildManagerField(),
           _buildCustomerField(),
+          const SizedBox(height: 8),
+          _buildCustomerExtraInfoField(),
           _buildDatePickerField(
             label: 'Дата заказа',
             value: _orderDate,
@@ -5638,6 +5651,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
         return null;
       },
+    );
+  }
+
+  Widget _buildCustomerExtraInfoField() {
+    return TextFormField(
+      controller: _customerExtraInfoController,
+      decoration: const InputDecoration(
+        labelText: 'Доп. информация',
+        hintText: 'Необязательно',
+        border: OutlineInputBorder(),
+      ),
     );
   }
 
