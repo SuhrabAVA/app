@@ -283,6 +283,9 @@ class _ProductionScreenState extends State<ProductionScreen>
 
     for (final group in groups) {
       final tasksForStage = tasksByGroup[group.key] ?? const <TaskModel>[];
+      if (tasksForStage.isEmpty) {
+        continue;
+      }
       final status = _groupStatus(tasksForStage);
       final color = _stageColor(status);
       final label = group.label;
@@ -308,6 +311,13 @@ class _ProductionScreenState extends State<ProductionScreen>
           ],
         ),
       ));
+    }
+
+    if (chips.isEmpty) {
+      return const Text(
+        'Этапы не назначены',
+        style: TextStyle(color: Colors.black54),
+      );
     }
 
     return SingleChildScrollView(
@@ -340,9 +350,25 @@ class _ProductionScreenState extends State<ProductionScreen>
 
     final workplaces = List.of(personnelProvider.workplaces)
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+    final tasksByOrder = <String, List<TaskModel>>{};
+    for (final task in tasks) {
+      tasksByOrder.putIfAbsent(task.orderId, () => []).add(task);
+    }
+
+    final activeWorkplaceIds = <String>{};
+    for (final order in orders) {
+      final orderTasks = tasksByOrder[order.id] ?? const <TaskModel>[];
+      final grouping = _groupingForOrder(order, orderTasks);
+      if (grouping.isCompleted) continue;
+      activeWorkplaceIds.addAll(grouping.visibleWorkplaceIds);
+    }
+
     final tabs = [
       const _ProductionTabInfo(id: _allTabId, label: _allLabel, isAll: true),
-      for (final w in workplaces) _ProductionTabInfo(id: w.id, label: w.name),
+      for (final w in workplaces)
+        if (activeWorkplaceIds.contains(w.id))
+          _ProductionTabInfo(id: w.id, label: w.name),
       const _ProductionTabInfo(
         id: _completedTabId,
         label: _completedLabel,
