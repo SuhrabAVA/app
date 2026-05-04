@@ -15,6 +15,7 @@ import '../../services/storage_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'orders_provider.dart';
+import 'order_stage_filter.dart';
 import 'orders_repository.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -966,6 +967,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _scheduleStagePreviewUpdate(immediate: true);
   }
 
+
+  OrderHandleType _resolveSelectedHandleType() {
+    if (_selectedHandleDescription.trim().isEmpty ||
+        _selectedHandleDescription.trim() == '-') {
+      return OrderHandleType.none;
+    }
+    final normalized = _selectedHandleDescription.toLowerCase();
+    if (normalized.contains('круч') || normalized.contains('twist')) {
+      return OrderHandleType.twisted;
+    }
+    return OrderHandleType.flat;
+  }
+
   Future<_StageRuleOutcome> _applyStageRules(
       List<Map<String, dynamic>> rawStages) async {
     final List<Map<String, dynamic>> stageMaps = rawStages
@@ -1306,8 +1320,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       normalized.add(map);
     }
 
-    return _StageRuleOutcome(
+    final filteredStages = filterOrderStagesByOptions(
       stages: normalized,
+      selectedHandleType: _resolveSelectedHandleType(),
+      hasCardboard: _cardboardChecked,
+      hasCutting: _trimming,
+    );
+
+    return _StageRuleOutcome(
+      stages: filteredStages,
       shouldCompleteBobbin: shouldCompleteBobbin,
       bobbinId: bobbinId,
     );
@@ -5453,13 +5474,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   onChanged: (val) => setState(() {
                     _cardboardChecked = val ?? false;
                     _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
+                    _scheduleStagePreviewUpdate(immediate: true);
                   }),
                   label: 'Картон',
                   width: 100,
                 ),
                 _buildCompactCheckboxTile(
                   value: _trimming,
-                  onChanged: (val) => setState(() => _trimming = val ?? false),
+                  onChanged: (val) => setState(() {
+                    _trimming = val ?? false;
+                    _scheduleStagePreviewUpdate(immediate: true);
+                  }),
                   label: 'Подрезка',
                   width: 100,
                 ),
@@ -5498,6 +5523,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                             desc.isEmpty ? '-' : matches.first.description;
                       }
                     }
+                    _scheduleStagePreviewUpdate(immediate: true);
                   });
                 },
               ),
