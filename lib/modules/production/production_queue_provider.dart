@@ -292,10 +292,13 @@ class ProductionQueueProvider with ChangeNotifier {
         ..addAll(canonicalSequence);
     }
 
+    // Always append newly discovered orders to the tail of the queue.
+    // This guarantees that a freshly created order never jumps to the top,
+    // even if upstream lists are sorted by "newest first".
+    final missingIds = <String>[];
     for (final id in normalizedIds) {
       if (!sequence.contains(id)) {
-        sequence.add(id);
-        changed = true;
+        missingIds.add(id);
       }
     }
 
@@ -303,6 +306,11 @@ class ProductionQueueProvider with ChangeNotifier {
     if (toRemove.isNotEmpty) {
       sequence.removeWhere((id) => toRemove.contains(id));
       hidden.removeWhere((id) => toRemove.contains(id));
+      changed = true;
+    }
+
+    if (missingIds.isNotEmpty) {
+      sequence.addAll(missingIds);
       changed = true;
     }
 
