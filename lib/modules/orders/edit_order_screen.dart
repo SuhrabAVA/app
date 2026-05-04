@@ -106,6 +106,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         .replaceFirst(RegExp(r'\.$'), '');
   }
 
+  String _extractFormExtraInfoFromSeries(String? seriesValue) {
+    final series = (seriesValue ?? '').trim();
+    if (series.isEmpty) return '';
+    final match = RegExp(r'\(([^()]*)\)\s*$').firstMatch(series);
+    return (match?.group(1) ?? '').trim();
+  }
+
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -181,6 +188,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _formStateInitialized = true;
         }
       });
+      final extractedFormExtra = _extractFormExtraInfoFromSeries(series);
+      if (_formExtraInfoController.text.trim() != extractedFormExtra) {
+        _formExtraInfoController.value = TextEditingValue(
+          text: extractedFormExtra,
+          selection:
+              TextSelection.collapsed(offset: extractedFormExtra.length),
+        );
+      }
 
       // Загрузка дополнительных деталей формы (размер, цвета, изображение)
       try {
@@ -461,7 +476,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<String> _managerNames = [];
   // Клиент и комментарии
   late TextEditingController _customerController;
-  late TextEditingController _customerExtraInfoController;
+  late TextEditingController _formExtraInfoController;
   late TextEditingController _commentsController;
   late TextEditingController _packagingController;
   late final TextEditingController _lengthController;
@@ -622,7 +637,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     _updateManagerDisplayController();
     _customerController = TextEditingController(text: template?.customer ?? '');
-    _customerExtraInfoController = TextEditingController();
+    _formExtraInfoController = TextEditingController();
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
@@ -1800,7 +1815,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   @override
   void dispose() {
     _customerController.dispose();
-    _customerExtraInfoController.dispose();
+    _formExtraInfoController.dispose();
     _commentsController.dispose();
     _packagingController.dispose();
     _lengthController.dispose();
@@ -3553,7 +3568,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             !hadFormBefore;
         if (hasNewFormPayload) {
           final customer = _customerController.text.trim();
-          final extraInfo = _customerExtraInfoController.text.trim();
+          final extraInfo = _formExtraInfoController.text.trim();
           String series = customer.isNotEmpty ? customer : 'F';
           if (extraInfo.isNotEmpty) {
             series = '$series ($extraInfo)';
@@ -3894,10 +3909,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       label: 'Заказчик',
                       labelWidth: labelWidth,
                       child: _buildCustomerField(),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildCustomerExtraInfoField(),
                     ),
                     _buildLabelRow(
                       label: 'Тип',
@@ -5336,8 +5347,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _buildFieldGrid([
           _buildManagerField(),
           _buildCustomerField(),
-          const SizedBox(height: 8),
-          _buildCustomerExtraInfoField(),
           _buildDatePickerField(
             label: 'Дата заказа',
             value: _orderDate,
@@ -5654,11 +5663,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildCustomerExtraInfoField() {
+  Widget _buildFormExtraInfoField() {
     return TextFormField(
-      controller: _customerExtraInfoController,
+      controller: _formExtraInfoController,
       decoration: const InputDecoration(
-        labelText: 'Доп. информация',
+        labelText: 'Доп. информация формы',
         hintText: 'Необязательно',
         border: OutlineInputBorder(),
       ),
@@ -6713,7 +6722,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         controller: _formSearchCtl,
         focusNode: _formSearchFocusNode,
         decoration: const InputDecoration(
-          hintText: 'Поиск формы (название или код)',
+          hintText: 'Поиск формы (название, код или доп. информация)',
           prefixIcon: Icon(Icons.search),
           border: OutlineInputBorder(),
         ),
@@ -6745,6 +6754,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     } else {
       widgets.add(const SizedBox(height: 4));
+      widgets.add(_buildFormExtraInfoField());
+      widgets.add(const SizedBox(height: 8));
       if (_newFormImageBytes != null) {
         widgets.add(Padding(
           padding: const EdgeInsets.only(bottom: 8),
