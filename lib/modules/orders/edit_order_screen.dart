@@ -16,6 +16,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'orders_provider.dart';
 import 'order_stage_filter.dart';
+import 'stage_queue_builder.dart';
 import 'orders_repository.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -508,6 +509,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String? _stagePreviewError;
   bool _stagePreviewScheduled = false;
   bool _stagePreviewInitialized = false;
+  bool _isStageQueueBuilt = false;
   bool _updatingStageTemplateText = false;
   bool _lastPreviewPaintsFilled = false;
   MaterialModel? _selectedMaterial;
@@ -962,6 +964,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _stagePreviewInitialized = false;
       _stagePreviewScheduled = false;
       _stageOrderManuallyChanged = false;
+      _isStageQueueBuilt = false;
     });
 
     _scheduleStagePreviewUpdate(immediate: true);
@@ -1385,6 +1388,39 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _stagePreviewStages = next;
       // Важно: после ручного swap больше не должны возвращать auto-порядок.
       _stageOrderManuallyChanged = true;
+      _isStageQueueBuilt = false;
+    });
+  }
+
+  void _buildStageQueue() {
+    final next = _stagePreviewStages
+        .map((s) => Map<String, dynamic>.from(s))
+        .where((s) => ((s['stageId'] ?? s['id'] ?? '').toString()) != kPackagingStageId)
+        .toList(growable: true);
+    final productTypeId = _product.productTypeId;
+    Map<String, dynamic>? productStage;
+    if (kVTypeProducts.contains(productTypeId)) {
+      productStage = {'stageId': kFriStageId, 'stageName': 'Фри'};
+    } else if (productTypeId == '71c889cb-b24c-4bda-9a69-ae312f9a4bbd') {
+      productStage = {'stageId': kAutoBigStageId, 'stageName': 'Автомат большой'};
+    } else if (productTypeId == 'aab3ed17-1688-43f0-b623-58dac264941f' ||
+        productTypeId == 'b07cd977-939c-4d4f-b68c-8d163341460e') {
+      productStage = {'stageId': kSheetCutStageId, 'stageName': 'Листорезка'};
+    }
+    var queue = next;
+    if (productStage != null) {
+      queue = insertProductStageAfterBaseStages(queue, productStage);
+    }
+    queue = queue.where((s) {
+      final id = (s['stageId'] ?? s['id'] ?? '').toString();
+      return id != kFriStageId && id != kWindowStageId && id != kAutoBigStageId && id != kAutoSmallStageId && id != kTubeStageId || s == productStage;
+    }).toList();
+    queue.add({'stageId': kPackagingStageId, 'stageName': 'Упаковка'});
+    final seen = <String>{};
+    queue = queue.where((s) => seen.add((s['stageId'] ?? s['id']).toString())).toList();
+    setState(() {
+      _stagePreviewStages = queue;
+      _isStageQueueBuilt = true;
     });
   }
 
@@ -1699,6 +1735,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _stagePreviewError = null;
         _stagePreviewInitialized = true;
         _stageOrderManuallyChanged = false;
+        _isStageQueueBuilt = false;
       });
     } catch (e) {
       if (!mounted) return;
@@ -2725,8 +2762,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return true;
     }
 
-    final bool hasStageQueueSelected =
-        _stageTemplateId != null && _stageTemplateId!.trim().isNotEmpty;
+    final bool hasStageQueueSelected = _isStageQueueBuilt;
     final bool canLaunchProductionNow =
         hasStageQueueSelected && hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
@@ -3269,7 +3305,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
-            'Заказ сохранён в черновиках: выберите очередь этапов для подготовки к запуску.',
+            'Сначала соберите очередь этапов',
           ),
         ),
       );
@@ -6091,6 +6127,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildProductionSection(BuildContext context,
       {bool wrapWithCard = true, bool includeMakeready = true}) {
     final children = <Widget>[];
+    children.add(
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: FilledButton.icon(
+          onPressed: _buildStageQueue,
+          icon: const Icon(Icons.auto_fix_high),
+          label: const Text('Собрать очередь'),
+        ),
+      ),
+    );
 
     if (includeMakeready) {
       children.add(_buildMakereadyFields());
@@ -6310,7 +6356,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               '')
           .toString()
           .trim();
-      children.add(Container(
+      children.add(GestureDetector(
+        onTap: () {
+          final id = (stage['stageId'] ?? stage['id'] ?? '').toString();
+          final toggled = toggleProductStage(id);
+          if (toggled == null) return;
+          setState(() {
+            stage['stageId'] = toggled;
+            stage['id'] = toggled;
+            _isStageQueueBuilt = true;
+          });
+        },
+        child: Container(
         margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -6340,7 +6397,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ),
           ],
         ),
-      ));
+      )));
     }
 
     return Column(
