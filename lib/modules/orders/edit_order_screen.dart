@@ -6277,7 +6277,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Widget _buildStagePreviewSection(BuildContext context) {
     final theme = Theme.of(context);
-    if (_stageTemplateId == null || _stageTemplateId!.isEmpty) {
+    if ((_stageTemplateId == null || _stageTemplateId!.isEmpty) &&
+        _stagePreviewStages.isEmpty) {
       return Text(
         'Выберите очередь, чтобы просмотреть этапы производства',
         style: theme.textTheme.bodySmall,
