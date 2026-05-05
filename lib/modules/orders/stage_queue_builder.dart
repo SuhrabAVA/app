@@ -44,3 +44,19 @@ String? toggleProductStage(String stageId) {
       return null;
   }
 }
+
+bool canToggleProductStage({
+  required String productTypeId,
+  required String stageId,
+}) {
+  final normalizedProductTypeId = productTypeId.trim();
+  if (kVTypeProducts.contains(normalizedProductTypeId)) {
+    return stageId == kFriStageId || stageId == kWindowStageId;
+  }
+  if (normalizedProductTypeId == '71c889cb-b24c-4bda-9a69-ae312f9a4bbd') {
+    return stageId == kAutoBigStageId ||
+        stageId == kAutoSmallStageId ||
+        stageId == kTubeStageId;
+  }
+  return false;
+}

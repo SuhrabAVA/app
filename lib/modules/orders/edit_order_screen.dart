@@ -6390,6 +6390,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       children.add(GestureDetector(
         onTap: () {
           final id = (stage['stageId'] ?? stage['id'] ?? '').toString();
+          final productTypeId = _product.type.trim();
+          if (!canToggleProductStage(productTypeId: productTypeId, stageId: id)) {
+            return;
+          }
           final toggled = toggleProductStage(id);
           if (toggled == null) return;
           setState(() {
