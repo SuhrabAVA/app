@@ -1397,7 +1397,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         .map((s) => Map<String, dynamic>.from(s))
         .where((s) => ((s['stageId'] ?? s['id'] ?? '').toString()) != kPackagingStageId)
         .toList(growable: true);
-    final productTypeId = _product.productTypeId;
+    final productTypeId = _product.type.trim();
     Map<String, dynamic>? productStage;
     if (kVTypeProducts.contains(productTypeId)) {
       productStage = {'stageId': kFriStageId, 'stageName': 'Фри'};
