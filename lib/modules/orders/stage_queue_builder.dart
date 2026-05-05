@@ -17,11 +17,33 @@ List<Map<String, dynamic>> insertProductStageAfterBaseStages(
   List<Map<String, dynamic>> queue,
   Map<String, dynamic> productStage,
 ) {
-  final ids = queue.map((e) => (e['stageId'] ?? e['id'] ?? '').toString()).toList();
-  final baseIds = <String>{'w_bobiner', 'w_bobbin', 'w_flexoprint'};
+  bool isBaseStage(Map<String, dynamic> stage) {
+    final id = (stage['stageId'] ?? stage['id'] ?? '').toString().toLowerCase();
+    final name = (stage['stageName'] ??
+            stage['workplaceName'] ??
+            stage['title'] ??
+            stage['name'] ??
+            '')
+        .toString()
+        .toLowerCase();
+    const baseIds = <String>{
+      'w_bobiner',
+      'w_bobbin',
+      'w_flexoprint',
+      'b92a89d1-8e95-4c6d-b990-e308486e4bf1', // canonical bobbin id
+      '0571c01c-f086-47e4-81b2-5d8b2ab91218', // canonical flexo id
+    };
+    if (baseIds.contains(id)) return true;
+    return name.contains('бобин') ||
+        name.contains('бобтн') ||
+        name.contains('флексо') ||
+        name.contains('flexo') ||
+        name.contains('печать');
+  }
+
   var insertAt = -1;
-  for (var i = 0; i < ids.length; i++) {
-    if (baseIds.contains(ids[i])) insertAt = i;
+  for (var i = 0; i < queue.length; i++) {
+    if (isBaseStage(queue[i])) insertAt = i;
   }
   final next = List<Map<String, dynamic>>.from(queue);
   next.insert(insertAt + 1, productStage);
