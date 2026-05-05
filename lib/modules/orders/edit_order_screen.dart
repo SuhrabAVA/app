@@ -1393,10 +1393,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   void _buildStageQueue() {
-    final next = _stagePreviewStages
+    var next = _stagePreviewStages
         .map((s) => Map<String, dynamic>.from(s))
         .where((s) => ((s['stageId'] ?? s['id'] ?? '').toString()) != kPackagingStageId)
         .toList(growable: true);
+    if (next.isEmpty) {
+      next = _applyBaseStageRulesForQueuePreview();
+    }
     final productTypeId = _product.type.trim();
     Map<String, dynamic>? productStage;
     if (kVTypeProducts.contains(productTypeId)) {
@@ -1422,6 +1425,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _stagePreviewStages = queue;
       _isStageQueueBuilt = true;
     });
+  }
+
+  List<Map<String, dynamic>> _applyBaseStageRulesForQueuePreview() {
+    final stages = <Map<String, dynamic>>[];
+    if (_trimming) {
+      stages.add({
+        'stageId': _canonicalBobbinWorkplaceId,
+        'workplaceId': _canonicalBobbinWorkplaceId,
+        'stageName': 'Бобинорезка',
+        'workplaceName': 'Бобинорезка',
+      });
+    }
+    if (_hasAnyPaints()) {
+      stages.add({
+        'stageId': _canonicalFlexoWorkplaceId,
+        'workplaceId': _canonicalFlexoWorkplaceId,
+        'stageName': 'Флексопечать',
+        'workplaceName': 'Флексопечать',
+      });
+    }
+    return stages;
   }
 
   List<Map<String, dynamic>> _decodeAndSortStageMaps(dynamic stagesData) {
@@ -1647,7 +1671,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void _scheduleStagePreviewUpdate({bool immediate = false}) {
     if (!mounted) return;
-    if (_stageTemplateId == null || _stageTemplateId!.isEmpty) return;
+    if ((_stageTemplateId == null || _stageTemplateId!.isEmpty) &&
+        _stagePreviewStages.isNotEmpty) {
+      return;
+    }
     if (immediate) {
       _stagePreviewScheduled = false;
       _rebuildStagePreview();
@@ -1667,9 +1694,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (templateId == null || templateId.isEmpty) {
       if (mounted) {
         setState(() {
-          _stagePreviewStages = <Map<String, dynamic>>[];
+          _stagePreviewStages = _applyBaseStageRulesForQueuePreview();
           _stagePreviewLoading = false;
           _stagePreviewError = null;
+          _stagePreviewInitialized = true;
+          _stageOrderManuallyChanged = false;
+          _isStageQueueBuilt = false;
         });
       }
       return;
