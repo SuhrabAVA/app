@@ -12,6 +12,85 @@ const Set<String> kVTypeProducts = {
   'd2323dba-74c9-4e86-adfb-18cd47be9480',
   'dfd3beb1-1afd-4c06-9b3b-5da680377b0d',
 };
+const Set<String> kSheetProducts = {
+  'aab3ed17-1688-43f0-b623-58dac264941f',
+  'b07cd977-939c-4d4f-b68c-8d163341460e',
+};
+
+const String kPTypePackageProduct = '71c889cb-b24c-4bda-9a69-ae312f9a4bbd';
+
+Map<String, dynamic>? _detectProductStage(String productTypeId) {
+  if (kVTypeProducts.contains(productTypeId)) {
+    return {'stageId': kFriStageId, 'stageName': 'Фри'};
+  }
+  if (productTypeId == kPTypePackageProduct) {
+    return {'stageId': kAutoBigStageId, 'stageName': 'Автомат большой'};
+  }
+  if (kSheetProducts.contains(productTypeId)) {
+    return {'stageId': kSheetCutStageId, 'stageName': 'Листорезка'};
+  }
+  return null;
+}
+
+List<Map<String, dynamic>> buildOrderStageQueue({
+  required String productTypeId,
+  required bool hasCutting,
+  required bool hasCardboard,
+  required bool hasBobbinCutting,
+  required bool hasFlexPrinting,
+  Object? handleType,
+  List<Map<String, dynamic>> existingStages = const [],
+  List<Map<String, dynamic>> templateStages = const [],
+}) {
+  final queue = <Map<String, dynamic>>[];
+  final source = existingStages.isNotEmpty ? existingStages : templateStages;
+  for (final stage in source) {
+    final copy = Map<String, dynamic>.from(stage);
+    final id = (copy['stageId'] ?? copy['id'] ?? '').toString();
+    if (id == kPackagingStageId) continue;
+    queue.add(copy);
+  }
+
+  if (queue.isEmpty) {
+    if (hasBobbinCutting || hasCutting || hasCardboard) {
+      queue.add({
+        'stageId': 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        'workplaceId': 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        'stageName': 'Бобинорезка',
+      });
+    }
+    if (hasFlexPrinting) {
+      queue.add({
+        'stageId': '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+        'workplaceId': '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+        'stageName': 'Флексопечать',
+      });
+    }
+  }
+
+  final productStage = _detectProductStage(productTypeId.trim());
+  if (productStage != null) {
+    queue.removeWhere((s) {
+      final id = (s['stageId'] ?? s['id'] ?? '').toString();
+      return id == kFriStageId ||
+          id == kWindowStageId ||
+          id == kAutoBigStageId ||
+          id == kAutoSmallStageId ||
+          id == kTubeStageId ||
+          id == kSheetCutStageId;
+    });
+    final withProduct = insertProductStageAfterBaseStages(queue, productStage);
+    queue
+      ..clear()
+      ..addAll(withProduct);
+  }
+
+  queue.add({'stageId': kPackagingStageId, 'stageName': 'Упаковка'});
+  final seen = <String>{};
+  return queue
+      .where((s) => seen.add((s['stageId'] ?? s['id']).toString()))
+      .toList(growable: false);
+}
 
 List<Map<String, dynamic>> insertProductStageAfterBaseStages(
   List<Map<String, dynamic>> queue,

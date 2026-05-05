@@ -1393,34 +1393,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   void _buildStageQueue() {
-    var next = _stagePreviewStages
+    final currentStages = _stagePreviewStages
         .map((s) => Map<String, dynamic>.from(s))
-        .where((s) => ((s['stageId'] ?? s['id'] ?? '').toString()) != kPackagingStageId)
-        .toList(growable: true);
-    if (next.isEmpty) {
-      next = _applyBaseStageRulesForQueuePreview();
-    }
-    final productTypeId = _product.type.trim();
-    Map<String, dynamic>? productStage;
-    if (kVTypeProducts.contains(productTypeId)) {
-      productStage = {'stageId': kFriStageId, 'stageName': 'Фри'};
-    } else if (productTypeId == '71c889cb-b24c-4bda-9a69-ae312f9a4bbd') {
-      productStage = {'stageId': kAutoBigStageId, 'stageName': 'Автомат большой'};
-    } else if (productTypeId == 'aab3ed17-1688-43f0-b623-58dac264941f' ||
-        productTypeId == 'b07cd977-939c-4d4f-b68c-8d163341460e') {
-      productStage = {'stageId': kSheetCutStageId, 'stageName': 'Листорезка'};
-    }
-    var queue = next;
-    if (productStage != null) {
-      queue = insertProductStageAfterBaseStages(queue, productStage);
-    }
-    queue = queue.where((s) {
-      final id = (s['stageId'] ?? s['id'] ?? '').toString();
-      return id != kFriStageId && id != kWindowStageId && id != kAutoBigStageId && id != kAutoSmallStageId && id != kTubeStageId || s == productStage;
-    }).toList();
-    queue.add({'stageId': kPackagingStageId, 'stageName': 'Упаковка'});
-    final seen = <String>{};
-    queue = queue.where((s) => seen.add((s['stageId'] ?? s['id']).toString())).toList();
+        .toList(growable: false);
+    final templateStages = _applyBaseStageRulesForQueuePreview();
+    final queue = buildOrderStageQueue(
+      productTypeId: _product.type.trim(),
+      hasCutting: _trimming,
+      hasCardboard: _cardboardChecked,
+      hasBobbinCutting: _trimming,
+      hasFlexPrinting: _hasAnyPaints(),
+      handleType: _resolveSelectedHandleType(),
+      existingStages: currentStages,
+      templateStages: templateStages,
+    );
     setState(() {
       _stagePreviewStages = queue;
       _isStageQueueBuilt = true;
