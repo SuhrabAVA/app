@@ -713,7 +713,20 @@ class OrdersProvider with ChangeNotifier {
           ids.add(id);
         }
 
-        add(row['stage_id'] ?? row['stageId'] ?? row['workplace_id']);
+        final workplaceIds = row['workplace_ids'] ?? row['workplaceIds'];
+        if (workplaceIds is List) {
+          for (final id in workplaceIds) {
+            add(id);
+          }
+        } else if (workplaceIds is String) {
+          for (final token in workplaceIds.split(',')) {
+            add(token);
+          }
+        }
+
+        if (ids.isEmpty) {
+          add(row['stage_id'] ?? row['stageId'] ?? row['workplace_id']);
+        }
         final alternatives = row['alternative_stage_ids'] ??
             row['alternativeStageIds'] ??
             row['stage_ids'] ??
@@ -742,7 +755,7 @@ class OrdersProvider with ChangeNotifier {
         if (planId != null && planId.isNotEmpty) {
           final rows = await _supabase
               .from('prod_plan_stages')
-              .select('stage_id, alternative_stage_ids, status, step, step_no, seq')
+              .select('stage_id, alternative_stage_ids, status, step, step_no, seq, stage_group_key')
               .eq('plan_id', planId)
               .order('step', ascending: true);
           if (rows is List) {
@@ -764,6 +777,7 @@ class OrdersProvider with ChangeNotifier {
           if (stages is List) {
             for (final raw in stages.whereType<Map>()) {
               final map = Map<String, dynamic>.from(raw as Map);
+              final workplaceIds = map['workplaceIds'] ?? map['workplace_ids'];
               final stageId = (map['stageId'] ??
                       map['stage_id'] ??
                       map['stageid'] ??
@@ -774,6 +788,7 @@ class OrdersProvider with ChangeNotifier {
               if (stageId == null || stageId.trim().isEmpty) continue;
               stageRows.add({
                 'stage_id': stageId.trim(),
+                if (workplaceIds != null) 'workplace_ids': workplaceIds,
                 if (map['alternativeStageIds'] != null)
                   'alternative_stage_ids': map['alternativeStageIds'],
                 if (map['alternative_stage_ids'] != null)
@@ -795,8 +810,16 @@ class OrdersProvider with ChangeNotifier {
       for (final row in stageRows) {
         final stageIds = _readStageIds(row);
         if (stageIds.isEmpty) continue;
+        final persistedGroupKey = (row['stage_group_key'] ??
+                row['stageGroupKey'] ??
+                row['queue_stage_key'] ??
+                row['queueStageKey'])
+            ?.toString()
+            .trim();
         final groupIds = List<String>.from(stageIds)..sort();
-        final stageGroupKey = groupIds.join('|');
+        final stageGroupKey = (persistedGroupKey != null && persistedGroupKey.isNotEmpty)
+            ? persistedGroupKey
+            : groupIds.join('|');
         final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
         final String taskStatus =
             (stageStatus == 'done' || stageStatus == 'completed')

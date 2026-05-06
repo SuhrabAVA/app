@@ -1,6 +1,7 @@
 class PlannedStage {
   final String stageId;
   final String stageName;
+  final List<String> workplaceIds;
   final List<String> alternativeStageIds;
   final List<String> alternativeStageNames;
   String? comment;
@@ -8,14 +9,28 @@ class PlannedStage {
   PlannedStage({
     required this.stageId,
     required this.stageName,
-    this.alternativeStageIds = const [],
+    List<String>? workplaceIds,
+    List<String> alternativeStageIds = const [],
     this.alternativeStageNames = const [],
     this.comment,
-  });
+  })  : workplaceIds = workplaceIds == null || workplaceIds.isEmpty
+            ? _dedupeOrdered(
+                [stageId, ...alternativeStageIds],
+                caseInsensitive: true,
+              )
+            : _dedupeOrdered(workplaceIds, caseInsensitive: true),
+        alternativeStageIds = (workplaceIds == null || workplaceIds.isEmpty
+                ? _dedupeOrdered(
+                    [stageId, ...alternativeStageIds],
+                    caseInsensitive: true,
+                  )
+                : _dedupeOrdered(workplaceIds, caseInsensitive: true))
+            .skip(1)
+            .toList();
 
   List<String> get allStageIds =>
       _dedupeOrdered(
-        [stageId, ...alternativeStageIds],
+        workplaceIds.isNotEmpty ? workplaceIds : [stageId, ...alternativeStageIds],
         caseInsensitive: true,
       );
 
@@ -27,46 +42,72 @@ class PlannedStage {
 
   PlannedStage copyWith({
     String? comment,
+    List<String>? workplaceIds,
     List<String>? alternativeStageIds,
     List<String>? alternativeStageNames,
   }) =>
       PlannedStage(
         stageId: stageId,
         stageName: stageName,
+        workplaceIds: workplaceIds ?? this.workplaceIds,
         alternativeStageIds: alternativeStageIds ?? this.alternativeStageIds,
         alternativeStageNames: alternativeStageNames ?? this.alternativeStageNames,
         comment: comment ?? this.comment,
       );
 
   Map<String, dynamic> toMap() => {
-        'stageId': stageId,
+        'stageId': allStageIds.isNotEmpty ? allStageIds.first : stageId,
+        'workplaceId': allStageIds.isNotEmpty ? allStageIds.first : stageId,
+        'workplaceIds': allStageIds,
         'stageName': stageName,
-        if (alternativeStageIds.isNotEmpty) 'alternativeStageIds': alternativeStageIds,
+        if (allStageIds.length > 1) 'alternativeStageIds': allStageIds.skip(1).toList(),
         if (alternativeStageNames.isNotEmpty) 'alternativeStageNames': alternativeStageNames,
         if (comment != null && comment!.isNotEmpty) 'comment': comment,
       };
 
-  factory PlannedStage.fromMap(Map<String, dynamic> map) => PlannedStage(
-        stageId: map['stageId'] as String,
-        stageName: (map['stageName'] as String? ?? '').trim(),
-        alternativeStageIds: _dedupeOrdered(
-          (map['alternativeStageIds'] as List?)
-                ?.whereType<dynamic>()
-                .map((e) => e.toString())
-                .toList() ??
-              const [],
-          caseInsensitive: true,
+  factory PlannedStage.fromMap(Map<String, dynamic> map) {
+    final primary = (map['stageId'] ??
+                map['stage_id'] ??
+                map['workplaceId'] ??
+                map['workplace_id'] ??
+                map['id'])
+            ?.toString() ??
+        '';
+    final explicitWorkplaces =
+        _readStringList(map['workplaceIds'] ?? map['workplace_ids']);
+    final legacyAlternatives = _readStringList(
+      map['alternativeStageIds'] ?? map['alternative_stage_ids'],
+    );
+    final workplaces = explicitWorkplaces.isNotEmpty
+        ? explicitWorkplaces
+        : _dedupeOrdered([primary, ...legacyAlternatives],
+            caseInsensitive: true);
+    final stageName = (map['stageName'] ?? map['stage_name'] ?? '').toString();
+    return PlannedStage(
+      stageId: workplaces.isNotEmpty ? workplaces.first : primary,
+      stageName: stageName.trim(),
+      workplaceIds: workplaces,
+      alternativeStageIds:
+          workplaces.length > 1 ? workplaces.skip(1).toList() : const [],
+      alternativeStageNames: _dedupeOrdered(
+        _readStringList(
+          map['alternativeStageNames'] ?? map['alternative_stage_names'],
         ),
-        alternativeStageNames: _dedupeOrdered(
-          (map['alternativeStageNames'] as List?)
-                ?.whereType<dynamic>()
-                .map((e) => e.toString())
-                .toList() ??
-              const [],
-          caseInsensitive: true,
-        ),
-        comment: map['comment'] as String?,
-      );
+        caseInsensitive: true,
+      ),
+      comment: map['comment'] as String?,
+    );
+  }
+}
+
+List<String> _readStringList(dynamic raw) {
+  if (raw is List) {
+    return raw.map((e) => e.toString()).toList();
+  }
+  if (raw is String && raw.trim().isNotEmpty) {
+    return raw.split(',').map((e) => e.trim()).toList();
+  }
+  return const [];
 }
 
 List<String> _dedupeOrdered(

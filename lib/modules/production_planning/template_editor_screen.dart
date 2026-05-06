@@ -26,8 +26,9 @@ class _TemplateEditorScreenState extends State<TemplateEditorScreen> {
       _nameCtrl.text = tpl.name;
       _stages.addAll(tpl.stages.map(
         (s) => PlannedStage(
-          stageId: s.stageId,
+          stageId: s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
           stageName: s.stageName,
+          workplaceIds: s.workplaceIds,
           alternativeStageIds: s.alternativeStageIds,
           alternativeStageNames: s.alternativeStageNames,
           comment: s.comment,
@@ -84,6 +85,7 @@ class _TemplateEditorScreenState extends State<TemplateEditorScreen> {
                         PlannedStage(
                           stageId: primary.id,
                           stageName: primary.name,
+                          workplaceIds: selected.map((e) => e.id).toList(),
                           alternativeStageIds: alternatives.map((e) => e.id).toList(),
                           alternativeStageNames: alternatives.map((e) => e.name).toList(),
                         ),

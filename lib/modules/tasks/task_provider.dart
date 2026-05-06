@@ -63,7 +63,7 @@ class TaskProvider with ChangeNotifier {
     final resolvedStageId = _resolveWorkplaceId(_normalizeId(rawStageId));
     data['stageId'] = resolvedStageId;
     final rawStageGroupKey =
-        row['stage_group_key'] ?? row['stageGroupKey'] ?? row['group_key'];
+        row['stage_group_key'] ?? row['stageGroupKey'] ?? row['queue_stage_key'] ?? row['queueStageKey'] ?? row['group_key'];
     final normalizedGroupKey = _normalizeId(rawStageGroupKey);
     data['stageGroupKey'] =
         normalizedGroupKey.isEmpty ? resolvedStageId : normalizedGroupKey;
@@ -438,9 +438,22 @@ class TaskProvider with ChangeNotifier {
       result.add(id);
     }
 
-    addCandidate(
-      pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']),
-    );
+    dynamic workplaceIds = pick(const ['workplaceIds', 'workplace_ids']);
+    if (workplaceIds is List) {
+      for (final value in workplaceIds) {
+        addCandidate(value);
+      }
+    } else if (workplaceIds is String) {
+      for (final token in workplaceIds.split(',')) {
+        addCandidate(token);
+      }
+    }
+
+    if (result.isEmpty) {
+      addCandidate(
+        pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']),
+      );
+    }
 
     dynamic alt = pick(const [
       'alternativeStageIds',
