@@ -102,6 +102,44 @@ class _StageRuleOutcome {
       {required this.stages, this.shouldCompleteBobbin = false, this.bobbinId});
 }
 
+List<Map<String, dynamic>> _buildStageMapsForProductionPlanSave({
+  required List<Map<String, dynamic>> stagePreviewStages,
+  required String? stageTemplateId,
+  required List<Map<String, dynamic>> selectedTemplateStages,
+  required List<Map<String, dynamic>> Function({
+    required List<Map<String, dynamic>> templateStages,
+  }) buildStageQueueFromCurrentDraft,
+}) {
+  if (stagePreviewStages.isNotEmpty) {
+    return stagePreviewStages
+        .map((stage) => Map<String, dynamic>.from(stage))
+        .toList(growable: true);
+  }
+
+  final hasSelectedTemplate = (stageTemplateId ?? '').trim().isNotEmpty;
+  return buildStageQueueFromCurrentDraft(
+    templateStages: hasSelectedTemplate
+        ? selectedTemplateStages
+        : const <Map<String, dynamic>>[],
+  );
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> buildStageMapsForProductionPlanSaveForTesting({
+  required List<Map<String, dynamic>> stagePreviewStages,
+  required String? stageTemplateId,
+  required List<Map<String, dynamic>> selectedTemplateStages,
+  required List<Map<String, dynamic>> Function({
+    required List<Map<String, dynamic>> templateStages,
+  }) buildStageQueueFromCurrentDraft,
+}) =>
+    _buildStageMapsForProductionPlanSave(
+      stagePreviewStages: stagePreviewStages,
+      stageTemplateId: stageTemplateId,
+      selectedTemplateStages: selectedTemplateStages,
+      buildStageQueueFromCurrentDraft: buildStageQueueFromCurrentDraft,
+    );
+
 class _EditOrderScreenState extends State<EditOrderScreen> {
   static const String _paintInfoParamLabel = 'Информация для красок:';
 
@@ -3032,18 +3070,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // stageTemplateId сохраняется в заказе выше, но автогенерация строится по полям формы.
       final templateStages = _selectedTemplateStageMaps();
 
-      List<Map<String, dynamic>> stageMaps;
       // Источник истины при сохранении — текущий preview.
       // Он уже может содержать ручную перестановку флексо/бобинорезки.
-      if (_stagePreviewStages.isNotEmpty) {
-        stageMaps = _stagePreviewStages
-            .map((stage) => Map<String, dynamic>.from(stage))
-            .toList(growable: true);
-      } else {
-        stageMaps = _buildStageQueueFromCurrentDraft(
-          templateStages: templateStages,
-        );
-      }
+      // Если preview пустой и шаблон не выбран, строим очередь строго из
+      // текущего черновика без этапов шаблона.
+      List<Map<String, dynamic>> stageMaps =
+          _buildStageMapsForProductionPlanSave(
+        stagePreviewStages: _stagePreviewStages,
+        stageTemplateId: _stageTemplateId,
+        selectedTemplateStages: templateStages,
+        buildStageQueueFromCurrentDraft: ({required templateStages}) =>
+            _buildStageQueueFromCurrentDraft(templateStages: templateStages),
+      );
 
       final outcome = await _applyStageRules(stageMaps);
       stageMaps = outcome.stages;
