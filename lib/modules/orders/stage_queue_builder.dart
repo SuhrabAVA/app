@@ -254,6 +254,7 @@ class _OrderStageQueueBuilder {
         groupKey: kSwitchableVGroupKey,
         fallbackSelectedId: kFriStageId,
       ));
+      if (draft.hasTrimming) _add(_stage(kCuttingStageId, 'Резка'));
       return;
     }
     if (_isTwoSheetPackageProduct(productTypeId)) {
