@@ -985,15 +985,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
 
   OrderHandleType _resolveSelectedHandleType() {
-    if (_selectedHandleDescription.trim().isEmpty ||
-        _selectedHandleDescription.trim() == '-') {
+    final normalized = _selectedHandleDescription.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == '-') {
       return OrderHandleType.none;
     }
-    final normalized = _selectedHandleDescription.toLowerCase();
     if (normalized.contains('круч') || normalized.contains('twist')) {
       return OrderHandleType.twisted;
     }
-    return OrderHandleType.flat;
+    if (normalized.contains('плоск') || normalized.contains('flat')) {
+      return OrderHandleType.flat;
+    }
+    if (normalized.contains('выруб') || normalized.contains('die cut')) {
+      return OrderHandleType.dieCut;
+    }
+    return OrderHandleType.none;
   }
 
   Future<_StageRuleOutcome> _applyStageRules(

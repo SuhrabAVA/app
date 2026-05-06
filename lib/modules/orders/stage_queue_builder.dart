@@ -40,6 +40,8 @@ const String kCuttingStageId = cuttingStageId;
 const String kCardboardStageId = cardboardStageId;
 const String kFlatHandleStageId = flatHandleStageId;
 const String kTwistedHandleStageId = twistedHandleStageId;
+const String kManualHandleStageId = manualHandleStageId;
+const String kDieCutHandleStageId = dieCutHandleStageId;
 
 const String kDieCutA1WorkplaceId = '7c168998-76b8-4a4c-9708-af45c2dbd4f0';
 const String kDieCutA2WorkplaceId = '5a47821b-c276-4deb-90de-f196539fc95d';
@@ -47,8 +49,8 @@ const String kBottomGlueWorkplaceId = 'dee83c5c-4624-4ca4-b36c-47673dc5cd72';
 const String kBottomGlueAltWorkplaceId = 'ad504db5-86c3-4284-8266-42bbf967b064';
 const String kBottomGlueSecondAltWorkplaceId = '96075b60-77d8-4fb2-91b0-bfbe6c1ed13c';
 const String kTwistedHandleWorkplaceId = 'c51ebb2e-dac8-4068-9e4c-ce0d8b975626';
-const String kSharedHandleWorkplaceId = 'c25acbfa-390a-4e87-84aa-536055e013f4';
-const String kFlatHandleWorkplaceId = '6ffdf2d9-3f57-45ca-9fad-dd700ac5c320';
+const String kSharedHandleWorkplaceId = kManualHandleStageId;
+const String kFlatHandleWorkplaceId = kFlatHandleStageId;
 
 // The following technological stage keys are intentionally distinct even when
 // a customer installation maps several of them to the same physical workplace.
@@ -281,14 +283,22 @@ class _OrderStageQueueBuilder {
       _add(_stage(
         kFlatHandleGroupStageId,
         'Плоская ручка',
-        workplaceIds: const [kFlatHandleWorkplaceId, kSharedHandleWorkplaceId],
+        workplaceIds: const [
+          kFlatHandleWorkplaceId,
+          kSharedHandleWorkplaceId,
+        ],
       ));
     } else if (type == OrderHandleType.twisted) {
       _add(_stage(
         kTwistedHandleGroupStageId,
         'Кручёная ручка',
-        workplaceIds: const [kTwistedHandleWorkplaceId, kSharedHandleWorkplaceId],
+        workplaceIds: const [
+          kTwistedHandleWorkplaceId,
+          kSharedHandleWorkplaceId,
+        ],
       ));
+    } else if (type == OrderHandleType.dieCut) {
+      _add(_stage(kDieCutHandleStageId, 'Вырубка'));
     }
   }
 

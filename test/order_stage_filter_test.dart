@@ -7,6 +7,8 @@ void main() {
   final baseStages = [
     _stage(flatHandleStageId),
     _stage(twistedHandleStageId),
+    _stage(manualHandleStageId),
+    _stage(dieCutHandleStageId),
     _stage(cardboardStageId),
     _stage(cuttingStageId),
     _stage('other-stage'),
@@ -31,7 +33,11 @@ void main() {
       hasCutting: false,
     );
 
-    expect(filtered.map((s) => s['stageId']), [twistedHandleStageId, 'other-stage']);
+    expect(filtered.map((s) => s['stageId']), [
+      twistedHandleStageId,
+      manualHandleStageId,
+      'other-stage',
+    ]);
   });
 
   test('keeps only flat handle stage and enabled flags', () {
@@ -44,8 +50,23 @@ void main() {
 
     expect(filtered.map((s) => s['stageId']), [
       flatHandleStageId,
+      manualHandleStageId,
       cardboardStageId,
       cuttingStageId,
+      'other-stage',
+    ]);
+  });
+
+  test('keeps die cut handle stage without manual handle stage', () {
+    final filtered = filterOrderStagesByOptions(
+      stages: baseStages,
+      selectedHandleType: OrderHandleType.dieCut,
+      hasCardboard: false,
+      hasCutting: false,
+    );
+
+    expect(filtered.map((s) => s['stageId']), [
+      dieCutHandleStageId,
       'other-stage',
     ]);
   });

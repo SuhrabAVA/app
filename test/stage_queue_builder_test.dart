@@ -83,14 +83,64 @@ void main() {
       ),
     );
 
+    final flatHandleStage = result.singleWhere(
+      (stage) => stage.stageKey == kFlatHandleGroupStageId,
+    );
+
     expect(result.map((stage) => stage.stageKey), containsAll([
-      'die_cut_a1',
-      'die_cut_a2',
+      kDieCutA1A2StageId,
       kCardboardStageId,
-      kFlatHandleStageId,
+      kFlatHandleGroupStageId,
       kPackagingStageId,
     ]));
+    expect(flatHandleStage.workplaceIds, [
+      kFlatHandleStageId,
+      kManualHandleStageId,
+    ]);
     expect(result.last.stageKey, kPackagingStageId);
+  });
+
+  test('builds twisted handle as one multi-workplace stage', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kPTypePackageProduct,
+        orderWidthB: 600,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: false,
+        hasCardboard: false,
+        handleType: OrderHandleType.twisted,
+      ),
+    );
+
+    final handleStage = result.singleWhere(
+      (stage) => stage.stageKey == kTwistedHandleGroupStageId,
+    );
+    expect(handleStage.stageName, 'Кручёная ручка');
+    expect(handleStage.workplaceIds, [
+      kTwistedHandleStageId,
+      kManualHandleStageId,
+    ]);
+  });
+
+  test('builds die cut handle as one stage', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kPTypePackageProduct,
+        orderWidthB: 600,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: false,
+        hasCardboard: false,
+        handleType: OrderHandleType.dieCut,
+      ),
+    );
+
+    final handleStage = result.singleWhere(
+      (stage) => stage.stageKey == kDieCutHandleStageId,
+    );
+    expect(handleStage.stageName, 'Вырубка');
+    expect(handleStage.workplaceIds, [kDieCutHandleStageId]);
   });
 
   test('builds switchable p-package stage with selected tube workplace', () {
