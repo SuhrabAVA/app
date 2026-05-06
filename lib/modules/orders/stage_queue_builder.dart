@@ -36,7 +36,12 @@ const String kAutoSmallStageId = 'cbcbe469-b924-4064-ae05-885ccd1b842a';
 const String kTubeStageId = 'e62fc013-4785-4375-b3ee-a3ca51f77199';
 const String kSheetCutStageId = '19a67630-8374-4f9f-ae5b-f2f66828720b';
 const String kCuttingStageId = cuttingStageId;
-const String kCardboardStageId = cardboardStageId;
+const String kCardboardCuttingStageId =
+    'd7d91f75-2f85-446f-8c1d-a20606bdb3b1';
+const String kCardboardInsertStageId =
+    'ce15da53-34bb-4a48-acef-610ddfd4a42e';
+const String kBottomWithCardboardAssemblyStageId =
+    'd15da69b-9842-4967-96ed-28a4834b409e';
 const String kFlatHandleStageId = flatHandleStageId;
 const String kTwistedHandleStageId = twistedHandleStageId;
 const String kManualHandleStageId = manualHandleStageId;
@@ -288,7 +293,13 @@ class _OrderStageQueueBuilder {
   }
 
   void _appendCardboardStages() {
-    if (draft.hasCardboard) _add(_stage(kCardboardStageId, 'Картон'));
+    if (!draft.hasCardboard) return;
+    _add(_stage(kCardboardCuttingStageId, 'Резка картона'));
+    _add(_stage(kCardboardInsertStageId, 'Вставка картона'));
+    _add(_stage(
+      kBottomWithCardboardAssemblyStageId,
+      'Сборка дно+картон',
+    ));
   }
 
   void _appendHandleStage() {

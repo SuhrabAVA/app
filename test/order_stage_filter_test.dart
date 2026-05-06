@@ -9,7 +9,9 @@ void main() {
     _stage(twistedHandleStageId),
     _stage(manualHandleStageId),
     _stage(dieCutHandleStageId),
-    _stage(cardboardStageId),
+    _stage(kCardboardCuttingStageId),
+    _stage(kCardboardInsertStageId),
+    _stage(kBottomWithCardboardAssemblyStageId),
     _stage(cuttingStageId),
     _stage('other-stage'),
   ];
@@ -51,7 +53,9 @@ void main() {
     expect(filtered.map((s) => s['stageId']), [
       flatHandleStageId,
       manualHandleStageId,
-      cardboardStageId,
+      kCardboardCuttingStageId,
+      kCardboardInsertStageId,
+      kBottomWithCardboardAssemblyStageId,
       cuttingStageId,
       'other-stage',
     ]);
