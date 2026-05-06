@@ -59,6 +59,34 @@ void main() {
     expect(result.last.sortOrder, result.length);
   });
 
+  test('builds v-type package route with trimming before final packaging', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kVTypeProductId,
+        orderWidthB: 300,
+        materialWidth: 600,
+        hasPaint: true,
+        hasTrimming: true,
+        hasCardboard: false,
+      ),
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kBobbinStageId,
+        kFlexPrintingStageId,
+        kVMainSwitchStageKey,
+        kCuttingStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(result[2].stageName, 'Фри');
+    expect(result[2].isSwitchable, isTrue);
+    expect(result[3].stageName, 'Резка');
+    expect(result.last.stageName, 'Упаковка');
+  });
+
   test('does not add bobbin cutting without positive widths', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(
