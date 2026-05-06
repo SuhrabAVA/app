@@ -1422,6 +1422,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     List<Map<String, dynamic>> templateStages = const <Map<String, dynamic>>[],
   }) {
     final draft = _currentStageQueueDraft();
+    final switchableSelectionSource = existingStages.isNotEmpty
+        ? existingStages
+        : _stagePreviewStages;
     return buildOrderStageQueue(
       productTypeId: draft.productTypeId,
       hasCutting: draft.hasTrimming,
@@ -1432,6 +1435,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       materialWidth: draft.materialWidth,
       switchableStageKey: draft.switchableStageKey,
       selectedSwitchableStageId: draft.selectedSwitchableStageId,
+      selectedSwitchableStageIdsByStageKey:
+          collectSwitchableStageSelectionsByStageKey(switchableSelectionSource),
       existingStages: existingStages,
       templateStages: templateStages,
     );
@@ -6411,46 +6416,45 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           .trim();
       children.add(GestureDetector(
         onTap: () {
-          final id = (stage['stageId'] ?? stage['id'] ?? '').toString();
-          final toggled = toggleProductStage(id);
-          if (toggled == null) return;
+          final toggledStage = toggleProductStageObject(stage);
+          if (toggledStage == null) return;
           setState(() {
-            stage['stageId'] = toggled;
-            stage['id'] = toggled;
+            _stagePreviewStages[i] = toggledStage;
             _isStageQueueBuilt = true;
           });
         },
         child: Container(
-        margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          border: Border.all(color: theme.dividerColor),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${i + 1}.', style: theme.textTheme.bodyMedium),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: theme.textTheme.bodyMedium),
-                  if (description.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        description,
-                        style: theme.textTheme.bodySmall,
+          margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            border: Border.all(color: theme.dividerColor),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${i + 1}.', style: theme.textTheme.bodyMedium),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: theme.textTheme.bodyMedium),
+                    if (description.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          description,
+                          style: theme.textTheme.bodySmall,
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      )));
+      ));
     }
 
     return Column(

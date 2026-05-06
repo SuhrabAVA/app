@@ -62,6 +62,8 @@ const String kBottomGlueStageId = 'bottom_glue_group';
 const String kTwistedHandleGroupStageId = 'twisted_handle_group';
 const String kFlatHandleGroupStageId = 'flat_handle_group';
 
+const String kVMainSwitchStageKey = 'v_main_switch';
+const String kPMainSwitchStageKey = 'p_main_switch';
 const String kSwitchableVGroupKey = 'v_bottom_stage';
 const String kSwitchablePGroupKey = 'p_package_stage';
 
@@ -88,6 +90,7 @@ class OrderStageQueueDraft {
     this.handleType,
     this.switchableStageKey,
     this.selectedSwitchableStageId,
+    this.selectedSwitchableStageIdsByStageKey = const <String, String>{},
   });
 
   final String productTypeId;
@@ -99,6 +102,7 @@ class OrderStageQueueDraft {
   final Object? handleType;
   final String? switchableStageKey;
   final String? selectedSwitchableStageId;
+  final Map<String, String> selectedSwitchableStageIdsByStageKey;
 }
 
 class BuiltOrderStage {
@@ -133,7 +137,10 @@ class BuiltOrderStage {
   }
 
   Map<String, dynamic> toMap() {
-    final selectedId = workplaceIds.isNotEmpty ? workplaceIds.first : stageKey;
+    final selectedId = (selectedWorkplaceId != null &&
+            workplaceIds.contains(selectedWorkplaceId))
+        ? selectedWorkplaceId!
+        : (workplaceIds.isNotEmpty ? workplaceIds.first : stageKey);
     final alternativeIds = workplaceIds
         .where((id) => id.trim().isNotEmpty && id != selectedId)
         .toList();
@@ -170,9 +177,16 @@ List<Map<String, dynamic>> buildOrderStageQueue({
   double? materialWidth,
   String? switchableStageKey,
   String? selectedSwitchableStageId,
+  Map<String, String> selectedSwitchableStageIdsByStageKey =
+      const <String, String>{},
   List<Map<String, dynamic>> existingStages = const [],
   List<Map<String, dynamic>> templateStages = const [],
 }) {
+  final selectedByStageKey = <String, String>{
+    ..._selectedSwitchableStageIdsByStageKey(templateStages),
+    ..._selectedSwitchableStageIdsByStageKey(existingStages),
+    ...selectedSwitchableStageIdsByStageKey,
+  };
   final selectedFromSource = selectedSwitchableStageId ??
       _selectedSwitchableStageId(existingStages) ??
       _selectedSwitchableStageId(templateStages);
@@ -186,6 +200,7 @@ List<Map<String, dynamic>> buildOrderStageQueue({
     handleType: handleType,
     switchableStageKey: switchableStageKey,
     selectedSwitchableStageId: selectedFromSource,
+    selectedSwitchableStageIdsByStageKey: selectedByStageKey,
   );
   return buildOrderStages(draft).map((stage) => stage.toMap()).toList();
 }
@@ -228,7 +243,7 @@ class _OrderStageQueueBuilder {
     }
     if (_isVTypeProduct(productTypeId)) {
       _add(_switchableStage(
-        stageKey: kSwitchableVGroupKey,
+        stageKey: kVMainSwitchStageKey,
         stageName: _vSwitchableName,
         workplaceIds: const [kFriStageId, kWindowStageId],
         groupKey: kSwitchableVGroupKey,
@@ -262,7 +277,7 @@ class _OrderStageQueueBuilder {
     }
     if (_isPTypePackageProduct(productTypeId)) {
       _add(_switchableStage(
-        stageKey: kSwitchablePGroupKey,
+        stageKey: kPMainSwitchStageKey,
         stageName: _pSwitchableName,
         workplaceIds: const [kAutoBigStageId, kAutoSmallStageId, kTubeStageId],
         groupKey: kSwitchablePGroupKey,
@@ -302,11 +317,17 @@ class _OrderStageQueueBuilder {
     }
   }
 
-  String get _vSwitchableName =>
-      _selectedName(_selectedForGroup(kSwitchableVGroupKey, kFriStageId));
+  String get _vSwitchableName => _selectedName(_selectedForSwitchable(
+        stageKey: kVMainSwitchStageKey,
+        groupKey: kSwitchableVGroupKey,
+        fallback: kFriStageId,
+      ));
 
-  String get _pSwitchableName =>
-      _selectedName(_selectedForGroup(kSwitchablePGroupKey, kAutoBigStageId));
+  String get _pSwitchableName => _selectedName(_selectedForSwitchable(
+        stageKey: kPMainSwitchStageKey,
+        groupKey: kSwitchablePGroupKey,
+        fallback: kAutoBigStageId,
+      ));
 
   BuiltOrderStage _stage(
     String stageKey,
@@ -329,7 +350,11 @@ class _OrderStageQueueBuilder {
     required String groupKey,
     required String fallbackSelectedId,
   }) {
-    final selected = _selectedForGroup(groupKey, fallbackSelectedId);
+    final selected = _selectedForSwitchable(
+      stageKey: stageKey,
+      groupKey: groupKey,
+      fallback: fallbackSelectedId,
+    );
     return BuiltOrderStage(
       stageKey: stageKey,
       stageName: stageName,
@@ -340,10 +365,22 @@ class _OrderStageQueueBuilder {
     );
   }
 
-  String _selectedForGroup(String groupKey, String fallback) {
+  String _selectedForSwitchable({
+    required String stageKey,
+    required String groupKey,
+    required String fallback,
+  }) {
+    final selectedByStageKey =
+        draft.selectedSwitchableStageIdsByStageKey[stageKey];
+    if (selectedByStageKey != null &&
+        _switchableIdsByStageKey[stageKey]!.contains(selectedByStageKey)) {
+      return selectedByStageKey;
+    }
+
     final selected = draft.selectedSwitchableStageId;
     if (draft.switchableStageKey != null &&
-        draft.switchableStageKey != groupKey) {
+        draft.switchableStageKey != groupKey &&
+        draft.switchableStageKey != stageKey) {
       return fallback;
     }
     if (selected != null &&
@@ -379,6 +416,16 @@ class _OrderStageQueueBuilder {
     ];
   }
 }
+
+const Map<String, Set<String>> _switchableIdsByStageKey = {
+  kVMainSwitchStageKey: {kFriStageId, kWindowStageId},
+  kPMainSwitchStageKey: {kAutoBigStageId, kAutoSmallStageId, kTubeStageId},
+};
+
+const Map<String, String> _switchableGroupKeyByStageKey = {
+  kVMainSwitchStageKey: kSwitchableVGroupKey,
+  kPMainSwitchStageKey: kSwitchablePGroupKey,
+};
 
 const Map<String, Set<String>> _switchableIdsByGroup = {
   kSwitchableVGroupKey: {kFriStageId, kWindowStageId},
@@ -438,6 +485,69 @@ String _selectedName(String stageId) {
     default:
       return '';
   }
+}
+
+Map<String, String> collectSwitchableStageSelectionsByStageKey(
+  List<Map<String, dynamic>> stages,
+) =>
+    _selectedSwitchableStageIdsByStageKey(stages);
+
+Map<String, String> _selectedSwitchableStageIdsByStageKey(
+  List<Map<String, dynamic>> stages,
+) {
+  final selections = <String, String>{};
+  for (final stage in stages) {
+    final rawStageKey = (stage['stageKey'] ?? stage['stage_key'])?.toString();
+    final rawGroupKey = stage['switchableGroupKey']?.toString();
+    final selectedId = _selectedSwitchableIdFromStage(stage);
+    if (selectedId == null) continue;
+    final stageKey = _normalizeSwitchableStageKey(rawStageKey, rawGroupKey) ??
+        _switchableStageKeyForWorkplaceId(selectedId);
+    if (stageKey == null) continue;
+    if (_switchableIdsByStageKey[stageKey]!.contains(selectedId)) {
+      selections[stageKey] = selectedId;
+    }
+  }
+  return selections;
+}
+
+String? _normalizeSwitchableStageKey(String? stageKey, String? groupKey) {
+  if (stageKey != null && _switchableIdsByStageKey.containsKey(stageKey)) {
+    return stageKey;
+  }
+  if (stageKey == kSwitchableVGroupKey || groupKey == kSwitchableVGroupKey) {
+    return kVMainSwitchStageKey;
+  }
+  if (stageKey == kSwitchablePGroupKey || groupKey == kSwitchablePGroupKey) {
+    return kPMainSwitchStageKey;
+  }
+  return null;
+}
+
+String? _switchableStageKeyForWorkplaceId(String workplaceId) {
+  for (final entry in _switchableIdsByStageKey.entries) {
+    if (entry.value.contains(workplaceId)) return entry.key;
+  }
+  return null;
+}
+
+String? _selectedSwitchableIdFromStage(Map<String, dynamic> stage) {
+  final id = (stage['selectedWorkplaceId'] ??
+          stage['stageId'] ??
+          stage['stage_id'] ??
+          stage['stageid'] ??
+          stage['workplaceId'] ??
+          stage['workplace_id'] ??
+          stage['id'])
+      ?.toString();
+  if (id == null || id.isEmpty) return null;
+  if (id == kVMainSwitchStageKey ||
+      id == kPMainSwitchStageKey ||
+      id == kSwitchableVGroupKey ||
+      id == kSwitchablePGroupKey) {
+    return null;
+  }
+  return id;
 }
 
 String? _selectedSwitchableStageId(List<Map<String, dynamic>> stages) {
@@ -511,4 +621,41 @@ String? toggleProductStage(String stageId) {
     default:
       return null;
   }
+}
+
+Map<String, dynamic>? toggleProductStageObject(Map<String, dynamic> stage) {
+  final currentId = _selectedSwitchableIdFromStage(stage);
+  if (currentId == null) return null;
+  final stageKey = _normalizeSwitchableStageKey(
+        (stage['stageKey'] ?? stage['stage_key'])?.toString(),
+        stage['switchableGroupKey']?.toString(),
+      ) ??
+      _switchableStageKeyForWorkplaceId(currentId);
+  if (stageKey == null) return null;
+  final toggledId = toggleProductStage(currentId);
+  if (toggledId == null ||
+      !_switchableIdsByStageKey[stageKey]!.contains(toggledId)) {
+    return null;
+  }
+
+  final updated = Map<String, dynamic>.from(stage);
+  final stageName = _selectedName(toggledId);
+  updated['stageKey'] = stageKey;
+  updated['stageId'] = toggledId;
+  updated['stage_id'] = toggledId;
+  updated['stageid'] = toggledId;
+  updated['id'] = toggledId;
+  updated['workplaceId'] = toggledId;
+  updated['workplace_id'] = toggledId;
+  updated['stageName'] = stageName;
+  updated['workplaceName'] = stageName;
+  updated['isSwitchable'] = true;
+  updated['switchableGroupKey'] = _switchableGroupKeyByStageKey[stageKey];
+  updated['selectedWorkplaceId'] = toggledId;
+  updated['workplaceIds'] =
+      List<String>.from(_switchableIdsByStageKey[stageKey]!);
+  updated['alternativeStageIds'] = _switchableIdsByStageKey[stageKey]!
+      .where((id) => id != toggledId)
+      .toList(growable: false);
+  return updated;
 }
