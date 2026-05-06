@@ -273,6 +273,7 @@ class TaskModel {
         'orderId': orderId,
         'stageId': stageId,
         'stageGroupKey': stageGroupKey,
+        'queueStageKey': stageGroupKey,
         if (capturedByWorkplaceId != null)
           'capturedByWorkplaceId': capturedByWorkplaceId,
         if (capturedByUserId != null) 'capturedByUserId': capturedByUserId,
@@ -340,6 +341,8 @@ class TaskModel {
   final stageGroupKey = _normalizeId(pick([
     'stageGroupKey',
     'stage_group_key',
+    'queueStageKey',
+    'queue_stage_key',
   ]));
   final capturedByWorkplaceId = _normalizeId(
     pick(['capturedByWorkplaceId', 'captured_by_workplace_id']),

@@ -1695,8 +1695,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<Map<String, dynamic>> _templateStageMaps(TemplateModel template) {
     return template.stages
         .map((s) => {
-              'stageId': s.stageId,
-              'workplaceId': s.stageId,
+              'stageId': s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
+              'workplaceId':
+                  s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
+              'workplaceIds': List<String>.from(s.allStageIds),
               'stageName': s.stageName,
               'workplaceName': s.stageName,
               if (s.alternativeStageIds.isNotEmpty)
@@ -3166,6 +3168,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           legacyStageLookup.containsValue(stageId);
     }
 
+    Iterable<dynamic> _collectIdsFrom(dynamic candidate) sync* {
+      if (candidate is List) {
+        for (final value in candidate) {
+          yield value;
+        }
+        return;
+      }
+      if (candidate is String) {
+        for (final token in candidate.split(',')) {
+          yield token;
+        }
+      }
+    }
+
+    Iterable<dynamic> _collectWorkplaceIds(Map<String, dynamic> sm) sync* {
+      yield* _collectIdsFrom(sm['workplaceIds']);
+      yield* _collectIdsFrom(sm['workplace_ids']);
+    }
+
     Iterable<dynamic> _collectAlternativeIds(Map<String, dynamic> sm) sync* {
       final candidates = <dynamic>[
         sm['alternativeStageIds'],
@@ -3176,17 +3197,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         sm['stage_ids'],
       ];
       for (final candidate in candidates) {
-        if (candidate is List) {
-          for (final value in candidate) {
-            yield value;
-          }
-          continue;
-        }
-        if (candidate is String) {
-          for (final token in candidate.split(',')) {
-            yield token;
-          }
-        }
+        yield* _collectIdsFrom(candidate);
       }
     }
 
@@ -3201,7 +3212,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
 
-      addCandidate(_resolveStageId(sm));
+      final workplaceCandidates = _collectWorkplaceIds(sm).toList();
+      if (workplaceCandidates.isNotEmpty) {
+        for (final raw in workplaceCandidates) {
+          addCandidate(raw);
+        }
+      } else {
+        addCandidate(_resolveStageId(sm));
+      }
 
       for (final probe in <dynamic>[
         sm['stageName'],
@@ -3274,6 +3292,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           await _sb.from('prod_plan_stages').insert({
             'plan_id': planId,
             'stage_id': resolvedStageId,
+            'stage_group_key': groupKey,
             'step': step,
             'status': 'waiting',
           });

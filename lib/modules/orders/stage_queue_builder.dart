@@ -41,14 +41,24 @@ const String kCardboardStageId = cardboardStageId;
 const String kFlatHandleStageId = flatHandleStageId;
 const String kTwistedHandleStageId = twistedHandleStageId;
 
+const String kDieCutA1WorkplaceId = '7c168998-76b8-4a4c-9708-af45c2dbd4f0';
+const String kDieCutA2WorkplaceId = '5a47821b-c276-4deb-90de-f196539fc95d';
+const String kBottomGlueWorkplaceId = 'dee83c5c-4624-4ca4-b36c-47673dc5cd72';
+const String kBottomGlueAltWorkplaceId = 'ad504db5-86c3-4284-8266-42bbf967b064';
+const String kBottomGlueSecondAltWorkplaceId = '96075b60-77d8-4fb2-91b0-bfbe6c1ed13c';
+const String kTwistedHandleWorkplaceId = 'c51ebb2e-dac8-4068-9e4c-ce0d8b975626';
+const String kSharedHandleWorkplaceId = 'c25acbfa-390a-4e87-84aa-536055e013f4';
+const String kFlatHandleWorkplaceId = '6ffdf2d9-3f57-45ca-9fad-dd700ac5c320';
+
 // The following technological stage keys are intentionally distinct even when
 // a customer installation maps several of them to the same physical workplace.
-const String kDieCutA1StageId = 'die_cut_a1';
-const String kDieCutA2StageId = 'die_cut_a2';
+const String kDieCutA1A2StageId = 'die_cut_a1_a2';
 const String kScotchStageId = 'scotch';
 const String kFromTwoSheetsStageId = 'from_two_sheets';
 const String kTubeAssemblyStageId = 'tube_assembly';
-const String kBottomGlueStageId = 'bottom_glue';
+const String kBottomGlueStageId = 'bottom_glue_group';
+const String kTwistedHandleGroupStageId = 'twisted_handle_group';
+const String kFlatHandleGroupStageId = 'flat_handle_group';
 
 const String kSwitchableVGroupKey = 'v_bottom_stage';
 const String kSwitchablePGroupKey = 'p_package_stage';
@@ -121,14 +131,17 @@ class BuiltOrderStage {
   }
 
   Map<String, dynamic> toMap() {
-    final selectedId = selectedWorkplaceId ??
-        (workplaceIds.isNotEmpty ? workplaceIds.first : stageKey);
+    final selectedId = workplaceIds.isNotEmpty ? workplaceIds.first : stageKey;
+    final alternativeIds = workplaceIds
+        .where((id) => id.trim().isNotEmpty && id != selectedId)
+        .toList();
     return {
       'stageKey': stageKey,
       'stageId': selectedId,
       'id': selectedId,
       'workplaceId': selectedId,
       'workplaceIds': List<String>.from(workplaceIds),
+      if (alternativeIds.isNotEmpty) 'alternativeStageIds': alternativeIds,
       'stageName': stageName,
       'workplaceName': stageName,
       'sortOrder': sortOrder,
@@ -225,20 +238,23 @@ class _OrderStageQueueBuilder {
       _add(_stage(kSheetCutStageId, 'Листорезка'));
       _add(_stage(kCuttingStageId, 'Резка'));
       _add(_stage(
-        'die_cut_a1',
-        'Высечка A1',
-        workplaceIds: const [kDieCutA1StageId],
-      ));
-      _add(_stage(
-        'die_cut_a2',
-        'Высечка A2',
-        workplaceIds: const [kDieCutA2StageId],
+        kDieCutA1A2StageId,
+        'Высечка A1/A2',
+        workplaceIds: const [kDieCutA1WorkplaceId, kDieCutA2WorkplaceId],
       ));
       _add(_stage(kScotchStageId, 'Скотч'));
       _add(_stage(kFromTwoSheetsStageId, 'С 2х листов'));
       _add(_stage(kTubeAssemblyStageId, 'Сборка трубы'));
       _appendCardboardStages();
-      _add(_stage(kBottomGlueStageId, 'Склейка дна'));
+      _add(_stage(
+        kBottomGlueStageId,
+        'Склейка дна',
+        workplaceIds: const [
+          kBottomGlueWorkplaceId,
+          kBottomGlueAltWorkplaceId,
+          kBottomGlueSecondAltWorkplaceId,
+        ],
+      ));
       _appendHandleStage();
       return;
     }
@@ -262,9 +278,17 @@ class _OrderStageQueueBuilder {
   void _appendHandleStage() {
     final type = draft.handleType;
     if (type == OrderHandleType.flat) {
-      _add(_stage(kFlatHandleStageId, 'Плоская ручка'));
+      _add(_stage(
+        kFlatHandleGroupStageId,
+        'Плоская ручка',
+        workplaceIds: const [kFlatHandleWorkplaceId, kSharedHandleWorkplaceId],
+      ));
     } else if (type == OrderHandleType.twisted) {
-      _add(_stage(kTwistedHandleStageId, 'Кручёная ручка'));
+      _add(_stage(
+        kTwistedHandleGroupStageId,
+        'Кручёная ручка',
+        workplaceIds: const [kTwistedHandleWorkplaceId, kSharedHandleWorkplaceId],
+      ));
     }
   }
 

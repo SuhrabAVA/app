@@ -2054,20 +2054,37 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         }
 
-        final primary = _resolveStageId(
-          sm['stageId'] ??
-              sm['stageid'] ??
-              sm['stage_id'] ??
-              sm['workplaceId'] ??
-              sm['workplace_id'] ??
-              sm['id'] ??
-              sm['stageName'] ??
-              sm['stage_name'] ??
-              sm['workplaceName'] ??
-              sm['workplace_name'],
-        );
-        if (primary != null && primary.isNotEmpty) {
-          ids.add(primary);
+        void addList(dynamic raw) {
+          if (raw is List) {
+            for (final entry in raw) {
+              final id = _resolveStageId(entry);
+              if (id != null && id.isNotEmpty) ids.add(id);
+              addComposite(entry);
+            }
+          } else if (raw is String) {
+            addComposite(raw);
+          }
+        }
+
+        addList(sm['workplaceIds']);
+        addList(sm['workplace_ids']);
+
+        if (ids.isEmpty) {
+          final primary = _resolveStageId(
+            sm['stageId'] ??
+                sm['stageid'] ??
+                sm['stage_id'] ??
+                sm['workplaceId'] ??
+                sm['workplace_id'] ??
+                sm['id'] ??
+                sm['stageName'] ??
+                sm['stage_name'] ??
+                sm['workplaceName'] ??
+                sm['workplace_name'],
+          );
+          if (primary != null && primary.isNotEmpty) {
+            ids.add(primary);
+          }
         }
 
         addComposite(sm['stageName']);
@@ -2077,14 +2094,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         addComposite(sm['title']);
         addComposite(sm['name']);
 
-        final rawAlt = sm['alternativeStageIds'] ?? sm['alternative_stage_ids'];
-        if (rawAlt is List) {
-          for (final entry in rawAlt) {
-            final id = _resolveStageId(entry);
-            if (id != null && id.isNotEmpty) ids.add(id);
-            addComposite(entry);
-          }
-        }
+        addList(sm['alternativeStageIds'] ?? sm['alternative_stage_ids']);
 
         final rawAltNames =
             sm['alternativeStageNames'] ?? sm['alternative_stage_names'];
@@ -2131,6 +2141,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final createdStageIds = <String>{};
       for (final sm in stageMaps) {
         final stageIds = _extractStageIds(sm);
+        final resolvedStageIds = stageIds
+            .map((stageId) => workplaceLookup[stageId.toLowerCase()] ??
+                legacyStageLookup[stageId.toLowerCase()] ??
+                stageId)
+            .where((stageId) => stageId.trim().isNotEmpty)
+            .toList();
+        final canonical = List<String>.from(resolvedStageIds)..sort();
+        final stageGroupKey = canonical.join('|');
         for (final stageId in stageIds) {
           if (stageId.isEmpty) continue;
           try {
@@ -2151,6 +2169,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             await _sb.from('tasks').insert({
               'order_id': createdOrUpdatedOrder.id,
               'stage_id': resolvedStageId,
+              'stage_group_key': stageGroupKey.isEmpty ? resolvedStageId : stageGroupKey,
               'status': 'waiting',
               'assignees': [],
               'comments': [],
@@ -2189,17 +2208,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           // Rebuild plan stages
           await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
           int step = 1;
+          String? previousGroupKey;
           for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step,
-              'step_no': step,
-              'status': 'waiting',
-            });
+            final stageIds = _extractStageIds(sm);
+            if (stageIds.isEmpty) continue;
+            final resolvedStageIds = stageIds
+                .map((stageId) => workplaceLookup[stageId.toLowerCase()] ??
+                    legacyStageLookup[stageId.toLowerCase()] ??
+                    stageId)
+                .where((stageId) => stageId.trim().isNotEmpty)
+                .toList();
+            final canonical = List<String>.from(resolvedStageIds)..sort();
+            final groupKey = canonical.join('|');
+            if (groupKey.isNotEmpty && groupKey == previousGroupKey) continue;
+            previousGroupKey = groupKey;
+            for (final stageId in resolvedStageIds) {
+              await _sb.from('prod_plan_stages').insert({
+                'plan_id': planId,
+                'stage_id': stageId,
+                'stage_group_key': groupKey,
+                'step': step,
+                'step_no': step,
+                'status': 'waiting',
+              });
+            }
             step++;
           }
           // Mark bobbin as done here as well

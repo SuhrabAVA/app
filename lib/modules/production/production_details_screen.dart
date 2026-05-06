@@ -68,9 +68,16 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
   List<String> _plannedStageIds(pcompat.PlannedStage planned) {
     final ids = <String>{};
-    final primary = planned.stageId.trim();
-    if (primary.isNotEmpty) ids.add(primary);
     final extra = planned.extra;
+    final workplaceIds = _decodeStringList(
+      extra['workplaceIds'] ?? extra['workplace_ids'],
+    );
+    if (workplaceIds.isNotEmpty) {
+      ids.addAll(workplaceIds.where((id) => id.trim().isNotEmpty));
+    } else {
+      final primary = planned.stageId.trim();
+      if (primary.isNotEmpty) ids.add(primary);
+    }
     final altIds = _decodeStringList(
       extra['alternativeStageIds'] ?? extra['alternative_stage_ids'],
     );
@@ -268,7 +275,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
           final String planId = plan['id'] as String;
           final rows = await sb
               .from('prod_plan_stages')
-              .select('stage_id, stage_name, workplace_name, name, step, step_no, seq')
+              .select('stage_id, stage_name, workplace_name, name, step, step_no, seq, stage_group_key')
               .eq('plan_id', planId);
 
           if (rows is List && rows.isNotEmpty) {
@@ -277,15 +284,31 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                 .map((r) => Map<String, dynamic>.from(r))
                 .toList()
               ..sort((a, b) => _readStageOrder(a).compareTo(_readStageOrder(b)));
+            final groupedRows = <String, List<Map<String, dynamic>>>{};
             for (final m in normalizedRows) {
-              final id =
-                  (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString();
-              final name =
-                  (m['stage_name'] ?? m['workplace_name'] ?? m['name'] ?? 'Этап')
-                      .toString();
-              if (id.isNotEmpty) {
-                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
-              }
+              final orderKey = _readStageOrder(m).toString().padLeft(6, '0');
+              final groupKey = (m['stage_group_key'] ?? '').toString().trim();
+              final fallbackId = (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString();
+              final key = '$orderKey::${groupKey.isNotEmpty ? groupKey : fallbackId}';
+              groupedRows.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(m);
+            }
+            for (final rows in groupedRows.values) {
+              final ids = rows
+                  .map((m) => (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString())
+                  .where((id) => id.trim().isNotEmpty)
+                  .toList();
+              if (ids.isEmpty) continue;
+              final first = rows.first;
+              final name = (first['stage_name'] ??
+                      first['workplace_name'] ??
+                      first['name'] ??
+                      'Этап')
+                  .toString();
+              stages.add(pcompat.PlannedStage(
+                stageId: ids.first,
+                stageName: name,
+                extra: {'workplaceIds': ids},
+              ));
             }
           }
         }
