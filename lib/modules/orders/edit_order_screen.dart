@@ -80,6 +80,15 @@ const Set<String> _legacyBobbinAliases = {
   'w_bobiner',
   'w_bobbin',
 };
+const Set<String> _cardboardUnsupportedProductTypeIds = {
+  kSheetProductTypeId,
+  ...kVTypeProducts,
+};
+
+bool _supportsCardboard(String productTypeId) {
+  return !_cardboardUnsupportedProductTypeIds
+      .contains(productTypeId.trim().toLowerCase());
+}
 
 class _StageRuleOutcome {
   final List<Map<String, dynamic>> stages;
@@ -735,6 +744,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _depthController = TextEditingController(
       text: _product.depth > 0 ? _formatDecimal(_product.depth) : '',
     );
+    if (!_supportsCardboard(_product.type)) {
+      _cardboardChecked = false;
+      _selectedCardboard = 'нет';
+    }
     _stockExtraSelectedQty =
         (_product.leftover != null && _product.leftover! > 0)
             ? _product.leftover
@@ -5316,8 +5329,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .map((t) => DropdownMenuItem(value: t, child: Text(t)))
               .toList(),
           onChanged: (val) {
+            var shouldUpdateStagePreview = false;
             setState(() {
               _product.type = val ?? '';
+              if (!_supportsCardboard(_product.type)) {
+                _cardboardChecked = false;
+                _selectedCardboard = 'нет';
+                shouldUpdateStagePreview = true;
+              }
               _selectedStockExtraRow = null;
               _stockExtraResults = [];
               _stockExtra = null;
@@ -5325,6 +5344,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               _stockExtraQtyTouched = false;
               _product.leftover = null;
             });
+            if (shouldUpdateStagePreview) {
+              _scheduleStagePreviewUpdate(immediate: true);
+            }
             _stockExtraSearchDebounce?.cancel();
             _stockExtraSearchController.clear();
             _updateStockExtraQtyController();
@@ -5502,6 +5524,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
             ];
 
+            final supportsCardboard = _supportsCardboard(_product.type);
             final extras = Wrap(
               // Reduce spacing to shrink the area used by the checkboxes.
               spacing: 6,
@@ -5509,11 +5532,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               children: [
                 _buildCompactCheckboxTile(
                   value: _cardboardChecked,
-                  onChanged: (val) => setState(() {
-                    _cardboardChecked = val ?? false;
-                    _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
-                    _scheduleStagePreviewUpdate(immediate: true);
-                  }),
+                  onChanged: supportsCardboard
+                      ? (val) => setState(() {
+                            _cardboardChecked = val ?? false;
+                            _selectedCardboard =
+                                _cardboardChecked ? 'есть' : 'нет';
+                            _scheduleStagePreviewUpdate(immediate: true);
+                          })
+                      : null,
                   label: 'Картон',
                   width: 100,
                 ),
@@ -5661,7 +5687,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Widget _buildCompactCheckboxTile({
     required bool value,
-    required ValueChanged<bool?> onChanged,
+    required ValueChanged<bool?>? onChanged,
     required String label,
     double? width,
   }) {
@@ -5669,7 +5695,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     final tile = InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: () => onChanged(!value),
+      onTap: onChanged == null ? null : () => onChanged(!value),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1),
         child: Row(
