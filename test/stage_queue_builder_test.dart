@@ -77,7 +77,72 @@ void main() {
     );
   });
 
-  test('builds two-sheet package route for product UUID', () {
+  test(
+    'builds two-sheet package route with trimming, cardboard and flat handle',
+    () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kTwoSheetPackageProductTypeId,
+        orderWidthB: 300,
+        materialWidth: 600,
+        hasPaint: true,
+        hasTrimming: true,
+        hasCardboard: true,
+        handleType: OrderHandleType.flat,
+      ),
+    );
+
+    final dieCutStage = result.singleWhere(
+      (stage) => stage.stageKey == kDieCutA1A2StageId,
+    );
+    final bottomGlueStage = result.singleWhere(
+      (stage) => stage.stageKey == kBottomGlueStageId,
+    );
+    final flatHandleStage = result.singleWhere(
+      (stage) => stage.stageKey == kFlatHandleGroupStageId,
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kBobbinStageId,
+        kFlexPrintingStageId,
+        kSheetCutStageId,
+        kCuttingStageId,
+        kDieCutA1A2StageId,
+        kScotchStageId,
+        kFromTwoSheetsStageId,
+        kTubeAssemblyStageId,
+        kCardboardCuttingStageId,
+        kBottomWithCardboardAssemblyStageId,
+        kBottomGlueStageId,
+        kFlatHandleGroupStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kCardboardInsertStageId)),
+    );
+    expect(dieCutStage.workplaceIds, [
+      kDieCutA1WorkplaceId,
+      kDieCutA2WorkplaceId,
+    ]);
+    expect(bottomGlueStage.workplaceIds, [
+      kBottomGlueWorkplaceId,
+      kBottomGlueAltWorkplaceId,
+      kBottomGlueSecondAltWorkplaceId,
+    ]);
+    expect(flatHandleStage.workplaceIds, [
+      kFlatHandleStageId,
+      kManualHandleStageId,
+    ]);
+    expect(result.last.stageKey, kPackagingStageId);
+  });
+
+  test(
+    'builds two-sheet package route without trimming or cardboard and with twisted handle',
+    () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(
         productTypeId: kTwoSheetPackageProductTypeId,
@@ -85,13 +150,58 @@ void main() {
         materialWidth: 600,
         hasPaint: false,
         hasTrimming: false,
-        hasCardboard: true,
-        handleType: OrderHandleType.flat,
+        hasCardboard: false,
+        handleType: OrderHandleType.twisted,
       ),
     );
 
-    final flatHandleStage = result.singleWhere(
-      (stage) => stage.stageKey == kFlatHandleGroupStageId,
+    final twistedHandleStage = result.singleWhere(
+      (stage) => stage.stageKey == kTwistedHandleGroupStageId,
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kSheetCutStageId,
+        kDieCutA1A2StageId,
+        kScotchStageId,
+        kFromTwoSheetsStageId,
+        kTubeAssemblyStageId,
+        kBottomWithCardboardAssemblyStageId,
+        kBottomGlueStageId,
+        kTwistedHandleGroupStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kCuttingStageId)),
+    );
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kCardboardCuttingStageId)),
+    );
+    expect(twistedHandleStage.workplaceIds, [
+      kTwistedHandleStageId,
+      kManualHandleStageId,
+    ]);
+  });
+
+  test('builds two-sheet package route with die cut handle', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kTwoSheetPackageProductTypeId,
+        orderWidthB: 600,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: true,
+        hasCardboard: false,
+        handleType: OrderHandleType.dieCut,
+      ),
+    );
+
+    final handleStage = result.singleWhere(
+      (stage) => stage.stageKey == kDieCutHandleStageId,
     );
 
     expect(
@@ -103,30 +213,14 @@ void main() {
         kScotchStageId,
         kFromTwoSheetsStageId,
         kTubeAssemblyStageId,
-        kCardboardCuttingStageId,
-        kCardboardInsertStageId,
         kBottomWithCardboardAssemblyStageId,
         kBottomGlueStageId,
-        kFlatHandleGroupStageId,
+        kDieCutHandleStageId,
         kPackagingStageId,
       ],
     );
-    expect(
-      result.map((stage) => stage.stageName),
-      containsAll([
-        'С 2х листов',
-        'Сборка трубы',
-        'Резка картона',
-        'Вставка картона',
-        'Сборка дно+картон',
-        'Склейка дна',
-      ]),
-    );
-    expect(flatHandleStage.workplaceIds, [
-      kFlatHandleStageId,
-      kManualHandleStageId,
-    ]);
-    expect(result.last.stageKey, kPackagingStageId);
+    expect(handleStage.stageName, 'Вырубка');
+    expect(handleStage.workplaceIds, [kDieCutHandleStageId]);
   });
 
   test('builds twisted handle as one multi-workplace stage', () {

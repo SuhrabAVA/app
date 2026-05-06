@@ -51,7 +51,8 @@ const String kDieCutA1WorkplaceId = '7c168998-76b8-4a4c-9708-af45c2dbd4f0';
 const String kDieCutA2WorkplaceId = '5a47821b-c276-4deb-90de-f196539fc95d';
 const String kBottomGlueWorkplaceId = 'dee83c5c-4624-4ca4-b36c-47673dc5cd72';
 const String kBottomGlueAltWorkplaceId = 'ad504db5-86c3-4284-8266-42bbf967b064';
-const String kBottomGlueSecondAltWorkplaceId = '96075b60-77d8-4fb2-91b0-bfbe6c1ed13c';
+const String kBottomGlueSecondAltWorkplaceId =
+    '96075b60-77d8-4fb2-91b0-bfbe6c1ed13c';
 const String kTwistedHandleWorkplaceId = 'c51ebb2e-dac8-4068-9e4c-ce0d8b975626';
 const String kSharedHandleWorkplaceId = kManualHandleStageId;
 const String kFlatHandleWorkplaceId = kFlatHandleStageId;
@@ -256,27 +257,7 @@ class _OrderStageQueueBuilder {
       return;
     }
     if (_isTwoSheetPackageProduct(productTypeId)) {
-      _add(_stage(kSheetCutStageId, 'Листорезка'));
-      _add(_stage(kCuttingStageId, 'Резка'));
-      _add(_stage(
-        kDieCutA1A2StageId,
-        'Высечка A1/A2',
-        workplaceIds: const [kDieCutA1WorkplaceId, kDieCutA2WorkplaceId],
-      ));
-      _add(_stage(kScotchStageId, 'Скотч'));
-      _add(_stage(kFromTwoSheetsStageId, 'С 2х листов'));
-      _add(_stage(kTubeAssemblyStageId, 'Сборка трубы'));
-      _appendCardboardStages();
-      _add(_stage(
-        kBottomGlueStageId,
-        'Склейка дна',
-        workplaceIds: const [
-          kBottomGlueWorkplaceId,
-          kBottomGlueAltWorkplaceId,
-          kBottomGlueSecondAltWorkplaceId,
-        ],
-      ));
-      _appendHandleStage();
+      _appendTwoSheetPackageStages();
       return;
     }
     if (_isPTypePackageProduct(productTypeId)) {
@@ -290,6 +271,36 @@ class _OrderStageQueueBuilder {
       _appendCardboardStages();
       _appendHandleStage();
     }
+  }
+
+  void _appendTwoSheetPackageStages() {
+    _add(_stage(kSheetCutStageId, 'Листорезка'));
+    if (draft.hasTrimming) _add(_stage(kCuttingStageId, 'Резка'));
+    _add(_stage(
+      kDieCutA1A2StageId,
+      'Высечка A1/A2',
+      workplaceIds: const [kDieCutA1WorkplaceId, kDieCutA2WorkplaceId],
+    ));
+    _add(_stage(kScotchStageId, 'Скотч'));
+    _add(_stage(kFromTwoSheetsStageId, 'С 2х листов'));
+    _add(_stage(kTubeAssemblyStageId, 'Сборка трубы'));
+    if (draft.hasCardboard) {
+      _add(_stage(kCardboardCuttingStageId, 'Резка картона'));
+    }
+    _add(_stage(
+      kBottomWithCardboardAssemblyStageId,
+      'Сборка дно+картон',
+    ));
+    _add(_stage(
+      kBottomGlueStageId,
+      'Склейка дна',
+      workplaceIds: const [
+        kBottomGlueWorkplaceId,
+        kBottomGlueAltWorkplaceId,
+        kBottomGlueSecondAltWorkplaceId,
+      ],
+    ));
+    _appendHandleStage();
   }
 
   void _appendCardboardStages() {
