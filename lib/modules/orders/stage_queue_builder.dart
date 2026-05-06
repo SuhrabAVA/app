@@ -3,10 +3,8 @@ import 'material_model.dart';
 
 // Product type IDs from the production routing specification.
 const String kSheetProductTypeId = 'aab3ed17-1688-43f0-b623-58dac264941f';
-const String kSheetProductTypeAltId = 'b07cd977-939c-4d4f-b68c-8d163341460e';
 const Set<String> kSheetProducts = {
   kSheetProductTypeId,
-  kSheetProductTypeAltId,
 };
 
 const String kVTypeProductId = '448b731a-eafe-40f1-9268-bc5dd6ba57bc';
@@ -20,7 +18,8 @@ const Set<String> kVTypeProducts = {
   kVTypeProductAlt3Id,
 };
 
-const String kTwoSheetPackageProductTypeId = 'package_two_sheets';
+const String kTwoSheetPackageProductTypeId =
+    'b07cd977-939c-4d4f-b68c-8d163341460e';
 const Set<String> kTwoSheetPackageProducts = {kTwoSheetPackageProductTypeId};
 
 const String kPTypePackageProduct = '71c889cb-b24c-4bda-9a69-ae312f9a4bbd';
