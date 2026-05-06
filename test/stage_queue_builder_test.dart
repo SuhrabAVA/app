@@ -294,6 +294,149 @@ void main() {
     expect(handleStage.workplaceIds, [kDieCutHandleStageId]);
   });
 
+  test('builds p-package route for selected big automatic workplace', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kPTypePackageProduct,
+        orderWidthB: 600,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: true,
+        hasCardboard: true,
+        handleType: OrderHandleType.flat,
+        selectedSwitchableStageId: kAutoBigStageId,
+      ),
+    );
+
+    final switchStage = result.first;
+    final handleStage = result.singleWhere(
+      (stage) => stage.stageKey == kFlatHandleGroupStageId,
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kPMainSwitchStageKey,
+        kCuttingStageId,
+        kCardboardCuttingStageId,
+        kCardboardInsertStageId,
+        kFlatHandleGroupStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(switchStage.stageName, 'Автомат большой');
+    expect(switchStage.selectedWorkplaceId, kAutoBigStageId);
+    expect(switchStage.workplaceIds, [
+      kAutoBigStageId,
+      kAutoSmallStageId,
+      kTubeStageId,
+    ]);
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kBottomWithCardboardAssemblyStageId)),
+    );
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kBottomGlueStageId)),
+    );
+    expect(handleStage.workplaceIds, [
+      kFlatHandleStageId,
+      kManualHandleStageId,
+    ]);
+  });
+
+  test('builds p-package route for selected small automatic workplace', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kPTypePackageProduct,
+        orderWidthB: 600,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: true,
+        hasCardboard: true,
+        handleType: OrderHandleType.twisted,
+        selectedSwitchableStageIdsByStageKey: {
+          kPMainSwitchStageKey: kAutoSmallStageId,
+        },
+      ),
+    );
+
+    final switchStage = result.first;
+    final handleStage = result.singleWhere(
+      (stage) => stage.stageKey == kTwistedHandleGroupStageId,
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kPMainSwitchStageKey,
+        kCuttingStageId,
+        kCardboardCuttingStageId,
+        kCardboardInsertStageId,
+        kTwistedHandleGroupStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(switchStage.stageName, 'Автомат маленький');
+    expect(switchStage.selectedWorkplaceId, kAutoSmallStageId);
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kBottomWithCardboardAssemblyStageId)),
+    );
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kBottomGlueStageId)),
+    );
+    expect(handleStage.workplaceIds, [
+      kTwistedHandleStageId,
+      kManualHandleStageId,
+    ]);
+  });
+
+  test('builds p-package route for selected tube workplace', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: kPTypePackageProduct,
+        orderWidthB: 600,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: true,
+        hasCardboard: true,
+        handleType: OrderHandleType.dieCut,
+        selectedSwitchableStageId: kTubeStageId,
+      ),
+    );
+
+    final switchStage = result.first;
+    final bottomGlueStage = result.singleWhere(
+      (stage) => stage.stageKey == kBottomGlueStageId,
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kPMainSwitchStageKey,
+        kCuttingStageId,
+        kCardboardCuttingStageId,
+        kBottomWithCardboardAssemblyStageId,
+        kBottomGlueStageId,
+        kDieCutHandleStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(switchStage.stageName, 'Труба');
+    expect(switchStage.selectedWorkplaceId, kTubeStageId);
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kCardboardInsertStageId)),
+    );
+    expect(bottomGlueStage.workplaceIds, [
+      kBottomGlueWorkplaceId,
+      kBottomGlueAltWorkplaceId,
+      kBottomGlueSecondAltWorkplaceId,
+    ]);
+  });
+
   test('builds switchable p-package stage with selected tube workplace', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(

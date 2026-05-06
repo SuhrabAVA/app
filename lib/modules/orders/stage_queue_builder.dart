@@ -262,16 +262,47 @@ class _OrderStageQueueBuilder {
       return;
     }
     if (_isPTypePackageProduct(productTypeId)) {
-      _add(_switchableStage(
-        stageKey: kPMainSwitchStageKey,
-        stageName: _pSwitchableName,
-        workplaceIds: const [kAutoBigStageId, kAutoSmallStageId, kTubeStageId],
-        groupKey: kSwitchablePGroupKey,
-        fallbackSelectedId: kAutoBigStageId,
-      ));
-      _appendCardboardStages();
-      _appendHandleStage();
+      _appendPTypePackageStages();
     }
+  }
+
+  void _appendPTypePackageStages() {
+    final selectedWorkplaceId = _selectedForSwitchable(
+      stageKey: kPMainSwitchStageKey,
+      groupKey: kSwitchablePGroupKey,
+      fallback: kAutoBigStageId,
+    );
+
+    _add(_switchableStage(
+      stageKey: kPMainSwitchStageKey,
+      stageName: _selectedName(selectedWorkplaceId),
+      workplaceIds: const [kAutoBigStageId, kAutoSmallStageId, kTubeStageId],
+      groupKey: kSwitchablePGroupKey,
+      fallbackSelectedId: kAutoBigStageId,
+    ));
+    if (draft.hasTrimming) _add(_stage(kCuttingStageId, 'Резка'));
+    if (draft.hasCardboard) {
+      _add(_stage(kCardboardCuttingStageId, 'Резка картона'));
+      if (selectedWorkplaceId == kAutoBigStageId ||
+          selectedWorkplaceId == kAutoSmallStageId) {
+        _add(_stage(kCardboardInsertStageId, 'Вставка картона'));
+      } else if (selectedWorkplaceId == kTubeStageId) {
+        _add(_stage(
+          kBottomWithCardboardAssemblyStageId,
+          'Сборка дно+картон',
+        ));
+        _add(_stage(
+          kBottomGlueStageId,
+          'Склейка дна',
+          workplaceIds: const [
+            kBottomGlueWorkplaceId,
+            kBottomGlueAltWorkplaceId,
+            kBottomGlueSecondAltWorkplaceId,
+          ],
+        ));
+      }
+    }
+    _appendHandleStage();
   }
 
   void _appendTwoSheetPackageStages() {
@@ -304,16 +335,6 @@ class _OrderStageQueueBuilder {
     _appendHandleStage();
   }
 
-  void _appendCardboardStages() {
-    if (!draft.hasCardboard) return;
-    _add(_stage(kCardboardCuttingStageId, 'Резка картона'));
-    _add(_stage(kCardboardInsertStageId, 'Вставка картона'));
-    _add(_stage(
-      kBottomWithCardboardAssemblyStageId,
-      'Сборка дно+картон',
-    ));
-  }
-
   void _appendHandleStage() {
     final type = draft.handleType;
     if (type == OrderHandleType.flat) {
@@ -343,12 +364,6 @@ class _OrderStageQueueBuilder {
         stageKey: kVMainSwitchStageKey,
         groupKey: kSwitchableVGroupKey,
         fallback: kFriStageId,
-      ));
-
-  String get _pSwitchableName => _selectedName(_selectedForSwitchable(
-        stageKey: kPMainSwitchStageKey,
-        groupKey: kSwitchablePGroupKey,
-        fallback: kAutoBigStageId,
       ));
 
   BuiltOrderStage _stage(
