@@ -90,6 +90,9 @@ bool _supportsCardboard(String productTypeId) {
       .contains(productTypeId.trim().toLowerCase());
 }
 
+bool supportsCardboardForTesting(String productTypeId) =>
+    _supportsCardboard(productTypeId);
+
 class _StageRuleOutcome {
   final List<Map<String, dynamic>> stages;
   final bool shouldCompleteBobbin;
@@ -5581,6 +5584,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               children: [
                 _buildCompactCheckboxTile(
                   value: _cardboardChecked,
+                  enabled: supportsCardboard,
                   onChanged: supportsCardboard
                       ? (val) => setState(() {
                             _cardboardChecked = val ?? false;
@@ -5738,13 +5742,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required bool value,
     required ValueChanged<bool?>? onChanged,
     required String label,
+    bool enabled = true,
     double? width,
   }) {
     final theme = Theme.of(context);
+    final effectiveOnChanged = enabled ? onChanged : null;
 
     final tile = InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: onChanged == null ? null : () => onChanged(!value),
+      onTap: effectiveOnChanged == null
+          ? null
+          : () => effectiveOnChanged(!value),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1),
         child: Row(
@@ -5755,7 +5763,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               alignment: Alignment.centerLeft,
               child: Checkbox(
                 value: value,
-                onChanged: onChanged,
+                onChanged: effectiveOnChanged,
                 visualDensity: VisualDensity.compact,
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
