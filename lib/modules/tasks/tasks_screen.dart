@@ -23,9 +23,12 @@ import '../warehouse/warehouse_provider.dart';
 import 'task_model.dart';
 import 'task_completion_rules.dart';
 import 'task_provider.dart';
+import 'stage_sequence_utils.dart' as stage_sequence;
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
 // Additional helpers for time formatting and aggregated timers
+const String kCardboardCuttingStageId =
+    stage_sequence.kCardboardCuttingStageId;
 
 class TasksScreen extends StatefulWidget {
   final String employeeId;
@@ -591,79 +594,17 @@ void _ensureBobbinBeforeFlexoByLabel(
 }
 
 /// Разрешить старт только для самого первого незавершённого этапа заказа
-typedef StageGroupingResolver = String Function(String orderId, String stageId);
+bool _canRunOutOfStageSequence(TaskModel task) =>
+    task.stageId.trim() == kCardboardCuttingStageId;
 
 bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     TaskModel task,
-    {StageGroupingResolver? groupResolver}) {
-  String _groupKey(String stageId) =>
-      groupResolver?.call(task.orderId, stageId) ?? stageId;
+    {stage_sequence.StageGroupingResolver? groupResolver}) {
+  if (_canRunOutOfStageSequence(task)) return true;
 
-  // Все задачи этого заказа
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return true;
 
-  // Сгруппировать по этапу; фиксируем и незавершённые, и уже завершённые
-  // альтернативы, чтобы не блокировать последующие этапы, когда одна из
-  // альтернатив завершена.
-  final stages = <String, Map<String, bool>>{}; // stageId -> {pending, completed, problem}
-  for (final t in all) {
-    final completed = _isEffectivelyCompleted(t);
-    final pending = !completed;
-    final problem = t.status == TaskStatus.problem ||
-        t.comments.any((c) => c.type == 'problem');
-    final key = _groupKey(t.stageId);
-    final current = stages[key] ??
-        {'pending': false, 'completed': false, 'problem': false};
-    stages[key] = {
-      'pending': current['pending'] == true || pending,
-      'completed': current['completed'] == true || completed,
-      'problem': current['problem'] == true || problem,
-    };
-  }
-
-  final orderedStages = tasks.stageSequenceForOrder(task.orderId) ?? const [];
-  if (orderedStages.isNotEmpty) {
-    final orderedKeys = <String>[];
-    for (final id in orderedStages) {
-      final k = _groupKey(id);
-      if (!orderedKeys.contains(k)) orderedKeys.add(k);
-    }
-    final indexMap = <String, int>{};
-    for (var i = 0; i < orderedKeys.length; i++) {
-      indexMap.putIfAbsent(orderedKeys[i], () => i);
-    }
-
-    final currentKey = _groupKey(task.stageId);
-    final currentIndex = indexMap[currentKey];
-    if (currentIndex == null || currentIndex <= 0) return true;
-
-    for (var i = currentIndex - 1; i >= 0; i--) {
-      final prevKey = orderedKeys[i];
-      final prevState = stages[prevKey];
-      if (prevState == null) continue;
-
-      // Ищем ближайший реально существующий предыдущий этап.
-      final hasPending = prevState['pending'] == true;
-      final hasProblem = prevState['problem'] == true;
-      if (!hasPending && prevState['completed'] == true) {
-        continue;
-      }
-      // Следующий этап нельзя запускать, пока предыдущий не завершён,
-      // кроме случаев, когда предыдущий переведён в "Проблему".
-      return prevState['completed'] == true || hasProblem;
-    }
-    return true;
-  }
-
-  // В fallback-режиме сохраняем старое правило: только первый незавершённый.
-  final pendingStageIds = stages.entries
-      .where((e) => e.value['pending'] == true && e.value['completed'] != true)
-      .map((e) => e.key)
-      .toList();
-  if (pendingStageIds.isEmpty) return true;
-
-  // Отсортировать по названию рабочего места (fallback к id)
   int byName(String a, String b) {
     String name(String id) {
       try {
@@ -677,13 +618,21 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     return name(a).compareTo(name(b));
   }
 
-  pendingStageIds.sort(byName);
-
-  // Первый незавершённый этап
-  final firstPendingStageId = pendingStageIds.first;
-
-  // Разрешаем старт, если наш task относится к самому первому незавершённому этапу
-  return _groupKey(task.stageId) == firstPendingStageId;
+  return stage_sequence.isFirstPendingStageInOrder(
+    orderId: task.orderId,
+    currentStageId: task.stageId,
+    stageStates: all.map(
+      (t) => stage_sequence.PendingStageState(
+        stageId: t.stageId,
+        completed: _isEffectivelyCompleted(t),
+        problem: t.status == TaskStatus.problem ||
+            t.comments.any((c) => c.type == 'problem'),
+      ),
+    ),
+    orderedStages: tasks.stageSequenceForOrder(task.orderId) ?? const [],
+    groupResolver: groupResolver,
+    fallbackStageComparator: byName,
+  );
 }
 
 bool _hasWorkplaceQueueActivity(TaskModel task) {
@@ -4293,9 +4242,10 @@ class _TasksScreenState extends State<TasksScreen>
           context.read<ProductionQueueProvider>(),
           stage,
         ) &&
-        _isFirstPendingStage(context.read<TaskProvider>(),
-            context.read<PersonnelProvider>(), task,
-            groupResolver: _stageGroupKey) &&
+        (_canRunOutOfStageSequence(task) ||
+            _isFirstPendingStage(context.read<TaskProvider>(),
+                context.read<PersonnelProvider>(), task,
+                groupResolver: _stageGroupKey)) &&
         stageModeAllowsJoin &&
         !shiftPaused &&
         !groupLocked &&
@@ -4543,9 +4493,10 @@ class _TasksScreenState extends State<TasksScreen>
                         final taskProvider = context.read<TaskProvider>();
                         final personnelProvider = personnel;
                         // Sequential stage guard
-                        if (!_isFirstPendingStage(
-                            taskProvider, personnelProvider, task,
-                            groupResolver: _stageGroupKey)) {
+                        if (!_canRunOutOfStageSequence(task) &&
+                            !_isFirstPendingStage(
+                                taskProvider, personnelProvider, task,
+                                groupResolver: _stageGroupKey)) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                                 content: Text(
