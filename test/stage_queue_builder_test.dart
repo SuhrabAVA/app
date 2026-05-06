@@ -156,9 +156,53 @@ void main() {
       ),
     );
 
-    expect(result.first.stageKey, kSwitchablePGroupKey);
+    expect(result.first.stageKey, kPMainSwitchStageKey);
     expect(result.first.isSwitchable, isTrue);
     expect(result.first.selectedWorkplaceId, kTubeStageId);
     expect(result.last.stageKey, kPackagingStageId);
   });
+
+  test('keeps switchable selections by stage key when rebuilding queue', () {
+    final result = buildOrderStageQueue(
+      productTypeId: kPTypePackageProduct,
+      hasCutting: false,
+      hasCardboard: true,
+      hasFlexPrinting: false,
+      selectedSwitchableStageIdsByStageKey: const {
+        kPMainSwitchStageKey: kTubeStageId,
+      },
+    );
+
+    final switchStage = result.singleWhere(
+      (stage) => stage['stageKey'] == kPMainSwitchStageKey,
+    );
+    expect(switchStage['stageId'], kTubeStageId);
+    expect(switchStage['workplaceId'], kTubeStageId);
+    expect(switchStage['selectedWorkplaceId'], kTubeStageId);
+    expect(switchStage['stageName'], 'Труба');
+    expect(switchStage['isSwitchable'], isTrue);
+    expect(switchStage['switchableGroupKey'], kSwitchablePGroupKey);
+  });
+
+  test('toggles full switchable stage object metadata', () {
+    final toggled = toggleProductStageObject({
+      'stageKey': kVMainSwitchStageKey,
+      'stageId': kFriStageId,
+      'workplaceId': kFriStageId,
+      'selectedWorkplaceId': kFriStageId,
+      'stageName': 'Фри',
+      'isSwitchable': true,
+      'switchableGroupKey': kSwitchableVGroupKey,
+      'workplaceIds': [kFriStageId, kWindowStageId],
+    });
+
+    expect(toggled, isNotNull);
+    expect(toggled!['stageKey'], kVMainSwitchStageKey);
+    expect(toggled['stageId'], kWindowStageId);
+    expect(toggled['workplaceId'], kWindowStageId);
+    expect(toggled['selectedWorkplaceId'], kWindowStageId);
+    expect(toggled['stageName'], 'Окно');
+    expect(toggled['workplaceName'], 'Окно');
+  });
+
 }
