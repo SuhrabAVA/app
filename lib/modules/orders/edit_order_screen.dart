@@ -1114,25 +1114,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return null;
     }
 
-    double? _parseLeadingNumber(String? source) {
-      if (source == null) return null;
-      final match = RegExp(r'[0-9]+(?:[.,][0-9]+)?')
-          .firstMatch(source.replaceAll(',', '.'));
-      if (match == null) return null;
-      return double.tryParse(match.group(0)!);
-    }
-
     double? formatWidth(MaterialModel paper, {required bool isMain}) {
-      final candidates = <String?>[
-        paper.format,
-        if (isMain &&
-            (paper.id ?? '').trim().isEmpty &&
-            (_matSelectedFormat ?? '').trim().isNotEmpty)
-          _matSelectedFormat,
-      ];
-      for (final candidate in candidates) {
-        final fmtWidth = _parseLeadingNumber(candidate);
-        if (fmtWidth != null) return fmtWidth;
+      final width = parseMaterialWidth(paper);
+      if (width != null) return width;
+      if (isMain &&
+          (paper.id ?? '').trim().isEmpty &&
+          (_matSelectedFormat ?? '').trim().isNotEmpty) {
+        return _parseLeadingNumber(_matSelectedFormat);
       }
       return null;
     }
@@ -1392,12 +1380,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     });
   }
 
+  MaterialModel? _mainMaterialForStageQueue() {
+    if (_selectedMaterial != null) return _selectedMaterial;
+    final selectedPapers = _collectSelectedPapers();
+    return selectedPapers.isNotEmpty ? selectedPapers.first : null;
+  }
+
   OrderStageQueueDraft _currentStageQueueDraft() {
+    final mainMaterial = _mainMaterialForStageQueue();
     return OrderStageQueueDraft(
       productTypeId: _product.type.trim(),
       orderWidthB: (_product.widthB ?? _product.width).toDouble(),
-      materialWidth:
-          _parseLeadingNumber(_matSelectedFormat ?? _matFormatCtl.text),
+      materialWidth: parseMaterialWidth(mainMaterial),
       hasPaint: _hasAnyPaints(),
       hasTrimming: _trimming,
       hasCardboard: _cardboardChecked,
@@ -1414,7 +1408,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       productTypeId: draft.productTypeId,
       hasCutting: draft.hasTrimming,
       hasCardboard: draft.hasCardboard,
-      hasBobbinCutting: draft.hasTrimming,
       hasFlexPrinting: draft.hasPaint,
       handleType: draft.handleType,
       orderWidthB: draft.orderWidthB,
@@ -1442,14 +1435,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   List<Map<String, dynamic>> _applyBaseStageRulesForQueuePreview() {
     final stages = <Map<String, dynamic>>[];
-    if (_trimming) {
-      stages.add({
-        'stageId': _canonicalBobbinWorkplaceId,
-        'workplaceId': _canonicalBobbinWorkplaceId,
-        'stageName': 'Бобинорезка',
-        'workplaceName': 'Бобинорезка',
-      });
-    }
     if (_hasAnyPaints()) {
       stages.add({
         'stageId': _canonicalFlexoWorkplaceId,
@@ -1654,16 +1639,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   double? _paperFormatWidth(MaterialModel paper, {required bool isMain}) {
-    final candidates = <String?>[
-      paper.format,
-      if (isMain &&
-          (paper.id ?? '').trim().isEmpty &&
-          (_matSelectedFormat ?? '').trim().isNotEmpty)
-        _matSelectedFormat,
-    ];
-    for (final candidate in candidates) {
-      final width = _parseLeadingNumber(candidate);
-      if (width != null) return width;
+    final width = parseMaterialWidth(paper);
+    if (width != null) return width;
+    if (isMain &&
+        (paper.id ?? '').trim().isEmpty &&
+        (_matSelectedFormat ?? '').trim().isNotEmpty) {
+      return _parseLeadingNumber(_matSelectedFormat);
     }
     return null;
   }

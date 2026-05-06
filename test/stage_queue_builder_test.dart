@@ -52,6 +52,24 @@ void main() {
     expect(result.last.sortOrder, result.length);
   });
 
+  test('does not add bobbin cutting without positive widths', () {
+    final result = buildOrderStages(
+      const OrderStageQueueDraft(
+        productTypeId: 'Листы',
+        orderWidthB: 0,
+        materialWidth: 600,
+        hasPaint: false,
+        hasTrimming: false,
+        hasCardboard: false,
+      ),
+    );
+
+    expect(
+      result.map((stage) => stage.stageKey),
+      isNot(contains(kBobbinStageId)),
+    );
+  });
+
   test('keeps separate two-sheet technological stages with unique stage keys', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(

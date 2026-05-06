@@ -1,4 +1,5 @@
 import 'order_stage_filter.dart';
+import 'material_model.dart';
 
 // Product type IDs from the production routing specification.
 const String kSheetProductTypeId = 'aab3ed17-1688-43f0-b623-58dac264941f';
@@ -51,6 +52,18 @@ const String kBottomGlueStageId = 'bottom_glue';
 
 const String kSwitchableVGroupKey = 'v_bottom_stage';
 const String kSwitchablePGroupKey = 'p_package_stage';
+
+double? _parseLeadingNumber(String? source) {
+  if (source == null) return null;
+  final match = RegExp(r'[0-9]+(?:[.,][0-9]+)?')
+      .firstMatch(source.replaceAll(',', '.'));
+  if (match == null) return null;
+  return double.tryParse(match.group(0)!);
+}
+
+double? parseMaterialWidth(MaterialModel? material) {
+  return _parseLeadingNumber(material?.format);
+}
 
 class OrderStageQueueDraft {
   const OrderStageQueueDraft({
@@ -136,7 +149,6 @@ List<Map<String, dynamic>> buildOrderStageQueue({
   required String productTypeId,
   required bool hasCutting,
   required bool hasCardboard,
-  required bool hasBobbinCutting,
   required bool hasFlexPrinting,
   Object? handleType,
   double? orderWidthB,
@@ -149,12 +161,10 @@ List<Map<String, dynamic>> buildOrderStageQueue({
   final selectedFromSource = selectedSwitchableStageId ??
       _selectedSwitchableStageId(existingStages) ??
       _selectedSwitchableStageId(templateStages);
-  final useLegacyBobbinFlag =
-      orderWidthB == null && materialWidth == null && hasBobbinCutting;
   final draft = OrderStageQueueDraft(
     productTypeId: productTypeId,
-    orderWidthB: useLegacyBobbinFlag ? 0 : orderWidthB,
-    materialWidth: useLegacyBobbinFlag ? 1 : materialWidth,
+    orderWidthB: orderWidthB,
+    materialWidth: materialWidth,
     hasPaint: hasFlexPrinting,
     hasTrimming: hasCutting,
     hasCardboard: hasCardboard,
@@ -190,8 +200,8 @@ class _OrderStageQueueBuilder {
   bool get _needsBobbinCutting {
     final orderWidth = draft.orderWidthB;
     final material = draft.materialWidth;
-    if (orderWidth != null && material != null) return orderWidth < material;
-    return false;
+    if (orderWidth == null || material == null) return false;
+    return orderWidth > 0 && material > 0 && orderWidth < material;
   }
 
   void _appendProductStages() {
