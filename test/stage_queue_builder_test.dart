@@ -26,6 +26,10 @@ void main() {
     expect(result.first['stageId'], kSheetCutStageId);
   });
 
+  test('sheet products contain only the sheet UUID', () {
+    expect(kSheetProducts, {kSheetProductTypeId});
+  });
+
   test('builds sheet queue from centralized draft rules', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(
@@ -70,10 +74,10 @@ void main() {
     );
   });
 
-  test('keeps separate two-sheet technological stages with unique stage keys', () {
+  test('builds two-sheet package route for product UUID', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(
-        productTypeId: 'Пакет из 2х листов',
+        productTypeId: kTwoSheetPackageProductTypeId,
         orderWidthB: 600,
         materialWidth: 600,
         hasPaint: false,
@@ -87,12 +91,25 @@ void main() {
       (stage) => stage.stageKey == kFlatHandleGroupStageId,
     );
 
-    expect(result.map((stage) => stage.stageKey), containsAll([
-      kDieCutA1A2StageId,
-      kCardboardStageId,
-      kFlatHandleGroupStageId,
-      kPackagingStageId,
-    ]));
+    expect(
+      result.map((stage) => stage.stageKey),
+      [
+        kSheetCutStageId,
+        kCuttingStageId,
+        kDieCutA1A2StageId,
+        kScotchStageId,
+        kFromTwoSheetsStageId,
+        kTubeAssemblyStageId,
+        kCardboardStageId,
+        kBottomGlueStageId,
+        kFlatHandleGroupStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(
+      result.map((stage) => stage.stageName),
+      containsAll(['С 2х листов', 'Сборка трубы', 'Склейка дна']),
+    );
     expect(flatHandleStage.workplaceIds, [
       kFlatHandleStageId,
       kManualHandleStageId,
