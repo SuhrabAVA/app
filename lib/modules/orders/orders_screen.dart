@@ -15,6 +15,7 @@ import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
 import 'id_format.dart';
+import 'order_launch_rules.dart';
 
 enum SortOption {
   orderDateAsc,
@@ -957,21 +958,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   bool _canLaunchOrder(OrderModel order, WarehouseProvider warehouse) {
-    if (order.assignmentCreated ||
-        order.statusEnum != OrderStatus.ready_to_start) {
-      return false;
-    }
-    if (order.stageTemplateId == null || order.stageTemplateId!.isEmpty) {
-      return false;
-    }
-    final String? materialId = order.material?.id;
-    final double requiredLength = (order.product.length ?? 0).toDouble();
-    if (materialId == null || materialId.isEmpty || requiredLength <= 0) {
-      return true;
-    }
-    final matches = warehouse.allTmc.where((t) => t.id == materialId).toList();
-    if (matches.isEmpty) return false;
-    return matches.first.quantity >= requiredLength;
+    return canLaunchOrder(order, warehouse.allTmc);
   }
 
   Future<void> _launchOrder(OrderModel order) async {
