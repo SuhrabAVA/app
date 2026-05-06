@@ -1404,6 +1404,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       hasBobbinCutting: _trimming,
       hasFlexPrinting: _hasAnyPaints(),
       handleType: _resolveSelectedHandleType(),
+      orderWidthB: (_product.widthB ?? _product.width).toDouble(),
+      materialWidth:
+          _parseLeadingNumber(_matSelectedFormat ?? _matFormatCtl.text),
       existingStages: currentStages,
       templateStages: templateStages,
     );
