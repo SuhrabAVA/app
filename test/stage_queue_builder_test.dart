@@ -1,5 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sheet_clone/modules/orders/order_stage_filter.dart';
+import 'package:sheet_clone/modules/orders/order_stage_filter.dart'
+    hide kBottomWithCardboardAssemblyStageId,
+        kCardboardCuttingStageId,
+        kCardboardInsertStageId;
 import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
 
 void main() {
@@ -100,7 +103,9 @@ void main() {
         kScotchStageId,
         kFromTwoSheetsStageId,
         kTubeAssemblyStageId,
-        kCardboardStageId,
+        kCardboardCuttingStageId,
+        kCardboardInsertStageId,
+        kBottomWithCardboardAssemblyStageId,
         kBottomGlueStageId,
         kFlatHandleGroupStageId,
         kPackagingStageId,
@@ -108,7 +113,14 @@ void main() {
     );
     expect(
       result.map((stage) => stage.stageName),
-      containsAll(['С 2х листов', 'Сборка трубы', 'Склейка дна']),
+      containsAll([
+        'С 2х листов',
+        'Сборка трубы',
+        'Резка картона',
+        'Вставка картона',
+        'Сборка дно+картон',
+        'Склейка дна',
+      ]),
     );
     expect(flatHandleStage.workplaceIds, [
       kFlatHandleStageId,
