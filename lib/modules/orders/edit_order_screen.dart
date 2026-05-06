@@ -1392,23 +1392,47 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     });
   }
 
+  OrderStageQueueDraft _currentStageQueueDraft() {
+    return OrderStageQueueDraft(
+      productTypeId: _product.type.trim(),
+      orderWidthB: (_product.widthB ?? _product.width).toDouble(),
+      materialWidth:
+          _parseLeadingNumber(_matSelectedFormat ?? _matFormatCtl.text),
+      hasPaint: _hasAnyPaints(),
+      hasTrimming: _trimming,
+      hasCardboard: _cardboardChecked,
+      handleType: _resolveSelectedHandleType(),
+    );
+  }
+
+  List<Map<String, dynamic>> _buildStageQueueFromCurrentDraft({
+    List<Map<String, dynamic>> existingStages = const <Map<String, dynamic>>[],
+    List<Map<String, dynamic>> templateStages = const <Map<String, dynamic>>[],
+  }) {
+    final draft = _currentStageQueueDraft();
+    return buildOrderStageQueue(
+      productTypeId: draft.productTypeId,
+      hasCutting: draft.hasTrimming,
+      hasCardboard: draft.hasCardboard,
+      hasBobbinCutting: draft.hasTrimming,
+      hasFlexPrinting: draft.hasPaint,
+      handleType: draft.handleType,
+      orderWidthB: draft.orderWidthB,
+      materialWidth: draft.materialWidth,
+      switchableStageKey: draft.switchableStageKey,
+      selectedSwitchableStageId: draft.selectedSwitchableStageId,
+      existingStages: existingStages,
+      templateStages: templateStages,
+    );
+  }
+
   void _buildStageQueue() {
     final currentStages = _stagePreviewStages
         .map((s) => Map<String, dynamic>.from(s))
         .toList(growable: false);
-    final templateStages = _applyBaseStageRulesForQueuePreview();
-    final queue = buildOrderStageQueue(
-      productTypeId: _product.type.trim(),
-      hasCutting: _trimming,
-      hasCardboard: _cardboardChecked,
-      hasBobbinCutting: _trimming,
-      hasFlexPrinting: _hasAnyPaints(),
-      handleType: _resolveSelectedHandleType(),
-      orderWidthB: (_product.widthB ?? _product.width).toDouble(),
-      materialWidth:
-          _parseLeadingNumber(_matSelectedFormat ?? _matFormatCtl.text),
+    final queue = _buildStageQueueFromCurrentDraft(
       existingStages: currentStages,
-      templateStages: templateStages,
+      templateStages: _selectedTemplateStageMaps(),
     );
     setState(() {
       _stagePreviewStages = queue;
@@ -1660,10 +1684,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void _scheduleStagePreviewUpdate({bool immediate = false}) {
     if (!mounted) return;
-    if ((_stageTemplateId == null || _stageTemplateId!.isEmpty) &&
-        _stagePreviewStages.isNotEmpty) {
-      return;
-    }
     if (immediate) {
       _stagePreviewScheduled = false;
       _rebuildStagePreview();
@@ -1678,36 +1698,40 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     });
   }
 
-  Future<void> _rebuildStagePreview() async {
+  List<Map<String, dynamic>> _templateStageMaps(TemplateModel template) {
+    return template.stages
+        .map((s) => {
+              'stageId': s.stageId,
+              'workplaceId': s.stageId,
+              'stageName': s.stageName,
+              'workplaceName': s.stageName,
+              if (s.alternativeStageIds.isNotEmpty)
+                'alternativeStageIds': List<String>.from(s.alternativeStageIds),
+              if (s.alternativeStageNames.isNotEmpty)
+                'alternativeStageNames':
+                    List<String>.from(s.alternativeStageNames),
+            })
+        .toList();
+  }
+
+
+  List<Map<String, dynamic>> _selectedTemplateStageMaps() {
     final templateId = _stageTemplateId;
     if (templateId == null || templateId.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _stagePreviewStages = _applyBaseStageRulesForQueuePreview();
-          _stagePreviewLoading = false;
-          _stagePreviewError = null;
-          _stagePreviewInitialized = true;
-          _stageOrderManuallyChanged = false;
-          _isStageQueueBuilt = false;
-        });
-      }
-      return;
+      return const <Map<String, dynamic>>[];
     }
     final provider = context.read<TemplateProvider>();
-    final tpl = _findTemplateById(provider.templates, templateId);
-    if (tpl == null) {
-      if (mounted) {
-        setState(() {
-          _stagePreviewStages = <Map<String, dynamic>>[];
-          _stagePreviewLoading = false;
-          _stagePreviewError = null;
-        });
-      }
-      return;
-    }
+    final template = _findTemplateById(provider.templates, templateId);
+    return template == null
+        ? const <Map<String, dynamic>>[]
+        : _templateStageMaps(template);
+  }
+
+  Future<void> _rebuildStagePreview() async {
+    final templateStages = _selectedTemplateStageMaps();
 
     // Для редактирования сначала берём уже сохранённый план заказа,
-    // чтобы отобразить и редактировать именно пользовательскую очередь.
+    // чтобы сохранить выбранные вручную переключаемые этапы как источник.
     List<Map<String, dynamic>> rawStages = <Map<String, dynamic>>[];
     if (widget.order != null) {
       try {
@@ -1721,22 +1745,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         rawStages = <Map<String, dynamic>>[];
       }
     }
-    if (rawStages.isEmpty) {
-      rawStages = tpl.stages
-          .map((s) => {
-                'stageId': s.stageId,
-                'workplaceId': s.stageId,
-                'stageName': s.stageName,
-                'workplaceName': s.stageName,
-                if (s.alternativeStageIds.isNotEmpty)
-                  'alternativeStageIds':
-                      List<String>.from(s.alternativeStageIds),
-                if (s.alternativeStageNames.isNotEmpty)
-                  'alternativeStageNames':
-                      List<String>.from(s.alternativeStageNames),
-              })
-          .toList();
-    }
 
     if (mounted) {
       setState(() {
@@ -1746,7 +1754,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     try {
-      final outcome = await _applyStageRules(rawStages);
+      final queue = _buildStageQueueFromCurrentDraft(
+        existingStages: rawStages,
+        templateStages: templateStages,
+      );
+      final outcome = await _applyStageRules(queue);
       if (!mounted) return;
       setState(() {
         _stagePreviewStages = outcome.stages;
@@ -2994,114 +3006,109 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       createdOrUpdatedOrder.pdfUrl = uploadedPath;
       await provider.updateOrder(createdOrUpdatedOrder);
     }
-    // если выбран шаблон и задания ещё не создавались - создаём их (ОДИН РАЗ)
-    if (_stageTemplateId != null && _stageTemplateId!.isNotEmpty) {
-      // Fetch template stages from 'plan_templates' table
-      final tplRow = await _sb
-          .from('plan_templates')
-          .select('stages')
-          .eq('id', _stageTemplateId!)
-          .maybeSingle();
-      if (tplRow != null) {
-        final stagesData = tplRow['stages'];
-        List<Map<String, dynamic>> stageMaps = [];
+    // Создаём или обновляем производственную очередь независимо от шаблона.
+    // stageTemplateId сохраняется в заказе выше, но автогенерация строится по полям формы.
+    final templateStages = _selectedTemplateStageMaps();
 
-        // Источник истины при сохранении — текущий preview.
-        // Он уже может содержать ручную перестановку флексо/бобинорезки.
-        if (_stagePreviewStages.isNotEmpty) {
-          stageMaps = _stagePreviewStages
-              .map((stage) => Map<String, dynamic>.from(stage))
-              .toList(growable: true);
-        } else {
-          stageMaps = _decodeAndSortStageMaps(stagesData);
-        }
+    List<Map<String, dynamic>> stageMaps;
+    // Источник истины при сохранении — текущий preview.
+    // Он уже может содержать ручную перестановку флексо/бобинорезки.
+    if (_stagePreviewStages.isNotEmpty) {
+      stageMaps = _stagePreviewStages
+          .map((stage) => Map<String, dynamic>.from(stage))
+          .toList(growable: true);
+    } else {
+      stageMaps = _buildStageQueueFromCurrentDraft(
+        templateStages: templateStages,
+      );
+    }
 
-        final outcome = await _applyStageRules(stageMaps);
-        stageMaps = outcome.stages;
-        final bool __shouldCompleteBobbin = outcome.shouldCompleteBobbin;
-        final String? __bobbinId = outcome.bobbinId;
-        // Save or update production plan in dedicated table 'production_plans'
-        final existingPlan = await _sb
-            .from('production_plans')
-            .select('id')
-            .eq('order_id', createdOrUpdatedOrder.id)
-            .maybeSingle();
-        if (existingPlan != null) {
-          await _sb
-              .from('production_plans')
-              .update({'stages': stageMaps}).eq('id', existingPlan['id']);
-        } else {
-          await _sb.from('production_plans').insert(
-              {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
-        }
+    final outcome = await _applyStageRules(stageMaps);
+    stageMaps = outcome.stages;
+    final bool __shouldCompleteBobbin = outcome.shouldCompleteBobbin;
+    final String? __bobbinId = outcome.bobbinId;
+    // Save or update production plan in dedicated table 'production_plans'
+    final existingPlan = await _sb
+        .from('production_plans')
+        .select('id')
+        .eq('order_id', createdOrUpdatedOrder.id)
+        .maybeSingle();
+    if (existingPlan != null) {
+      await _sb
+          .from('production_plans')
+          .update({'stages': stageMaps}).eq('id', existingPlan['id']);
+    } else {
+      await _sb.from('production_plans').insert(
+          {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
+    }
 
-        bool _looksLikeBobbin(Map<String, dynamic> sm) {
-          final title =
-              ((sm['stageName'] ?? sm['title']) as String?)?.toLowerCase() ?? '';
-          return title.contains('бобинорезка') ||
-              title.contains('бабинорезка') ||
-              title.contains('bobbin');
-        }
+    bool _looksLikeBobbin(Map<String, dynamic> sm) {
+      final title =
+          ((sm['stageName'] ?? sm['title']) as String?)?.toLowerCase() ?? '';
+      return title.contains('бобинорезка') ||
+          title.contains('бабинорезка') ||
+          title.contains('bobbin');
+    }
 
-        String? _resolveStageId(Map<String, dynamic> sm) {
-          final sid = (sm['stageId'] as String?) ??
-              (sm['stageid'] as String?) ??
-              (sm['stage_id'] as String?) ??
-              (sm['workplaceId'] as String?) ??
-              (sm['workplace_id'] as String?) ??
-              (sm['id'] as String?);
-          if ((_looksLikeBobbin(sm) || sid == null || sid.isEmpty) &&
-              __bobbinId != null &&
-              __bobbinId!.isNotEmpty) {
-            return __bobbinId;
-          }
-          return sid;
-        }
+    String? _resolveStageId(Map<String, dynamic> sm) {
+      final sid = (sm['stageId'] as String?) ??
+          (sm['stageid'] as String?) ??
+          (sm['stage_id'] as String?) ??
+          (sm['workplaceId'] as String?) ??
+          (sm['workplace_id'] as String?) ??
+          (sm['id'] as String?);
+      if ((_looksLikeBobbin(sm) || sid == null || sid.isEmpty) &&
+          __bobbinId != null &&
+          __bobbinId!.isNotEmpty) {
+        return __bobbinId;
+      }
+      return sid;
+    }
 
-        String _normalizeText(dynamic value) =>
-            (value?.toString() ?? '').trim();
+    String _normalizeText(dynamic value) =>
+        (value?.toString() ?? '').trim();
 
-        final workplaceLookup = <String, String>{};
-        Future<List<Map<String, dynamic>>> _loadWorkplaceRows() async {
-          Future<List<Map<String, dynamic>>> readRows(String select) async {
-            final rows = await _sb.from('workplaces').select(select);
-            if (rows is! List) return const <Map<String, dynamic>>[];
-            return rows
-                .whereType<Map>()
-                .map((row) => Map<String, dynamic>.from(row))
-                .toList(growable: false);
-          }
+    final workplaceLookup = <String, String>{};
+    Future<List<Map<String, dynamic>>> _loadWorkplaceRows() async {
+      Future<List<Map<String, dynamic>>> readRows(String select) async {
+        final rows = await _sb.from('workplaces').select(select);
+        if (rows is! List) return const <Map<String, dynamic>>[];
+        return rows
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+      }
 
+      try {
+        return await readRows(
+          'id, code, name, title, short_name, workplace_name, stage_name',
+        );
+      } catch (_) {
+        try {
+          return await readRows('id, name, code, title, short_name');
+        } catch (_) {
           try {
-            return await readRows(
-              'id, code, name, title, short_name, workplace_name, stage_name',
-            );
+            return await readRows('id, name');
           } catch (_) {
-            try {
-              return await readRows('id, name, code, title, short_name');
-            } catch (_) {
-              try {
-                return await readRows('id, name');
-              } catch (_) {
-                return const <Map<String, dynamic>>[];
-              }
-            }
+            return const <Map<String, dynamic>>[];
           }
         }
+      }
+    }
 
-        final workplaceRows = await _loadWorkplaceRows();
-        bool _containsBobbinWord(String value) {
-          final text = value.toLowerCase();
-          return text.contains('бобин') ||
-              text.contains('бабин') ||
-              text.contains('bobin') ||
-              text.contains('bobbin');
-        }
+    final workplaceRows = await _loadWorkplaceRows();
+    bool _containsBobbinWord(String value) {
+      final text = value.toLowerCase();
+      return text.contains('бобин') ||
+          text.contains('бабин') ||
+          text.contains('bobin') ||
+          text.contains('bobbin');
+    }
 
-        bool _containsFlexoWord(String value) {
-          final text = value.toLowerCase();
-          return text.contains('флекс') || text.contains('flexo');
-        }
+    bool _containsFlexoWord(String value) {
+      final text = value.toLowerCase();
+      return text.contains('флекс') || text.contains('flexo');
+    }
 
       final legacyStageLookup = <String, String>{};
       legacyStageLookup['w_flexoprint'] = _canonicalFlexoWorkplaceId;
@@ -3109,194 +3116,189 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       legacyStageLookup['w_bobiner'] = _canonicalBobbinWorkplaceId;
       legacyStageLookup['w_bobbin'] = _canonicalBobbinWorkplaceId;
       for (final map in workplaceRows) {
-          final id = _normalizeText(map['id']);
-          if (id.isEmpty) continue;
-          final probes = [
-            map['id'],
-            map['code'],
-            map['name'],
-            map['title'],
-            map['short_name'],
-            map['workplace_name'],
-            map['stage_name'],
-          ];
-          final joined = probes.map(_normalizeText).join(' ').toLowerCase();
-          if (_containsBobbinWord(joined)) {
-            legacyStageLookup['w_bobiner'] = id;
-            legacyStageLookup['w_bobbin'] = id;
+      final id = _normalizeText(map['id']);
+      if (id.isEmpty) continue;
+      final probes = [
+        map['id'],
+        map['code'],
+        map['name'],
+        map['title'],
+        map['short_name'],
+        map['workplace_name'],
+        map['stage_name'],
+      ];
+      final joined = probes.map(_normalizeText).join(' ').toLowerCase();
+      if (_containsBobbinWord(joined)) {
+        legacyStageLookup['w_bobiner'] = id;
+        legacyStageLookup['w_bobbin'] = id;
+      }
+      if (_containsFlexoWord(joined)) {
+        legacyStageLookup['w_flexoprint'] = id;
+        legacyStageLookup['w_flexo'] = id;
+      }
+      for (final probe in probes) {
+        final key = _normalizeText(probe).toLowerCase();
+        if (key.isEmpty) continue;
+        workplaceLookup.putIfAbsent(key, () => id);
+      }
+    }
+
+    String? _resolveStageValue(dynamic raw) {
+      final normalized = _normalizeText(raw);
+      if (normalized.isEmpty) return null;
+      final key = normalized.toLowerCase();
+      return workplaceLookup[key] ?? legacyStageLookup[key] ?? normalized;
+    }
+
+    bool _looksLikeUuid(String value) {
+      final v = value.trim();
+      return RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+          .hasMatch(v);
+    }
+
+    final knownWorkplaceIds = workplaceRows
+        .map((row) => _normalizeText(row['id']))
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    bool _isResolvableWorkplaceId(String stageId) {
+      if (stageId.isEmpty) return false;
+      if (_looksLikeUuid(stageId)) {
+        // При неполном lookup (например, из-за RLS) пропускаем UUID дальше,
+        // но при наличии списка рабочих мест всё равно предпочитаем реальные id.
+        return knownWorkplaceIds.isEmpty || knownWorkplaceIds.contains(stageId);
+      }
+      return workplaceLookup.containsValue(stageId) ||
+          legacyStageLookup.containsValue(stageId);
+    }
+
+    Iterable<dynamic> _collectAlternativeIds(Map<String, dynamic> sm) sync* {
+      final candidates = <dynamic>[
+        sm['alternativeStageIds'],
+        sm['alternative_stage_ids'],
+        sm['allStageIds'],
+        sm['all_stage_ids'],
+        sm['stageIds'],
+        sm['stage_ids'],
+      ];
+      for (final candidate in candidates) {
+        if (candidate is List) {
+          for (final value in candidate) {
+            yield value;
           }
-          if (_containsFlexoWord(joined)) {
-            legacyStageLookup['w_flexoprint'] = id;
-            legacyStageLookup['w_flexo'] = id;
-          }
-          for (final probe in probes) {
-            final key = _normalizeText(probe).toLowerCase();
-            if (key.isEmpty) continue;
-            workplaceLookup.putIfAbsent(key, () => id);
-          }
+          continue;
         }
-
-        String? _resolveStageValue(dynamic raw) {
-          final normalized = _normalizeText(raw);
-          if (normalized.isEmpty) return null;
-          final key = normalized.toLowerCase();
-          return workplaceLookup[key] ?? legacyStageLookup[key] ?? normalized;
-        }
-
-        bool _looksLikeUuid(String value) {
-          final v = value.trim();
-          return RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
-              .hasMatch(v);
-        }
-
-        final knownWorkplaceIds = workplaceRows
-            .map((row) => _normalizeText(row['id']))
-            .where((id) => id.isNotEmpty)
-            .toSet();
-
-        bool _isResolvableWorkplaceId(String stageId) {
-          if (stageId.isEmpty) return false;
-          if (_looksLikeUuid(stageId)) {
-            // При неполном lookup (например, из-за RLS) пропускаем UUID дальше,
-            // но при наличии списка рабочих мест всё равно предпочитаем реальные id.
-            return knownWorkplaceIds.isEmpty || knownWorkplaceIds.contains(stageId);
+        if (candidate is String) {
+          for (final token in candidate.split(',')) {
+            yield token;
           }
-          return workplaceLookup.containsValue(stageId) ||
-              legacyStageLookup.containsValue(stageId);
-        }
-
-        Iterable<dynamic> _collectAlternativeIds(Map<String, dynamic> sm) sync* {
-          final candidates = <dynamic>[
-            sm['alternativeStageIds'],
-            sm['alternative_stage_ids'],
-            sm['allStageIds'],
-            sm['all_stage_ids'],
-            sm['stageIds'],
-            sm['stage_ids'],
-          ];
-          for (final candidate in candidates) {
-            if (candidate is List) {
-              for (final value in candidate) {
-                yield value;
-              }
-              continue;
-            }
-            if (candidate is String) {
-              for (final token in candidate.split(',')) {
-                yield token;
-              }
-            }
-          }
-        }
-
-        List<String> _resolveStageIds(Map<String, dynamic> sm) {
-          final candidates = <String>[];
-
-          void addCandidate(dynamic raw) {
-            final resolved = _resolveStageValue(raw);
-            if (resolved == null || resolved.isEmpty) return;
-            if (!candidates.contains(resolved)) {
-              candidates.add(resolved);
-            }
-          }
-
-          addCandidate(_resolveStageId(sm));
-
-          for (final probe in <dynamic>[
-            sm['stageName'],
-            sm['stage_name'],
-            sm['workplaceName'],
-            sm['workplace_name'],
-            sm['title'],
-            sm['name'],
-          ]) {
-            addCandidate(probe);
-          }
-
-          for (final raw in _collectAlternativeIds(sm)) {
-            addCandidate(raw);
-          }
-
-          final resolved = <String>[];
-          for (final candidate in candidates) {
-            if (_isResolvableWorkplaceId(candidate) && !resolved.contains(candidate)) {
-              resolved.add(candidate);
-            }
-          }
-
-          if (resolved.isNotEmpty) return resolved;
-          if (candidates.isEmpty) return const <String>[];
-          return <String>[candidates.first];
-        }
-
-        final bool shouldLaunchNow = true;
-
-        if (shouldLaunchNow) {
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-        try {
-          // Ensure prod_plans row exists
-          final planRow = await _sb
-              .from('prod_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          String planId;
-          if (planRow == null) {
-            final inserted = await _sb
-                .from('prod_plans')
-                .insert({
-                  'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
-                })
-                .select('id')
-                .single();
-            planId = inserted['id'] as String;
-          } else {
-            planId = planRow['id'] as String;
-          }
-          // Rebuild plan stages
-          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-          int step = 1;
-          String? previousGroupKey;
-          for (final sm in stageMaps) {
-            final stageIds = _resolveStageIds(sm);
-            if (stageIds.isEmpty) continue;
-
-            final canonical = List<String>.from(stageIds)..sort();
-            final groupKey = canonical.join('|');
-            if (groupKey.isNotEmpty && groupKey == previousGroupKey) {
-              continue;
-            }
-            previousGroupKey = groupKey;
-
-            for (final rawStageId in stageIds) {
-              final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
-                  legacyStageLookup[rawStageId.toLowerCase()] ??
-                  rawStageId;
-              await _sb.from('prod_plan_stages').insert({
-                'plan_id': planId,
-                'stage_id': resolvedStageId,
-                'step': step,
-                'status': 'waiting',
-              });
-            }
-            step += 1;
-          }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
-            await _sb.from('prod_plan_stages').update({
-              'status': 'done',
-              'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
-          }
-        } catch (_) {
-          // ignore if tables don't exist
-        }
-        // ---- /sync normalized tables ----
-
         }
       }
     }
+
+    List<String> _resolveStageIds(Map<String, dynamic> sm) {
+      final candidates = <String>[];
+
+      void addCandidate(dynamic raw) {
+        final resolved = _resolveStageValue(raw);
+        if (resolved == null || resolved.isEmpty) return;
+        if (!candidates.contains(resolved)) {
+          candidates.add(resolved);
+        }
+      }
+
+      addCandidate(_resolveStageId(sm));
+
+      for (final probe in <dynamic>[
+        sm['stageName'],
+        sm['stage_name'],
+        sm['workplaceName'],
+        sm['workplace_name'],
+        sm['title'],
+        sm['name'],
+      ]) {
+        addCandidate(probe);
+      }
+
+      for (final raw in _collectAlternativeIds(sm)) {
+        addCandidate(raw);
+      }
+
+      final resolved = <String>[];
+      for (final candidate in candidates) {
+        if (_isResolvableWorkplaceId(candidate) && !resolved.contains(candidate)) {
+          resolved.add(candidate);
+        }
+      }
+
+      if (resolved.isNotEmpty) return resolved;
+      if (candidates.isEmpty) return const <String>[];
+      return <String>[candidates.first];
+    }
+
+    // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
+    try {
+      // Ensure prod_plans row exists
+      final planRow = await _sb
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', createdOrUpdatedOrder.id)
+          .maybeSingle();
+      String planId;
+      if (planRow == null) {
+        final inserted = await _sb
+            .from('prod_plans')
+            .insert({
+              'order_id': createdOrUpdatedOrder.id,
+              'status': 'planned',
+            })
+            .select('id')
+            .single();
+        planId = inserted['id'] as String;
+      } else {
+        planId = planRow['id'] as String;
+      }
+      // Rebuild plan stages
+      await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
+      int step = 1;
+      String? previousGroupKey;
+      for (final sm in stageMaps) {
+        final stageIds = _resolveStageIds(sm);
+        if (stageIds.isEmpty) continue;
+
+        final canonical = List<String>.from(stageIds)..sort();
+        final groupKey = canonical.join('|');
+        if (groupKey.isNotEmpty && groupKey == previousGroupKey) {
+          continue;
+        }
+        previousGroupKey = groupKey;
+
+        for (final rawStageId in stageIds) {
+          final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
+              legacyStageLookup[rawStageId.toLowerCase()] ??
+              rawStageId;
+          await _sb.from('prod_plan_stages').insert({
+            'plan_id': planId,
+            'stage_id': resolvedStageId,
+            'step': step,
+            'status': 'waiting',
+          });
+        }
+        step += 1;
+      }
+      // Mark bobbin as done here as well
+      if (__shouldCompleteBobbin && __bobbinId != null) {
+        await _sb.from('prod_plan_stages').update({
+          'status': 'done',
+          'finished_at': DateTime.now().toIso8601String(),
+        }).match({'plan_id': planId, 'stage_id': __bobbinId});
+      }
+    } catch (_) {
+      // ignore if tables don't exist
+    }
+    // ---- /sync normalized tables ----
+
+
     // Сначала синхронизируем список красок, чтобы в просмотре заказа
     // изменения были видны сразу после сохранения.
     await _persistPaints(createdOrUpdatedOrder.id);
