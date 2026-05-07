@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sheet_clone/modules/orders/material_model.dart';
 import 'package:sheet_clone/modules/orders/order_stage_filter.dart'
     hide kBottomWithCardboardAssemblyStageId,
         kCardboardCuttingStageId,
@@ -109,6 +110,56 @@ void main() {
       expect(result.first.selectedWorkplaceId, kFriStageId);
       expect(result.last.stageKey, kPackagingStageId);
     }
+  });
+
+
+  test('centralized bobbin rule checks all selected papers', () {
+    final result = buildOrderStages(
+      OrderStageQueueDraft(
+        productTypeId: 'Листы',
+        orderWidthB: 600,
+        materialWidth: 600,
+        requiresBobbinCutting: requiresBobbinCuttingForOrder(
+          defaultOrderWidthB: 600,
+          papers: const [
+            MaterialModel(name: 'Main', quantity: 1, unit: 'м', format: '600'),
+            MaterialModel(
+              name: 'Extra',
+              quantity: 1,
+              unit: 'м',
+              format: '700',
+              extra: {'widthB': 300},
+            ),
+          ],
+        ),
+        hasPaint: false,
+        hasTrimming: false,
+        hasCardboard: false,
+      ),
+    );
+
+    expect(result.map((stage) => stage.stageKey), contains(kBobbinStageId));
+  });
+
+  test('normalizes base stage aliases without changing composition', () {
+    final result = normalizeBuiltOrderStageQueue([
+      {'stageId': kPackagingStageId, 'stageName': 'Упаковка'},
+      {'stageId': kSheetCutStageId, 'stageName': 'Листорезка'},
+      {'stageId': 'w_flexoprint', 'stageName': 'Flexo'},
+      {'stageId': 'w_bobiner', 'stageName': 'Бобинорезка'},
+    ]);
+
+    expect(
+      result.map((stage) => stage['stageId']),
+      [
+        kBobbinStageId,
+        kFlexPrintingStageId,
+        kSheetCutStageId,
+        kPackagingStageId,
+      ],
+    );
+    expect(result[0]['stageName'], 'Бабинорезка');
+    expect(result[1]['stageName'], 'Флексопечать');
   });
 
   test('does not add bobbin cutting without positive widths', () {

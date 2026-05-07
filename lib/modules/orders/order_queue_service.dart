@@ -80,6 +80,7 @@ class OrderQueueService {
       hasCardboard: draft.hasCardboard,
       hasFlexPrinting: draft.hasPaint,
       handleType: draft.handleType,
+      requiresBobbinCutting: draft.requiresBobbinCutting,
       orderWidthB: draft.orderWidthB,
       materialWidth: draft.materialWidth,
       switchableStageKey: draft.switchableStageKey,

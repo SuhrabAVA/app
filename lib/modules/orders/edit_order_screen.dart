@@ -132,32 +132,11 @@ class _PaintEntry {
   set qtyKg(double? value) => qtyGrams = value == null ? null : value * 1000;
 }
 
-const String _canonicalFlexoWorkplaceId =
-    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
-const String _canonicalBobbinWorkplaceId =
-    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
-const Set<String> _legacyFlexoAliases = {
-  'w_flexoprint',
-  'w_flexo',
-};
-const Set<String> _legacyBobbinAliases = {
-  'w_bobiner',
-  'w_bobbin',
-};
 bool _supportsCardboard(String productTypeId) =>
     supportsCardboardForProductType(productTypeId);
 
 bool supportsCardboardForTesting(String productTypeId) =>
     _supportsCardboard(productTypeId);
-
-class _StageRuleOutcome {
-  final List<Map<String, dynamic>> stages;
-  final bool shouldCompleteBobbin;
-  final String? bobbinId;
-
-  const _StageRuleOutcome(
-      {required this.stages, this.shouldCompleteBobbin = false, this.bobbinId});
-}
 
 List<Map<String, dynamic>> _buildStageMapsForProductionPlanSave({
   required List<Map<String, dynamic>> stagePreviewStages,
@@ -1111,404 +1090,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return OrderHandleType.none;
   }
 
-  Future<_StageRuleOutcome> _applyStageRules(
-      List<Map<String, dynamic>> rawStages) async {
-    final List<Map<String, dynamic>> stageMaps = rawStages
-        .map((stage) => Map<String, dynamic>.from(stage))
-        .toList(growable: true);
-
-    String? flexoId;
-    String? flexoTitle;
-    String? bobbinId;
-    String? bobbinTitle;
-    bool shouldCompleteBobbin = false;
-    Map<String, dynamic>? removedBobbinStage;
-
-    try {
-      Map<String, dynamic>? flexo = await _sb
-          .from('workplaces')
-          .select('id,title')
-          .ilike('title', 'Флексопечать%')
-          .limit(1)
-          .maybeSingle();
-      flexo ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Flexo%')
-          .limit(1)
-          .maybeSingle();
-      flexo ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('name', 'Flexo%')
-          .limit(1)
-          .maybeSingle();
-      flexo ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Флексо%')
-          .limit(1)
-          .maybeSingle();
-      if (flexo != null) {
-        flexoId = (flexo['id'] as String?);
-        flexoTitle = (flexo['title'] as String?) ?? (flexo['name'] as String?);
-        if (flexoTitle == null || flexoTitle!.trim().isEmpty) {
-          flexoTitle = 'Флексопечать';
-        }
-        if (flexoTitle != null &&
-            RegExp(r'^[a-z0-9_\-]+$').hasMatch(flexoTitle!.toLowerCase())) {
-          flexoTitle = 'Флексопечать';
-        }
-      }
-
-      Map<String, dynamic>? bob = await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Бобинорезка%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Бабинорезка%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('name', 'Бабинорезка%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('title', 'Bobbin%')
-          .limit(1)
-          .maybeSingle();
-      bob ??= await _sb
-          .from('workplaces')
-          .select('id,title,name')
-          .ilike('name', 'Bobbin%')
-          .limit(1)
-          .maybeSingle();
-      if (bob == null) {
-        bob = await _sb
-            .from('workplaces')
-            .select('id,title,name')
-            .eq('id', _canonicalBobbinWorkplaceId)
-            .maybeSingle();
-      }
-      if (bob == null) {
-        bob = await _sb
-            .from('workplaces')
-            .select('id,title,name')
-            .eq('id', 'w_bobiner')
-            .maybeSingle();
-      }
-      if (bob != null) {
-        bobbinId = (bob['id'] as String?) ?? bobbinId;
-        bobbinTitle = (bob['title'] as String?) ??
-            (bob['name'] as String?) ??
-            bobbinTitle;
-      }
-    } catch (_) {}
-
-    int findStageIndex(bool Function(Map<String, dynamic>) predicate) {
-      for (var i = 0; i < stageMaps.length; i++) {
-        if (predicate(stageMaps[i])) return i;
-      }
-      return -1;
-    }
-
-    Map<String, dynamic>? removeBobbinStage() {
-      final idx = findStageIndex((m) {
-        final sid = (m['stageId'] as String?) ??
-            (m['stageid'] as String?) ??
-            (m['stage_id'] as String?) ??
-            (m['workplaceId'] as String?) ??
-            (m['workplace_id'] as String?) ??
-            (m['id'] as String?);
-        final title =
-            ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-        final byId = bobbinId != null && sid == bobbinId;
-        final byName = title.contains('бобинорезка') ||
-            title.contains('бабинорезка') ||
-            title.contains('bobbin');
-        return byId || byName;
-      });
-      if (idx >= 0) {
-        return stageMaps.removeAt(idx);
-      }
-      return null;
-    }
-
-    double? formatWidth(MaterialModel paper, {required bool isMain}) {
-      final width = parseMaterialWidth(paper);
-      if (width != null) return width;
-      if (isMain &&
-          (paper.id ?? '').trim().isEmpty &&
-          (_matSelectedFormat ?? '').trim().isNotEmpty) {
-        return _parseLeadingNumber(_matSelectedFormat);
-      }
-      return null;
-    }
-
-    double? bobbinWidth(MaterialModel paper, {required bool isMain}) {
-      if (isMain) {
-        return (_product.widthB ?? _product.width).toDouble();
-      }
-      final fromExtra = _paperExtraDouble(paper, 'widthB');
-      return fromExtra ?? (_product.widthB ?? _product.width).toDouble();
-    }
-
-    bool paintsFilled = _hasAnyPaints();
-
-    if (paintsFilled) {
-      flexoId ??= _canonicalFlexoWorkplaceId;
-      flexoTitle = (flexoTitle?.trim().isNotEmpty ?? false)
-          ? flexoTitle
-          : 'Флексопечать';
-      final hasFlexo = findStageIndex((m) {
-            final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-            if (sid != null && flexoId != null && sid == flexoId) return true;
-            final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                    '';
-            return title.contains('флексопечать') || title.contains('flexo');
-          }) >=
-          0;
-      if (!hasFlexo && flexoId != null && flexoId!.isNotEmpty) {
-        int insertIndex = 0;
-        final bobIndex = findStageIndex((m) {
-          final sid = (m['stageId'] as String?) ??
-              (m['stageid'] as String?) ??
-              (m['stage_id'] as String?) ??
-              (m['workplaceId'] as String?) ??
-              (m['workplace_id'] as String?) ??
-              (m['id'] as String?);
-          final title =
-              ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
-          final byId = bobbinId != null && sid == bobbinId;
-          final byName = title.contains('бобинорезка') ||
-              title.contains('бабинорезка') ||
-              title.contains('bobbin');
-          return byId || byName;
-        });
-        if (bobIndex >= 0) insertIndex = bobIndex + 1;
-        stageMaps.insert(insertIndex, {
-          'stageId': flexoId,
-          'workplaceId': flexoId,
-          'stageName': flexoTitle,
-          'workplaceName': flexoTitle,
-          'order': 0,
-        });
-      }
-    }
-
-    const double epsilon = 0.001;
-
-    void removeBobbinStageIfPresent() {
-      removedBobbinStage = removeBobbinStage();
-      if (removedBobbinStage != null) {
-        shouldCompleteBobbin = true;
-        bobbinId = (removedBobbinStage!['stageId'] ??
-                removedBobbinStage!['stage_id'] ??
-                removedBobbinStage!['stageid'] ??
-                removedBobbinStage!['workplaceId'] ??
-                removedBobbinStage!['workplace_id'] ??
-                removedBobbinStage!['id'])
-            ?.toString();
-      }
-    }
-
-    void addBobbinStageIfMissing() {
-      final hasBobbin = findStageIndex((m) {
-            final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-            if (sid != null && bobbinId != null && sid == bobbinId) return true;
-            final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                    '';
-            return title.contains('бобинорезка') ||
-                title.contains('бабинорезка') ||
-                title.contains('bobbin');
-          }) >=
-          0;
-      if (hasBobbin) return;
-      final resolvedId = (bobbinId != null && bobbinId!.isNotEmpty)
-          ? bobbinId
-          : (removedBobbinStage != null
-              ? (removedBobbinStage!['stageId'] as String?)
-              : null);
-      final resolvedTitle = (bobbinTitle?.trim().isNotEmpty ?? false)
-          ? bobbinTitle
-          : 'Бабинорезка';
-      final fallbackId = resolvedId ?? _canonicalBobbinWorkplaceId;
-      stageMaps.insert(0, {
-        'stageId': fallbackId,
-        'workplaceId': fallbackId,
-        'stageName': resolvedTitle,
-        'workplaceName': resolvedTitle,
-        'order': 0,
-      });
-      bobbinId = fallbackId;
-    }
-
-    final papersForRules = _collectSelectedPapers();
-    var shouldUseBobbin = false;
-    for (var i = 0; i < papersForRules.length; i++) {
-      final paper = papersForRules[i];
-      final fmtWidth = formatWidth(paper, isMain: i == 0);
-      final prodWidth = bobbinWidth(paper, isMain: i == 0);
-      if (fmtWidth == null || prodWidth == null || prodWidth <= 0) {
-        continue;
-      }
-      if ((prodWidth + epsilon) < fmtWidth) {
-        shouldUseBobbin = true;
-        break;
-      }
-    }
-    if (shouldUseBobbin) {
-      addBobbinStageIfMissing();
-    } else {
-      removeBobbinStageIfPresent();
-    }
-
-    final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
-    final Set<String> uniqueStageKeys = <String>{};
-
-    bool _isFlexoStage(Map<String, dynamic> map, String stageId) {
-      final stageKey = stageId.toLowerCase();
-      if (stageId == _canonicalFlexoWorkplaceId ||
-          _legacyFlexoAliases.contains(stageKey)) {
-        return true;
-      }
-      final name =
-          ((map['stageName'] ?? map['title'] ?? '') as String).toLowerCase();
-      return name.contains('флекс') || name.contains('flexo');
-    }
-
-    bool _isBobbinStage(Map<String, dynamic> map, String stageId) {
-      final stageKey = stageId.toLowerCase();
-      if (stageId == _canonicalBobbinWorkplaceId ||
-          _legacyBobbinAliases.contains(stageKey)) {
-        return true;
-      }
-      final name =
-          ((map['stageName'] ?? map['title'] ?? '') as String).toLowerCase();
-      return name.contains('бобин') || name.contains('бабин') || name.contains('bobbin');
-    }
-
-    for (final stage in stageMaps) {
-      final map = Map<String, dynamic>.from(stage);
-      final String? stageId = (map['stageId'] ??
-              map['stage_id'] ??
-              map['stageid'] ??
-              map['workplaceId'] ??
-              map['workplace_id'] ??
-              map['id'])
-          ?.toString();
-      if (stageId != null && stageId.isNotEmpty) {
-        final normalizedStageId = stageId == 'w_flexoprint'
-            ? _canonicalFlexoWorkplaceId
-            : (stageId == 'w_bobiner' || stageId == 'w_bobbin')
-                ? _canonicalBobbinWorkplaceId
-                : stageId;
-        final dedupeKey = _isFlexoStage(map, normalizedStageId)
-            ? 'position:print'
-            : _isBobbinStage(map, normalizedStageId)
-                ? 'position:bob_cutter'
-                : 'stage:$normalizedStageId';
-        if (uniqueStageKeys.contains(dedupeKey)) {
-          continue;
-        }
-        uniqueStageKeys.add(dedupeKey);
-        map['stageId'] = normalizedStageId;
-        map['workplaceId'] = normalizedStageId;
-      }
-      map['stageName'] = _resolveStageName(map);
-      normalized.add(map);
-    }
-
-    final filteredStages = filterOrderStagesByOptions(
-      stages: normalized,
-      selectedHandleType: _resolveSelectedHandleType(),
-      hasCardboard: _cardboardChecked,
-      hasCutting: _trimming,
-    );
-
-    return _StageRuleOutcome(
-      stages: filteredStages,
-      shouldCompleteBobbin: shouldCompleteBobbin,
-      bobbinId: bobbinId,
-    );
-  }
-
-  bool _isFlexoPreviewStage(Map<String, dynamic> stage) {
-    final stageId = ((stage['stageId'] ??
-                stage['stage_id'] ??
-                stage['stageid'] ??
-                stage['workplaceId'] ??
-                stage['workplace_id'] ??
-                stage['id']) as String?)
-            ?.trim() ??
-        '';
-    if (stageId == _canonicalFlexoWorkplaceId ||
-        _legacyFlexoAliases.contains(stageId.toLowerCase())) {
-      return true;
-    }
-    final title = _resolveStageName(stage).toLowerCase();
-    return title.contains('флекс') || title.contains('flexo');
-  }
-
-  bool _isBobbinPreviewStage(Map<String, dynamic> stage) {
-    final stageId = ((stage['stageId'] ??
-                stage['stage_id'] ??
-                stage['stageid'] ??
-                stage['workplaceId'] ??
-                stage['workplace_id'] ??
-                stage['id']) as String?)
-            ?.trim() ??
-        '';
-    if (stageId == _canonicalBobbinWorkplaceId ||
-        _legacyBobbinAliases.contains(stageId.toLowerCase())) {
-      return true;
-    }
-    final title = _resolveStageName(stage).toLowerCase();
-    return title.contains('бобин') ||
-        title.contains('бабин') ||
-        title.contains('bobbin');
-  }
-
-  void _swapFlexoAndBobbinInPreview() {
-    final flexoIndex = _stagePreviewStages.indexWhere(_isFlexoPreviewStage);
-    final bobbinIndex = _stagePreviewStages.indexWhere(_isBobbinPreviewStage);
-    if (flexoIndex < 0 || bobbinIndex < 0 || flexoIndex == bobbinIndex) return;
-
-    setState(() {
-      final next = _stagePreviewStages
-          .map((stage) => Map<String, dynamic>.from(stage))
-          .toList(growable: true);
-      final flexo = next[flexoIndex];
-      next[flexoIndex] = next[bobbinIndex];
-      next[bobbinIndex] = flexo;
-      _stagePreviewStages = next;
-      // Важно: после ручного swap больше не должны возвращать auto-порядок.
-      _stageOrderManuallyChanged = true;
-      _isStageQueueBuilt = false;
-      _markQueueOutdatedIfBuilt();
-    });
-  }
-
   MaterialModel? _mainMaterialForStageQueue() {
     if (_selectedMaterial != null) return _selectedMaterial;
     final selectedPapers = _collectSelectedPapers();
@@ -1517,10 +1098,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   OrderStageQueueDraft _currentStageQueueDraft() {
     final mainMaterial = _mainMaterialForStageQueue();
+    final orderWidth = (_product.widthB ?? _product.width).toDouble();
+    final selectedPapers = _collectSelectedPapers();
     return OrderStageQueueDraft(
       productTypeId: _product.type.trim(),
-      orderWidthB: (_product.widthB ?? _product.width).toDouble(),
+      orderWidthB: orderWidth,
       materialWidth: parseMaterialWidth(mainMaterial),
+      requiresBobbinCutting: requiresBobbinCuttingForOrder(
+        papers: selectedPapers,
+        defaultOrderWidthB: orderWidth,
+        mainMaterialFormatFallback: _matSelectedFormat,
+      ),
       hasPaint: _hasAnyPaints(),
       hasTrimming: _trimming,
       hasCardboard: _cardboardChecked,
@@ -1820,19 +1408,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _queueBuildStatus = QueueBuildStatus.built;
       _isStageQueueBuilt = true;
     });
-  }
-
-  List<Map<String, dynamic>> _applyBaseStageRulesForQueuePreview() {
-    final stages = <Map<String, dynamic>>[];
-    if (_hasAnyPaints()) {
-      stages.add({
-        'stageId': _canonicalFlexoWorkplaceId,
-        'workplaceId': _canonicalFlexoWorkplaceId,
-        'stageName': 'Флексопечать',
-        'workplaceName': 'Флексопечать',
-      });
-    }
-    return stages;
   }
 
   List<Map<String, dynamic>> _decodeAndSortStageMaps(dynamic stagesData) {
@@ -2135,10 +1710,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         existingStages: rawStages,
         templateStages: templateStages,
       );
-      final outcome = await _applyStageRules(queue);
       if (!mounted) return;
       setState(() {
-        _stagePreviewStages = outcome.stages;
+        _stagePreviewStages = queue;
         _stagePreviewLoading = false;
         _stagePreviewError = null;
         _stagePreviewInitialized = true;
@@ -3209,11 +2783,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         (wasAlreadyLaunched && canResetForRelaunchAfterQueueEdit);
     // Перед сохранением всегда строим эффективную очередь из текущего черновика,
     // даже если пользователь не нажимал «Собрать очередь» или шаблон не выбран.
-    var stageMaps = _buildStageQueueFromCurrentDraft(
+    final stageMaps = _buildStageQueueFromCurrentDraft(
       templateStages: _selectedTemplateStageMaps(),
     );
-    final outcome = await _applyStageRules(stageMaps);
-    stageMaps = outcome.stages;
     final bool hasEffectiveStageQueue = stageMaps.isNotEmpty;
     final bool willSaveBuiltStageQueue =
         canRebuildProductionPlan && hasEffectiveStageQueue;
@@ -3453,8 +3025,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             'selected_p_stage': _selectedPStage,
           },
           currentQueueSignature,
-          completeBobbin: outcome.shouldCompleteBobbin,
-          bobbinStageId: outcome.bobbinId,
         );
       } catch (error) {
         final failedOrder = createdOrUpdatedOrder.copyWith(
@@ -6609,34 +6179,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     final children = <Widget>[];
-    final hasFlexo = _stagePreviewStages.any(_isFlexoPreviewStage);
-    final hasBobbin = _stagePreviewStages.any(_isBobbinPreviewStage);
-    if (hasFlexo && hasBobbin) {
-      children.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _swapFlexoAndBobbinInPreview,
-                icon: const Icon(Icons.swap_vert),
-                label: const Text('Поменять местами бобинорезку и флексопечать'),
-              ),
-              if (_stageOrderManuallyChanged)
-                Text(
-                  'Порядок изменён вручную',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-    }
     for (var i = 0; i < _stagePreviewStages.length; i++) {
       final stage = _stagePreviewStages[i];
       final title = _resolveStageName(stage);
