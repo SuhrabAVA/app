@@ -263,7 +263,7 @@ class OrderQueueSyncService {
     }
     final inserted = await _sb
         .from('prod_plans')
-        .insert({'order_id': orderId, 'status': 'planned'})
+        .insert({'order_id': orderId})
         .select('id')
         .single();
     return inserted['id'].toString();
