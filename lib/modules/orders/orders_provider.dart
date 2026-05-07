@@ -719,7 +719,7 @@ class OrdersProvider with ChangeNotifier {
           .select()
           .eq('id', order.id)
           .maybeSingle();
-      if (persisted is Map) {
+      if (persisted != null) {
         launchOrder = OrderModel.fromMap(
           Map<String, dynamic>.from(persisted),
         );
