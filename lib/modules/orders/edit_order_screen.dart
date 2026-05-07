@@ -167,17 +167,8 @@ List<Map<String, dynamic>> _buildStageMapsForProductionPlanSave({
     required List<Map<String, dynamic>> templateStages,
   }) buildStageQueueFromCurrentDraft,
 }) {
-  if (stagePreviewStages.isNotEmpty) {
-    return stagePreviewStages
-        .map((stage) => Map<String, dynamic>.from(stage))
-        .toList(growable: true);
-  }
-
-  final hasSelectedTemplate = (stageTemplateId ?? '').trim().isNotEmpty;
   return buildStageQueueFromCurrentDraft(
-    templateStages: hasSelectedTemplate
-        ? selectedTemplateStages
-        : const <Map<String, dynamic>>[],
+    templateStages: selectedTemplateStages,
   );
 }
 
@@ -3196,10 +3187,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return true;
     }
 
-    final bool hasBuiltStageQueue =
-        nextQueueBuildStatus == QueueBuildStatus.built;
-    final bool canLaunchProductionNow =
-        hasBuiltStageQueue && hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
     if (wasAlreadyLaunched) {
       await _loadRuntimeEditLocks();
@@ -3220,6 +3207,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final bool canRebuildProductionPlan = isCreating ||
         !wasAlreadyLaunched ||
         (wasAlreadyLaunched && canResetForRelaunchAfterQueueEdit);
+    // Перед сохранением всегда строим эффективную очередь из текущего черновика,
+    // даже если пользователь не нажимал «Собрать очередь» или шаблон не выбран.
+    var stageMaps = _buildStageQueueFromCurrentDraft(
+      templateStages: _selectedTemplateStageMaps(),
+    );
+    final outcome = await _applyStageRules(stageMaps);
+    stageMaps = outcome.stages;
+    final bool hasEffectiveStageQueue = stageMaps.isNotEmpty;
+    final bool willSaveBuiltStageQueue =
+        canRebuildProductionPlan && hasEffectiveStageQueue;
+    if (willSaveBuiltStageQueue) {
+      _syncSwitchableStageSelectionFields(stageMaps);
+      nextQueueBuildStatus = QueueBuildStatus.built;
+    }
+    final bool hasBuiltStageQueue =
+        nextQueueBuildStatus == QueueBuildStatus.built;
+    final bool canLaunchProductionNow =
+        hasBuiltStageQueue && hasEnoughPaperForLaunch();
     final String nextOrderStatus = wasAlreadyLaunched
         ? widget.order!.status
         : (!hasBuiltStageQueue
@@ -3433,30 +3438,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       createdOrUpdatedOrder.pdfUrl = uploadedPath;
       await provider.updateOrder(createdOrUpdatedOrder);
     }
-    if (canRebuildProductionPlan && hasBuiltStageQueue) {
+    if (willSaveBuiltStageQueue) {
       // Сохраняем фактическую очередь заказа через общий сервис.
       // stageTemplateId остаётся метаданным выбора в UI, а не источником истины.
-      final templateStages = _selectedTemplateStageMaps();
-      var stageMaps = _buildStageMapsForProductionPlanSave(
-        stagePreviewStages: _stagePreviewStages,
-        stageTemplateId: _stageTemplateId,
-        selectedTemplateStages: templateStages,
-        buildStageQueueFromCurrentDraft: ({required templateStages}) =>
-            _buildStageQueueFromCurrentDraft(templateStages: templateStages),
-      );
-      final outcome = await _applyStageRules(stageMaps);
-      stageMaps = outcome.stages;
       await _orderQueueService.saveBuiltQueue(
         createdOrUpdatedOrder.id,
         stageMaps,
         <String, String?>{
-          'selected_v_stage': _persistedSelectedVStage(nextQueueBuildStatus),
-          'selected_p_stage': _persistedSelectedPStage(nextQueueBuildStatus),
+          'selected_v_stage': _selectedVStage,
+          'selected_p_stage': _selectedPStage,
         },
         currentQueueSignature,
         completeBobbin: outcome.shouldCompleteBobbin,
         bobbinStageId: outcome.bobbinId,
       );
+      createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
+        queueBuildStatus: QueueBuildStatus.built,
+        selectedVStage: _selectedVStage,
+        selectedPStage: _selectedPStage,
+        queueSignature: currentQueueSignature,
+      );
+      _queueBuildStatus = QueueBuildStatus.built;
+      _queueSignature = currentQueueSignature;
     }
 
     // Сначала синхронизируем список красок, чтобы в просмотре заказа
