@@ -274,7 +274,7 @@ class OrderQueueSyncService {
         .from('prod_plan_stages')
         .select('*')
         .eq('plan_id', planId)
-        .order('step', ascending: true);
+        .order('seq', ascending: true);
     if (rows is! List) return const <OrderQueueSyncEntry>[];
     return rows
         .whereType<Map>()
@@ -307,7 +307,7 @@ class OrderQueueSyncService {
       id: row['id']?.toString(),
       stageId: stageId,
       stageGroupKey: groupKey.isEmpty ? stageId : groupKey,
-      step: _readInt(row['step'] ?? row['step_no'] ?? row['seq']),
+      step: _readInt(row['seq'] ?? row['step_no'] ?? row['step']),
       status: (row['status'] ?? 'waiting').toString(),
       row: row,
     );
@@ -346,7 +346,7 @@ class OrderQueueSyncService {
         .delete()
         .eq('stage_id', current.stageId)
         .eq('stage_group_key', current.stageGroupKey)
-        .eq('step', current.step);
+        .eq('seq', current.step);
   }
 
   Future<void> _updatePendingPlanStage(
@@ -356,7 +356,7 @@ class OrderQueueSyncService {
     final updates = {
       'stage_id': next.stageId,
       'stage_group_key': next.stageGroupKey,
-      'step': next.step,
+      'seq': next.step,
       'status': 'waiting',
     };
     await _updatePlanStageWithOptionalStepNo(current, updates, next.step);
@@ -370,7 +370,7 @@ class OrderQueueSyncService {
       'plan_id': planId,
       'stage_id': next.stageId,
       'stage_group_key': next.stageGroupKey,
-      'step': next.step,
+      'seq': next.step,
       'status': 'waiting',
     };
     try {
@@ -400,7 +400,7 @@ class OrderQueueSyncService {
           .update(payload)
           .eq('stage_id', current.stageId)
           .eq('stage_group_key', current.stageGroupKey)
-          .eq('step', current.step);
+          .eq('seq', current.step);
     }
 
     try {

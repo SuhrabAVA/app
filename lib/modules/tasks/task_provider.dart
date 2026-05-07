@@ -1414,13 +1414,25 @@ class TaskProvider with ChangeNotifier {
           if (rows is List && rows.isNotEmpty) {
             int maxOrder = 0;
             for (final r in rows) {
-              final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
+              final o = r['order'] ??
+                  r['position'] ??
+                  r['idx'] ??
+                  r['seq'] ??
+                  r['step_no'] ??
+                  r['step'] ??
+                  0;
               final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
               if (oi > maxOrder) maxOrder = oi;
             }
             final lastIds = <String>{};
             for (final r in rows) {
-              final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
+              final o = r['order'] ??
+                  r['position'] ??
+                  r['idx'] ??
+                  r['seq'] ??
+                  r['step_no'] ??
+                  r['step'] ??
+                  0;
               final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
               if (oi == maxOrder) {
                 final sid =
