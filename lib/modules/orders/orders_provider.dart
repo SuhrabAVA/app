@@ -5,7 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'material_model.dart';
 import 'order_model.dart';
-import 'order_queue_sync_service.dart';
+import 'order_queue_service.dart';
 import 'product_model.dart';
 import '../../utils/auth_helper.dart';
 
@@ -754,159 +754,11 @@ class OrdersProvider with ChangeNotifier {
     }
 
     try {
-      final List<Map<String, dynamic>> stageRows = <Map<String, dynamic>>[];
-      List<String> _readStageIds(Map<String, dynamic> row) {
-        final ids = <String>[];
-        void add(dynamic value) {
-          final id = value?.toString().trim() ?? '';
-          if (id.isEmpty || ids.contains(id)) return;
-          ids.add(id);
-        }
-
-        final workplaceIds = row['workplace_ids'] ?? row['workplaceIds'];
-        if (workplaceIds is List) {
-          for (final id in workplaceIds) {
-            add(id);
-          }
-        } else if (workplaceIds is String) {
-          for (final token in workplaceIds.split(',')) {
-            add(token);
-          }
-        }
-
-        if (ids.isEmpty) {
-          add(row['stage_id'] ?? row['stageId'] ?? row['workplace_id']);
-        }
-        final alternatives = row['alternative_stage_ids'] ??
-            row['alternativeStageIds'] ??
-            row['stage_ids'] ??
-            row['stageIds'] ??
-            row['all_stage_ids'] ??
-            row['allStageIds'];
-        if (alternatives is List) {
-          for (final id in alternatives) {
-            add(id);
-          }
-        } else if (alternatives is String) {
-          for (final token in alternatives.split(',')) {
-            add(token);
-          }
-        }
-        return ids;
-      }
-
       try {
-        final plan = await _supabase
-            .from('prod_plans')
-            .select('id')
-            .eq('order_id', launchOrder.id)
-            .maybeSingle();
-        final String? planId = plan?['id']?.toString();
-        if (planId != null && planId.isNotEmpty) {
-          final rows = await _supabase
-              .from('prod_plan_stages')
-              .select('stage_id, alternative_stage_ids, status, step, step_no, seq, stage_group_key')
-              .eq('plan_id', planId)
-              .order('step', ascending: true);
-          if (rows is List) {
-            stageRows.addAll(rows
-                .whereType<Map>()
-                .map((r) => Map<String, dynamic>.from(r as Map)));
-          }
-        }
-      } catch (_) {}
-
-      if (stageRows.isEmpty) {
-        try {
-          final legacyPlan = await _supabase
-              .from('production_plans')
-              .select('stages')
-              .eq('order_id', launchOrder.id)
-              .maybeSingle();
-          final dynamic stages = legacyPlan?['stages'];
-          if (stages is List) {
-            for (final raw in stages.whereType<Map>()) {
-              final map = Map<String, dynamic>.from(raw as Map);
-              final workplaceIds = map['workplaceIds'] ?? map['workplace_ids'];
-              final stageId = (map['stageId'] ??
-                      map['stage_id'] ??
-                      map['stageid'] ??
-                      map['workplaceId'] ??
-                      map['workplace_id'] ??
-                      map['id'])
-                  ?.toString();
-              if (stageId == null || stageId.trim().isEmpty) continue;
-              stageRows.add({
-                'stage_id': stageId.trim(),
-                if (workplaceIds != null) 'workplace_ids': workplaceIds,
-                if (map['alternativeStageIds'] != null)
-                  'alternative_stage_ids': map['alternativeStageIds'],
-                if (map['alternative_stage_ids'] != null)
-                  'alternative_stage_ids': map['alternative_stage_ids'],
-                'status': 'waiting',
-              });
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (stageRows.isEmpty) {
-        return 'Не удалось запустить заказ: не найдена очередь этапов.';
-      }
-
-      final nextQueue = <OrderQueueSyncEntry>[];
-      final doneStageKeys = <String>{};
-      final Set<String> createdTaskKeys = <String>{};
-      var fallbackStep = 1;
-      for (final row in stageRows) {
-        final stageIds = _readStageIds(row);
-        if (stageIds.isEmpty) continue;
-        final persistedGroupKey = (row['stage_group_key'] ??
-                row['stageGroupKey'] ??
-                row['queue_stage_key'] ??
-                row['queueStageKey'])
-            ?.toString()
-            .trim();
-        final groupIds = List<String>.from(stageIds)..sort();
-        final stageGroupKey =
-            (persistedGroupKey != null && persistedGroupKey.isNotEmpty)
-                ? persistedGroupKey
-                : groupIds.join('|');
-        final step = int.tryParse(
-              (row['step'] ?? row['step_no'] ?? row['seq'] ?? fallbackStep)
-                  .toString(),
-            ) ??
-            fallbackStep;
-        final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
-        final bool isDoneStage = stageStatus == 'done' || stageStatus == 'completed';
-        for (final stageId in stageIds) {
-          final dedupeKey = '$stageGroupKey::$stageId';
-          if (!createdTaskKeys.add(dedupeKey)) continue;
-          nextQueue.add(OrderQueueSyncEntry(
-            stageId: stageId,
-            stageGroupKey: stageGroupKey.isEmpty ? stageId : stageGroupKey,
-            step: step,
-            status: isDoneStage ? 'done' : 'waiting',
-          ));
-          if (isDoneStage) doneStageKeys.add(dedupeKey);
-        }
-        fallbackStep += 1;
-      }
-
-      await OrderQueueSyncService(_supabase).sync(
-        orderId: launchOrder.id,
-        nextQueue: nextQueue,
-      );
-      for (final key in doneStageKeys) {
-        final parts = key.split('::');
-        if (parts.length != 2) continue;
-        await _supabase.from('tasks').update({
-          'status': 'done',
-          'completed_at': DateTime.now().toIso8601String(),
-        })
-            .eq('order_id', launchOrder.id)
-            .eq('stage_group_key', parts[0])
-            .eq('stage_id', parts[1]);
+        await OrderQueueService(_supabase)
+            .createTasksFromSavedQueue(launchOrder.id);
+      } on StateError catch (e) {
+        return 'Не удалось запустить заказ: ${e.message}';
       }
 
       // Бизнес-правило резерва: до перевода в in_production
