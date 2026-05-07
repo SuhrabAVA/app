@@ -5,7 +5,7 @@ import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
 void main() {
   group('production plan save stage maps', () {
     test(
-      'creates product-type queue without selected template and ends with packaging',
+      'uses selected template stages even without selected template id',
       () {
         List<Map<String, dynamic>>? receivedTemplateStages;
 
@@ -32,7 +32,7 @@ void main() {
           },
         );
 
-        expect(receivedTemplateStages, isEmpty);
+        expect(receivedTemplateStages, isNotEmpty);
         expect(
           stageMaps.map((stage) => stage['stageKey']),
           [
@@ -43,7 +43,7 @@ void main() {
             kPackagingStageId,
           ],
         );
-        expect(stageMaps.first['stageName'], 'Автомат большой');
+        expect(stageMaps.first['stageName'], 'Труба');
         expect(stageMaps.last['stageName'], 'Упаковка');
       },
     );
