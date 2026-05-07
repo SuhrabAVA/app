@@ -52,6 +52,7 @@ void main() {
   group('supportsCardboardForTesting', () {
     test('returns false for sheet and V-type products', () {
       expect(supportsCardboardForTesting(kSheetProductTypeId), isFalse);
+      expect(supportsCardboardForTesting('Листы'), isFalse);
 
       for (final productTypeId in kVTypeProducts) {
         expect(
@@ -60,11 +61,28 @@ void main() {
           reason: 'V-type product $productTypeId should not support cardboard',
         );
       }
+
+      for (final productTypeName in const [
+        'В-образный окно',
+        'В-образный пакет',
+        'В-образный фри',
+        'В-образный уголок',
+      ]) {
+        expect(
+          supportsCardboardForTesting(productTypeName),
+          isFalse,
+          reason: 'V-type product name $productTypeName should not support '
+              'cardboard',
+        );
+      }
     });
 
     test('returns true for P-type and two-sheet package products', () {
       expect(supportsCardboardForTesting(kPTypePackageProduct), isTrue);
-      expect(supportsCardboardForTesting(kTwoSheetPackageProductTypeId), isTrue);
+      expect(
+        supportsCardboardForTesting(kTwoSheetPackageProductTypeId),
+        isTrue,
+      );
     });
   });
 }

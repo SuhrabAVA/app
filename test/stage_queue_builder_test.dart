@@ -87,6 +87,30 @@ void main() {
     expect(result.last.stageName, 'Упаковка');
   });
 
+  test('recognizes named V-type products as switchable V routes', () {
+    for (final productTypeName in const [
+      'В-образный окно',
+      'В-образный пакет',
+      'В-образный фри',
+      'В-образный уголок',
+    ]) {
+      final result = buildOrderStages(
+        OrderStageQueueDraft(
+          productTypeId: productTypeName,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+        ),
+      );
+
+      expect(result.first.stageKey, kVMainSwitchStageKey);
+      expect(result.first.selectedWorkplaceId, kFriStageId);
+      expect(result.last.stageKey, kPackagingStageId);
+    }
+  });
+
   test('does not add bobbin cutting without positive widths', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(

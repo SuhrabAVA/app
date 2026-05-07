@@ -60,9 +60,9 @@ const String kFlatHandleWorkplaceId = kFlatHandleStageId;
 // The following technological stage keys are intentionally distinct even when
 // a customer installation maps several of them to the same physical workplace.
 const String kDieCutA1A2StageId = 'die_cut_a1_a2';
-const String kScotchStageId = 'scotch';
-const String kFromTwoSheetsStageId = 'from_two_sheets';
-const String kTubeAssemblyStageId = 'tube_assembly';
+const String kScotchStageId = 'a9e21c59-e145-4074-8d24-f2db089c8747';
+const String kFromTwoSheetsStageId = '008a5bbd-86f8-48c1-a98b-0034f80492a6';
+const String kTubeAssemblyStageId = '4e4750b0-5849-42be-94b8-a721a68b85da';
 const String kBottomGlueStageId = 'bottom_glue_group';
 const String kTwistedHandleGroupStageId = 'twisted_handle_group';
 const String kFlatHandleGroupStageId = 'flat_handle_group';
@@ -469,6 +469,19 @@ const Map<String, Set<String>> _switchableIdsByGroup = {
   kSwitchablePGroupKey: {kAutoBigStageId, kAutoSmallStageId, kTubeStageId},
 };
 
+bool isSheetProductType(String productTypeId) => _isSheetProduct(productTypeId);
+
+bool isVTypeProductType(String productTypeId) => _isVTypeProduct(productTypeId);
+
+bool isTwoSheetPackageProductType(String productTypeId) =>
+    _isTwoSheetPackageProduct(productTypeId);
+
+bool isPTypePackageProductType(String productTypeId) =>
+    _isPTypePackageProduct(productTypeId);
+
+bool supportsCardboardForProductType(String productTypeId) =>
+    !_isSheetProduct(productTypeId) && !_isVTypeProduct(productTypeId);
+
 bool _isSheetProduct(String productTypeId) {
   final normalized = _normalizeProductType(productTypeId);
   return kSheetProducts.contains(productTypeId) || normalized == 'листы';
@@ -480,7 +493,11 @@ bool _isVTypeProduct(String productTypeId) {
       normalized == 'v пакет' ||
       normalized == 'v-пакет' ||
       normalized == 'в образные' ||
-      normalized == 'в-образные';
+      normalized == 'в-образные' ||
+      normalized == 'в-образный окно' ||
+      normalized == 'в-образный пакет' ||
+      normalized == 'в-образный фри' ||
+      normalized == 'в-образный уголок';
 }
 
 bool _isTwoSheetPackageProduct(String productTypeId) {
