@@ -3221,25 +3221,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _syncSwitchableStageSelectionFields(stageMaps);
       nextQueueBuildStatus = QueueBuildStatus.built;
     }
-    final bool hasBuiltStageQueue =
-        nextQueueBuildStatus == QueueBuildStatus.built;
+    // Статус заказа рассчитываем от эффективной очереди текущего черновика,
+    // а не от того, нажимал ли пользователь кнопку «Собрать очередь».
+    final bool hasQueueForStatus = hasEffectiveStageQueue;
+    final bool hasEnoughMaterialsForQueue = hasEnoughPaperForLaunch();
     final bool canLaunchProductionNow =
-        hasBuiltStageQueue && hasEnoughPaperForLaunch();
+        hasQueueForStatus && hasEnoughMaterialsForQueue;
     final String nextOrderStatus = wasAlreadyLaunched
         ? widget.order!.status
-        : (!hasBuiltStageQueue
+        : (!hasQueueForStatus
             ? OrderStatus.draft.name
             : (canLaunchProductionNow
                 ? OrderStatus.ready_to_start.name
                 : OrderStatus.waiting_materials.name));
     final bool nextHasMaterialShortage = wasAlreadyLaunched
         ? widget.order!.hasMaterialShortage
-        : (hasBuiltStageQueue ? !canLaunchProductionNow : false);
+        : (hasQueueForStatus && !hasEnoughMaterialsForQueue);
     final String shortageMessage = wasAlreadyLaunched
         ? widget.order!.materialShortageMessage
-        : (!hasBuiltStageQueue
+        : (!hasQueueForStatus
             ? ''
-            : (canLaunchProductionNow
+            : (hasEnoughMaterialsForQueue
                 ? ''
                 : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
     late OrderModel createdOrUpdatedOrder;
@@ -3553,7 +3555,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
       );
     } else if (!createdOrUpdatedOrder.assignmentCreated &&
-        !hasBuiltStageQueue) {
+        !hasQueueForStatus) {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
@@ -3561,7 +3563,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ),
       );
-    } else if (!createdOrUpdatedOrder.assignmentCreated && !canLaunchProductionNow) {
+    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+        !canLaunchProductionNow) {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
@@ -3570,7 +3573,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ),
       );
-    } else if (!createdOrUpdatedOrder.assignmentCreated && canLaunchProductionNow) {
+    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+        canLaunchProductionNow) {
       messenger.showSnackBar(
         const SnackBar(
           content: Text('Заказ сохранён и готов к запуску. Нажмите «Запустить».'),
