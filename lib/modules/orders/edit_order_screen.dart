@@ -80,15 +80,8 @@ const Set<String> _legacyBobbinAliases = {
   'w_bobiner',
   'w_bobbin',
 };
-const Set<String> _cardboardUnsupportedProductTypeIds = {
-  kSheetProductTypeId,
-  ...kVTypeProducts,
-};
-
-bool _supportsCardboard(String productTypeId) {
-  return !_cardboardUnsupportedProductTypeIds
-      .contains(productTypeId.trim().toLowerCase());
-}
+bool _supportsCardboard(String productTypeId) =>
+    supportsCardboardForProductType(productTypeId);
 
 bool supportsCardboardForTesting(String productTypeId) =>
     _supportsCardboard(productTypeId);
@@ -2848,9 +2841,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return true;
     }
 
-    final bool hasStageQueueSelected = _isStageQueueBuilt;
-    final bool canLaunchProductionNow =
-        hasStageQueueSelected && hasEnoughPaperForLaunch();
+    // Очередь теперь автособирается при каждом сохранении заказа: пользователю
+    // не нужно отдельно нажимать кнопку построения очереди.
+    const bool hasStageQueueSelected = true;
+    final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
     if (wasAlreadyLaunched) {
       await _loadRuntimeEditLocks();
