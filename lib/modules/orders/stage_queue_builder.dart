@@ -28,6 +28,8 @@ const Set<String> kPTypePackageProducts = {kPTypePackageProduct};
 // Workplace/stage IDs from the production routing specification.
 const String kBobbinStageId = 'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
 const String kFlexPrintingStageId = '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+const Set<String> kLegacyBobbinStageAliases = {'w_bobiner', 'w_bobbin'};
+const Set<String> kLegacyFlexPrintingStageAliases = {'w_flexoprint', 'w_flexo'};
 const String kPackagingStageId = 'edeb85db-c7a3-4a24-8f33-70ccdda4aae1';
 const String kFriStageId = '92d96ee9-0519-40b9-bd17-9bec475496b6';
 const String kWindowStageId = '8337f16e-c2d1-42dc-966d-6277ba3c1a50';
@@ -92,6 +94,7 @@ class OrderStageQueueDraft {
     required this.hasPaint,
     required this.hasTrimming,
     required this.hasCardboard,
+    this.requiresBobbinCutting,
     this.handleType,
     this.switchableStageKey,
     this.selectedSwitchableStageId,
@@ -104,6 +107,7 @@ class OrderStageQueueDraft {
   final bool hasPaint;
   final bool hasTrimming;
   final bool hasCardboard;
+  final bool? requiresBobbinCutting;
   final Object? handleType;
   final String? switchableStageKey;
   final String? selectedSwitchableStageId;
@@ -119,6 +123,7 @@ class OrderStageQueueDraft {
       hasPaint: hasPaint,
       hasTrimming: hasTrimming,
       hasCardboard: hasCardboard,
+      requiresBobbinCutting: requiresBobbinCutting,
       handleType: handleType,
       switchableStageKey: switchableStageKey,
       selectedSwitchableStageId: selectedSwitchableStageId,
@@ -195,6 +200,7 @@ List<Map<String, dynamic>> buildOrderStageQueue({
   required bool hasCardboard,
   required bool hasFlexPrinting,
   Object? handleType,
+  bool? requiresBobbinCutting,
   double? orderWidthB,
   double? materialWidth,
   String? switchableStageKey,
@@ -219,13 +225,171 @@ List<Map<String, dynamic>> buildOrderStageQueue({
     hasPaint: hasFlexPrinting,
     hasTrimming: hasCutting,
     hasCardboard: hasCardboard,
+    requiresBobbinCutting: requiresBobbinCutting,
     handleType: handleType,
     switchableStageKey: switchableStageKey,
     selectedSwitchableStageId: selectedFromSource,
     selectedSwitchableStageIdsByStageKey: selectedByStageKey,
   );
-  return buildOrderStages(draft).map((stage) => stage.toMap()).toList();
+  return normalizeBuiltOrderStageQueue(
+    buildOrderStages(draft).map((stage) => stage.toMap()).toList(),
+  );
 }
+
+
+bool requiresBobbinCuttingForOrder({
+  required Iterable<MaterialModel> papers,
+  required double? defaultOrderWidthB,
+  String? mainMaterialFormatFallback,
+}) {
+  const double epsilon = 0.001;
+  var index = 0;
+  for (final paper in papers) {
+    final formatWidth = parseMaterialWidth(paper) ??
+        (index == 0 ? _parseLeadingNumber(mainMaterialFormatFallback) : null);
+    final productWidth = index == 0
+        ? defaultOrderWidthB
+        : (_materialExtraDouble(paper, 'widthB') ?? defaultOrderWidthB);
+    if (formatWidth != null &&
+        productWidth != null &&
+        productWidth > 0 &&
+        (productWidth + epsilon) < formatWidth) {
+      return true;
+    }
+    index += 1;
+  }
+  return false;
+}
+
+double? _materialExtraDouble(MaterialModel paper, String key) {
+  final value = paper.extra?[key];
+  if (value is num) return value.toDouble();
+  if (value is String) {
+    final normalized = value.trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    return double.tryParse(normalized);
+  }
+  return null;
+}
+
+List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
+  List<Map<String, dynamic>> stages,
+) {
+  final normalized = <Map<String, dynamic>>[];
+  final seen = <String>{};
+
+  for (final source in stages) {
+    final map = Map<String, dynamic>.from(source);
+    final stageId = _stageIdFromMap(map);
+    final canonicalId = _canonicalStageId(stageId);
+    final dedupeKey = _dedupeStageKey(map, canonicalId);
+    if (!seen.add(dedupeKey)) continue;
+    if (canonicalId != null && canonicalId.isNotEmpty) {
+      map['stageId'] = canonicalId;
+      map['workplaceId'] = canonicalId;
+      map['id'] = canonicalId;
+    }
+    if (_isBobbinStage(map, canonicalId)) {
+      map['stageName'] = 'Бабинорезка';
+      map['workplaceName'] = 'Бабинорезка';
+    } else if (_isFlexPrintingStage(map, canonicalId)) {
+      map['stageName'] = 'Флексопечать';
+      map['workplaceName'] = 'Флексопечать';
+    } else if (_isPackagingStage(map, canonicalId)) {
+      map['stageName'] = 'Упаковка';
+      map['workplaceName'] = 'Упаковка';
+    }
+    normalized.add(map);
+  }
+
+  final bobbin = <Map<String, dynamic>>[];
+  final flex = <Map<String, dynamic>>[];
+  final products = <Map<String, dynamic>>[];
+  final packaging = <Map<String, dynamic>>[];
+
+  for (final stage in normalized) {
+    final id = _stageIdFromMap(stage);
+    if (_isBobbinStage(stage, id)) {
+      bobbin.add(stage);
+    } else if (_isFlexPrintingStage(stage, id)) {
+      flex.add(stage);
+    } else if (_isPackagingStage(stage, id)) {
+      packaging.add(stage);
+    } else {
+      products.add(stage);
+    }
+  }
+
+  final ordered = <Map<String, dynamic>>[
+    ...bobbin,
+    ...flex,
+    ...products,
+    ...packaging,
+  ];
+  for (var i = 0; i < ordered.length; i++) {
+    ordered[i]['sortOrder'] = i + 1;
+    ordered[i]['order'] = i + 1;
+  }
+  return ordered;
+}
+
+String? _stageIdFromMap(Map<String, dynamic> map) => (map['stageId'] ??
+        map['stage_id'] ??
+        map['stageid'] ??
+        map['workplaceId'] ??
+        map['workplace_id'] ??
+        map['id'])
+    ?.toString();
+
+String? _canonicalStageId(String? stageId) {
+  if (stageId == null) return null;
+  final normalized = stageId.toLowerCase();
+  if (kLegacyFlexPrintingStageAliases.contains(normalized)) {
+    return kFlexPrintingStageId;
+  }
+  if (kLegacyBobbinStageAliases.contains(normalized)) return kBobbinStageId;
+  return stageId;
+}
+
+String _dedupeStageKey(Map<String, dynamic> map, String? stageId) {
+  if (_isBobbinStage(map, stageId)) return 'position:bob_cutter';
+  if (_isFlexPrintingStage(map, stageId)) return 'position:print';
+  return 'stage:${stageId ?? (map['stageKey'] ?? map['stage_key'] ?? '').toString()}';
+}
+
+bool _isBobbinStage(Map<String, dynamic> map, String? stageId) {
+  final normalizedId = (stageId ?? '').toLowerCase();
+  if (stageId == kBobbinStageId ||
+      kLegacyBobbinStageAliases.contains(normalizedId)) {
+    return true;
+  }
+  final name = _stageNameFromMap(map);
+  return name.contains('бобин') || name.contains('бабин') || name.contains('bobbin');
+}
+
+bool _isFlexPrintingStage(Map<String, dynamic> map, String? stageId) {
+  final normalizedId = (stageId ?? '').toLowerCase();
+  if (stageId == kFlexPrintingStageId ||
+      kLegacyFlexPrintingStageAliases.contains(normalizedId)) {
+    return true;
+  }
+  final name = _stageNameFromMap(map);
+  return name.contains('флекс') || name.contains('flexo');
+}
+
+bool _isPackagingStage(Map<String, dynamic> map, String? stageId) {
+  if (stageId == kPackagingStageId) return true;
+  return _stageNameFromMap(map).contains('упаков');
+}
+
+String _stageNameFromMap(Map<String, dynamic> map) => (map['stageName'] ??
+        map['workplaceName'] ??
+        map['title'] ??
+        map['name'] ??
+        '')
+    .toString()
+    .trim()
+    .toLowerCase();
 
 class _OrderStageQueueBuilder {
   _OrderStageQueueBuilder(this.draft);
@@ -252,6 +416,9 @@ class _OrderStageQueueBuilder {
   bool get _needsBobbinCutting {
     final orderWidth = draft.orderWidthB;
     final material = draft.materialWidth;
+    if (draft.requiresBobbinCutting != null) {
+      return draft.requiresBobbinCutting!;
+    }
     if (orderWidth == null || material == null) return false;
     return orderWidth > 0 && material > 0 && orderWidth < material;
   }
@@ -654,9 +821,8 @@ List<Map<String, dynamic>> insertProductStageAfterBaseStages(
         .toString()
         .toLowerCase();
     const baseIds = <String>{
-      'w_bobiner',
-      'w_bobbin',
-      'w_flexoprint',
+      ...kLegacyBobbinStageAliases,
+      ...kLegacyFlexPrintingStageAliases,
       kBobbinStageId,
       kFlexPrintingStageId,
     };
