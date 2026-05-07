@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const String kStartedStageQueueChangeMessage =
-    'Нельзя изменить этап, который уже находится в работе. Завершите или отмените текущий этап перед изменением очереди.';
+    'Нельзя изменить уже начатый или завершённый этап.';
 
 const String kOutdatedProdPlanStageIdSchemaMessage =
     'Схема базы данных устарела: отсутствует prod_plan_stages.stage_id. Примените миграции Supabase';
@@ -147,6 +147,13 @@ class OrderQueueSyncService {
   static String _normalizeStatus(dynamic status) =>
       (status?.toString() ?? '').trim().toLowerCase().replaceAll('-', '_');
 
+  static String protectedStageChangeMessage(OrderQueueSyncEntry entry) {
+    final status = entry.status.trim();
+    final statusSuffix = status.isEmpty ? '' : ' (статус: $status)';
+    return 'Нельзя изменить уже начатый или завершённый этап '
+        '«${entry.displayName}»$statusSuffix. Измените только ожидающие этапы.';
+  }
+
   static List<OrderQueueSyncOperation> diff({
     required List<OrderQueueSyncEntry> currentStages,
     required List<OrderQueueSyncEntry> currentTasks,
@@ -167,7 +174,7 @@ class OrderQueueSyncService {
           operations.add(OrderQueueSyncOperation(
             type: OrderQueueSyncOperationType.block,
             current: current,
-            reason: kStartedStageQueueChangeMessage,
+            reason: protectedStageChangeMessage(current),
           ));
         } else {
           operations.add(OrderQueueSyncOperation(
@@ -178,11 +185,18 @@ class OrderQueueSyncService {
         continue;
       }
 
-      if (current.sameQueueSlot(next) || isProtectedStatus(current.status)) {
+      if (current.sameQueueSlot(next)) {
         operations.add(OrderQueueSyncOperation(
           type: OrderQueueSyncOperationType.keep,
           current: current,
           next: next,
+        ));
+      } else if (isProtectedStatus(current.status)) {
+        operations.add(OrderQueueSyncOperation(
+          type: OrderQueueSyncOperationType.block,
+          current: current,
+          next: next,
+          reason: protectedStageChangeMessage(current),
         ));
       } else {
         operations.add(OrderQueueSyncOperation(
@@ -194,14 +208,16 @@ class OrderQueueSyncService {
     }
 
     for (final task in currentTasks) {
-      if (nextByKey.containsKey(task.identityKey)) continue;
+      final next = nextByKey[task.identityKey];
+      if (next != null && task.sameQueueSlot(next)) continue;
       if (isProtectedStatus(task.status)) {
         operations.add(OrderQueueSyncOperation(
           type: OrderQueueSyncOperationType.block,
           current: task,
-          reason: kStartedStageQueueChangeMessage,
+          next: next,
+          reason: protectedStageChangeMessage(task),
         ));
-      } else {
+      } else if (next == null) {
         operations.add(OrderQueueSyncOperation(
           type: OrderQueueSyncOperationType.cancelOrDeletePending,
           current: task,
