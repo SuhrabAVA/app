@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'order_model.dart';
@@ -6,6 +7,9 @@ import 'stage_queue_builder.dart';
 
 export 'order_queue_sync_service.dart'
     show OrderQueueSyncBlockedException, OrderQueueSyncSchemaOutdatedException;
+
+const String kCreateProductionTasksFailedMessage =
+    'Не удалось создать производственные задания';
 
 /// Source priority for a persisted order queue.
 ///
@@ -35,6 +39,29 @@ class SavedOrderQueue {
 
   bool get isEmpty => rows.isEmpty;
   bool get isNotEmpty => rows.isNotEmpty;
+}
+
+class SaveBuiltQueueResult {
+  const SaveBuiltQueueResult({
+    required this.productionTasksCreated,
+    this.legacySchemaFallback = false,
+  });
+
+  final bool productionTasksCreated;
+  final bool legacySchemaFallback;
+}
+
+class OrderQueueSaveException implements Exception {
+  const OrderQueueSaveException([
+    this.message = kCreateProductionTasksFailedMessage,
+    this.cause,
+  ]);
+
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() => message;
 }
 
 class OrderQueueService {
@@ -167,7 +194,7 @@ class OrderQueueService {
     );
   }
 
-  Future<void> saveBuiltQueue(
+  Future<SaveBuiltQueueResult> saveBuiltQueue(
     String orderId,
     List<Map<String, dynamic>> queue,
     Map<String, String?> selections,
@@ -176,7 +203,9 @@ class OrderQueueService {
     String? bobbinStageId,
   }) async {
     final id = orderId.trim();
-    if (id.isEmpty) return;
+    if (id.isEmpty) {
+      return const SaveBuiltQueueResult(productionTasksCreated: false);
+    }
     final rows = queue.map((row) => Map<String, dynamic>.from(row)).toList();
 
     await _upsertLegacyProductionPlan(id, rows);
@@ -188,7 +217,9 @@ class OrderQueueService {
         'selected_p_stage': selections['selected_p_stage'],
         'queue_signature': signature,
       }).eq('id', id);
-    } catch (_) {}
+    } catch (error) {
+      _debugPrintQueueSyncFailure(id, 'orders', error);
+    }
 
     try {
       await syncQueueForExistingOrder(
@@ -197,12 +228,65 @@ class OrderQueueService {
         completeBobbin: completeBobbin,
         bobbinStageId: bobbinStageId,
       );
+      return const SaveBuiltQueueResult(productionTasksCreated: true);
     } on OrderQueueSyncBlockedException {
       rethrow;
-    } catch (_) {
-      // Older deployments may not have normalized plan tables yet; the legacy
-      // saved queue above remains available for loadSavedQueue().
+    } catch (error) {
+      final tableName = _syncFailureTableName(error);
+      _debugPrintQueueSyncFailure(id, tableName, error);
+      if (_isLegacyNormalizedQueueSchemaError(error)) {
+        // Older deployments may not have normalized plan tables yet; the
+        // legacy saved queue above remains available for loadSavedQueue().
+        return const SaveBuiltQueueResult(
+          productionTasksCreated: false,
+          legacySchemaFallback: true,
+        );
+      }
+      throw OrderQueueSaveException(
+        kCreateProductionTasksFailedMessage,
+        error,
+      );
     }
+  }
+
+  static bool _isLegacyNormalizedQueueSchemaError(Object error) {
+    if (error is! PostgrestException) return false;
+    final code = (error.code ?? '').trim();
+    final message = error.message.toLowerCase();
+    final mentionsNormalizedPlanTable =
+        message.contains('prod_plans') || message.contains('prod_plan_stages');
+    if (!mentionsNormalizedPlanTable) return false;
+    return code == '42P01' ||
+        code == '42703' ||
+        code == 'PGRST204' ||
+        code == 'PGRST205';
+  }
+
+  static String _syncFailureTableName(Object error) {
+    if (error is PostgrestException) {
+      final message = error.message.toLowerCase();
+      for (final table in const <String>[
+        'prod_plan_stages',
+        'prod_plans',
+        'tasks',
+        'orders',
+        'production_plans',
+      ]) {
+        if (message.contains(table)) return table;
+      }
+    }
+    return 'prod_plan_stages/tasks';
+  }
+
+  static void _debugPrintQueueSyncFailure(
+    String orderId,
+    String tableName,
+    Object error,
+  ) {
+    debugPrint(
+      'OrderQueueService.saveBuiltQueue failed: orderId=$orderId '
+      'table=$tableName error=$error',
+    );
   }
 
   Future<List<OrderQueueSyncOperation>> syncQueueForExistingOrder(
