@@ -68,10 +68,12 @@ class _SwitchableStageDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final fillColor = selected ? colors.primary : colors.surface;
+    final fillColor = selected
+        ? colors.primary.withValues(alpha: 0.18)
+        : colors.surfaceContainerHighest.withValues(alpha: 0.3);
     final borderColor = selected
-        ? colors.primary
-        : colors.primary.withValues(alpha: 0.85);
+        ? colors.primary.withValues(alpha: 0.72)
+        : colors.outlineVariant.withValues(alpha: 0.9);
 
     return Tooltip(
       message: label,
@@ -81,32 +83,23 @@ class _SwitchableStageDot extends StatelessWidget {
         label: label,
         child: InkResponse(
           onTap: onTap,
-          radius: 22,
+          radius: 18,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOut,
-            width: 28,
-            height: 28,
-            padding: const EdgeInsets.all(3),
+            width: 20,
+            height: 20,
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: fillColor,
-              border: Border.all(color: borderColor, width: 2.5),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: colors.primary.withValues(alpha: 0.24),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
-                      ),
-                    ]
-                  : null,
+              border: Border.all(color: borderColor, width: 1.5),
             ),
             child: selected
                 ? DecoratedBox(
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: colors.onPrimary.withValues(alpha: 0.18),
+                      color: colors.primary.withValues(alpha: 0.78),
                     ),
                   )
                 : null,
@@ -1733,38 +1726,39 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final colors = theme.colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.only(top: 8),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
-          borderRadius: BorderRadius.circular(14),
+          color: colors.surfaceContainerHighest.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: colors.outlineVariant.withValues(alpha: 0.8),
+            color: colors.outlineVariant.withValues(alpha: 0.45),
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Выбран этап',
+                'Этап:',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: colors.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                selectedOption.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colors.onSurface,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  selectedOption.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: colors.onSurface.withValues(alpha: 0.82),
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(width: 10),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1777,7 +1771,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         options[i].stageId,
                       ),
                     ),
-                    if (i != options.length - 1) const SizedBox(width: 14),
+                    if (i != options.length - 1) const SizedBox(width: 8),
                   ],
                 ],
               ),
