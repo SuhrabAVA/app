@@ -1,31 +1,36 @@
 alter table if exists public.prod_plan_stages
   add column if not exists stage_id text;
 
+alter table if exists public.prod_plan_stages
+  add column if not exists stage_group_key text;
+
 do $$
 declare
-  source_column text;
+  source_expression text;
 begin
-  select column_name
-  into source_column
-  from information_schema.columns
-  where table_schema = 'public'
-    and table_name = 'prod_plan_stages'
-    and column_name in ('workplace_id', 'workplaceId', 'id')
-    and data_type in ('text', 'character varying', 'character')
-  order by case column_name
-    when 'workplace_id' then 1
-    when 'workplaceId' then 2
-    when 'id' then 3
-  end
-  limit 1;
+  select string_agg(format('nullif(%I, %L)', column_name, ''), ', ' order by priority)
+  into source_expression
+  from (
+    select column_name,
+      case column_name
+        when 'workplace_id' then 1
+        when 'workplaceId' then 2
+        when 'id' then 3
+      end as priority
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'prod_plan_stages'
+      and column_name in ('workplace_id', 'workplaceId', 'id')
+      and data_type in ('text', 'character varying', 'character')
+  ) legacy_columns;
 
-  if source_column is not null then
+  if source_expression is not null then
     execute format(
       'update public.prod_plan_stages
-       set stage_id = %1$I
+       set stage_id = coalesce(%1$s)
        where coalesce(stage_id, '''') = ''''
-         and coalesce(%1$I, '''') <> ''''',
-      source_column
+         and coalesce(%1$s) is not null',
+      source_expression
     );
   end if;
 end $$;
