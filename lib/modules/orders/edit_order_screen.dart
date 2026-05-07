@@ -949,7 +949,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .from('prod_plan_stages')
               .select('stage_id')
               .eq('plan_id', planId)
-              .order('step', ascending: true)
+              .order('seq', ascending: true)
               .limit(1)
               .maybeSingle();
           firstStageId = firstStage?['stage_id']?.toString();

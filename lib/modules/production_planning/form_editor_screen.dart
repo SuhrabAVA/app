@@ -2226,7 +2226,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 'plan_id': planId,
                 'stage_id': stageId,
                 'stage_group_key': groupKey,
-                'step': step,
+                'seq': step,
                 'step_no': step,
                 'status': 'waiting',
               });

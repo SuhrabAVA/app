@@ -275,7 +275,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
           final String planId = plan['id'] as String;
           final rows = await sb
               .from('prod_plan_stages')
-              .select('stage_id, stage_name, workplace_name, name, step, step_no, seq, stage_group_key')
+              .select('stage_id, stage_name, workplace_name, name, step_no, seq, stage_group_key')
               .eq('plan_id', planId);
 
           if (rows is List && rows.isNotEmpty) {

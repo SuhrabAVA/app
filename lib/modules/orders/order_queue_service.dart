@@ -245,7 +245,7 @@ class OrderQueueService {
           .from('prod_plan_stages')
           .select('*')
           .eq('plan_id', planId)
-          .order('step', ascending: true);
+          .order('seq', ascending: true);
       return _decodeRows(rows);
     } catch (_) {
       return const <Map<String, dynamic>>[];
