@@ -7,6 +7,73 @@ import 'package:sheet_clone/modules/orders/order_stage_filter.dart'
 import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
 
 void main() {
+
+  void expectBuiltStages(
+    List<BuiltOrderStage> stages,
+    List<String> expectedStageKeys, {
+    Map<String, List<String>> workplaceIdsByStageKey = const {},
+    Map<String, String?> selectedWorkplaceIdsByStageKey = const {},
+  }) {
+    expect(stages.map((stage) => stage.stageKey).toList(), expectedStageKeys);
+    for (var index = 0; index < stages.length; index += 1) {
+      final stage = stages[index];
+      expect(
+        stage.sortOrder,
+        index + 1,
+        reason: '${stage.stageKey} sortOrder must follow queue order',
+      );
+      expect(stage.workplaceIds, isNotEmpty);
+      expect(
+        stage.selectedWorkplaceId,
+        selectedWorkplaceIdsByStageKey.containsKey(stage.stageKey)
+            ? selectedWorkplaceIdsByStageKey[stage.stageKey]
+            : stage.workplaceIds.first,
+        reason: '${stage.stageKey} selectedWorkplaceId',
+      );
+    }
+    workplaceIdsByStageKey.forEach((stageKey, workplaceIds) {
+      expect(
+        stages.singleWhere((stage) => stage.stageKey == stageKey).workplaceIds,
+        workplaceIds,
+        reason: '$stageKey workplaceIds',
+      );
+    });
+  }
+
+  void expectQueueMaps(
+    List<Map<String, dynamic>> queue,
+    List<String> expectedStageKeys, {
+    Map<String, List<String>> workplaceIdsByStageKey = const {},
+    Map<String, String?> selectedWorkplaceIdsByStageKey = const {},
+  }) {
+    expect(queue.map((stage) => stage['stageKey']).toList(), expectedStageKeys);
+    for (var index = 0; index < queue.length; index += 1) {
+      final stage = queue[index];
+      final stageKey = stage['stageKey'] as String;
+      final workplaceIds = (stage['workplaceIds'] as List).cast<String>();
+      final selectedWorkplaceId = selectedWorkplaceIdsByStageKey
+              .containsKey(stageKey)
+          ? selectedWorkplaceIdsByStageKey[stageKey]
+          : workplaceIds.first;
+
+      expect(stage['sortOrder'], index + 1, reason: '$stageKey sortOrder');
+      expect(stage['order'], index + 1, reason: '$stageKey order');
+      expect(workplaceIds, isNotEmpty, reason: '$stageKey workplaceIds');
+      expect(stage['selectedWorkplaceId'], selectedWorkplaceId);
+      expect(stage['stageId'], selectedWorkplaceId);
+      expect(stage['workplaceId'], selectedWorkplaceId);
+    }
+    workplaceIdsByStageKey.forEach((stageKey, workplaceIds) {
+      expect(
+        (queue.singleWhere((stage) => stage['stageKey'] == stageKey)
+                ['workplaceIds'] as List)
+            .cast<String>(),
+        workplaceIds,
+        reason: '$stageKey workplaceIds',
+      );
+    });
+  }
+
   test('inserts product stage after bobbin/flexo base stages', () {
     final queue = [
       {'stageId': kBobbinStageId, 'stageName': 'Бобинорезка'},
@@ -572,6 +639,470 @@ void main() {
     expect(toggled['selectedWorkplaceId'], kWindowStageId);
     expect(toggled['stageName'], 'Окно');
     expect(toggled['workplaceName'], 'Окно');
+  });
+
+
+  group('comprehensive production routes', () {
+    test('Листы: no options keeps only sheet cutting and packaging', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kSheetProductTypeId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+        ),
+      );
+
+      expectBuiltStages(result, [kSheetCutStageId, kPackagingStageId]);
+    });
+
+    test('Листы: adds Бабинорезка when product width is smaller', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: 'Листы',
+          orderWidthB: 300,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+        ),
+      );
+
+      expectBuiltStages(result, [
+        kBobbinStageId,
+        kSheetCutStageId,
+        kPackagingStageId,
+      ]);
+    });
+
+    test('Листы: adds Флексопечать between Бабинорезка and Листорезка', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: 'Листы',
+          orderWidthB: 300,
+          materialWidth: 600,
+          hasPaint: true,
+          hasTrimming: false,
+          hasCardboard: false,
+        ),
+      );
+
+      expectBuiltStages(result, [
+        kBobbinStageId,
+        kFlexPrintingStageId,
+        kSheetCutStageId,
+        kPackagingStageId,
+      ]);
+    });
+
+    test('Листы: adds Подрезка after Листорезка', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: 'Листы',
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: true,
+          hasCardboard: false,
+        ),
+      );
+
+      expectBuiltStages(result, [
+        kSheetCutStageId,
+        kCuttingStageId,
+        kPackagingStageId,
+      ]);
+    });
+
+    test('Листы: ignores disabled cardboard branch even when flag is true', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: 'Листы',
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: true,
+        ),
+      );
+
+      expect(supportsCardboardForProductType('Листы'), isFalse);
+      expectBuiltStages(result, [kSheetCutStageId, kPackagingStageId]);
+      expect(
+        result.map((stage) => stage.stageKey),
+        isNot(contains(kCardboardCuttingStageId)),
+      );
+    });
+
+    test('В-образные UUID products default to Фри and disable cardboard', () {
+      for (final productTypeId in kVTypeProducts) {
+        final result = buildOrderStages(
+          OrderStageQueueDraft(
+            productTypeId: productTypeId,
+            orderWidthB: 600,
+            materialWidth: 600,
+            hasPaint: false,
+            hasTrimming: false,
+            hasCardboard: true,
+          ),
+        );
+
+        expect(supportsCardboardForProductType(productTypeId), isFalse);
+        expectBuiltStages(
+          result,
+          [kVMainSwitchStageKey, kPackagingStageId],
+          workplaceIdsByStageKey: const {
+            kVMainSwitchStageKey: [kFriStageId, kWindowStageId],
+          },
+          selectedWorkplaceIdsByStageKey: const {
+            kVMainSwitchStageKey: kFriStageId,
+          },
+        );
+        expect(result.first.stageName, 'Фри');
+        expect(result.first.isSwitchable, isTrue);
+        expect(result.first.switchableGroupKey, kSwitchableVGroupKey);
+        expect(
+          result.map((stage) => stage.stageKey),
+          isNot(contains(kCardboardCuttingStageId)),
+        );
+      }
+    });
+
+    test('В-образный: switches from Фри to Окно', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kVTypeProductId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          selectedSwitchableStageIdsByStageKey: {
+            kVMainSwitchStageKey: kWindowStageId,
+          },
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [kVMainSwitchStageKey, kPackagingStageId],
+        workplaceIdsByStageKey: const {
+          kVMainSwitchStageKey: [kFriStageId, kWindowStageId],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kVMainSwitchStageKey: kWindowStageId,
+        },
+      );
+      expect(result.first.stageName, 'Окно');
+    });
+
+    test('В-образный: adds Подрезка after selected bottom stage', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kVTypeProductAltId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: true,
+          hasCardboard: false,
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [kVMainSwitchStageKey, kCuttingStageId, kPackagingStageId],
+        workplaceIdsByStageKey: const {
+          kVMainSwitchStageKey: [kFriStageId, kWindowStageId],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kVMainSwitchStageKey: kFriStageId,
+        },
+      );
+    });
+
+    test('Пакет из 2х листов: full route with optional trimming/cardboard', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kTwoSheetPackageProductTypeId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: true,
+          hasCardboard: true,
+          handleType: OrderHandleType.flat,
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [
+          kSheetCutStageId,
+          kCuttingStageId,
+          kDieCutA1A2StageId,
+          kScotchStageId,
+          kFromTwoSheetsStageId,
+          kTubeAssemblyStageId,
+          kCardboardCuttingStageId,
+          kBottomWithCardboardAssemblyStageId,
+          kBottomGlueStageId,
+          kFlatHandleGroupStageId,
+          kPackagingStageId,
+        ],
+        workplaceIdsByStageKey: const {
+          kDieCutA1A2StageId: [kDieCutA1WorkplaceId, kDieCutA2WorkplaceId],
+          kBottomGlueStageId: [
+            kBottomGlueWorkplaceId,
+            kBottomGlueAltWorkplaceId,
+            kBottomGlueSecondAltWorkplaceId,
+          ],
+          kFlatHandleGroupStageId: [
+            kFlatHandleStageId,
+            kManualHandleStageId,
+          ],
+        },
+      );
+    });
+
+    test('Пакет из 2х листов: trimming/cardboard are optional', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kTwoSheetPackageProductTypeId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          handleType: OrderHandleType.dieCut,
+        ),
+      );
+
+      expectBuiltStages(result, [
+        kSheetCutStageId,
+        kDieCutA1A2StageId,
+        kScotchStageId,
+        kFromTwoSheetsStageId,
+        kTubeAssemblyStageId,
+        kBottomWithCardboardAssemblyStageId,
+        kBottomGlueStageId,
+        kDieCutHandleStageId,
+        kPackagingStageId,
+      ]);
+      expect(
+        result.map((stage) => stage.stageKey),
+        isNot(contains(kCuttingStageId)),
+      );
+      expect(
+        result.map((stage) => stage.stageKey),
+        isNot(contains(kCardboardCuttingStageId)),
+      );
+    });
+
+    test('Пакет из 2х листов: supports twisted handles', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kTwoSheetPackageProductTypeId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          handleType: OrderHandleType.twisted,
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [
+          kSheetCutStageId,
+          kDieCutA1A2StageId,
+          kScotchStageId,
+          kFromTwoSheetsStageId,
+          kTubeAssemblyStageId,
+          kBottomWithCardboardAssemblyStageId,
+          kBottomGlueStageId,
+          kTwistedHandleGroupStageId,
+          kPackagingStageId,
+        ],
+        workplaceIdsByStageKey: const {
+          kTwistedHandleGroupStageId: [
+            kTwistedHandleStageId,
+            kManualHandleStageId,
+          ],
+        },
+      );
+    });
+
+    test('П-образный пакет: Автомат большой uses cardboard insert branch', () {
+      final queue = buildOrderStageQueue(
+        productTypeId: kPTypePackageProduct,
+        hasCutting: true,
+        hasCardboard: true,
+        hasFlexPrinting: false,
+        handleType: OrderHandleType.flat,
+        selectedSwitchableStageIdsByStageKey: const {
+          kPMainSwitchStageKey: kAutoBigStageId,
+        },
+      );
+
+      expectQueueMaps(
+        queue,
+        [
+          kPMainSwitchStageKey,
+          kCuttingStageId,
+          kCardboardCuttingStageId,
+          kCardboardInsertStageId,
+          kFlatHandleGroupStageId,
+          kPackagingStageId,
+        ],
+        workplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: [
+            kAutoBigStageId,
+            kAutoSmallStageId,
+            kTubeStageId,
+          ],
+          kFlatHandleGroupStageId: [
+            kFlatHandleStageId,
+            kManualHandleStageId,
+          ],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: kAutoBigStageId,
+        },
+      );
+      expect(queue.first['stageName'], 'Автомат большой');
+      expect(queue.first['isSwitchable'], isTrue);
+      expect(queue.first['switchableGroupKey'], kSwitchablePGroupKey);
+      expect(
+        queue.map((stage) => stage['stageKey']),
+        isNot(contains(kBottomGlueStageId)),
+      );
+    });
+
+    test('П-образный пакет: Автомат маленький uses same cardboard branch', () {
+      final queue = buildOrderStageQueue(
+        productTypeId: kPTypePackageProduct,
+        hasCutting: true,
+        hasCardboard: true,
+        hasFlexPrinting: false,
+        handleType: OrderHandleType.twisted,
+        selectedSwitchableStageIdsByStageKey: const {
+          kPMainSwitchStageKey: kAutoSmallStageId,
+        },
+      );
+
+      expectQueueMaps(
+        queue,
+        [
+          kPMainSwitchStageKey,
+          kCuttingStageId,
+          kCardboardCuttingStageId,
+          kCardboardInsertStageId,
+          kTwistedHandleGroupStageId,
+          kPackagingStageId,
+        ],
+        workplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: [
+            kAutoBigStageId,
+            kAutoSmallStageId,
+            kTubeStageId,
+          ],
+          kTwistedHandleGroupStageId: [
+            kTwistedHandleStageId,
+            kManualHandleStageId,
+          ],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: kAutoSmallStageId,
+        },
+      );
+      expect(queue.first['stageName'], 'Автомат маленький');
+    });
+
+    test('П-образный пакет: Труба uses bottom cardboard/glue branch', () {
+      final queue = buildOrderStageQueue(
+        productTypeId: kPTypePackageProduct,
+        hasCutting: true,
+        hasCardboard: true,
+        hasFlexPrinting: false,
+        handleType: OrderHandleType.dieCut,
+        selectedSwitchableStageIdsByStageKey: const {
+          kPMainSwitchStageKey: kTubeStageId,
+        },
+      );
+
+      expectQueueMaps(
+        queue,
+        [
+          kPMainSwitchStageKey,
+          kCuttingStageId,
+          kCardboardCuttingStageId,
+          kBottomWithCardboardAssemblyStageId,
+          kBottomGlueStageId,
+          kDieCutHandleStageId,
+          kPackagingStageId,
+        ],
+        workplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: [
+            kAutoBigStageId,
+            kAutoSmallStageId,
+            kTubeStageId,
+          ],
+          kBottomGlueStageId: [
+            kBottomGlueWorkplaceId,
+            kBottomGlueAltWorkplaceId,
+            kBottomGlueSecondAltWorkplaceId,
+          ],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: kTubeStageId,
+        },
+      );
+      expect(queue.first['stageName'], 'Труба');
+      expect(
+        queue.map((stage) => stage['stageKey']),
+        isNot(contains(kCardboardInsertStageId)),
+      );
+    });
+
+    test('П-образный пакет: cardboard branch is optional for switches', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kPTypePackageProduct,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          handleType: OrderHandleType.flat,
+          selectedSwitchableStageId: kTubeStageId,
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [kPMainSwitchStageKey, kFlatHandleGroupStageId, kPackagingStageId],
+        workplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: [
+            kAutoBigStageId,
+            kAutoSmallStageId,
+            kTubeStageId,
+          ],
+          kFlatHandleGroupStageId: [
+            kFlatHandleStageId,
+            kManualHandleStageId,
+          ],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kPMainSwitchStageKey: kTubeStageId,
+        },
+      );
+      expect(
+        result.map((stage) => stage.stageKey),
+        isNot(contains(kCardboardCuttingStageId)),
+      );
+    });
   });
 
 }
