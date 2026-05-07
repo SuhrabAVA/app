@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const String kStartedStageQueueChangeMessage =
@@ -225,9 +226,21 @@ class OrderQueueSyncService {
     bool completeBobbin = false,
     String? bobbinStageId,
   }) async {
-    final planId = await _ensurePlan(orderId);
-    final currentStages = await _loadPlanStages(planId);
-    final currentTasks = await _loadTasks(orderId);
+    final planId = await _runTableStep(
+      orderId: orderId,
+      tableName: 'prod_plans',
+      action: () => _ensurePlan(orderId),
+    );
+    final currentStages = await _runTableStep(
+      orderId: orderId,
+      tableName: 'prod_plan_stages',
+      action: () => _loadPlanStages(planId),
+    );
+    final currentTasks = await _runTableStep(
+      orderId: orderId,
+      tableName: 'tasks',
+      action: () => _loadTasks(orderId),
+    );
     final operations = diff(
       currentStages: currentStages,
       currentTasks: currentTasks,
@@ -248,22 +261,42 @@ class OrderQueueSyncService {
         case OrderQueueSyncOperationType.cancelOrDeletePending:
           final current = op.current;
           if (current != null) {
-            await _deletePendingPlanStage(current);
-            await _deletePendingTasks(orderId, current);
+            await _runTableStep<void>(
+              orderId: orderId,
+              tableName: 'prod_plan_stages',
+              action: () => _deletePendingPlanStage(current),
+            );
+            await _runTableStep<void>(
+              orderId: orderId,
+              tableName: 'tasks',
+              action: () => _deletePendingTasks(orderId, current),
+            );
           }
           break;
         case OrderQueueSyncOperationType.updatePending:
           final current = op.current;
           final next = op.next;
           if (current != null && next != null) {
-            await _updatePendingPlanStage(current, next);
-            await _syncPendingTaskGroup(orderId, current, next);
+            await _runTableStep<void>(
+              orderId: orderId,
+              tableName: 'prod_plan_stages',
+              action: () => _updatePendingPlanStage(current, next),
+            );
+            await _runTableStep<void>(
+              orderId: orderId,
+              tableName: 'tasks',
+              action: () => _syncPendingTaskGroup(orderId, current, next),
+            );
           }
           break;
         case OrderQueueSyncOperationType.insert:
           final next = op.next;
           if (next != null) {
-            await _insertPlanStage(planId, next);
+            await _runTableStep<void>(
+              orderId: orderId,
+              tableName: 'prod_plan_stages',
+              action: () => _insertPlanStage(planId, next),
+            );
           }
           break;
         case OrderQueueSyncOperationType.keep:
@@ -272,13 +305,39 @@ class OrderQueueSyncService {
       }
     }
 
-    await _createMissingTasks(orderId, nextQueue);
+    await _runTableStep<void>(
+      orderId: orderId,
+      tableName: 'tasks',
+      action: () => _createMissingTasks(orderId, nextQueue),
+    );
 
-    if (completeBobbin && bobbinStageId != null && bobbinStageId.trim().isNotEmpty) {
-      await _markBobbinDone(planId, orderId, bobbinStageId.trim());
+    if (completeBobbin &&
+        bobbinStageId != null &&
+        bobbinStageId.trim().isNotEmpty) {
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'prod_plan_stages/tasks',
+        action: () => _markBobbinDone(planId, orderId, bobbinStageId.trim()),
+      );
     }
 
     return operations;
+  }
+
+  Future<T> _runTableStep<T>({
+    required String orderId,
+    required String tableName,
+    required Future<T> Function() action,
+  }) async {
+    try {
+      return await action();
+    } catch (error) {
+      debugPrint(
+        'OrderQueueSyncService.sync failed: orderId=$orderId '
+        'table=$tableName error=$error',
+      );
+      rethrow;
+    }
   }
 
   Future<String> _ensurePlan(String orderId) async {

@@ -3441,17 +3441,67 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (willSaveBuiltStageQueue) {
       // Сохраняем фактическую очередь заказа через общий сервис.
       // stageTemplateId остаётся метаданным выбора в UI, а не источником истины.
-      await _orderQueueService.saveBuiltQueue(
-        createdOrUpdatedOrder.id,
-        stageMaps,
-        <String, String?>{
-          'selected_v_stage': _selectedVStage,
-          'selected_p_stage': _selectedPStage,
-        },
-        currentQueueSignature,
-        completeBobbin: outcome.shouldCompleteBobbin,
-        bobbinStageId: outcome.bobbinId,
-      );
+      SaveBuiltQueueResult queueSaveResult;
+      try {
+        queueSaveResult = await _orderQueueService.saveBuiltQueue(
+          createdOrUpdatedOrder.id,
+          stageMaps,
+          <String, String?>{
+            'selected_v_stage': _selectedVStage,
+            'selected_p_stage': _selectedPStage,
+          },
+          currentQueueSignature,
+          completeBobbin: outcome.shouldCompleteBobbin,
+          bobbinStageId: outcome.bobbinId,
+        );
+      } catch (error) {
+        final failedOrder = createdOrUpdatedOrder.copyWith(
+          status: OrderStatus.draft.name,
+          hasMaterialShortage: false,
+          materialShortageMessage: '',
+          queueBuildStatus: QueueBuildStatus.notBuilt,
+          selectedVStage: '',
+          selectedPStage: '',
+          queueSignature: const <String, dynamic>{},
+        );
+        await provider.updateOrder(failedOrder);
+        _queueBuildStatus = QueueBuildStatus.notBuilt;
+        _queueSignature = null;
+        if (mounted) {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                error is OrderQueueSaveException
+                    ? error.message
+                    : '$kCreateProductionTasksFailedMessage: $error',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      if (!queueSaveResult.productionTasksCreated) {
+        final failedOrder = createdOrUpdatedOrder.copyWith(
+          status: OrderStatus.draft.name,
+          hasMaterialShortage: false,
+          materialShortageMessage: '',
+          queueBuildStatus: QueueBuildStatus.notBuilt,
+          selectedVStage: '',
+          selectedPStage: '',
+          queueSignature: const <String, dynamic>{},
+        );
+        await provider.updateOrder(failedOrder);
+        _queueBuildStatus = QueueBuildStatus.notBuilt;
+        _queueSignature = null;
+        if (mounted) {
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text(kCreateProductionTasksFailedMessage),
+            ),
+          );
+        }
+        return;
+      }
       createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
         queueBuildStatus: QueueBuildStatus.built,
         selectedVStage: _selectedVStage,
