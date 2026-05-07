@@ -2197,7 +2197,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 .from('prod_plans')
                 .insert({
                   'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
                 })
                 .select('id')
                 .single();
