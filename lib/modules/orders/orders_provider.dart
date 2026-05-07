@@ -757,6 +757,8 @@ class OrdersProvider with ChangeNotifier {
       try {
         await OrderQueueService(_supabase)
             .createTasksFromSavedQueue(launchOrder.id);
+      } on OrderQueueSyncSchemaOutdatedException catch (e) {
+        return e.message;
       } on StateError catch (e) {
         return 'Не удалось запустить заказ: ${e.message}';
       }
@@ -811,6 +813,8 @@ class OrdersProvider with ChangeNotifier {
         'Заказ запущен в производство. Бумага переведена в резерв',
       );
       return null;
+    } on OrderQueueSyncSchemaOutdatedException catch (e) {
+      return e.message;
     } catch (e, st) {
       debugPrint('❌ launchOrder error: $e\n$st');
       return 'Не удалось запустить заказ: $e';

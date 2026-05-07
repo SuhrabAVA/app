@@ -3,6 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 const String kStartedStageQueueChangeMessage =
     'Нельзя изменить этап, который уже находится в работе. Завершите или отмените текущий этап перед изменением очереди.';
 
+const String kOutdatedProdPlanStageIdSchemaMessage =
+    'Схема базы данных устарела: отсутствует prod_plan_stages.stage_id. Примените миграции Supabase';
+
 enum OrderQueueSyncOperationType {
   keep,
   insert,
@@ -28,6 +31,17 @@ class OrderQueueSyncOperation {
 class OrderQueueSyncBlockedException implements Exception {
   const OrderQueueSyncBlockedException([
     this.message = kStartedStageQueueChangeMessage,
+  ]);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class OrderQueueSyncSchemaOutdatedException implements Exception {
+  const OrderQueueSyncSchemaOutdatedException([
+    this.message = kOutdatedProdPlanStageIdSchemaMessage,
   ]);
 
   final String message;
@@ -344,6 +358,20 @@ class OrderQueueSyncService {
         message.contains('prod_plan_stages');
   }
 
+  static bool _isMissingProdPlanStageId(Object error) {
+    if (error is! PostgrestException) return false;
+    final message = error.message.toLowerCase();
+    return error.code == 'PGRST204' &&
+        message.contains('stage_id') &&
+        message.contains('prod_plan_stages');
+  }
+
+  static void _throwIfMissingProdPlanStageId(Object error) {
+    if (_isMissingProdPlanStageId(error)) {
+      throw const OrderQueueSyncSchemaOutdatedException();
+    }
+  }
+
   static Map<String, dynamic> _withoutStageGroupKey(
     Map<String, dynamic> payload,
   ) {
@@ -361,7 +389,12 @@ class OrderQueueSyncService {
     if (includeStageGroupKey) {
       query.eq('stage_group_key', current.stageGroupKey);
     }
-    await query.eq('seq', current.step);
+    try {
+      await query.eq('seq', current.step);
+    } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
+      rethrow;
+    }
   }
 
   Future<void> _deletePendingPlanStage(OrderQueueSyncEntry current) async {
@@ -406,6 +439,7 @@ class OrderQueueSyncService {
           .from('prod_plan_stages')
           .insert({...row, 'step_no': next.step});
     } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
       if (_isMissingProdPlanStageGroupKey(error)) {
         await _insertPlanStageWithoutStageGroupKey(row, next.step);
         return;
@@ -413,6 +447,7 @@ class OrderQueueSyncService {
       try {
         await _sb.from('prod_plan_stages').insert(row);
       } catch (fallbackError) {
+        _throwIfMissingProdPlanStageId(fallbackError);
         if (!_isMissingProdPlanStageGroupKey(fallbackError)) rethrow;
         await _insertPlanStageWithoutStageGroupKey(row, next.step);
       }
@@ -428,8 +463,14 @@ class OrderQueueSyncService {
       await _sb
           .from('prod_plan_stages')
           .insert({...legacyRow, 'step_no': stepNo});
-    } catch (_) {
-      await _sb.from('prod_plan_stages').insert(legacyRow);
+    } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
+      try {
+        await _sb.from('prod_plan_stages').insert(legacyRow);
+      } catch (fallbackError) {
+        _throwIfMissingProdPlanStageId(fallbackError);
+        rethrow;
+      }
     }
   }
 
@@ -465,6 +506,7 @@ class OrderQueueSyncService {
         includeStageGroupKeyFilter: true,
       );
     } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
       if (_isMissingProdPlanStageGroupKey(error)) {
         await run(
           _withoutStageGroupKey(updates),
@@ -475,6 +517,7 @@ class OrderQueueSyncService {
       try {
         await run(updates, includeStageGroupKeyFilter: true);
       } catch (fallbackError) {
+        _throwIfMissingProdPlanStageId(fallbackError);
         if (!_isMissingProdPlanStageGroupKey(fallbackError)) rethrow;
         await run(
           _withoutStageGroupKey(updates),
@@ -546,10 +589,15 @@ class OrderQueueSyncService {
     String bobbinStageId,
   ) async {
     final now = DateTime.now().toIso8601String();
-    await _sb.from('prod_plan_stages').update({
-      'status': 'done',
-      'finished_at': now,
-    }).match({'plan_id': planId, 'stage_id': bobbinStageId});
+    try {
+      await _sb.from('prod_plan_stages').update({
+        'status': 'done',
+        'finished_at': now,
+      }).match({'plan_id': planId, 'stage_id': bobbinStageId});
+    } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
+      rethrow;
+    }
     await _sb.from('tasks').update({
       'status': 'done',
       'completed_at': now,
