@@ -336,17 +336,45 @@ class OrderQueueSyncService {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
+  static bool _isMissingProdPlanStageGroupKey(Object error) {
+    if (error is! PostgrestException) return false;
+    final message = error.message.toLowerCase();
+    return error.code == 'PGRST204' &&
+        message.contains('stage_group_key') &&
+        message.contains('prod_plan_stages');
+  }
+
+  static Map<String, dynamic> _withoutStageGroupKey(
+    Map<String, dynamic> payload,
+  ) {
+    return Map<String, dynamic>.from(payload)..remove('stage_group_key');
+  }
+
+  Future<void> _deletePlanStageByQueueSlot(
+    OrderQueueSyncEntry current, {
+    required bool includeStageGroupKey,
+  }) async {
+    final query = _sb
+        .from('prod_plan_stages')
+        .delete()
+        .eq('stage_id', current.stageId);
+    if (includeStageGroupKey) {
+      query.eq('stage_group_key', current.stageGroupKey);
+    }
+    await query.eq('seq', current.step);
+  }
+
   Future<void> _deletePendingPlanStage(OrderQueueSyncEntry current) async {
     if (current.id != null && current.id!.isNotEmpty) {
       await _sb.from('prod_plan_stages').delete().eq('id', current.id!);
       return;
     }
-    await _sb
-        .from('prod_plan_stages')
-        .delete()
-        .eq('stage_id', current.stageId)
-        .eq('stage_group_key', current.stageGroupKey)
-        .eq('seq', current.step);
+    try {
+      await _deletePlanStageByQueueSlot(current, includeStageGroupKey: true);
+    } catch (error) {
+      if (!_isMissingProdPlanStageGroupKey(error)) rethrow;
+      await _deletePlanStageByQueueSlot(current, includeStageGroupKey: false);
+    }
   }
 
   Future<void> _updatePendingPlanStage(
@@ -377,8 +405,31 @@ class OrderQueueSyncService {
       await _sb
           .from('prod_plan_stages')
           .insert({...row, 'step_no': next.step});
+    } catch (error) {
+      if (_isMissingProdPlanStageGroupKey(error)) {
+        await _insertPlanStageWithoutStageGroupKey(row, next.step);
+        return;
+      }
+      try {
+        await _sb.from('prod_plan_stages').insert(row);
+      } catch (fallbackError) {
+        if (!_isMissingProdPlanStageGroupKey(fallbackError)) rethrow;
+        await _insertPlanStageWithoutStageGroupKey(row, next.step);
+      }
+    }
+  }
+
+  Future<void> _insertPlanStageWithoutStageGroupKey(
+    Map<String, dynamic> row,
+    int stepNo,
+  ) async {
+    final legacyRow = _withoutStageGroupKey(row);
+    try {
+      await _sb
+          .from('prod_plan_stages')
+          .insert({...legacyRow, 'step_no': stepNo});
     } catch (_) {
-      await _sb.from('prod_plan_stages').insert(row);
+      await _sb.from('prod_plan_stages').insert(legacyRow);
     }
   }
 
@@ -387,7 +438,10 @@ class OrderQueueSyncService {
     Map<String, dynamic> updates,
     int stepNo,
   ) async {
-    Future<void> run(Map<String, dynamic> payload) async {
+    Future<void> run(
+      Map<String, dynamic> payload, {
+      required bool includeStageGroupKeyFilter,
+    }) async {
       if (current.id != null && current.id!.isNotEmpty) {
         await _sb
             .from('prod_plan_stages')
@@ -395,18 +449,38 @@ class OrderQueueSyncService {
             .eq('id', current.id!);
         return;
       }
-      await _sb
+      final query = _sb
           .from('prod_plan_stages')
           .update(payload)
-          .eq('stage_id', current.stageId)
-          .eq('stage_group_key', current.stageGroupKey)
-          .eq('seq', current.step);
+          .eq('stage_id', current.stageId);
+      if (includeStageGroupKeyFilter) {
+        query.eq('stage_group_key', current.stageGroupKey);
+      }
+      await query.eq('seq', current.step);
     }
 
     try {
-      await run({...updates, 'step_no': stepNo});
-    } catch (_) {
-      await run(updates);
+      await run(
+        {...updates, 'step_no': stepNo},
+        includeStageGroupKeyFilter: true,
+      );
+    } catch (error) {
+      if (_isMissingProdPlanStageGroupKey(error)) {
+        await run(
+          _withoutStageGroupKey(updates),
+          includeStageGroupKeyFilter: false,
+        );
+        return;
+      }
+      try {
+        await run(updates, includeStageGroupKeyFilter: true);
+      } catch (fallbackError) {
+        if (!_isMissingProdPlanStageGroupKey(fallbackError)) rethrow;
+        await run(
+          _withoutStageGroupKey(updates),
+          includeStageGroupKeyFilter: false,
+        );
+      }
     }
   }
 
