@@ -18,11 +18,17 @@ const String _canonicalBobbinWorkplaceId =
 class _StageSequenceData {
   final List<String> ids;
   final Map<String, Map<String, dynamic>> meta;
+  final Map<String, String> groupByStageId;
 
-  const _StageSequenceData({required this.ids, required this.meta});
+  const _StageSequenceData({
+    required this.ids,
+    required this.meta,
+    required this.groupByStageId,
+  });
   const _StageSequenceData.empty()
       : ids = const [],
-        meta = const {};
+        meta = const {},
+        groupByStageId = const {};
 }
 
 class TaskProvider with ChangeNotifier {
@@ -32,6 +38,7 @@ class TaskProvider with ChangeNotifier {
   final Map<String, String> _workplaceAliasToId = <String, String>{};
   final Map<String, List<String>> _orderStageSequences = {};
   final Map<String, Map<String, String>> _orderStageNames = {};
+  final Map<String, Map<String, String>> _orderStageGroupMaps = {};
   RealtimeChannel? _tasksChannel;
   final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
 
@@ -43,6 +50,25 @@ class TaskProvider with ChangeNotifier {
   List<String>? stageSequenceForOrder(String orderId) {
     final seq = _orderStageSequences[orderId];
     return seq == null ? null : List.unmodifiable(normalizeStageSequence(seq));
+  }
+
+  Map<String, String>? stageGroupMapForOrder(String orderId) {
+    final map = _orderStageGroupMaps[orderId];
+    return map == null ? null : Map.unmodifiable(map);
+  }
+
+  List<String>? stageGroupMembersForOrder(String orderId, String stageId) {
+    final map = _orderStageGroupMaps[orderId];
+    if (map == null || map.isEmpty) return null;
+    final groupKey = map[stageId.trim()]?.trim();
+    if (groupKey == null || groupKey.isEmpty) return null;
+    final members = <String>[];
+    for (final entry in map.entries) {
+      if (entry.value == groupKey && !members.contains(entry.key)) {
+        members.add(entry.key);
+      }
+    }
+    return members.isEmpty ? null : List.unmodifiable(members);
   }
 
   Future<void> _ensureAuthed() async {
@@ -372,6 +398,11 @@ class TaskProvider with ChangeNotifier {
       } else {
         _orderStageSequences.remove(orderId);
       }
+      if (data.groupByStageId.isNotEmpty) {
+        _orderStageGroupMaps[orderId] = data.groupByStageId;
+      } else {
+        _orderStageGroupMaps.remove(orderId);
+      }
       if (data.meta.isNotEmpty) {
         final names = <String, String>{};
         data.meta.forEach((stageId, meta) {
@@ -672,12 +703,27 @@ class TaskProvider with ChangeNotifier {
       }
       final result = <String>[];
       final filteredRows = <Map<String, dynamic>>[];
+      final groupByStageId = <String, String>{};
       for (final m in list) {
         final stageIds = _readStageIds(m);
         if (stageIds.isEmpty) {
           continue;
         }
+        final explicitGroupKey = (m['stage_group_key'] ??
+                m['stageGroupKey'] ??
+                m['queue_stage_key'] ??
+                m['queueStageKey'] ??
+                m['group_key'])
+            ?.toString()
+            .trim();
+        final fallbackGroupKey = stageIds.join('|');
+        final groupKey = explicitGroupKey != null && explicitGroupKey.isNotEmpty
+            ? explicitGroupKey
+            : fallbackGroupKey;
         for (final id in stageIds) {
+          if (id.isNotEmpty) {
+            groupByStageId[id] = groupKey;
+          }
           if (id.isEmpty || result.contains(id)) {
             continue;
           }
@@ -685,6 +731,7 @@ class TaskProvider with ChangeNotifier {
           final normalizedRow = Map<String, dynamic>.from(m);
           normalizedRow['stage_id'] = id;
           normalizedRow['stageId'] = id;
+          normalizedRow['stage_group_key'] = groupKey;
           filteredRows.add(normalizedRow);
         }
       }
@@ -709,7 +756,11 @@ class TaskProvider with ChangeNotifier {
         }
       }
 
-      return _StageSequenceData(ids: normalizedIds, meta: names);
+      return _StageSequenceData(
+        ids: normalizedIds,
+        meta: names,
+        groupByStageId: groupByStageId,
+      );
     }
 
     // Priority: preserve the exact queue saved during order creation/edit.
@@ -727,23 +778,6 @@ class TaskProvider with ChangeNotifier {
       }
     } catch (_) {}
 
-    // Try normalized production.* plan tables.
-    try {
-      final plan = await _supabase
-          .from('production.plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('production.plan_stages')
-            .select('stage_id, order, position, idx, step, step_no')
-            .eq('plan_id', plan['id'].toString());
-        final seq = await fromRows(rows);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
     // Try normalized legacy public tables.
     try {
       final plan = await _supabase
@@ -754,7 +788,9 @@ class TaskProvider with ChangeNotifier {
       if (plan != null && plan is Map && plan['id'] != null) {
         final rows = await _supabase
             .from('prod_plan_stages')
-            .select('stage_id, order, position, idx, step, step_no, seq')
+            .select(
+              'stage_id, stage_group_key, order, position, idx, step, step_no, seq',
+            )
             .eq('plan_id', plan['id'].toString());
         final seq = await fromRows(rows);
         if (seq.ids.isNotEmpty) return seq;
