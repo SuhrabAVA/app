@@ -486,15 +486,11 @@ String _workplaceName(PersonnelProvider personnel, String stageId,
 
 String _stageLabelForOrder(
     PersonnelProvider personnel,
-    TemplateProvider templates,
-    OrdersProvider orders,
+    TemplateProvider _templates,
+    OrdersProvider _orders,
     TaskProvider tasks,
     String orderId,
     String stageId) {
-  OrderModel? order;
-  try {
-    order = orders.orders.firstWhere((o) => o.id == orderId);
-  } catch (_) {}
   final savedGroupMap = tasks.stageGroupMapForOrder(orderId);
   if (savedGroupMap != null && savedGroupMap.containsKey(stageId.trim())) {
     final savedName = tasks.stageNameForOrder(orderId, stageId)?.trim();
@@ -502,67 +498,23 @@ String _stageLabelForOrder(
     return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
   }
 
-  final templateId = order?.stageTemplateId;
-  if (templateId == null || templateId.isEmpty) {
-    return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
-  }
-
-  PlannedStage? planned;
-  for (final tpl in templates.templates) {
-    if (tpl.id != templateId) continue;
-    for (final stage in tpl.stages) {
-      if (stage.allStageIds.contains(stageId)) {
-        planned = stage;
-        break;
-      }
-    }
-  }
-
-  if (planned == null) {
-    return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
-  }
-
-  final labels = <String>{};
-  for (final id in planned.allStageIds) {
-    labels.add(_workplaceName(personnel, id, tasks: tasks, orderId: orderId));
-  }
-  return labels.join(' / ');
+  // Stage labels/grouping come from TaskProvider, which loads the shared
+  // saved queue mapper and applies template data only as old-data fallback.
+  return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
 }
 
 Map<String, String> _stageGroupMapForOrder(
   OrderModel order,
-  TemplateProvider templates, {
+  TemplateProvider _templates, {
   TaskProvider? tasks,
 }) {
   final saved = tasks?.stageGroupMapForOrder(order.id);
   if (saved != null && saved.isNotEmpty) return saved;
 
-  final templateId = order.stageTemplateId;
-  if (templateId == null || templateId.isEmpty) return const {};
-  final tpl = templates.templates
-      .firstWhere(
-        (t) => t.id == templateId,
-        orElse: () =>
-            TemplateModel(id: '', name: '', stages: const <PlannedStage>[]),
-      );
-  if (tpl.id.isEmpty) return const {};
-
-  final map = <String, String>{};
-  for (final stage in tpl.stages) {
-    final ids = <String>[];
-    for (final id in stage.allStageIds) {
-      final normalized = id.trim();
-      if (normalized.isEmpty || ids.contains(normalized)) continue;
-      ids.add(normalized);
-    }
-    if (ids.isEmpty) continue;
-    final canonicalIds = List<String>.from(ids)..sort();
-    final key = canonicalIds.join('|');
-    for (final id in ids) {
-      map[id] = key;
-    }
-  }
-  return map;
+  // Do not derive factual grouping directly from stageTemplateId here.
+  // TaskProvider has already applied the shared queue priority and returns a
+  // template-derived map only for legacy orders without a saved queue.
+  return const <String, String>{};
 }
 
 String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
@@ -1814,30 +1766,8 @@ class _TasksScreenState extends State<TasksScreen>
       return savedMembers;
     }
 
-    final order = _orderById(orderId);
-    final templateId = order?.stageTemplateId;
-    if (order == null || templateId == null || templateId.isEmpty) {
-      return [stageId];
-    }
-
-    final templateProvider =
-        Provider.of<TemplateProvider?>(context, listen: false);
-    final templates = templateProvider?.templates ?? const [];
-    for (final tpl in templates) {
-      if (tpl.id != templateId) continue;
-      for (final stage in tpl.stages) {
-        if (stage.allStageIds.contains(stageId)) {
-          final ids = <String>[];
-          for (final id in stage.allStageIds) {
-            final normalized = id.trim();
-            if (normalized.isEmpty || ids.contains(normalized)) continue;
-            ids.add(normalized);
-          }
-          if (ids.isNotEmpty) return ids;
-        }
-      }
-    }
-
+    // Template-derived grouping is intentionally centralized in TaskProvider via
+    // OrderQueueService and is only allowed as a legacy fallback there.
     return [stageId];
   }
 

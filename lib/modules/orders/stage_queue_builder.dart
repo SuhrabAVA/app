@@ -108,6 +108,23 @@ class OrderStageQueueDraft {
   final String? switchableStageKey;
   final String? selectedSwitchableStageId;
   final Map<String, String> selectedSwitchableStageIdsByStageKey;
+
+  OrderStageQueueDraft copyWithSwitchableSelections(
+    Map<String, String> selections,
+  ) {
+    return OrderStageQueueDraft(
+      productTypeId: productTypeId,
+      orderWidthB: orderWidthB,
+      materialWidth: materialWidth,
+      hasPaint: hasPaint,
+      hasTrimming: hasTrimming,
+      hasCardboard: hasCardboard,
+      handleType: handleType,
+      switchableStageKey: switchableStageKey,
+      selectedSwitchableStageId: selectedSwitchableStageId,
+      selectedSwitchableStageIdsByStageKey: selections,
+    );
+  }
 }
 
 class BuiltOrderStage {

@@ -5,6 +5,7 @@ import 'dart:async';
 import '../../services/app_auth.dart';
 
 import '../orders/order_model.dart';
+import '../orders/order_queue_service.dart';
 import 'task_completion_rules.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
@@ -604,18 +605,16 @@ class TaskProvider with ChangeNotifier {
   Future<_StageSequenceData> _fetchStageSequence(String orderId) async {
     await _ensureAuthed();
     String? orderCode;
-    String? stageTemplateId;
     try {
       final order = await _supabase
           .from('orders')
-          .select('assignment_id, stage_template_id')
+          .select('assignment_id')
           .eq('id', orderId)
           .maybeSingle();
       final orderMap = order is Map
           ? Map<String, dynamic>.from(order as Map)
           : const <String, dynamic>{};
       orderCode = orderMap['assignment_id']?.toString();
-      stageTemplateId = orderMap['stage_template_id']?.toString();
     } catch (_) {}
 
     Future<_StageSequenceData> fromRows(dynamic rows) async {
@@ -763,52 +762,17 @@ class TaskProvider with ChangeNotifier {
       );
     }
 
-    // Priority: preserve the exact queue saved during order creation/edit.
-    // This source is written by the order form and must stay authoritative
-    // for tasks/start-order gating.
-    try {
-      final plan = await _supabase
-          .from('production_plans')
-          .select('stages')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['stages'] != null) {
-        final seq = await fromRows(plan['stages']);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
-    // Try normalized legacy public tables.
-    try {
-      final plan = await _supabase
-          .from('prod_plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('prod_plan_stages')
-            .select(
-              'stage_id, stage_group_key, order, position, idx, step, step_no, seq',
-            )
-            .eq('plan_id', plan['id'].toString());
-        final seq = await fromRows(rows);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
-    // Try the stage template attached to the order (plan_templates).
-    if (stageTemplateId != null && stageTemplateId!.isNotEmpty) {
-      try {
-        final tpl = await _supabase
-            .from('plan_templates')
-            .select('stages')
-            .eq('id', stageTemplateId!)
-            .maybeSingle();
-        final seq = await fromRows(tpl?['stages']);
-        if (seq.ids.isNotEmpty) return seq;
-      } catch (_) {}
+    // Shared priority: saved order queue -> normalized rows -> legacy
+    // production_plans.stages -> template fallback for old orders only.
+    final savedQueue =
+        await OrderQueueService(_supabase).loadSavedQueue(orderId);
+    if (savedQueue.isNotEmpty) {
+      final seq = await fromRows(savedQueue.rows);
+      if (seq.ids.isNotEmpty) return seq;
     }
+
+    // stageTemplateId is not read directly here: OrderQueueService already
+    // applies templates only as the last fallback for legacy orders.
 
     // Fallback: derived/public views. They can contain auto-added or repeated
     // stages, so they are intentionally lower priority.

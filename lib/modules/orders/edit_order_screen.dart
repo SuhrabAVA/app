@@ -17,7 +17,7 @@ import 'dart:typed_data';
 import 'orders_provider.dart';
 import 'order_stage_filter.dart';
 import 'stage_queue_builder.dart';
-import 'order_queue_sync_service.dart';
+import 'order_queue_service.dart';
 import 'orders_repository.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -520,6 +520,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final _formKey = GlobalKey<FormState>();
   final _uuid = const Uuid();
   final SupabaseClient _sb = Supabase.instance.client;
+  late final OrderQueueService _orderQueueService = OrderQueueService(_sb);
 
   // Персонал: выбранный менеджер из списка сотрудников с ролью «Менеджер»
   String? _selectedManager;
@@ -1705,18 +1706,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if ((_selectedPStage ?? '').trim().isNotEmpty)
         kPMainSwitchStageKey: _selectedPStage!.trim(),
     };
-    return buildOrderStageQueue(
-      productTypeId: draft.productTypeId,
-      hasCutting: draft.hasTrimming,
-      hasCardboard: draft.hasCardboard,
-      hasFlexPrinting: draft.hasPaint,
-      handleType: draft.handleType,
-      orderWidthB: draft.orderWidthB,
-      materialWidth: draft.materialWidth,
-      switchableStageKey: draft.switchableStageKey,
-      selectedSwitchableStageId: draft.selectedSwitchableStageId,
-      selectedSwitchableStageIdsByStageKey:
-          selectedSwitchableStageIdsByStageKey,
+    return _orderQueueService.buildPreviewQueue(
+      draft.copyWithSwitchableSelections(selectedSwitchableStageIdsByStageKey),
       existingStages: existingStages,
       templateStages: templateStages,
     );
@@ -3342,293 +3333,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       await provider.updateOrder(createdOrUpdatedOrder);
     }
     if (canRebuildProductionPlan && hasBuiltStageQueue) {
-      // Создаём или обновляем производственную очередь независимо от шаблона.
-      // stageTemplateId сохраняется в заказе выше, но автогенерация строится по полям формы.
+      // Сохраняем фактическую очередь заказа через общий сервис.
+      // stageTemplateId остаётся метаданным выбора в UI, а не источником истины.
       final templateStages = _selectedTemplateStageMaps();
-
-      // Источник истины при сохранении — текущий preview.
-      // Он уже может содержать ручную перестановку флексо/бобинорезки.
-      // Если preview пустой и шаблон не выбран, строим очередь строго из
-      // текущего черновика без этапов шаблона.
-      List<Map<String, dynamic>> stageMaps =
-          _buildStageMapsForProductionPlanSave(
+      var stageMaps = _buildStageMapsForProductionPlanSave(
         stagePreviewStages: _stagePreviewStages,
         stageTemplateId: _stageTemplateId,
         selectedTemplateStages: templateStages,
         buildStageQueueFromCurrentDraft: ({required templateStages}) =>
             _buildStageQueueFromCurrentDraft(templateStages: templateStages),
       );
-
       final outcome = await _applyStageRules(stageMaps);
       stageMaps = outcome.stages;
-      final bool __shouldCompleteBobbin = outcome.shouldCompleteBobbin;
-      final String? __bobbinId = outcome.bobbinId;
-      // Save or update production plan in dedicated table 'production_plans'
-      final existingPlan = await _sb
-          .from('production_plans')
-          .select('id')
-          .eq('order_id', createdOrUpdatedOrder.id)
-          .maybeSingle();
-      if (existingPlan != null) {
-        await _sb
-            .from('production_plans')
-            .update({'stages': stageMaps}).eq('id', existingPlan['id']);
-      } else {
-        await _sb.from('production_plans').insert(
-            {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
-      }
-
-      bool _looksLikeBobbin(Map<String, dynamic> sm) {
-        final title =
-            ((sm['stageName'] ?? sm['title']) as String?)?.toLowerCase() ?? '';
-        return title.contains('бобинорезка') ||
-            title.contains('бабинорезка') ||
-            title.contains('bobbin');
-      }
-
-      String? _resolveStageId(Map<String, dynamic> sm) {
-        final sid = (sm['stageId'] as String?) ??
-            (sm['stageid'] as String?) ??
-            (sm['stage_id'] as String?) ??
-            (sm['workplaceId'] as String?) ??
-            (sm['workplace_id'] as String?) ??
-            (sm['id'] as String?);
-        if ((_looksLikeBobbin(sm) || sid == null || sid.isEmpty) &&
-            __bobbinId != null &&
-            __bobbinId!.isNotEmpty) {
-          return __bobbinId;
-        }
-        return sid;
-      }
-
-      String _normalizeText(dynamic value) => (value?.toString() ?? '').trim();
-
-      final workplaceLookup = <String, String>{};
-      Future<List<Map<String, dynamic>>> _loadWorkplaceRows() async {
-        Future<List<Map<String, dynamic>>> readRows(String select) async {
-          final rows = await _sb.from('workplaces').select(select);
-          if (rows is! List) return const <Map<String, dynamic>>[];
-          return rows
-              .whereType<Map>()
-              .map((row) => Map<String, dynamic>.from(row))
-              .toList(growable: false);
-        }
-
-        try {
-          return await readRows(
-            'id, code, name, title, short_name, workplace_name, stage_name',
-          );
-        } catch (_) {
-          try {
-            return await readRows('id, name, code, title, short_name');
-          } catch (_) {
-            try {
-              return await readRows('id, name');
-            } catch (_) {
-              return const <Map<String, dynamic>>[];
-            }
-          }
-        }
-      }
-
-      final workplaceRows = await _loadWorkplaceRows();
-      bool _containsBobbinWord(String value) {
-        final text = value.toLowerCase();
-        return text.contains('бобин') ||
-            text.contains('бабин') ||
-            text.contains('bobin') ||
-            text.contains('bobbin');
-      }
-
-      bool _containsFlexoWord(String value) {
-        final text = value.toLowerCase();
-        return text.contains('флекс') || text.contains('flexo');
-      }
-
-      final legacyStageLookup = <String, String>{};
-      legacyStageLookup['w_flexoprint'] = _canonicalFlexoWorkplaceId;
-      legacyStageLookup['w_flexo'] = _canonicalFlexoWorkplaceId;
-      legacyStageLookup['w_bobiner'] = _canonicalBobbinWorkplaceId;
-      legacyStageLookup['w_bobbin'] = _canonicalBobbinWorkplaceId;
-      for (final map in workplaceRows) {
-        final id = _normalizeText(map['id']);
-        if (id.isEmpty) continue;
-        final probes = [
-          map['id'],
-          map['code'],
-          map['name'],
-          map['title'],
-          map['short_name'],
-          map['workplace_name'],
-          map['stage_name'],
-        ];
-        final joined = probes.map(_normalizeText).join(' ').toLowerCase();
-        if (_containsBobbinWord(joined)) {
-          legacyStageLookup['w_bobiner'] = id;
-          legacyStageLookup['w_bobbin'] = id;
-        }
-        if (_containsFlexoWord(joined)) {
-          legacyStageLookup['w_flexoprint'] = id;
-          legacyStageLookup['w_flexo'] = id;
-        }
-        for (final probe in probes) {
-          final key = _normalizeText(probe).toLowerCase();
-          if (key.isEmpty) continue;
-          workplaceLookup.putIfAbsent(key, () => id);
-        }
-      }
-
-      String? _resolveStageValue(dynamic raw) {
-        final normalized = _normalizeText(raw);
-        if (normalized.isEmpty) return null;
-        final key = normalized.toLowerCase();
-        return workplaceLookup[key] ?? legacyStageLookup[key] ?? normalized;
-      }
-
-      bool _looksLikeUuid(String value) {
-        final v = value.trim();
-        return RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
-            .hasMatch(v);
-      }
-
-      final knownWorkplaceIds = workplaceRows
-          .map((row) => _normalizeText(row['id']))
-          .where((id) => id.isNotEmpty)
-          .toSet();
-
-      bool _isResolvableWorkplaceId(String stageId) {
-        if (stageId.isEmpty) return false;
-        if (_looksLikeUuid(stageId)) {
-          // При неполном lookup (например, из-за RLS) пропускаем UUID дальше,
-          // но при наличии списка рабочих мест всё равно предпочитаем реальные id.
-          return knownWorkplaceIds.isEmpty || knownWorkplaceIds.contains(stageId);
-        }
-        return workplaceLookup.containsValue(stageId) ||
-            legacyStageLookup.containsValue(stageId);
-      }
-
-      Iterable<dynamic> _collectIdsFrom(dynamic candidate) sync* {
-        if (candidate is List) {
-          for (final value in candidate) {
-            yield value;
-          }
-          return;
-        }
-        if (candidate is String) {
-          for (final token in candidate.split(',')) {
-            yield token;
-          }
-        }
-      }
-
-      Iterable<dynamic> _collectWorkplaceIds(Map<String, dynamic> sm) sync* {
-        yield* _collectIdsFrom(sm['workplaceIds']);
-        yield* _collectIdsFrom(sm['workplace_ids']);
-      }
-
-      Iterable<dynamic> _collectAlternativeIds(Map<String, dynamic> sm) sync* {
-        final candidates = <dynamic>[
-          sm['alternativeStageIds'],
-          sm['alternative_stage_ids'],
-          sm['allStageIds'],
-          sm['all_stage_ids'],
-          sm['stageIds'],
-          sm['stage_ids'],
-        ];
-        for (final candidate in candidates) {
-          yield* _collectIdsFrom(candidate);
-        }
-      }
-
-      List<String> _resolveStageIds(Map<String, dynamic> sm) {
-        final candidates = <String>[];
-
-        void addCandidate(dynamic raw) {
-          final resolved = _resolveStageValue(raw);
-          if (resolved == null || resolved.isEmpty) return;
-          if (!candidates.contains(resolved)) {
-            candidates.add(resolved);
-          }
-        }
-
-        final workplaceCandidates = _collectWorkplaceIds(sm).toList();
-        if (workplaceCandidates.isNotEmpty) {
-          for (final raw in workplaceCandidates) {
-            addCandidate(raw);
-          }
-        } else {
-          addCandidate(_resolveStageId(sm));
-        }
-
-        for (final probe in <dynamic>[
-          sm['stageName'],
-          sm['stage_name'],
-          sm['workplaceName'],
-          sm['workplace_name'],
-          sm['title'],
-          sm['name'],
-        ]) {
-          addCandidate(probe);
-        }
-
-        for (final raw in _collectAlternativeIds(sm)) {
-          addCandidate(raw);
-        }
-
-        final resolved = <String>[];
-        for (final candidate in candidates) {
-          if (_isResolvableWorkplaceId(candidate) && !resolved.contains(candidate)) {
-            resolved.add(candidate);
-          }
-        }
-
-        if (resolved.isNotEmpty) return resolved;
-        if (candidates.isEmpty) return const <String>[];
-        return <String>[candidates.first];
-      }
-
-      // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-      try {
-        // Синхронизируем очередь диффом, не трогая завершённые/запущенные этапы
-        // и связанные с ними задачи.
-        final nextQueue = <OrderQueueSyncEntry>[];
-        int step = 1;
-        String? previousGroupKey;
-        for (final sm in stageMaps) {
-          final stageIds = _resolveStageIds(sm);
-          if (stageIds.isEmpty) continue;
-
-          final canonical = List<String>.from(stageIds)..sort();
-          final groupKey = canonical.join('|');
-          if (groupKey.isNotEmpty && groupKey == previousGroupKey) {
-            continue;
-          }
-          previousGroupKey = groupKey;
-
-          for (final rawStageId in stageIds) {
-            final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
-                legacyStageLookup[rawStageId.toLowerCase()] ??
-                rawStageId;
-            nextQueue.add(OrderQueueSyncEntry(
-              stageId: resolvedStageId,
-              stageGroupKey: groupKey.isEmpty ? resolvedStageId : groupKey,
-              step: step,
-            ));
-          }
-          step += 1;
-        }
-        await OrderQueueSyncService(_sb).sync(
-          orderId: createdOrUpdatedOrder.id,
-          nextQueue: nextQueue,
-          completeBobbin: __shouldCompleteBobbin,
-          bobbinStageId: __bobbinId,
-        );
-      } on OrderQueueSyncBlockedException {
-        rethrow;
-      } catch (_) {
-        // ignore if tables don't exist
-      }
-      // ---- /sync normalized tables ----
+      await _orderQueueService.saveBuiltQueue(
+        createdOrUpdatedOrder.id,
+        stageMaps,
+        <String, String?>{
+          'selected_v_stage': _persistedSelectedVStage(nextQueueBuildStatus),
+          'selected_p_stage': _persistedSelectedPStage(nextQueueBuildStatus),
+        },
+        currentQueueSignature,
+        completeBobbin: outcome.shouldCompleteBobbin,
+        bobbinStageId: outcome.bobbinId,
+      );
     }
 
     // Сначала синхронизируем список красок, чтобы в просмотре заказа
