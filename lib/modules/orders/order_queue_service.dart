@@ -80,7 +80,7 @@ class OrderQueueService {
           .select('stage_queue, saved_stage_queue, order_stage_queue')
           .eq('id', id)
           .maybeSingle();
-      if (order is Map) {
+      if (order != null) {
         for (final key in const [
           'stage_queue',
           'saved_stage_queue',
@@ -101,7 +101,7 @@ class OrderQueueService {
     try {
       final order =
           await _sb.from('orders').select('data').eq('id', id).maybeSingle();
-      final data = order is Map && order['data'] is Map
+      final data = order != null && order['data'] is Map
           ? Map<String, dynamic>.from(order['data'] as Map)
           : const <String, dynamic>{};
       for (final key in const [
@@ -137,7 +137,7 @@ class OrderQueueService {
           .select('stages')
           .eq('order_id', id)
           .maybeSingle();
-      if (plan is Map) {
+      if (plan != null) {
         final rows = _decodeRows(plan['stages']);
         if (rows.isNotEmpty) {
           return SavedOrderQueue(
@@ -237,7 +237,7 @@ class OrderQueueService {
           .select('id')
           .eq('order_id', orderId)
           .maybeSingle();
-      final planId = plan is Map ? plan['id']?.toString() : null;
+      final planId = plan != null ? plan['id']?.toString() : null;
       if (planId == null || planId.isEmpty) {
         return const <Map<String, dynamic>>[];
       }
@@ -261,7 +261,7 @@ class OrderQueueService {
           .select('stage_template_id')
           .eq('id', orderId)
           .maybeSingle();
-      final templateId = order is Map
+      final templateId = order != null
           ? (order['stage_template_id'] ?? '').toString().trim()
           : '';
       if (templateId.isEmpty) return const <Map<String, dynamic>>[];
@@ -270,7 +270,7 @@ class OrderQueueService {
           .select('stages')
           .eq('id', templateId)
           .maybeSingle();
-      return tpl is Map
+      return tpl != null
           ? _decodeRows(tpl['stages'])
           : const <Map<String, dynamic>>[];
     } catch (_) {
@@ -287,7 +287,7 @@ class OrderQueueService {
         .select('id')
         .eq('order_id', orderId)
         .maybeSingle();
-    if (existing is Map && existing['id'] != null) {
+    if (existing != null && existing['id'] != null) {
       await _sb
           .from('production_plans')
           .update({'stages': rows})
