@@ -69,6 +69,21 @@ class OrderQueueSyncEntry {
 
   String get identityKey => '$stageGroupKey::$stageId';
 
+  String get displayName {
+    for (final key in const [
+      'name',
+      'stageName',
+      'stage_name',
+      'workplaceName',
+      'workplace_name',
+      'title',
+    ]) {
+      final value = row[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return stageId;
+  }
+
   bool sameQueueSlot(OrderQueueSyncEntry other) =>
       stageId == other.stageId &&
       stageGroupKey == other.stageGroupKey &&
@@ -366,6 +381,14 @@ class OrderQueueSyncService {
         message.contains('prod_plan_stages');
   }
 
+  static bool _isMissingProdPlanStageName(Object error) {
+    if (error is! PostgrestException) return false;
+    final message = error.message.toLowerCase();
+    return error.code == 'PGRST204' &&
+        message.contains('name') &&
+        message.contains('prod_plan_stages');
+  }
+
   static void _throwIfMissingProdPlanStageId(Object error) {
     if (_isMissingProdPlanStageId(error)) {
       throw const OrderQueueSyncSchemaOutdatedException();
@@ -376,6 +399,12 @@ class OrderQueueSyncService {
     Map<String, dynamic> payload,
   ) {
     return Map<String, dynamic>.from(payload)..remove('stage_group_key');
+  }
+
+  static Map<String, dynamic> _withoutStageName(
+    Map<String, dynamic> payload,
+  ) {
+    return Map<String, dynamic>.from(payload)..remove('name');
   }
 
   Future<void> _deletePlanStageByQueueSlot(
@@ -431,26 +460,41 @@ class OrderQueueSyncService {
       'plan_id': planId,
       'stage_id': next.stageId,
       'stage_group_key': next.stageGroupKey,
+      'name': next.displayName,
       'seq': next.step,
       'status': 'waiting',
     };
     try {
-      await _sb
-          .from('prod_plan_stages')
-          .insert({...row, 'step_no': next.step});
+      await _insertPlanStageWithOptionalStepNo(row, next.step);
     } catch (error) {
       _throwIfMissingProdPlanStageId(error);
       if (_isMissingProdPlanStageGroupKey(error)) {
         await _insertPlanStageWithoutStageGroupKey(row, next.step);
         return;
       }
-      try {
-        await _sb.from('prod_plan_stages').insert(row);
-      } catch (fallbackError) {
-        _throwIfMissingProdPlanStageId(fallbackError);
-        if (!_isMissingProdPlanStageGroupKey(fallbackError)) rethrow;
-        await _insertPlanStageWithoutStageGroupKey(row, next.step);
+      if (_isMissingProdPlanStageName(error)) {
+        await _insertPlanStageWithoutStageName(row, next.step);
+        return;
       }
+      rethrow;
+    }
+  }
+
+  Future<void> _insertPlanStageWithOptionalStepNo(
+    Map<String, dynamic> row,
+    int stepNo,
+  ) async {
+    try {
+      await _sb
+          .from('prod_plan_stages')
+          .insert({...row, 'step_no': stepNo});
+    } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
+      if (_isMissingProdPlanStageGroupKey(error) ||
+          _isMissingProdPlanStageName(error)) {
+        rethrow;
+      }
+      await _sb.from('prod_plan_stages').insert(row);
     }
   }
 
@@ -460,17 +504,31 @@ class OrderQueueSyncService {
   ) async {
     final legacyRow = _withoutStageGroupKey(row);
     try {
-      await _sb
-          .from('prod_plan_stages')
-          .insert({...legacyRow, 'step_no': stepNo});
+      await _insertPlanStageWithOptionalStepNo(legacyRow, stepNo);
     } catch (error) {
       _throwIfMissingProdPlanStageId(error);
-      try {
-        await _sb.from('prod_plan_stages').insert(legacyRow);
-      } catch (fallbackError) {
-        _throwIfMissingProdPlanStageId(fallbackError);
-        rethrow;
-      }
+      if (!_isMissingProdPlanStageName(error)) rethrow;
+      await _insertPlanStageWithOptionalStepNo(
+        _withoutStageName(legacyRow),
+        stepNo,
+      );
+    }
+  }
+
+  Future<void> _insertPlanStageWithoutStageName(
+    Map<String, dynamic> row,
+    int stepNo,
+  ) async {
+    final legacyRow = _withoutStageName(row);
+    try {
+      await _insertPlanStageWithOptionalStepNo(legacyRow, stepNo);
+    } catch (error) {
+      _throwIfMissingProdPlanStageId(error);
+      if (!_isMissingProdPlanStageGroupKey(error)) rethrow;
+      await _insertPlanStageWithOptionalStepNo(
+        _withoutStageGroupKey(legacyRow),
+        stepNo,
+      );
     }
   }
 

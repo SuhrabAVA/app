@@ -2113,6 +2113,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // При неполном workplaceLookup (например, из-за RLS) не теряем валидные UUID,
       // но и не пытаемся вставлять невалидные идентификаторы этапов.
       final List<String> __validStageIds = [];
+      String _stageDisplayName(Map<String, dynamic> sm, String fallback) {
+        for (final key in const [
+          'name',
+          'stageName',
+          'stage_name',
+          'workplaceName',
+          'workplace_name',
+          'title',
+        ]) {
+          final value = sm[key]?.toString().trim() ?? '';
+          if (value.isNotEmpty) return value;
+        }
+        return fallback;
+      }
+
       for (final sm in stageMaps) {
         final stageIds = _extractStageIds(sm);
         for (final sid in stageIds) {
@@ -2226,6 +2241,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 'plan_id': planId,
                 'stage_id': stageId,
                 'stage_group_key': groupKey,
+                'name': _stageDisplayName(sm, stageId),
                 'seq': step,
                 'step_no': step,
                 'status': 'waiting',
