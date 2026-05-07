@@ -4,7 +4,8 @@ import 'order_model.dart';
 import 'order_queue_sync_service.dart';
 import 'stage_queue_builder.dart';
 
-export 'order_queue_sync_service.dart' show OrderQueueSyncBlockedException;
+export 'order_queue_sync_service.dart'
+    show OrderQueueSyncBlockedException, OrderQueueSyncSchemaOutdatedException;
 
 /// Source priority for a persisted order queue.
 ///
