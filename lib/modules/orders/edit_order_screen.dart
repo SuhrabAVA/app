@@ -47,6 +47,13 @@ class EditOrderScreen extends StatefulWidget {
   State<EditOrderScreen> createState() => _EditOrderScreenState();
 }
 
+class _SwitchableStageOption {
+  const _SwitchableStageOption(this.stageId, this.label);
+
+  final String stageId;
+  final String label;
+}
+
 class _PaintEntry {
   TmcModel? tmc;
   String? name;
@@ -1523,6 +1530,165 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _queueBuildStatus = QueueBuildStatus.outdated;
     }
   }
+
+  bool _isSwitchablePreviewStage(Map<String, dynamic> stage) {
+    final value = stage['isSwitchable'];
+    if (value == true) return true;
+    if (value is String && value.toLowerCase().trim() == 'true') return true;
+    return _switchableStageKeyFromPreviewStage(stage) != null;
+  }
+
+  String? _switchableStageKeyFromPreviewStage(Map<String, dynamic> stage) {
+    final stageKey = (stage['stageKey'] ?? stage['stage_key'])?.toString();
+    final groupKey = stage['switchableGroupKey']?.toString();
+    if (stageKey == kVMainSwitchStageKey ||
+        stageKey == kSwitchableVGroupKey ||
+        stageKey == kFriStageId ||
+        stageKey == kWindowStageId ||
+        groupKey == kSwitchableVGroupKey) {
+      return kVMainSwitchStageKey;
+    }
+    if (stageKey == kPMainSwitchStageKey ||
+        stageKey == kSwitchablePGroupKey ||
+        stageKey == kAutoBigStageId ||
+        stageKey == kAutoSmallStageId ||
+        stageKey == kTubeStageId ||
+        groupKey == kSwitchablePGroupKey) {
+      return kPMainSwitchStageKey;
+    }
+
+    final selectedId = _selectedSwitchableIdFromPreviewStage(stage);
+    if (selectedId == kFriStageId || selectedId == kWindowStageId) {
+      return kVMainSwitchStageKey;
+    }
+    if (selectedId == kAutoBigStageId ||
+        selectedId == kAutoSmallStageId ||
+        selectedId == kTubeStageId) {
+      return kPMainSwitchStageKey;
+    }
+    return null;
+  }
+
+  String? _selectedSwitchableIdFromPreviewStage(Map<String, dynamic> stage) {
+    final id = (stage['selectedWorkplaceId'] ??
+            stage['stageId'] ??
+            stage['stage_id'] ??
+            stage['stageid'] ??
+            stage['workplaceId'] ??
+            stage['workplace_id'] ??
+            stage['id'])
+        ?.toString()
+        .trim();
+    if (id == null || id.isEmpty) return null;
+    return id;
+  }
+
+  List<_SwitchableStageOption> _switchableOptionsForStageKey(
+    String stageKey,
+  ) {
+    if (stageKey == kVMainSwitchStageKey) {
+      return const [
+        _SwitchableStageOption(kFriStageId, 'Фри'),
+        _SwitchableStageOption(kWindowStageId, 'Окно'),
+      ];
+    }
+    if (stageKey == kPMainSwitchStageKey) {
+      return const [
+        _SwitchableStageOption(kAutoBigStageId, 'Автомат большой'),
+        _SwitchableStageOption(kAutoSmallStageId, 'Автомат маленький'),
+        _SwitchableStageOption(kTubeStageId, 'Труба'),
+      ];
+    }
+    return const <_SwitchableStageOption>[];
+  }
+
+  String? _selectedSwitchableStageIdForPreview(
+    String stageKey,
+    Map<String, dynamic> stage,
+  ) {
+    final stateSelected = stageKey == kVMainSwitchStageKey
+        ? _selectedVStage
+        : stageKey == kPMainSwitchStageKey
+            ? _selectedPStage
+            : null;
+    final selected =
+        (stateSelected ?? _selectedSwitchableIdFromPreviewStage(stage))
+            ?.trim();
+    final options = _switchableOptionsForStageKey(stageKey)
+        .map((option) => option.stageId)
+        .toSet();
+    if (selected != null && options.contains(selected)) return selected;
+    return options.isEmpty ? null : options.first;
+  }
+
+  void _selectSwitchablePreviewStage(String stageKey, String selectedStageId) {
+    final current = stageKey == kVMainSwitchStageKey
+        ? _selectedVStage
+        : stageKey == kPMainSwitchStageKey
+            ? _selectedPStage
+            : null;
+    if (current == selectedStageId) return;
+
+    setState(() {
+      if (stageKey == kVMainSwitchStageKey) {
+        _selectedVStage = selectedStageId;
+      } else if (stageKey == kPMainSwitchStageKey) {
+        _selectedPStage = selectedStageId;
+      } else {
+        return;
+      }
+
+      final currentStages = _stagePreviewStages
+          .map((stage) => Map<String, dynamic>.from(stage))
+          .toList(growable: false);
+      final queue = _buildStageQueueFromCurrentDraft(
+        existingStages: currentStages,
+        templateStages: _selectedTemplateStageMaps(),
+      );
+      _stagePreviewStages = queue;
+      _syncSwitchableStageSelectionFields(queue);
+      _queueBuildStatus = QueueBuildStatus.outdated;
+      _isStageQueueBuilt = false;
+    });
+  }
+
+  Widget? _buildSwitchableStageSelector(Map<String, dynamic> stage) {
+    if (!_isSwitchablePreviewStage(stage)) return null;
+    final stageKey = _switchableStageKeyFromPreviewStage(stage);
+    if (stageKey == null) return null;
+    final options = _switchableOptionsForStageKey(stageKey);
+    if (options.isEmpty) return null;
+    final selected = _selectedSwitchableStageIdForPreview(stageKey, stage);
+    if (selected == null) return null;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: SegmentedButton<String>(
+        segments: [
+          for (final option in options)
+            ButtonSegment<String>(
+              value: option.stageId,
+              label: Text(option.label),
+            ),
+        ],
+        selected: {selected},
+        onSelectionChanged: (selection) {
+          if (selection.isEmpty) return;
+          _selectSwitchablePreviewStage(stageKey, selection.first);
+        },
+      ),
+    );
+  }
+
+  String? _persistedSelectedVStage(String queueBuildStatus) =>
+      queueBuildStatus == QueueBuildStatus.built
+          ? _selectedVStage
+          : widget.order?.selectedVStage;
+
+  String? _persistedSelectedPStage(String queueBuildStatus) =>
+      queueBuildStatus == QueueBuildStatus.built
+          ? _selectedPStage
+          : widget.order?.selectedPStage;
 
   List<Map<String, dynamic>> _buildStageQueueFromCurrentDraft({
     List<Map<String, dynamic>> existingStages = const <Map<String, dynamic>>[],
@@ -3006,8 +3172,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         comments: _commentsController.text.trim(),
         status: nextOrderStatus,
         queueBuildStatus: nextQueueBuildStatus,
-        selectedVStage: _selectedVStage,
-        selectedPStage: _selectedPStage,
+        selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
+        selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
         queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
             ? null
             : currentQueueSignature,
@@ -3090,8 +3256,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         assignmentId: widget.order!.assignmentId,
         assignmentCreated: widget.order!.assignmentCreated,
         queueBuildStatus: nextQueueBuildStatus,
-        selectedVStage: _selectedVStage,
-        selectedPStage: _selectedPStage,
+        selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
+        selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
         queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
             ? null
             : currentQueueSignature,
@@ -6596,40 +6762,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               '')
           .toString()
           .trim();
-      children.add(GestureDetector(
-        onTap: () {
-          final toggledStage = toggleProductStageObject(stage);
-          if (toggledStage == null) return;
-          final toggledStageKey = toggledStage['stageKey']?.toString();
-          final selectedWorkplaceId =
-              toggledStage['selectedWorkplaceId']?.toString();
-          if (selectedWorkplaceId == null || selectedWorkplaceId.isEmpty) {
-            return;
-          }
-          setState(() {
-            if (toggledStageKey == kVMainSwitchStageKey) {
-              _selectedVStage = selectedWorkplaceId;
-            } else if (toggledStageKey == kPMainSwitchStageKey) {
-              _selectedPStage = selectedWorkplaceId;
-            } else {
-              return;
-            }
-
-            final currentStages = _stagePreviewStages
-                .map((stage) => Map<String, dynamic>.from(stage))
-                .toList(growable: false);
-            final queue = _buildStageQueueFromCurrentDraft(
-              existingStages: currentStages,
-              templateStages: _selectedTemplateStageMaps(),
-            );
-            _stagePreviewStages = queue;
-            _syncSwitchableStageSelectionFields(queue);
-            _queueSignature = _currentQueueSignature();
-            _queueBuildStatus = QueueBuildStatus.outdated;
-            _isStageQueueBuilt = false;
-          });
-        },
-        child: Container(
+      final switchableSelector = _buildSwitchableStageSelector(stage);
+      children.add(
+        Container(
           margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -6654,13 +6789,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
+                    if (switchableSelector != null) switchableSelector,
                   ],
                 ),
               ),
             ],
           ),
         ),
-      ));
+      );
     }
 
     return Column(
