@@ -459,7 +459,24 @@ class OrderQueueMapper {
       fallbackStep += 1;
     }
 
-    return result;
+    return _withUniqueSteps(result);
+  }
+
+  static List<OrderQueueSyncEntry> _withUniqueSteps(
+    List<OrderQueueSyncEntry> entries,
+  ) {
+    final normalized = <OrderQueueSyncEntry>[];
+    var lastStep = 0;
+    for (final entry in entries) {
+      final requestedStep = entry.step > 0 ? entry.step : lastStep + 1;
+      final uniqueStep =
+          requestedStep <= lastStep ? lastStep + 1 : requestedStep;
+      normalized.add(
+        uniqueStep == entry.step ? entry : entry.copyWith(step: uniqueStep),
+      );
+      lastStep = uniqueStep;
+    }
+    return normalized;
   }
 
   static List<String> stageIdsFromRow(Map<String, dynamic> row) {

@@ -272,53 +272,59 @@ class OrderQueueSyncService {
       );
     }
 
-    for (final op in operations) {
-      switch (op.type) {
-        case OrderQueueSyncOperationType.cancelOrDeletePending:
-          final current = op.current;
-          if (current != null) {
-            await _runTableStep<void>(
-              orderId: orderId,
-              tableName: 'prod_plan_stages',
-              action: () => _deletePendingPlanStage(current),
-            );
-            await _runTableStep<void>(
-              orderId: orderId,
-              tableName: 'tasks',
-              action: () => _deletePendingTasks(orderId, current),
-            );
-          }
-          break;
-        case OrderQueueSyncOperationType.updatePending:
-          final current = op.current;
-          final next = op.next;
-          if (current != null && next != null) {
-            await _runTableStep<void>(
-              orderId: orderId,
-              tableName: 'prod_plan_stages',
-              action: () => _updatePendingPlanStage(current, next),
-            );
-            await _runTableStep<void>(
-              orderId: orderId,
-              tableName: 'tasks',
-              action: () => _syncPendingTaskGroup(orderId, current, next),
-            );
-          }
-          break;
-        case OrderQueueSyncOperationType.insert:
-          final next = op.next;
-          if (next != null) {
-            await _runTableStep<void>(
-              orderId: orderId,
-              tableName: 'prod_plan_stages',
-              action: () => _insertPlanStage(planId, next),
-            );
-          }
-          break;
-        case OrderQueueSyncOperationType.keep:
-        case OrderQueueSyncOperationType.block:
-          break;
-      }
+    for (final op in operations.where(
+      (op) => op.type == OrderQueueSyncOperationType.cancelOrDeletePending,
+    )) {
+      final current = op.current;
+      if (current == null) continue;
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'prod_plan_stages',
+        action: () => _deletePendingPlanStage(current),
+      );
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'tasks',
+        action: () => _deletePendingTasks(orderId, current),
+      );
+    }
+
+    final updateOperations = operations
+        .where((op) => op.type == OrderQueueSyncOperationType.updatePending)
+        .toList(growable: false);
+    final parkedUpdates = await _runTableStep<Map<String, OrderQueueSyncEntry>>(
+      orderId: orderId,
+      tableName: 'prod_plan_stages',
+      action: () => _parkPendingPlanStageUpdates(updateOperations),
+    );
+
+    for (final op in updateOperations) {
+      final current = op.current;
+      final next = op.next;
+      if (current == null || next == null) continue;
+      final parkedCurrent = parkedUpdates[current.identityKey] ?? current;
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'prod_plan_stages',
+        action: () => _updatePendingPlanStage(parkedCurrent, next),
+      );
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'tasks',
+        action: () => _syncPendingTaskGroup(orderId, current, next),
+      );
+    }
+
+    for (final op in operations.where(
+      (op) => op.type == OrderQueueSyncOperationType.insert,
+    )) {
+      final next = op.next;
+      if (next == null) continue;
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'prod_plan_stages',
+        action: () => _insertPlanStage(planId, next),
+      );
     }
 
     await _runTableStep<void>(
@@ -658,6 +664,29 @@ class OrderQueueSyncService {
         );
       }
     }
+  }
+
+  Future<Map<String, OrderQueueSyncEntry>> _parkPendingPlanStageUpdates(
+    List<OrderQueueSyncOperation> updateOperations,
+  ) async {
+    if (updateOperations.length < 2) {
+      return const <String, OrderQueueSyncEntry>{};
+    }
+    final parked = <String, OrderQueueSyncEntry>{};
+    var offset = 0;
+    for (final op in updateOperations) {
+      final current = op.current;
+      if (current == null) continue;
+      final tempStep = -1000000 - offset;
+      offset += 1;
+      await _updatePlanStageWithOptionalStepNo(
+        current,
+        {'seq': tempStep},
+        tempStep,
+      );
+      parked[current.identityKey] = current.copyWith(step: tempStep);
+    }
+    return parked;
   }
 
   Future<void> _deletePendingTasks(

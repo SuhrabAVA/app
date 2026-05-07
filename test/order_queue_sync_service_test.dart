@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sheet_clone/modules/orders/order_queue_service.dart';
 import 'package:sheet_clone/modules/orders/order_queue_sync_service.dart';
 
 void main() {
@@ -94,5 +95,28 @@ void main() {
     expect(blocked, isNotEmpty);
     expect(blocked.first.reason, contains('Печать'));
     expect(blocked.first.reason, contains('started'));
+  });
+
+  test('OrderQueueMapper assigns unique steps for alternative workplaces', () {
+    final entries = OrderQueueMapper.toSyncEntries(const [
+      {
+        'stageKey': 'die_cut',
+        'stageId': 'die-cut-a1',
+        'workplaceIds': ['die-cut-a1', 'die-cut-a2'],
+        'order': 3,
+      },
+      {
+        'stageKey': 'pack',
+        'stageId': 'pack',
+        'order': 4,
+      },
+    ]);
+
+    expect(entries.map((entry) => entry.step), [3, 4, 5]);
+    expect(entries.map((entry) => entry.stageId), [
+      'die-cut-a1',
+      'die-cut-a2',
+      'pack',
+    ]);
   });
 }
