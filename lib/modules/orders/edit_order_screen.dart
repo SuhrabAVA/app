@@ -1531,6 +1531,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final switchableSelectionSource = existingStages.isNotEmpty
         ? existingStages
         : _stagePreviewStages;
+    final selectedSwitchableStageIdsByStageKey = <String, String>{
+      ...collectSwitchableStageSelectionsByStageKey(switchableSelectionSource),
+      if ((_selectedVStage ?? '').trim().isNotEmpty)
+        kVMainSwitchStageKey: _selectedVStage!.trim(),
+      if ((_selectedPStage ?? '').trim().isNotEmpty)
+        kPMainSwitchStageKey: _selectedPStage!.trim(),
+    };
     return buildOrderStageQueue(
       productTypeId: draft.productTypeId,
       hasCutting: draft.hasTrimming,
@@ -1542,7 +1549,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       switchableStageKey: draft.switchableStageKey,
       selectedSwitchableStageId: draft.selectedSwitchableStageId,
       selectedSwitchableStageIdsByStageKey:
-          collectSwitchableStageSelectionsByStageKey(switchableSelectionSource),
+          selectedSwitchableStageIdsByStageKey,
       existingStages: existingStages,
       templateStages: templateStages,
     );
@@ -2899,7 +2906,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final List<MaterialModel> selectedPapers = _collectSelectedPapers();
     final currentQueueSignature = _currentQueueSignature();
     var nextQueueBuildStatus = _queueBuildStatus;
-    if (isCreating && nextQueueBuildStatus != QueueBuildStatus.built) {
+    if (isCreating &&
+        nextQueueBuildStatus != QueueBuildStatus.built &&
+        nextQueueBuildStatus != QueueBuildStatus.outdated) {
       nextQueueBuildStatus = QueueBuildStatus.notBuilt;
     } else if (!isCreating &&
         widget.order?.queueBuildStatus == QueueBuildStatus.built &&
@@ -6607,12 +6616,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         onTap: () {
           final toggledStage = toggleProductStageObject(stage);
           if (toggledStage == null) return;
+          final toggledStageKey = toggledStage['stageKey']?.toString();
+          final selectedWorkplaceId =
+              toggledStage['selectedWorkplaceId']?.toString();
+          if (selectedWorkplaceId == null || selectedWorkplaceId.isEmpty) {
+            return;
+          }
           setState(() {
-            _stagePreviewStages[i] = toggledStage;
-            _syncSwitchableStageSelectionFields(_stagePreviewStages);
+            if (toggledStageKey == kVMainSwitchStageKey) {
+              _selectedVStage = selectedWorkplaceId;
+            } else if (toggledStageKey == kPMainSwitchStageKey) {
+              _selectedPStage = selectedWorkplaceId;
+            } else {
+              return;
+            }
+
+            final currentStages = _stagePreviewStages
+                .map((stage) => Map<String, dynamic>.from(stage))
+                .toList(growable: false);
+            final queue = _buildStageQueueFromCurrentDraft(
+              existingStages: currentStages,
+              templateStages: _selectedTemplateStageMaps(),
+            );
+            _stagePreviewStages = queue;
+            _syncSwitchableStageSelectionFields(queue);
             _queueSignature = _currentQueueSignature();
-            _queueBuildStatus = QueueBuildStatus.built;
-            _isStageQueueBuilt = true;
+            _queueBuildStatus = QueueBuildStatus.outdated;
+            _isStageQueueBuilt = false;
           });
         },
         child: Container(
