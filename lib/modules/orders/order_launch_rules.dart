@@ -3,13 +3,14 @@ import 'order_model.dart';
 
 /// Returns whether the order can be launched from the orders list UI.
 ///
-/// The UI only gates launching by assignment/status and available material.
-/// Presence of a persisted stage queue is validated by OrdersProvider.launchOrder
-/// so orders without a legacy [OrderModel.stageTemplateId] can still be
-/// launched when their stages are saved in production plan tables.
+/// The UI gates launching by assignment/status, queue build state, and
+/// available material. OrdersProvider.launchOrder repeats the queue check
+/// against persisted data before creating tasks.
 bool canLaunchOrder(OrderModel order, Iterable<TmcModel> allTmc) {
   if (order.assignmentCreated ||
-      order.statusEnum != OrderStatus.ready_to_start) {
+      order.statusEnum != OrderStatus.ready_to_start ||
+      QueueBuildStatus.normalize(order.queueBuildStatus) !=
+          QueueBuildStatus.built) {
     return false;
   }
 
