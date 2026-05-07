@@ -2765,30 +2765,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (wasAlreadyLaunched) {
       await _loadRuntimeEditLocks();
     }
-    final bool stageQueueChangedForLaunchedOrder = wasAlreadyLaunched &&
-        ((_stageTemplateId ?? '') != (widget.order?.stageTemplateId ?? '') ||
-            _stageOrderManuallyChanged);
-    final bool queueChangeBlockedByStartedStages =
-        stageQueueChangedForLaunchedOrder && _launchedWithStartedStages;
-    if (queueChangeBlockedByStartedStages) {
-      throw const OrderQueueSyncBlockedException();
-    }
-    final bool canResetForRelaunchAfterQueueEdit =
-        stageQueueChangedForLaunchedOrder && _launchedNoStartedStages;
-    // Перестраивать normalized/JSON-план можно только для нового заказа,
-    // незапущенного заказа или запущенного заказа без активности задач,
-    // который будет снят с производства для ручного повторного запуска.
-    final bool canRebuildProductionPlan = isCreating ||
-        !wasAlreadyLaunched ||
-        (wasAlreadyLaunched && canResetForRelaunchAfterQueueEdit);
+    // Запущенный заказ больше не снимается с производства только из-за
+    // редактирования очереди. OrderQueueSyncService точечно обновляет pending
+    // этапы/задачи и блокирует только изменение защищённых этапов.
     // Перед сохранением всегда строим эффективную очередь из текущего черновика,
     // даже если пользователь не нажимал «Собрать очередь» или шаблон не выбран.
     final stageMaps = _buildStageQueueFromCurrentDraft(
       templateStages: _selectedTemplateStageMaps(),
     );
     final bool hasEffectiveStageQueue = stageMaps.isNotEmpty;
-    final bool willSaveBuiltStageQueue =
-        canRebuildProductionPlan && hasEffectiveStageQueue;
+    final bool willSaveBuiltStageQueue = hasEffectiveStageQueue;
     if (willSaveBuiltStageQueue) {
       _syncSwitchableStageSelectionFields(stageMaps);
       nextQueueBuildStatus = QueueBuildStatus.built;
@@ -2817,7 +2803,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ? ''
                 : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
     late OrderModel createdOrUpdatedOrder;
-    bool resetForRelaunchAfterEdit = false;
     if (widget.order == null) {
       // создаём новый заказ
       final _created = await provider.createOrder(
@@ -2907,9 +2892,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         makeready: _makeready,
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
-        stageTemplateId: queueChangeBlockedByStartedStages
-            ? widget.order!.stageTemplateId
-            : _stageTemplateId,
+        stageTemplateId: _stageTemplateId,
         // На этапе базового сохранения не перетираем уже привязанную форму.
         // Фактическая запись формы всегда выполняется позже в _processFormAssignment.
         hasForm: effectivePersistedHasForm,
@@ -2935,24 +2918,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
-      if (wasAlreadyLaunched &&
-          canResetForRelaunchAfterQueueEdit &&
-          mounted) {
-        // Бизнес-правило: если изменили очередь этапов у запущенного заказа,
-        // а этапы ещё не начинались — снимаем заказ с производства и ждём
-        // ручного повторного запуска.
-        await provider.resetLaunchedOrderForRelaunch(updated.id);
-        createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
-          assignmentCreated: false,
-          status: nextOrderStatus,
-        );
-        resetForRelaunchAfterEdit = true;
-      }
     }
 
-    final String effectiveNextOrderStatus = resetForRelaunchAfterEdit
-        ? createdOrUpdatedOrder.status
-        : nextOrderStatus;
+    final String effectiveNextOrderStatus = nextOrderStatus;
     if (createdOrUpdatedOrder.status != effectiveNextOrderStatus ||
         createdOrUpdatedOrder.hasMaterialShortage != nextHasMaterialShortage ||
         createdOrUpdatedOrder.materialShortageMessage != shortageMessage) {
@@ -3017,28 +2985,76 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // stageTemplateId остаётся метаданным выбора в UI, а не источником истины.
       SaveBuiltQueueResult queueSaveResult;
       try {
-        queueSaveResult = await _orderQueueService.saveBuiltQueue(
-          createdOrUpdatedOrder.id,
-          stageMaps,
-          <String, String?>{
-            'selected_v_stage': _selectedVStage,
-            'selected_p_stage': _selectedPStage,
-          },
-          currentQueueSignature,
-        );
+        if (!isCreating && wasAlreadyLaunched) {
+          await _orderQueueService.syncQueueForExistingOrder(
+            createdOrUpdatedOrder.id,
+            stageMaps,
+          );
+          queueSaveResult =
+              const SaveBuiltQueueResult(productionTasksCreated: true);
+        } else {
+          queueSaveResult = await _orderQueueService.saveBuiltQueue(
+            createdOrUpdatedOrder.id,
+            stageMaps,
+            <String, String?>{
+              'selected_v_stage': _selectedVStage,
+              'selected_p_stage': _selectedPStage,
+            },
+            currentQueueSignature,
+          );
+        }
+      } on OrderQueueSyncBlockedException catch (error) {
+        if (!isCreating && widget.order != null) {
+          final restoredQueueState = createdOrUpdatedOrder.copyWith(
+            stageTemplateId: widget.order!.stageTemplateId,
+            queueBuildStatus: widget.order!.queueBuildStatus,
+            selectedVStage: widget.order!.selectedVStage,
+            selectedPStage: widget.order!.selectedPStage,
+            queueSignature: widget.order!.queueSignature,
+          );
+          await provider.updateOrder(restoredQueueState);
+          createdOrUpdatedOrder = restoredQueueState;
+          _queueBuildStatus = widget.order!.queueBuildStatus;
+          _queueSignature = widget.order!.queueSignature;
+        }
+        if (mounted) {
+          messenger.showSnackBar(SnackBar(content: Text(error.message)));
+        }
+        return;
       } catch (error) {
         final failedOrder = createdOrUpdatedOrder.copyWith(
-          status: OrderStatus.draft.name,
-          hasMaterialShortage: false,
-          materialShortageMessage: '',
-          queueBuildStatus: QueueBuildStatus.notBuilt,
-          selectedVStage: '',
-          selectedPStage: '',
-          queueSignature: const <String, dynamic>{},
+          status: isCreating
+              ? OrderStatus.draft.name
+              : createdOrUpdatedOrder.status,
+          hasMaterialShortage:
+              isCreating ? false : createdOrUpdatedOrder.hasMaterialShortage,
+          materialShortageMessage:
+              isCreating ? '' : createdOrUpdatedOrder.materialShortageMessage,
+          stageTemplateId: !isCreating && widget.order != null
+              ? widget.order!.stageTemplateId
+              : createdOrUpdatedOrder.stageTemplateId,
+          queueBuildStatus: isCreating
+              ? QueueBuildStatus.notBuilt
+              : (widget.order?.queueBuildStatus ??
+                  createdOrUpdatedOrder.queueBuildStatus),
+          selectedVStage: isCreating
+              ? ''
+              : (widget.order?.selectedVStage ??
+                  createdOrUpdatedOrder.selectedVStage),
+          selectedPStage: isCreating
+              ? ''
+              : (widget.order?.selectedPStage ??
+                  createdOrUpdatedOrder.selectedPStage),
+          queueSignature: isCreating
+              ? const <String, dynamic>{}
+              : (widget.order?.queueSignature ??
+                  createdOrUpdatedOrder.queueSignature),
         );
         await provider.updateOrder(failedOrder);
-        _queueBuildStatus = QueueBuildStatus.notBuilt;
-        _queueSignature = null;
+        if (isCreating) {
+          _queueBuildStatus = QueueBuildStatus.notBuilt;
+          _queueSignature = null;
+        }
         if (mounted) {
           messenger.showSnackBar(
             SnackBar(
@@ -3099,23 +3115,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     // Бизнес-правило: в создании/редактировании заказа списание бумаги отключено полностью.
 
-    if (queueChangeBlockedByStartedStages) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Изменены только разрешённые поля заказа. Очередь этапов нельзя изменить после начала выполнения этапов.',
-          ),
-        ),
-      );
-    } else if (resetForRelaunchAfterEdit) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Заказ обновлён и снят с производства. Для продолжения запустите его повторно.',
-          ),
-        ),
-      );
-    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+    if (!createdOrUpdatedOrder.assignmentCreated &&
         nextQueueBuildStatus == QueueBuildStatus.outdated) {
       messenger.showSnackBar(
         const SnackBar(
