@@ -34,6 +34,10 @@ class OrderFormData {
   final String? queueId;
   final String? stageTemplateId;
   final String? status;
+  final String queueBuildStatus;
+  final String? selectedVStage;
+  final String? selectedPStage;
+  final Map<String, dynamic>? queueSignature;
 
   const OrderFormData({
     required this.manager,
@@ -65,6 +69,10 @@ class OrderFormData {
     this.queueId,
     this.stageTemplateId,
     this.status,
+    this.queueBuildStatus = 'not_built',
+    this.selectedVStage,
+    this.selectedPStage,
+    this.queueSignature,
   });
 
   Map<String, dynamic> toInsertMap() {
@@ -98,6 +106,10 @@ class OrderFormData {
       'queue_id': queueId,
       'stage_template_id': stageTemplateId,
       'status': status ?? 'draft',
+      'queue_build_status': queueBuildStatus,
+      'selected_v_stage': selectedVStage,
+      'selected_p_stage': selectedPStage,
+      'queue_signature': queueSignature,
     };
     return _cleanForInsert(m);
   }

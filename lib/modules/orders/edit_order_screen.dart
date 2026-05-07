@@ -553,6 +553,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _stagePreviewScheduled = false;
   bool _stagePreviewInitialized = false;
   bool _isStageQueueBuilt = false;
+  String _queueBuildStatus = QueueBuildStatus.notBuilt;
+  String? _selectedVStage;
+  String? _selectedPStage;
+  Map<String, dynamic>? _queueSignature;
   bool _updatingStageTemplateText = false;
   bool _lastPreviewPaintsFilled = false;
   MaterialModel? _selectedMaterial;
@@ -709,6 +713,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _makeready = template?.makeready ?? 0;
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
+    _queueBuildStatus =
+        widget.order?.queueBuildStatus ?? QueueBuildStatus.notBuilt;
+    _selectedVStage = widget.order?.selectedVStage;
+    _selectedPStage = widget.order?.selectedPStage;
+    _queueSignature = widget.order?.queueSignature == null
+        ? null
+        : Map<String, dynamic>.from(widget.order!.queueSignature!);
     final List<MaterialModel> initialPapers = template != null
         ? (template.paperMaterials.isNotEmpty
             ? List<MaterialModel>.from(template.paperMaterials)
@@ -1437,6 +1448,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // Важно: после ручного swap больше не должны возвращать auto-порядок.
       _stageOrderManuallyChanged = true;
       _isStageQueueBuilt = false;
+      _markQueueOutdatedIfBuilt();
     });
   }
 
@@ -1457,6 +1469,57 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       hasCardboard: _cardboardChecked,
       handleType: _resolveSelectedHandleType(),
     );
+  }
+
+
+  Map<String, dynamic> _currentQueueSignature() {
+    final mainMaterial = _mainMaterialForStageQueue();
+    final paperIds = _collectSelectedPapers()
+        .map((paper) => {
+              'id': (paper.id ?? '').trim(),
+              'name': paper.name.trim(),
+              'format': (paper.format ?? '').trim(),
+              'grammage': (paper.grammage ?? '').trim(),
+              'quantity': paper.quantity,
+            })
+        .toList(growable: false);
+    return <String, dynamic>{
+      'product_type_id': _product.type.trim(),
+      'product_quantity': _product.quantity,
+      'product_width': _product.width,
+      'product_height': _product.height,
+      'product_depth': _product.depth,
+      'product_width_b': _product.widthB,
+      'material_width': parseMaterialWidth(mainMaterial),
+      'paper_materials': paperIds,
+      'has_paint': _hasAnyPaints(),
+      'has_trimming': _trimming,
+      'has_cardboard': _cardboardChecked,
+      'handle': _selectedHandleDescription.trim(),
+      'stage_template_id': _stageTemplateId,
+    };
+  }
+
+  bool _sameQueueSignature(
+    Map<String, dynamic>? left,
+    Map<String, dynamic>? right,
+  ) {
+    if (left == null || right == null) return left == right;
+    return jsonEncode(left) == jsonEncode(right);
+  }
+
+  void _syncSwitchableStageSelectionFields(
+    List<Map<String, dynamic>> stages,
+  ) {
+    final selections = collectSwitchableStageSelectionsByStageKey(stages);
+    _selectedVStage = selections[kVMainSwitchStageKey];
+    _selectedPStage = selections[kPMainSwitchStageKey];
+  }
+
+  void _markQueueOutdatedIfBuilt() {
+    if (_queueBuildStatus == QueueBuildStatus.built) {
+      _queueBuildStatus = QueueBuildStatus.outdated;
+    }
   }
 
   List<Map<String, dynamic>> _buildStageQueueFromCurrentDraft({
@@ -1494,6 +1557,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
     setState(() {
       _stagePreviewStages = queue;
+      _syncSwitchableStageSelectionFields(queue);
+      _queueSignature = _currentQueueSignature();
+      _queueBuildStatus = QueueBuildStatus.built;
       _isStageQueueBuilt = true;
     });
   }
@@ -1730,6 +1796,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void _scheduleStagePreviewUpdate({bool immediate = false}) {
     if (!mounted) return;
+    if (_queueBuildStatus == QueueBuildStatus.built &&
+        !_sameQueueSignature(_queueSignature, _currentQueueSignature())) {
+      _queueBuildStatus = QueueBuildStatus.outdated;
+    }
     if (immediate) {
       _stagePreviewScheduled = false;
       _rebuildStagePreview();
@@ -2823,6 +2893,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     // Бумага хранится динамическим списком без жёсткого лимита.
     final List<MaterialModel> selectedPapers = _collectSelectedPapers();
+    final currentQueueSignature = _currentQueueSignature();
+    var nextQueueBuildStatus = _queueBuildStatus;
+    if (isCreating && nextQueueBuildStatus != QueueBuildStatus.built) {
+      nextQueueBuildStatus = QueueBuildStatus.notBuilt;
+    } else if (!isCreating &&
+        widget.order?.queueBuildStatus == QueueBuildStatus.built &&
+        !_sameQueueSignature(
+            widget.order?.queueSignature, currentQueueSignature)) {
+      nextQueueBuildStatus = QueueBuildStatus.outdated;
+    }
+    if (nextQueueBuildStatus == QueueBuildStatus.built) {
+      _syncSwitchableStageSelectionFields(_stagePreviewStages);
+    }
     bool hasEnoughPaperForLaunch() {
       if (selectedPapers.isEmpty) return true;
       for (final paper in selectedPapers) {
@@ -2905,6 +2988,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         paymentDone: false,
         comments: _commentsController.text.trim(),
         status: nextOrderStatus,
+        queueBuildStatus: nextQueueBuildStatus,
+        selectedVStage: _selectedVStage,
+        selectedPStage: _selectedPStage,
+        queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
+            ? null
+            : currentQueueSignature,
       );
       if (_created == null) {
         if (mounted) {
@@ -2983,6 +3072,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         materialShortageMessage: shortageMessage,
         assignmentId: widget.order!.assignmentId,
         assignmentCreated: widget.order!.assignmentCreated,
+        queueBuildStatus: nextQueueBuildStatus,
+        selectedVStage: _selectedVStage,
+        selectedPStage: _selectedPStage,
+        queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
+            ? null
+            : currentQueueSignature,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
@@ -3045,6 +3140,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           status: createdOrUpdatedOrder.status,
           assignmentId: humanId,
           assignmentCreated: createdOrUpdatedOrder.assignmentCreated,
+          queueBuildStatus: createdOrUpdatedOrder.queueBuildStatus,
+          selectedVStage: createdOrUpdatedOrder.selectedVStage,
+          selectedPStage: createdOrUpdatedOrder.selectedPStage,
+          queueSignature: createdOrUpdatedOrder.queueSignature,
         );
         await provider.updateOrder(withReadable);
         createdOrUpdatedOrder = withReadable;
@@ -6480,6 +6579,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           if (toggledStage == null) return;
           setState(() {
             _stagePreviewStages[i] = toggledStage;
+            _syncSwitchableStageSelectionFields(_stagePreviewStages);
+            _queueSignature = _currentQueueSignature();
+            _queueBuildStatus = QueueBuildStatus.built;
             _isStageQueueBuilt = true;
           });
         },

@@ -19,6 +19,24 @@ enum OrderStatus {
   completed,
 }
 
+class QueueBuildStatus {
+  static const String notBuilt = 'not_built';
+  static const String built = 'built';
+  static const String outdated = 'outdated';
+
+  static String normalize(String? raw) {
+    final value = (raw ?? '').trim();
+    switch (value) {
+      case notBuilt:
+      case built:
+      case outdated:
+        return value;
+      default:
+        return notBuilt;
+    }
+  }
+}
+
 /// ===== SAFE CAST HELPERS =====
 bool? _asBool(dynamic v) {
   if (v == null) return null;
@@ -125,6 +143,10 @@ class OrderModel {
   String materialShortageMessage;
   String? assignmentId;
   bool assignmentCreated;
+  String queueBuildStatus;
+  String? selectedVStage;
+  String? selectedPStage;
+  Map<String, dynamic>? queueSignature;
 
   OrderModel({
     required this.id,
@@ -160,6 +182,10 @@ class OrderModel {
     this.shippedAt,
     this.shippedBy,
     this.shippedQty,
+    String? queueBuildStatus,
+    this.selectedVStage,
+    this.selectedPStage,
+    Map<String, dynamic>? queueSignature,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -176,7 +202,11 @@ class OrderModel {
         status = status ?? OrderStatus.draft.name,
         hasMaterialShortage = hasMaterialShortage ?? false,
         materialShortageMessage = materialShortageMessage ?? '',
-        assignmentCreated = assignmentCreated ?? false;
+        assignmentCreated = assignmentCreated ?? false,
+        queueBuildStatus = QueueBuildStatus.normalize(queueBuildStatus),
+        queueSignature = queueSignature == null
+            ? null
+            : Map<String, dynamic>.from(queueSignature);
 
   static String normalizeStatus(String? raw) {
     final value = (raw ?? '').trim();
@@ -223,8 +253,9 @@ class OrderModel {
         if (includeNulls || material != null)
           'material': material?.toMap(),
         if (includeNulls || paperMaterials.isNotEmpty)
-          'material_list':
-              paperMaterials.isEmpty ? null : paperMaterials.map((m) => m.toMap()).toList(),
+          'material_list': paperMaterials.isEmpty
+              ? null
+              : paperMaterials.map((m) => m.toMap()).toList(),
         'makeready': makeready,
         'val': val,
         'has_form': hasForm,
@@ -248,6 +279,13 @@ class OrderModel {
           'shipped_at': shippedAt?.toIso8601String(),
         if (includeNulls || shippedBy != null) 'shipped_by': shippedBy,
         if (includeNulls || shippedQty != null) 'shipped_qty': shippedQty,
+        'queue_build_status': QueueBuildStatus.normalize(queueBuildStatus),
+        if (includeNulls || selectedVStage != null)
+          'selected_v_stage': selectedVStage,
+        if (includeNulls || selectedPStage != null)
+          'selected_p_stage': selectedPStage,
+        if (includeNulls || queueSignature != null)
+          'queue_signature': queueSignature,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -269,7 +307,8 @@ class OrderModel {
       if (raw is List) {
         return raw
             .whereType<Map>()
-            .map((item) => MaterialModel.fromMap(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                MaterialModel.fromMap(Map<String, dynamic>.from(item as Map)))
             .toList();
       }
       return const <MaterialModel>[];
@@ -334,7 +373,9 @@ class OrderModel {
       material: materialMap.isEmpty ? null : MaterialModel.fromMap(materialMap),
       paperMaterials: materialList.isNotEmpty
           ? materialList
-          : (materialMap.isEmpty ? const <MaterialModel>[] : [MaterialModel.fromMap(materialMap)]),
+          : (materialMap.isEmpty
+              ? const <MaterialModel>[]
+              : [MaterialModel.fromMap(materialMap)]),
       makeready:
           ((_pickAny(map, const ['makeready']) as num?)?.toDouble()) ?? 0,
       val: ((_pickAny(map, const ['val']) as num?)?.toDouble()) ?? 0,
@@ -372,6 +413,20 @@ class OrderModel {
       shippedBy: (_pickAny(map, const ['shipped_by', 'shippedBy']) as String?),
       shippedQty:
           _parseDouble(_pickAny(map, const ['shipped_qty', 'shippedQty'])),
+      queueBuildStatus: QueueBuildStatus.normalize(
+          _pickAny(map, const ['queue_build_status', 'queueBuildStatus'])
+              ?.toString()),
+      selectedVStage:
+          (_pickAny(map, const ['selected_v_stage', 'selectedVStage'])
+              as String?),
+      selectedPStage:
+          (_pickAny(map, const ['selected_p_stage', 'selectedPStage'])
+              as String?),
+      queueSignature: (() {
+        final raw = _pickAny(map, const ['queue_signature', 'queueSignature']);
+        final decoded = _asMap(raw);
+        return decoded.isEmpty ? null : decoded;
+      })(),
     );
   }
 
@@ -405,6 +460,10 @@ class OrderModel {
     String? shippedBy,
     double? shippedQty,
     bool? hasForm,
+    String? queueBuildStatus,
+    String? selectedVStage,
+    String? selectedPStage,
+    Map<String, dynamic>? queueSignature,
   }) {
     return OrderModel(
       id: id,
@@ -418,7 +477,8 @@ class OrderModel {
       handle: handle ?? this.handle,
       cardboard: cardboard ?? this.cardboard,
       material: material ?? this.material,
-      paperMaterials: paperMaterials ?? List<MaterialModel>.from(this.paperMaterials),
+      paperMaterials:
+          paperMaterials ?? List<MaterialModel>.from(this.paperMaterials),
       makeready: makeready ?? this.makeready,
       val: val ?? this.val,
       pdfUrl: pdfUrl ?? this.pdfUrl,
@@ -441,6 +501,13 @@ class OrderModel {
       shippedAt: shippedAt ?? this.shippedAt,
       shippedBy: shippedBy ?? this.shippedBy,
       shippedQty: shippedQty ?? this.shippedQty,
+      queueBuildStatus: queueBuildStatus ?? this.queueBuildStatus,
+      selectedVStage: selectedVStage ?? this.selectedVStage,
+      selectedPStage: selectedPStage ?? this.selectedPStage,
+      queueSignature: queueSignature ??
+          (this.queueSignature == null
+              ? null
+              : Map<String, dynamic>.from(this.queueSignature!)),
     );
   }
 }
