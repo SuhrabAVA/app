@@ -1024,6 +1024,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     setState(() {
       _stageTemplateId = template.id;
       _selectedStageTemplateName = template.name;
+      _markQueueOutdatedIfBuilt();
       _stagePreviewStages = <Map<String, dynamic>>[];
       _stagePreviewError = null;
       _stagePreviewLoading = true;
@@ -1643,6 +1644,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _selectedStageTemplateName!.trim() != text.trim()) {
         _stageTemplateId = null;
         _selectedStageTemplateName = null;
+        _markQueueOutdatedIfBuilt();
         _stagePreviewStages = <Map<String, dynamic>>[];
         _stagePreviewError = null;
         _stagePreviewLoading = false;
@@ -2272,6 +2274,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (extraIndex >= 0 && extraIndex < _extraPaperMaterials.length) {
         final currentExtra = _extraPaperMaterials[extraIndex];
         setState(() {
+          _markQueueOutdatedIfBuilt();
           _extraPaperMaterials[extraIndex] = currentExtra.copyWith(
             id: paper.id,
             name: paper.description,
@@ -2283,6 +2286,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             unit: 'м',
           );
         });
+        _scheduleStagePreviewUpdate();
         return;
       }
     }
@@ -2924,10 +2928,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return true;
     }
 
-    // Очередь теперь автособирается при каждом сохранении заказа: пользователю
-    // не нужно отдельно нажимать кнопку построения очереди.
-    const bool hasStageQueueSelected = true;
-    final bool canLaunchProductionNow = hasEnoughPaperForLaunch();
+    final bool hasBuiltStageQueue =
+        nextQueueBuildStatus == QueueBuildStatus.built;
+    final bool canLaunchProductionNow =
+        hasBuiltStageQueue && hasEnoughPaperForLaunch();
     final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
     if (wasAlreadyLaunched) {
       await _loadRuntimeEditLocks();
@@ -2947,21 +2951,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         (wasAlreadyLaunched && canResetForRelaunchAfterQueueEdit);
     final String nextOrderStatus = wasAlreadyLaunched
         ? widget.order!.status
-        : (!hasStageQueueSelected
+        : (!hasBuiltStageQueue
             ? OrderStatus.draft.name
             : (canLaunchProductionNow
-            ? OrderStatus.ready_to_start.name
-            : OrderStatus.waiting_materials.name));
+                ? OrderStatus.ready_to_start.name
+                : OrderStatus.waiting_materials.name));
     final bool nextHasMaterialShortage = wasAlreadyLaunched
         ? widget.order!.hasMaterialShortage
-        : (hasStageQueueSelected ? !canLaunchProductionNow : false);
+        : (hasBuiltStageQueue ? !canLaunchProductionNow : false);
     final String shortageMessage = wasAlreadyLaunched
         ? widget.order!.materialShortageMessage
-        : (!hasStageQueueSelected
+        : (!hasBuiltStageQueue
             ? ''
             : (canLaunchProductionNow
-            ? ''
-            : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
+                ? ''
+                : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
     late OrderModel createdOrUpdatedOrder;
     bool resetForRelaunchAfterEdit = false;
     if (widget.order == null) {
@@ -3090,7 +3094,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         await provider.resetLaunchedOrderForRelaunch(updated.id);
         createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
           assignmentCreated: false,
-          status: OrderStatus.ready_to_start.name,
+          status: nextOrderStatus,
         );
         resetForRelaunchAfterEdit = true;
       }
@@ -3158,7 +3162,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       createdOrUpdatedOrder.pdfUrl = uploadedPath;
       await provider.updateOrder(createdOrUpdatedOrder);
     }
-    if (canRebuildProductionPlan) {
+    if (canRebuildProductionPlan && hasBuiltStageQueue) {
       // Создаём или обновляем производственную очередь независимо от шаблона.
       // stageTemplateId сохраняется в заказе выше, но автогенерация строится по полям формы.
       final templateStages = _selectedTemplateStageMaps();
@@ -3499,7 +3503,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ),
       );
-    } else if (!createdOrUpdatedOrder.assignmentCreated && !hasStageQueueSelected) {
+    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+        nextQueueBuildStatus == QueueBuildStatus.outdated) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Очередь изменилась, нажмите Собрать очередь',
+          ),
+        ),
+      );
+    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+        !hasBuiltStageQueue) {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
@@ -5232,6 +5246,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                       _lengthExceeded = false;
                                     }
                                   });
+                                  _scheduleStagePreviewUpdate();
                                 },
                               ),
                             ),
@@ -5527,9 +5542,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               _stockExtraQtyTouched = false;
               _product.leftover = null;
             });
-            if (shouldUpdateStagePreview) {
-              _scheduleStagePreviewUpdate(immediate: true);
-            }
+            _scheduleStagePreviewUpdate(
+              immediate: shouldUpdateStagePreview,
+            );
             _stockExtraSearchDebounce?.cancel();
             _stockExtraSearchController.clear();
             _updateStockExtraQtyController();
@@ -5553,6 +5568,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       onChanged: (val) {
         final qty = int.tryParse(val) ?? 0;
         _product.quantity = qty;
+        _scheduleStagePreviewUpdate();
       },
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
@@ -6353,6 +6369,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ),
       ),
     );
+    if (_queueBuildStatus == QueueBuildStatus.outdated) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Очередь изменилась, нажмите Собрать очередь',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+      );
+    }
 
     if (includeMakeready) {
       children.add(_buildMakereadyFields());

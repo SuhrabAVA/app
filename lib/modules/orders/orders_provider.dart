@@ -146,6 +146,22 @@ class OrdersProvider with ChangeNotifier {
       }).toList(growable: false);
 
       for (final order in pending) {
+        final queueBuilt = QueueBuildStatus.normalize(order.queueBuildStatus) ==
+            QueueBuildStatus.built;
+        if (!queueBuilt) {
+          if (order.statusEnum == OrderStatus.draft &&
+              !order.hasMaterialShortage &&
+              order.materialShortageMessage.isEmpty) {
+            continue;
+          }
+          await _supabase.from('orders').update({
+            'status': OrderStatus.draft.name,
+            'has_material_shortage': false,
+            'material_shortage_message': '',
+          }).eq('id', order.id);
+          continue;
+        }
+
         final hasEnough = await _hasEnoughMaterialForLaunch(order);
         final nextStatus = hasEnough
             ? OrderStatus.ready_to_start
@@ -695,16 +711,41 @@ class OrdersProvider with ChangeNotifier {
     if (order.assignmentCreated) {
       return null;
     }
-    if (order.statusEnum != OrderStatus.ready_to_start) {
+    OrderModel launchOrder = order;
+    try {
+      final persisted = await _supabase
+          .from('orders')
+          .select()
+          .eq('id', order.id)
+          .maybeSingle();
+      if (persisted is Map) {
+        launchOrder = OrderModel.fromMap(
+          Map<String, dynamic>.from(persisted),
+        );
+      }
+    } catch (_) {
+      // If the row cannot be reloaded, keep checking the provided model below.
+    }
+    if (QueueBuildStatus.normalize(launchOrder.queueBuildStatus) !=
+        QueueBuildStatus.built) {
+      return QueueBuildStatus.normalize(launchOrder.queueBuildStatus) ==
+              QueueBuildStatus.outdated
+          ? 'Заказ нельзя запустить: очередь изменилась, нажмите «Собрать очередь» и сохраните заказ.'
+          : 'Заказ нельзя запустить: сначала соберите очередь этапов и сохраните заказ.';
+    }
+    if (launchOrder.assignmentCreated) {
+      return null;
+    }
+    if (launchOrder.statusEnum != OrderStatus.ready_to_start) {
       return 'Заказ нельзя запустить: статус должен быть ready_to_start.';
     }
-    if (!await _hasEnoughMaterialForLaunch(order)) {
-      final message = await _materialShortageMessage(order);
+    if (!await _hasEnoughMaterialForLaunch(launchOrder)) {
+      final message = await _materialShortageMessage(launchOrder);
       await _supabase.from('orders').update({
         'status': OrderStatus.waiting_materials.name,
         'has_material_shortage': true,
         'material_shortage_message': message,
-      }).eq('id', order.id);
+      }).eq('id', launchOrder.id);
       await refresh();
       return message.isEmpty
           ? 'Недостаточно материала для запуска заказа.'
@@ -757,7 +798,7 @@ class OrdersProvider with ChangeNotifier {
         final plan = await _supabase
             .from('prod_plans')
             .select('id')
-            .eq('order_id', order.id)
+            .eq('order_id', launchOrder.id)
             .maybeSingle();
         final String? planId = plan?['id']?.toString();
         if (planId != null && planId.isNotEmpty) {
@@ -779,7 +820,7 @@ class OrdersProvider with ChangeNotifier {
           final legacyPlan = await _supabase
               .from('production_plans')
               .select('stages')
-              .eq('order_id', order.id)
+              .eq('order_id', launchOrder.id)
               .maybeSingle();
           final dynamic stages = legacyPlan?['stages'];
           if (stages is List) {
@@ -812,7 +853,7 @@ class OrdersProvider with ChangeNotifier {
         return 'Не удалось запустить заказ: не найдена очередь этапов.';
       }
 
-      await _supabase.from('tasks').delete().eq('order_id', order.id);
+      await _supabase.from('tasks').delete().eq('order_id', launchOrder.id);
 
       final Set<String> createdTaskKeys = <String>{};
       for (final row in stageRows) {
@@ -825,9 +866,10 @@ class OrdersProvider with ChangeNotifier {
             ?.toString()
             .trim();
         final groupIds = List<String>.from(stageIds)..sort();
-        final stageGroupKey = (persistedGroupKey != null && persistedGroupKey.isNotEmpty)
-            ? persistedGroupKey
-            : groupIds.join('|');
+        final stageGroupKey =
+            (persistedGroupKey != null && persistedGroupKey.isNotEmpty)
+                ? persistedGroupKey
+                : groupIds.join('|');
         final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
         final String taskStatus =
             (stageStatus == 'done' || stageStatus == 'completed')
@@ -839,7 +881,7 @@ class OrdersProvider with ChangeNotifier {
           // Для этапов с несколькими рабочими местами создаём по одной задаче
           // на каждое рабочее место, но связываем их единым stage_group_key.
           await _supabase.from('tasks').insert({
-            'order_id': order.id,
+            'order_id': launchOrder.id,
             'stage_id': stageId,
             'stage_group_key': stageGroupKey,
             'status': taskStatus,
@@ -854,19 +896,21 @@ class OrdersProvider with ChangeNotifier {
 
       // Бизнес-правило резерва: до перевода в in_production
       // пытаемся атомарно зафиксировать резерв бумаги.
-      final reserveError = await _syncPaperReservationsForOrder(order.copyWith(
-        status: OrderStatus.in_production.name,
-        assignmentCreated: true,
-      ));
+      final reserveError = await _syncPaperReservationsForOrder(
+        launchOrder.copyWith(
+          status: OrderStatus.in_production.name,
+          assignmentCreated: true,
+        ),
+      );
       if (reserveError != null) {
         // Если резерв не зафиксирован, не оставляем созданные задачи.
-        await _supabase.from('tasks').delete().eq('order_id', order.id);
+        await _supabase.from('tasks').delete().eq('order_id', launchOrder.id);
         return reserveError;
       }
 
       final String nextAssignmentId =
-          (order.assignmentId ?? '').trim().isNotEmpty
-              ? order.assignmentId!.trim()
+          (launchOrder.assignmentId ?? '').trim().isNotEmpty
+              ? launchOrder.assignmentId!.trim()
               : generateAssignmentId();
 
       await _supabase.from('orders').update({
@@ -875,9 +919,9 @@ class OrdersProvider with ChangeNotifier {
         'material_shortage_message': '',
         'assignment_created': true,
         'assignment_id': nextAssignmentId,
-      }).eq('id', order.id);
+      }).eq('id', launchOrder.id);
 
-      final index = _orders.indexWhere((o) => o.id == order.id);
+      final index = _orders.indexWhere((o) => o.id == launchOrder.id);
       if (index != -1) {
         _orders[index] = _orders[index].copyWith(
           status: OrderStatus.in_production.name,
@@ -890,7 +934,10 @@ class OrdersProvider with ChangeNotifier {
       }
 
       await _logOrderEvent(
-          order.id, 'Запуск', 'Заказ запущен в производство. Бумага переведена в резерв');
+        launchOrder.id,
+        'Запуск',
+        'Заказ запущен в производство. Бумага переведена в резерв',
+      );
       return null;
     } catch (e, st) {
       debugPrint('❌ launchOrder error: $e\n$st');
@@ -1414,23 +1461,29 @@ class OrdersProvider with ChangeNotifier {
   }
 
   Future<void> _applyImmediateMaterialAvailabilityState(OrderModel order) async {
-    final hasEnough = await _hasEnoughMaterialForLaunch(order);
-    final shortageMessage = hasEnough ? '' : await _materialShortageMessage(order);
-    final nextStatus = hasEnough
-        ? (order.statusEnum == OrderStatus.waiting_materials
-            ? OrderStatus.ready_to_start
-            : order.statusEnum)
-        : OrderStatus.waiting_materials;
+    final queueBuilt = QueueBuildStatus.normalize(order.queueBuildStatus) ==
+        QueueBuildStatus.built;
+    final hasEnough = queueBuilt && await _hasEnoughMaterialForLaunch(order);
+    final shortageMessage =
+        queueBuilt && !hasEnough ? await _materialShortageMessage(order) : '';
+    final nextStatus = !queueBuilt
+        ? (order.assignmentCreated ? order.statusEnum : OrderStatus.draft)
+        : (hasEnough
+            ? (order.statusEnum == OrderStatus.waiting_materials
+                ? OrderStatus.ready_to_start
+                : order.statusEnum)
+            : OrderStatus.waiting_materials);
+    final hasMaterialShortage = queueBuilt && !hasEnough;
 
     if (order.statusEnum == nextStatus &&
-        order.hasMaterialShortage == !hasEnough &&
+        order.hasMaterialShortage == hasMaterialShortage &&
         order.materialShortageMessage == shortageMessage) {
       return;
     }
 
     final updatePayload = <String, dynamic>{
       'status': nextStatus.name,
-      'has_material_shortage': !hasEnough,
+      'has_material_shortage': hasMaterialShortage,
       'material_shortage_message': shortageMessage,
     };
 
@@ -1440,7 +1493,7 @@ class OrdersProvider with ChangeNotifier {
     if (index != -1) {
       _orders[index] = _orders[index].copyWith(
         status: nextStatus.name,
-        hasMaterialShortage: !hasEnough,
+        hasMaterialShortage: hasMaterialShortage,
         materialShortageMessage: shortageMessage,
       );
       notifyListeners();
