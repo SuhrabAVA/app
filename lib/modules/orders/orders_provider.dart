@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'material_model.dart';
 import 'order_model.dart';
+import 'order_queue_sync_service.dart';
 import 'product_model.dart';
 import '../../utils/auth_helper.dart';
 
@@ -853,9 +854,10 @@ class OrdersProvider with ChangeNotifier {
         return 'Не удалось запустить заказ: не найдена очередь этапов.';
       }
 
-      await _supabase.from('tasks').delete().eq('order_id', launchOrder.id);
-
+      final nextQueue = <OrderQueueSyncEntry>[];
+      final doneStageKeys = <String>{};
       final Set<String> createdTaskKeys = <String>{};
+      var fallbackStep = 1;
       for (final row in stageRows) {
         final stageIds = _readStageIds(row);
         if (stageIds.isEmpty) continue;
@@ -870,29 +872,42 @@ class OrdersProvider with ChangeNotifier {
             (persistedGroupKey != null && persistedGroupKey.isNotEmpty)
                 ? persistedGroupKey
                 : groupIds.join('|');
+        final step = int.tryParse(
+              (row['step'] ?? row['step_no'] ?? row['seq'] ?? fallbackStep)
+                  .toString(),
+            ) ??
+            fallbackStep;
         final String stageStatus = (row['status'] ?? '').toString().toLowerCase();
-        final String taskStatus =
-            (stageStatus == 'done' || stageStatus == 'completed')
-                ? 'done'
-                : 'waiting';
+        final bool isDoneStage = stageStatus == 'done' || stageStatus == 'completed';
         for (final stageId in stageIds) {
           final dedupeKey = '$stageGroupKey::$stageId';
           if (!createdTaskKeys.add(dedupeKey)) continue;
-          // Для этапов с несколькими рабочими местами создаём по одной задаче
-          // на каждое рабочее место, но связываем их единым stage_group_key.
-          await _supabase.from('tasks').insert({
-            'order_id': launchOrder.id,
-            'stage_id': stageId,
-            'stage_group_key': stageGroupKey,
-            'status': taskStatus,
-            'assignees': [],
-            'comments': [],
-            if (taskStatus == 'done')
-              'completed_at': DateTime.now().toIso8601String(),
-          });
+          nextQueue.add(OrderQueueSyncEntry(
+            stageId: stageId,
+            stageGroupKey: stageGroupKey.isEmpty ? stageId : stageGroupKey,
+            step: step,
+            status: isDoneStage ? 'done' : 'waiting',
+          ));
+          if (isDoneStage) doneStageKeys.add(dedupeKey);
         }
+        fallbackStep += 1;
       }
 
+      await OrderQueueSyncService(_supabase).sync(
+        orderId: launchOrder.id,
+        nextQueue: nextQueue,
+      );
+      for (final key in doneStageKeys) {
+        final parts = key.split('::');
+        if (parts.length != 2) continue;
+        await _supabase.from('tasks').update({
+          'status': 'done',
+          'completed_at': DateTime.now().toIso8601String(),
+        })
+            .eq('order_id', launchOrder.id)
+            .eq('stage_group_key', parts[0])
+            .eq('stage_id', parts[1]);
+      }
 
       // Бизнес-правило резерва: до перевода в in_production
       // пытаемся атомарно зафиксировать резерв бумаги.
@@ -903,8 +918,13 @@ class OrdersProvider with ChangeNotifier {
         ),
       );
       if (reserveError != null) {
-        // Если резерв не зафиксирован, не оставляем созданные задачи.
-        await _supabase.from('tasks').delete().eq('order_id', launchOrder.id);
+        // Если резерв не зафиксирован, убираем только будущие задачи, не трогая
+        // уже начатые/завершённые записи повторного запуска.
+        await _supabase
+            .from('tasks')
+            .delete()
+            .eq('order_id', launchOrder.id)
+            .inFilter('status', ['waiting', 'pending', 'planned']);
         return reserveError;
       }
 
@@ -1178,7 +1198,11 @@ class OrdersProvider with ChangeNotifier {
     try {
       // Бизнес-правило: после правок запущенного, но не начатого заказа
       // убираем его из производственных списков и возвращаем в ручной запуск.
-      await _supabase.from('tasks').delete().eq('order_id', orderId);
+      await _supabase
+          .from('tasks')
+          .delete()
+          .eq('order_id', orderId)
+          .inFilter('status', ['waiting', 'pending', 'planned']);
       await _supabase.from('orders').update({
         'assignment_created': false,
         'status': OrderStatus.ready_to_start.name,

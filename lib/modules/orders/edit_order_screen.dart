@@ -17,6 +17,7 @@ import 'dart:typed_data';
 import 'orders_provider.dart';
 import 'order_stage_filter.dart';
 import 'stage_queue_builder.dart';
+import 'order_queue_sync_service.dart';
 import 'orders_repository.dart';
 import 'order_model.dart';
 import 'product_model.dart';
@@ -2950,6 +2951,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _stageOrderManuallyChanged);
     final bool queueChangeBlockedByStartedStages =
         stageQueueChangedForLaunchedOrder && _launchedWithStartedStages;
+    if (queueChangeBlockedByStartedStages) {
+      throw const OrderQueueSyncBlockedException();
+    }
     final bool canResetForRelaunchAfterQueueEdit =
         stageQueueChangedForLaunchedOrder && _launchedNoStartedStages;
     // Перестраивать normalized/JSON-план можно только для нового заказа,
@@ -3419,28 +3423,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
       // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
       try {
-        // Ensure prod_plans row exists
-        final planRow = await _sb
-            .from('prod_plans')
-            .select('id')
-            .eq('order_id', createdOrUpdatedOrder.id)
-            .maybeSingle();
-        String planId;
-        if (planRow == null) {
-          final inserted = await _sb
-              .from('prod_plans')
-              .insert({
-                'order_id': createdOrUpdatedOrder.id,
-                'status': 'planned',
-              })
-              .select('id')
-              .single();
-          planId = inserted['id'] as String;
-        } else {
-          planId = planRow['id'] as String;
-        }
-        // Rebuild plan stages
-        await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
+        // Синхронизируем очередь диффом, не трогая завершённые/запущенные этапы
+        // и связанные с ними задачи.
+        final nextQueue = <OrderQueueSyncEntry>[];
         int step = 1;
         String? previousGroupKey;
         for (final sm in stageMaps) {
@@ -3458,23 +3443,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final resolvedStageId = workplaceLookup[rawStageId.toLowerCase()] ??
                 legacyStageLookup[rawStageId.toLowerCase()] ??
                 rawStageId;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': resolvedStageId,
-              'stage_group_key': groupKey,
-              'step': step,
-              'status': 'waiting',
-            });
+            nextQueue.add(OrderQueueSyncEntry(
+              stageId: resolvedStageId,
+              stageGroupKey: groupKey.isEmpty ? resolvedStageId : groupKey,
+              step: step,
+            ));
           }
           step += 1;
         }
-        // Mark bobbin as done here as well
-        if (__shouldCompleteBobbin && __bobbinId != null) {
-          await _sb.from('prod_plan_stages').update({
-            'status': 'done',
-            'finished_at': DateTime.now().toIso8601String(),
-          }).match({'plan_id': planId, 'stage_id': __bobbinId});
-        }
+        await OrderQueueSyncService(_sb).sync(
+          orderId: createdOrUpdatedOrder.id,
+          nextQueue: nextQueue,
+          completeBobbin: __shouldCompleteBobbin,
+          bobbinStageId: __bobbinId,
+        );
+      } on OrderQueueSyncBlockedException {
+        rethrow;
       } catch (_) {
         // ignore if tables don't exist
       }
