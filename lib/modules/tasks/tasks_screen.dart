@@ -495,6 +495,13 @@ String _stageLabelForOrder(
   try {
     order = orders.orders.firstWhere((o) => o.id == orderId);
   } catch (_) {}
+  final savedGroupMap = tasks.stageGroupMapForOrder(orderId);
+  if (savedGroupMap != null && savedGroupMap.containsKey(stageId.trim())) {
+    final savedName = tasks.stageNameForOrder(orderId, stageId)?.trim();
+    if (savedName != null && savedName.isNotEmpty) return savedName;
+    return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
+  }
+
   final templateId = order?.stageTemplateId;
   if (templateId == null || templateId.isEmpty) {
     return _workplaceName(personnel, stageId, tasks: tasks, orderId: orderId);
@@ -524,8 +531,12 @@ String _stageLabelForOrder(
 
 Map<String, String> _stageGroupMapForOrder(
   OrderModel order,
-  TemplateProvider templates,
-) {
+  TemplateProvider templates, {
+  TaskProvider? tasks,
+}) {
+  final saved = tasks?.stageGroupMapForOrder(order.id);
+  if (saved != null && saved.isNotEmpty) return saved;
+
   final templateId = order.stageTemplateId;
   if (templateId == null || templateId.isEmpty) return const {};
   final tpl = templates.templates
@@ -1796,6 +1807,13 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   List<String> _stageGroupMembers(String orderId, String stageId) {
+    final taskProvider = Provider.of<TaskProvider?>(context, listen: false);
+    final savedMembers =
+        taskProvider?.stageGroupMembersForOrder(orderId, stageId);
+    if (savedMembers != null && savedMembers.isNotEmpty) {
+      return savedMembers;
+    }
+
     final order = _orderById(orderId);
     final templateId = order?.stageTemplateId;
     if (order == null || templateId == null || templateId.isEmpty) {
@@ -1823,8 +1841,13 @@ class _TasksScreenState extends State<TasksScreen>
     return [stageId];
   }
 
-  String _stageGroupKey(String orderId, String stageId) =>
-      _stageGroupMembers(orderId, stageId).join('|');
+  String _stageGroupKey(String orderId, String stageId) {
+    final taskProvider = Provider.of<TaskProvider?>(context, listen: false);
+    final savedKey = taskProvider?.stageGroupMapForOrder(orderId)?[stageId.trim()]
+        ?.trim();
+    if (savedKey != null && savedKey.isNotEmpty) return savedKey;
+    return _stageGroupMembers(orderId, stageId).join('|');
+  }
 
   bool _isStageGroupLocked(TaskProvider provider, TaskModel task) {
     final groupMembers = _stageGroupMembers(task.orderId, task.stageId);
@@ -3370,7 +3393,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     String registerStage(String stageId) {
       final members = _stageGroupMembers(order.id, stageId);
-      final key = members.join('|');
+      final key = _stageGroupKey(order.id, stageId);
       groupMembersByKey.putIfAbsent(key, () => members);
       groupRepresentative.putIfAbsent(
         key,
@@ -4097,7 +4120,11 @@ class _TasksScreenState extends State<TasksScreen>
     final templateProvider = context.read<TemplateProvider>();
     final stageGroupByOrder = <String, Map<String, String>>{};
     for (final order in ordersProvider.orders) {
-      final map = _stageGroupMapForOrder(order, templateProvider);
+      final map = _stageGroupMapForOrder(
+        order,
+        templateProvider,
+        tasks: taskProvider,
+      );
       if (map.isNotEmpty) {
         stageGroupByOrder[order.id] = map;
       }
