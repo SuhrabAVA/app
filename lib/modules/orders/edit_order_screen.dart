@@ -54,6 +54,69 @@ class _SwitchableStageOption {
   final String label;
 }
 
+class _SwitchableStageDot extends StatelessWidget {
+  const _SwitchableStageDot({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final fillColor = selected ? colors.primary : colors.surface;
+    final borderColor = selected
+        ? colors.primary
+        : colors.primary.withValues(alpha: 0.85);
+
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: InkResponse(
+          onTap: onTap,
+          radius: 22,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOut,
+            width: 28,
+            height: 28,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: fillColor,
+              border: Border.all(color: borderColor, width: 2.5),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: colors.primary.withValues(alpha: 0.24),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: selected
+                ? DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: colors.onPrimary.withValues(alpha: 0.18),
+                    ),
+                  )
+                : null,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PaintEntry {
   TmcModel? tmc;
   String? name;
@@ -1662,21 +1725,65 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final selected = _selectedSwitchableStageIdForPreview(stageKey, stage);
     if (selected == null) return null;
 
+    final selectedOption = options.firstWhere(
+      (option) => option.stageId == selected,
+      orElse: () => options.first,
+    );
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: SegmentedButton<String>(
-        segments: [
-          for (final option in options)
-            ButtonSegment<String>(
-              value: option.stageId,
-              label: Text(option.label),
-            ),
-        ],
-        selected: {selected},
-        onSelectionChanged: (selection) {
-          if (selection.isEmpty) return;
-          _selectSwitchablePreviewStage(stageKey, selection.first);
-        },
+      padding: const EdgeInsets.only(top: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(alpha: 0.8),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Выбран этап',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                selectedOption.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < options.length; i++) ...[
+                    _SwitchableStageDot(
+                      label: options[i].label,
+                      selected: options[i].stageId == selected,
+                      onTap: () => _selectSwitchablePreviewStage(
+                        stageKey,
+                        options[i].stageId,
+                      ),
+                    ),
+                    if (i != options.length - 1) const SizedBox(width: 14),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
