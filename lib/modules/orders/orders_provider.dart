@@ -447,6 +447,10 @@ class OrdersProvider with ChangeNotifier {
     bool paymentDone = false,
     String comments = '',
     String status = 'draft',
+    String queueBuildStatus = QueueBuildStatus.notBuilt,
+    String? selectedVStage,
+    String? selectedPStage,
+    Map<String, dynamic>? queueSignature,
     String? assignmentId,
     bool assignmentCreated = false,
   }) async {
@@ -475,6 +479,10 @@ class OrdersProvider with ChangeNotifier {
       paymentDone: paymentDone,
       comments: comments,
       status: status,
+      queueBuildStatus: queueBuildStatus,
+      selectedVStage: selectedVStage,
+      selectedPStage: selectedPStage,
+      queueSignature: queueSignature,
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
     );

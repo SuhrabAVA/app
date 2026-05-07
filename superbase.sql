@@ -369,6 +369,12 @@ create table if not exists public.orders (
   updated_at timestamptz
 );
 alter table public.orders enable row level security;
+-- Безопасные колонки для состояния сборки производственной очереди.
+alter table public.orders
+  add column if not exists queue_build_status text not null default 'not_built',
+  add column if not exists selected_v_stage text,
+  add column if not exists selected_p_stage text,
+  add column if not exists queue_signature jsonb;
 -- Дополнительные колонки для совместимости с приложением
 do $$
 begin
