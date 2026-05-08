@@ -77,12 +77,58 @@ void main() {
           .map((stage) => stage.stageId)
           .toList();
       final taskProviderStageIds = normalizeStageSequence(
-        OrderQueueMapper.toSyncEntries(saved.rows).map((entry) => entry.stageId),
+        OrderQueueMapper.toSyncEntries(saved.rows)
+            .map((entry) => entry.stageId),
       );
 
       expect(saved.source, SavedOrderQueueSource.normalizedPlanRows);
       expect(productionStageIds, ['cut', 'print', 'pack']);
       expect(taskProviderStageIds, productionStageIds);
+    },
+  );
+
+  test(
+    'loadSavedQueue groups normalized multi-workplace stages by group key',
+    () async {
+      final service = OrderQueueService.withLoadSources(_sources(
+        normalizedRows: const [
+          {
+            'stage_id': 'die-a1',
+            'stage_group_key': 'die-cut',
+            'name': 'Высечка A1/A2',
+            'step_no': 5,
+            'seq': 5000,
+            'status': 'waiting',
+          },
+          {
+            'stage_id': 'die-a2',
+            'stage_group_key': 'die-cut',
+            'name': 'Высечка A1/A2',
+            'step_no': 5,
+            'seq': 5001,
+            'status': 'inProgress',
+          },
+          {
+            'stage_id': 'pack',
+            'stage_group_key': 'pack',
+            'name': 'Упаковка',
+            'step_no': 6,
+            'seq': 6,
+          },
+        ],
+      ));
+
+      final saved = await service.loadSavedQueue('order-grouped');
+
+      expect(saved.rows, hasLength(2));
+      expect(saved.rows.first['stage_group_key'], 'die-cut');
+      expect(saved.rows.first['workplaceIds'], ['die-a1', 'die-a2']);
+      expect(saved.rows.first['status'], 'inProgress');
+      expect(
+        OrderQueueMapper.toSyncEntries(saved.rows)
+            .map((entry) => entry.stageId),
+        ['die-a1', 'die-a2', 'pack'],
+      );
     },
   );
 

@@ -1005,6 +1005,16 @@ class TaskProvider with ChangeNotifier {
       }
     }
 
+    await _syncStageGroupStatusToSharedSources(
+      updated,
+      status,
+      spentSeconds: updated.spentSeconds,
+      startedAt: updated.startedAt,
+      completedAt: status == TaskStatus.completed
+          ? DateTime.now().millisecondsSinceEpoch
+          : null,
+    );
+
     // if this task just became completed — check last-stage and update actual_qty
     if (status == TaskStatus.completed) {
       final orderId = updated.orderId;
@@ -1034,6 +1044,135 @@ class TaskProvider with ChangeNotifier {
     }
 
     return true;
+  }
+
+  Future<void> _syncStageGroupStatusToSharedSources(
+    TaskModel task,
+    TaskStatus status, {
+    int? spentSeconds,
+    int? startedAt,
+    int? completedAt,
+  }) async {
+    final groupKey = task.stageGroupKey.trim().isNotEmpty
+        ? task.stageGroupKey.trim()
+        : task.stageId.trim();
+    if (task.orderId.trim().isEmpty || groupKey.isEmpty) return;
+
+    final taskUpdates = <String, dynamic>{
+      'status': status.name,
+      if (spentSeconds != null) 'spent_seconds': spentSeconds,
+      if (startedAt != null) 'started_at': startedAt,
+      if (completedAt != null) 'completed_at': completedAt,
+    };
+    final startedIso = startedAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(startedAt)
+            .toUtc()
+            .toIso8601String();
+    final completedIso = completedAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(completedAt)
+            .toUtc()
+            .toIso8601String();
+    final planUpdates = <String, dynamic>{
+      'status': status.name,
+      if (startedIso != null) 'started_at': startedIso,
+      if (completedIso != null) ...{
+        'finished_at': completedIso,
+        'completed_at': completedIso,
+      },
+    };
+
+    try {
+      await _updateTaskStageGroup(
+        orderId: task.orderId,
+        groupKey: groupKey,
+        updates: taskUpdates,
+      );
+      for (var i = 0; i < _tasks.length; i++) {
+        final local = _tasks[i];
+        if (local.orderId == task.orderId && local.stageGroupKey == groupKey) {
+          _tasks[i] = local.copyWith(
+            status: status,
+            spentSeconds: spentSeconds ?? local.spentSeconds,
+            startedAt: startedAt ?? local.startedAt,
+          );
+        }
+      }
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('⚠️ stage group task status sync failed: $e\n$st');
+    }
+
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', task.orderId)
+          .maybeSingle();
+      final planId = plan != null ? plan['id']?.toString() : null;
+      if (planId == null || planId.isEmpty) return;
+      await _updateProdPlanStageGroup(
+        planId: planId,
+        groupKey: groupKey,
+        updates: planUpdates,
+      );
+    } catch (e, st) {
+      debugPrint('⚠️ prod_plan_stages status sync failed: $e\n$st');
+    }
+  }
+
+  Future<void> _updateTaskStageGroup({
+    required String orderId,
+    required String groupKey,
+    required Map<String, dynamic> updates,
+  }) async {
+    Future<void> run(Map<String, dynamic> payload) async {
+      await _supabase
+          .from('tasks')
+          .update(payload)
+          .eq('order_id', orderId)
+          .eq('stage_group_key', groupKey);
+    }
+
+    try {
+      await run(updates);
+    } catch (error) {
+      if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+      final fallback = Map<String, dynamic>.from(updates)
+        ..remove('completed_at');
+      await run(fallback);
+    }
+  }
+
+  Future<void> _updateProdPlanStageGroup({
+    required String planId,
+    required String groupKey,
+    required Map<String, dynamic> updates,
+  }) async {
+    Future<void> run(Map<String, dynamic> payload) async {
+      await _supabase
+          .from('prod_plan_stages')
+          .update(payload)
+          .eq('plan_id', planId)
+          .eq('stage_group_key', groupKey);
+    }
+
+    try {
+      await run(updates);
+    } catch (error) {
+      if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+      final fallback = Map<String, dynamic>.from(updates)
+        ..remove('completed_at');
+      await run(fallback);
+    }
+  }
+
+  bool _isMissingColumnError(Object error, String columnName) {
+    if (error is! PostgrestException) return false;
+    final message = error.message.toLowerCase();
+    return message.contains(columnName.toLowerCase()) &&
+        (error.code == '42703' || error.code == 'PGRST204');
   }
 
   Future<void> addComment(
