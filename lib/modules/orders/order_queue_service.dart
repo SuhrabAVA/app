@@ -327,15 +327,48 @@ class OrderQueueService {
       if (planId == null || planId.isEmpty) {
         return const <Map<String, dynamic>>[];
       }
-      final rows = await _sb
-          .from('prod_plan_stages')
-          .select('*')
-          .eq('plan_id', planId)
-          .order('seq', ascending: true);
-      return _decodeRows(rows);
+      return await _selectPlanStageRows(planId);
     } catch (_) {
       return const <Map<String, dynamic>>[];
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _selectPlanStageRows(String planId) async {
+    const attempts = <({String columns, String orderColumn})>[
+      (
+        columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status',
+        orderColumn: 'seq',
+      ),
+      (
+        columns: 'stage_id,stage_group_key,stage_name,step_no,seq,status',
+        orderColumn: 'seq',
+      ),
+      (
+        columns: 'stage_id,stage_group_key,name,step_no,seq,status',
+        orderColumn: 'seq',
+      ),
+      (
+        columns: 'stage_id,stage_group_key,stage_name,step_no,status',
+        orderColumn: 'step_no',
+      ),
+      (
+        columns: 'stage_id,stage_group_key,name,seq,status',
+        orderColumn: 'seq',
+      ),
+    ];
+
+    for (final attempt in attempts) {
+      try {
+        final rows = await _sb
+            .from('prod_plan_stages')
+            .select(attempt.columns)
+            .eq('plan_id', planId)
+            .order(attempt.orderColumn, ascending: true);
+        final decoded = _decodeRows(rows);
+        if (decoded.isNotEmpty) return decoded;
+      } catch (_) {}
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   Future<List<Map<String, dynamic>>> _loadTemplateFallbackRows(

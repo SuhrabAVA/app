@@ -7,6 +7,7 @@ import 'package:sheet_clone/modules/orders/order_stage_filter.dart'
 import 'package:sheet_clone/modules/orders/order_model.dart';
 import 'package:sheet_clone/modules/orders/product_model.dart';
 import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
+import 'package:sheet_clone/modules/production/production_details_screen.dart';
 import 'package:sheet_clone/modules/production/production_screen.dart';
 import 'package:sheet_clone/modules/production_planning/planned_stage_model.dart';
 import 'package:sheet_clone/modules/production_planning/template_model.dart';
@@ -78,6 +79,52 @@ void main() {
       );
     });
   }
+
+  test(
+    'ProductionDetailsScreen hides duplicate twisted handle from saved queue',
+    () {
+      final stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
+        rows: const <Map<String, dynamic>>[
+          {
+            'stageKey': kTwistedHandleStageId,
+            'stageId': kTwistedHandleStageId,
+            'stage_id': kTwistedHandleStageId,
+            'stageName': 'Кручёная ручка',
+            'stage_name': 'Кручёная ручка',
+            'seq': 1,
+            'step_no': 1,
+          },
+          {
+            'stageKey': kTwistedHandleStageId,
+            'stageId': kTwistedHandleStageId,
+            'stage_id': kTwistedHandleStageId,
+            'stageName': 'Кручёная ручка',
+            'stage_name': 'Кручёная ручка',
+            'seq': 2,
+            'step_no': 2,
+          },
+          {
+            'stageKey': kPackagingStageId,
+            'stageId': kPackagingStageId,
+            'stage_id': kPackagingStageId,
+            'stageName': 'Упаковка',
+            'stage_name': 'Упаковка',
+            'seq': 3,
+            'step_no': 3,
+          },
+        ],
+      );
+
+      expect(stages.map((stage) => stage.stageName), [
+        'Кручёная ручка',
+        'Упаковка',
+      ]);
+      expect(
+        stages.where((stage) => stage.stageName == 'Кручёная ручка'),
+        hasLength(1),
+      );
+    },
+  );
 
   test('production stage groups follow saved queue and selected P workplace', () {
     final order = OrderModel(
