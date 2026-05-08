@@ -1,10 +1,11 @@
 // lib/modules/production/production_details_screen.dart
 //
 // Полный файл без урезаний. НИЧЕГО лишнего не создаю.
-// Исправление: загрузка этапов теперь основана на СУЩЕСТВУЮЩИХ таблицах
-//   1) public.prod_plans -> public.prod_plan_stages  (основной путь)
-//   2) public.v_order_plan_stages                     (если есть)
-//   3) public.production_plans.stages (JSON, старый вариант) — фоллбек
+// Исправление: загрузка этапов использует общий источник очереди
+// OrderQueueService.loadSavedQueue / TaskProvider._loadStageSequence:
+// сохранённая очередь -> нормализованные prod_plan_stages -> legacy JSON ->
+// шаблонный фоллбек старых заказов. public.v_order_plan_stages остаётся только
+// низкоприоритетным фоллбеком, как в TaskProvider.
 // Плюс обязательная авторизация перед запросами (RLS).
 //
 // Требуется: services/app_auth.dart с AppAuth.ensureSignedIn().
@@ -12,6 +13,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -20,6 +22,8 @@ import '../../services/storage_service.dart' as storage;
 import '../production_planning/compat.dart' as pcompat;
 import '../orders/orders_repository.dart';
 import '../orders/order_model.dart';
+import '../orders/order_queue_service.dart';
+import '../orders/stage_queue_builder.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_completion_rules.dart';
@@ -28,6 +32,74 @@ import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../../services/app_auth.dart';
 import '../orders/order_details_card.dart';
+
+@visibleForTesting
+List<pcompat.PlannedStage>
+    productionDetailsPlannedStagesFromQueueRowsForTesting({
+  required List<Map<String, dynamic>> rows,
+  Map<String, String> workplaceNames = const <String, String>{},
+}) {
+  final normalizedRows = normalizeBuiltOrderStageQueue(rows);
+  final planned = <pcompat.PlannedStage>[];
+
+  for (final row in normalizedRows) {
+    final stageIds = OrderQueueMapper.stageIdsFromRow(row);
+    final stageId = stageIds.isNotEmpty
+        ? stageIds.first
+        : (row['stageId'] ?? row['stage_id'] ?? row['workplaceId'] ?? row['id'])
+            ?.toString()
+            .trim();
+    if (stageId == null || stageId.isEmpty) continue;
+
+    final label = _productionDetailsStageLabelFromRow(
+      row,
+      stageId,
+      workplaceNames,
+    );
+    final allStageIds = stageIds.isNotEmpty ? stageIds : <String>[stageId];
+    planned.add(
+      pcompat.PlannedStage(
+        stageId: stageId,
+        stageName: label,
+        order: planned.length + 1,
+        extra: <String, dynamic>{
+          ...row,
+          'stage_id': stageId,
+          'stageId': stageId,
+          'stage_name': label,
+          'stageName': label,
+          'workplaceIds': allStageIds,
+          if (allStageIds.length > 1)
+            'alternativeStageIds': allStageIds.skip(1).toList(),
+        },
+      ),
+    );
+  }
+
+  return planned;
+}
+
+String _productionDetailsStageLabelFromRow(
+  Map<String, dynamic> row,
+  String stageId,
+  Map<String, String> workplaceNames,
+) {
+  for (final key in const <String>[
+    'stageName',
+    'stage_name',
+    'workplaceName',
+    'workplace_name',
+    'label',
+    'title',
+    'name',
+  ]) {
+    final value = row[key]?.toString().trim();
+    if (value != null && value.isNotEmpty) return value;
+  }
+  final workplaceName = workplaceNames[stageId]?.trim();
+  if (workplaceName != null && workplaceName.isNotEmpty) return workplaceName;
+  return stageId;
+}
 
 class ProductionDetailsScreen extends StatefulWidget {
   final OrderModel order;
@@ -83,20 +155,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     );
     ids.addAll(altIds.where((id) => id.trim().isNotEmpty));
     return ids.toList();
-  }
-
-  int _readStageOrder(Map<String, dynamic> row) {
-    const keys = ['step', 'step_no', 'seq', 'order', 'position', 'idx'];
-    for (final key in keys) {
-      final value = row[key];
-      if (value is int) return value;
-      if (value is num) return value.toInt();
-      if (value is String) {
-        final parsed = int.tryParse(value.trim());
-        if (parsed != null) return parsed;
-      }
-    }
-    return 0;
   }
 
   List<String> _plannedStageNames(pcompat.PlannedStage planned) {
@@ -261,62 +319,23 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
 
       final orderId = widget.order.id;
       final orderCode = widget.order.assignmentId ?? orderId;
+      final workplaceNames = <String, String>{
+        for (final workplace in context.read<PersonnelProvider>().workplaces)
+          workplace.id: workplace.name,
+      };
 
-      // ========== ПУТЬ 1: prod_plans -> prod_plan_stages ==========
       List<pcompat.PlannedStage> stages = [];
-      try {
-        final plan = await sb
-            .from('prod_plans')
-            .select('id')
-            .eq('order_id', orderId)
-            .maybeSingle();
-
-        if (plan != null && plan is Map && plan['id'] != null) {
-          final String planId = plan['id'] as String;
-          final rows = await sb
-              .from('prod_plan_stages')
-              .select('stage_id, stage_name, workplace_name, name, step_no, seq, stage_group_key')
-              .eq('plan_id', planId);
-
-          if (rows is List && rows.isNotEmpty) {
-            final normalizedRows = rows
-                .whereType<Map>()
-                .map((r) => Map<String, dynamic>.from(r))
-                .toList()
-              ..sort((a, b) => _readStageOrder(a).compareTo(_readStageOrder(b)));
-            final groupedRows = <String, List<Map<String, dynamic>>>{};
-            for (final m in normalizedRows) {
-              final orderKey = _readStageOrder(m).toString().padLeft(6, '0');
-              final groupKey = (m['stage_group_key'] ?? '').toString().trim();
-              final fallbackId = (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString();
-              final key = '$orderKey::${groupKey.isNotEmpty ? groupKey : fallbackId}';
-              groupedRows.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(m);
-            }
-            for (final rows in groupedRows.values) {
-              final ids = rows
-                  .map((m) => (m['stage_id'] ?? m['id'] ?? m['workplace_id'] ?? '').toString())
-                  .where((id) => id.trim().isNotEmpty)
-                  .toList();
-              if (ids.isEmpty) continue;
-              final first = rows.first;
-              final name = (first['stage_name'] ??
-                      first['workplace_name'] ??
-                      first['name'] ??
-                      'Этап')
-                  .toString();
-              stages.add(pcompat.PlannedStage(
-                stageId: ids.first,
-                stageName: name,
-                extra: {'workplaceIds': ids},
-              ));
-            }
-          }
-        }
-      } catch (_) {
-        // игнорируем и перейдём к следующему источнику
+      final savedQueue = await OrderQueueService(sb).loadSavedQueue(orderId);
+      if (savedQueue.isNotEmpty) {
+        stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
+          rows: savedQueue.rows,
+          workplaceNames: workplaceNames,
+        );
       }
 
-      // ========== ПУТЬ 2: public.v_order_plan_stages (если есть) ==========
+      // Derived/public view is kept only as the same low-priority fallback as in
+      // TaskProvider._loadStageSequence; saved queue / normalized rows from
+      // OrderQueueService remain the source of truth for persisted plans.
       if (stages.isEmpty) {
         try {
           final rows = await sb
@@ -326,35 +345,17 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               .order('step_no', ascending: true);
 
           if (rows is List && rows.isNotEmpty) {
-            for (final r in rows) {
-              final m = (r as Map<String, dynamic>);
-              final id = (m['stage_id'] ?? '').toString();
-              final name = (m['stage_name'] ?? 'Этап').toString();
-              if (id.isNotEmpty) {
-                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
-              }
-            }
+            stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
+              rows: rows
+                  .whereType<Map>()
+                  .map(Map<String, dynamic>.from)
+                  .toList(),
+              workplaceNames: workplaceNames,
+            );
           }
         } catch (_) {
-          // нет представления — идём дальше
+          // нет представления — показываем пустой план
         }
-      }
-
-      // ========== ПУТЬ 3: production_plans.stages (JSON, старый) ==========
-      if (stages.isEmpty) {
-        try {
-          final planJson = await sb
-              .from('production_plans')
-              .select('stages')
-              .eq('order_id', orderId)
-              .maybeSingle();
-
-          if (planJson != null &&
-              planJson is Map &&
-              planJson['stages'] != null) {
-            stages = pcompat.decodePlannedStages(planJson['stages']);
-          }
-        } catch (_) {}
       }
 
       if (mounted) {
@@ -372,7 +373,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       }
     }
   }
-
 
   Duration _elapsed(TaskModel task) {
     var seconds = task.spentSeconds;

@@ -277,6 +277,7 @@ List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
 ) {
   final normalized = <Map<String, dynamic>>[];
   final seen = <String>{};
+  final seenStageIdLabels = <String>{};
 
   for (final source in stages) {
     final map = Map<String, dynamic>.from(source);
@@ -299,21 +300,22 @@ List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
       map['stageName'] = 'Упаковка';
       map['workplaceName'] = 'Упаковка';
     }
+    if (!_allowsDuplicateStage(map)) {
+      final labelKey = _semanticStageLabelKey(map);
+      if (canonicalId != null && canonicalId.isNotEmpty && labelKey.isNotEmpty) {
+        final stageIdLabelKey = '${canonicalId.toLowerCase()}::$labelKey';
+        if (!seenStageIdLabels.add(stageIdLabelKey)) continue;
+      }
+    }
     normalized.add(map);
   }
 
-  final bobbin = <Map<String, dynamic>>[];
-  final flex = <Map<String, dynamic>>[];
   final products = <Map<String, dynamic>>[];
   final packaging = <Map<String, dynamic>>[];
 
   for (final stage in normalized) {
     final id = _stageIdFromMap(stage);
-    if (_isBobbinStage(stage, id)) {
-      bobbin.add(stage);
-    } else if (_isFlexPrintingStage(stage, id)) {
-      flex.add(stage);
-    } else if (_isPackagingStage(stage, id)) {
+    if (_isPackagingStage(stage, id)) {
       packaging.add(stage);
     } else {
       products.add(stage);
@@ -321,8 +323,6 @@ List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
   }
 
   final ordered = <Map<String, dynamic>>[
-    ...bobbin,
-    ...flex,
     ...products,
     ...packaging,
   ];
@@ -354,7 +354,33 @@ String? _canonicalStageId(String? stageId) {
 String _dedupeStageKey(Map<String, dynamic> map, String? stageId) {
   if (_isBobbinStage(map, stageId)) return 'position:bob_cutter';
   if (_isFlexPrintingStage(map, stageId)) return 'position:print';
-  return 'stage:${stageId ?? (map['stageKey'] ?? map['stage_key'] ?? '').toString()}';
+  final stageKey = (map['stageKey'] ??
+          map['stage_key'] ??
+          map['stage_group_key'] ??
+          map['stageGroupKey'])
+      ?.toString()
+      .trim();
+  if (stageKey != null && stageKey.isNotEmpty) return 'stageKey:$stageKey';
+  return 'stage:${stageId ?? ''}';
+}
+
+bool _allowsDuplicateStage(Map<String, dynamic> map) {
+  for (final key in const <String>[
+    'allowDuplicate',
+    'allow_duplicate',
+    'repeatAllowed',
+    'repeat_allowed',
+  ]) {
+    final value = map[key];
+    if (value == true) return true;
+    if (value?.toString().toLowerCase().trim() == 'true') return true;
+  }
+  return false;
+}
+
+String _semanticStageLabelKey(Map<String, dynamic> map) {
+  final label = _stageNameFromMap(map);
+  return label.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
 }
 
 bool _isBobbinStage(Map<String, dynamic> map, String? stageId) {
@@ -383,7 +409,9 @@ bool _isPackagingStage(Map<String, dynamic> map, String? stageId) {
 }
 
 String _stageNameFromMap(Map<String, dynamic> map) => (map['stageName'] ??
+        map['stage_name'] ??
         map['workplaceName'] ??
+        map['workplace_name'] ??
         map['title'] ??
         map['name'] ??
         '')
