@@ -466,15 +466,30 @@ class OrderQueueMapper {
     List<OrderQueueSyncEntry> entries,
   ) {
     final normalized = <OrderQueueSyncEntry>[];
-    var lastStep = 0;
+    var lastGroupStep = 0;
+    String? currentGroupKey;
+    var currentGroupStep = 0;
+
     for (final entry in entries) {
-      final requestedStep = entry.step > 0 ? entry.step : lastStep + 1;
-      final uniqueStep =
-          requestedStep <= lastStep ? lastStep + 1 : requestedStep;
+      final isSameGroup = entry.stageGroupKey == currentGroupKey;
+      final requestedStep = entry.step > 0 ? entry.step : lastGroupStep + 1;
+      final effectiveStep = isSameGroup
+          ? currentGroupStep
+          : (requestedStep <= lastGroupStep
+              ? lastGroupStep + 1
+              : requestedStep);
+
       normalized.add(
-        uniqueStep == entry.step ? entry : entry.copyWith(step: uniqueStep),
+        effectiveStep == entry.step
+            ? entry
+            : entry.copyWith(step: effectiveStep),
       );
-      lastStep = uniqueStep;
+
+      if (!isSameGroup) {
+        currentGroupKey = entry.stageGroupKey;
+        currentGroupStep = effectiveStep;
+        lastGroupStep = effectiveStep;
+      }
     }
     return normalized;
   }
@@ -498,6 +513,22 @@ class OrderQueueMapper {
           add(token);
         }
       }
+    }
+
+    final isSwitchable = row['isSwitchable'] == true ||
+        row['is_switchable'] == true ||
+        row['isSwitchable']?.toString().toLowerCase().trim() == 'true' ||
+        row['is_switchable']?.toString().toLowerCase().trim() == 'true';
+    if (isSwitchable) {
+      add(row['selectedWorkplaceId'] ??
+          row['selected_workplace_id'] ??
+          row['stageId'] ??
+          row['stage_id'] ??
+          row['stageid'] ??
+          row['workplaceId'] ??
+          row['workplace_id'] ??
+          row['id']);
+      return result;
     }
 
     addAll(row['workplaceIds'] ?? row['workplace_ids']);

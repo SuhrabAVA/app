@@ -97,26 +97,52 @@ void main() {
     expect(blocked.first.reason, contains('started'));
   });
 
-  test('OrderQueueMapper assigns unique steps for alternative workplaces', () {
+  test(
+    'OrderQueueMapper keeps parallel workplace alternatives on one queue step',
+    () {
+      final entries = OrderQueueMapper.toSyncEntries(const [
+        {
+          'stageKey': 'die_cut',
+          'stageId': 'die-cut-a1',
+          'workplaceIds': ['die-cut-a1', 'die-cut-a2'],
+          'order': 3,
+        },
+        {
+          'stageKey': 'pack',
+          'stageId': 'pack',
+          'order': 4,
+        },
+      ]);
+
+      expect(entries.map((entry) => entry.step), [3, 3, 4]);
+      expect(entries.map((entry) => entry.stageId), [
+        'die-cut-a1',
+        'die-cut-a2',
+        'pack',
+      ]);
+    },
+  );
+
+  test('OrderQueueMapper uses only selected workplace for switchable stages', () {
     final entries = OrderQueueMapper.toSyncEntries(const [
       {
-        'stageKey': 'die_cut',
-        'stageId': 'die-cut-a1',
-        'workplaceIds': ['die-cut-a1', 'die-cut-a2'],
-        'order': 3,
+        'stageKey': 'v_main_switch',
+        'stageId': 'window',
+        'selectedWorkplaceId': 'window',
+        'workplaceIds': ['fri', 'window'],
+        'alternativeStageIds': ['fri'],
+        'isSwitchable': true,
+        'order': 1,
       },
       {
         'stageKey': 'pack',
         'stageId': 'pack',
-        'order': 4,
+        'order': 2,
       },
     ]);
 
-    expect(entries.map((entry) => entry.step), [3, 4, 5]);
-    expect(entries.map((entry) => entry.stageId), [
-      'die-cut-a1',
-      'die-cut-a2',
-      'pack',
-    ]);
+    expect(entries.map((entry) => entry.stageId), ['window', 'pack']);
+    expect(entries.map((entry) => entry.step), [1, 2]);
   });
+
 }
