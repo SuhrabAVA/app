@@ -1263,7 +1263,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         : stageKey == kPMainSwitchStageKey
             ? _selectedPStage
             : null;
-    if (current == selectedStageId) return;
+    final effectiveCurrent = current ??
+        (_switchableOptionsForStageKey(stageKey).isNotEmpty
+            ? _switchableOptionsForStageKey(stageKey).first.stageId
+            : null);
+    if (effectiveCurrent == selectedStageId) return;
 
     setState(() {
       if (stageKey == kVMainSwitchStageKey) {
@@ -1286,6 +1290,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _queueBuildStatus = QueueBuildStatus.outdated;
       _isStageQueueBuilt = false;
     });
+  }
+
+  void _cycleSwitchablePreviewStage(
+    String stageKey,
+    Map<String, dynamic> stage,
+  ) {
+    final options = _switchableOptionsForStageKey(stageKey);
+    if (options.length < 2) return;
+    final selected = _selectedSwitchableStageIdForPreview(stageKey, stage);
+    final currentIndex =
+        options.indexWhere((option) => option.stageId == selected);
+    final nextIndex =
+        currentIndex < 0 ? 0 : (currentIndex + 1) % options.length;
+    _selectSwitchablePreviewStage(stageKey, options[nextIndex].stageId);
   }
 
   Widget? _buildSwitchableStageSelector(Map<String, dynamic> stage) {
@@ -6190,39 +6208,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           .toString()
           .trim();
       final switchableSelector = _buildSwitchableStageSelector(stage);
-      children.add(
-        Container(
-          margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            border: Border.all(color: theme.dividerColor),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('${i + 1}.', style: theme.textTheme.bodyMedium),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: theme.textTheme.bodyMedium),
-                    if (description.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          description,
-                          style: theme.textTheme.bodySmall,
-                        ),
+      final switchableStageKey = _switchableStageKeyFromPreviewStage(stage);
+      final stageCard = Container(
+        margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.dividerColor),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${i + 1}.', style: theme.textTheme.bodyMedium),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.bodyMedium),
+                  if (description.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        description,
+                        style: theme.textTheme.bodySmall,
                       ),
-                    if (switchableSelector != null) switchableSelector,
-                  ],
+                    ),
+                  if (switchableSelector != null) switchableSelector,
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+      children.add(
+        switchableStageKey == null
+            ? stageCard
+            : Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _cycleSwitchablePreviewStage(
+                    switchableStageKey,
+                    stage,
+                  ),
+                  child: stageCard,
                 ),
               ),
-            ],
-          ),
-        ),
       );
     }
 
