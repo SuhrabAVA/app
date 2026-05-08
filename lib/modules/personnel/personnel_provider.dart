@@ -434,27 +434,26 @@ class PersonnelProvider extends ChangeNotifier {
   }
 
   Future<void> ensureManagerPosition() async {
-    final exists = _positions.any((p) => p.id == kManagerId);
-    if (!exists) {
-      await _db.insertPosition(id: kManagerId, name: 'Manager');
-      await _loadPositionsFromSql();
-    }
+    await _ensurePosition(id: kManagerId, name: 'Manager');
   }
 
   Future<void> ensureWarehouseHeadPosition() async {
-    final exists = _positions.any((p) => p.id == kWarehouseHeadId);
-    if (!exists) {
-      await _db.insertPosition(id: kWarehouseHeadId, name: 'Warehouse Head');
-      await _loadPositionsFromSql();
-    }
+    await _ensurePosition(id: kWarehouseHeadId, name: 'Warehouse Head');
   }
 
   Future<void> ensureCmmSpecialistPosition() async {
-    final exists = _positions.any((p) => p.id == kCmmSpecialistId);
-    if (!exists) {
-      await _db.insertPosition(id: kCmmSpecialistId, name: 'CMM специалист');
-      await _loadPositionsFromSql();
+    await _ensurePosition(id: kCmmSpecialistId, name: 'CMM специалист');
+  }
+
+  Future<void> _ensurePosition({required String id, required String name}) async {
+    if (_positions.any((p) => p.id == id)) return;
+    try {
+      await _db.insertPosition(id: id, name: name);
+    } on PostgrestException catch (e) {
+      if (e.code != '23505') rethrow;
+      // Another client/session has already inserted this fixed position.
     }
+    await _loadPositionsFromSql();
   }
 
   // ---------- realtime ----------

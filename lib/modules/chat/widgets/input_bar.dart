@@ -46,6 +46,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   int? _mentionTriggerIndex;
   final List<_PendingMention> _selectedMentions = <_PendingMention>[];
   int _mentionRequestId = 0;
+  bool _isDisposed = false;
 
   /// Снимает фото через камеру устройства и отправляет его в чат. Если
   /// пользователь отменяет съёмку, ничего не происходит. Этот метод
@@ -53,13 +54,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
   /// из приложения. Для сохранения совместимости с Web вызовы камеры
   /// доступны только на мобильных платформах.
   Future<void> _takePhoto() async {
+    if (_isDisposed || !mounted) return;
+    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
       if (image == null) return;
       final bytes = await image.readAsBytes();
       final mime = lookupMimeType(image.path) ?? 'image/jpeg';
-      await context.read<ChatProvider>().sendFile(
+      if (_isDisposed || !mounted) return;
+      await chat.sendFile(
             roomId: widget.roomId,
             senderId: widget.senderId,
             senderName: widget.senderName,
@@ -77,26 +81,33 @@ class _ChatInputBarState extends State<ChatInputBar> {
   void initState() {
     super.initState();
     _controller.addListener(_handleControllerChanged);
-    _focusNode.addListener(() {
-      if (!_focusNode.hasFocus) {
-        _hideMentionOverlay();
-      } else {
-        unawaited(_refreshMentionSuggestions());
-      }
-    });
+    _focusNode.addListener(_handleFocusChanged);
   }
 
   @override
   void dispose() {
+    _isDisposed = true;
+    _mentionRequestId++;
     _controller.removeListener(_handleControllerChanged);
+    _focusNode.removeListener(_handleFocusChanged);
     _hideMentionOverlay();
     _focusNode.dispose();
     _controller.dispose();
-    _stopRecordingIfNeeded(notify: false);
+    unawaited(_disposeRecorder());
     super.dispose();
   }
 
+  void _handleFocusChanged() {
+    if (_isDisposed || !mounted) return;
+    if (!_focusNode.hasFocus) {
+      _hideMentionOverlay();
+    } else {
+      unawaited(_refreshMentionSuggestions());
+    }
+  }
+
   Future<void> _sendText() async {
+    if (_isDisposed || !mounted) return;
     _cleanupObsoleteMentions();
     var prepared = _controller.text;
     if (prepared.trim().isEmpty) return;
@@ -118,6 +129,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _handleControllerChanged() {
+    if (_isDisposed || !mounted) return;
     _cleanupObsoleteMentions();
     unawaited(_refreshMentionSuggestions());
   }
@@ -207,6 +219,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   Future<void> _refreshMentionSuggestions() async {
+    if (_isDisposed || !mounted) return;
     final requestId = ++_mentionRequestId;
     if (!_focusNode.hasFocus) {
       _hideMentionOverlay();
@@ -235,7 +248,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
     if (atIndex > 0) {
       final before = prefix.substring(atIndex - 1, atIndex);
-      final allowedBefore = RegExp("[\s.,!?;:()\[\]{}<>\"-]");
+      final allowedBefore = RegExp(r'[\s.,!?;:()\[\]{}<>"-]');
       if (!allowedBefore.hasMatch(before)) {
         _hideMentionOverlay();
         return;
@@ -248,7 +261,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
     final chat = context.read<ChatProvider>();
     final suggestions = await chat.mentionCandidates(query: querySegment.trimLeft());
-    if (!mounted || requestId != _mentionRequestId) return;
+    if (_isDisposed || !mounted || requestId != _mentionRequestId) return;
     if (suggestions.isEmpty) {
       _hideMentionOverlay();
       return;
@@ -261,9 +274,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _showMentionOverlay() {
+    if (_isDisposed || !mounted) return;
     if (_mentionOverlay == null) {
       final overlayState = Overlay.of(context);
-      if (overlayState == null) return;
       _mentionOverlay = OverlayEntry(builder: _buildMentionOverlay);
       overlayState.insert(_mentionOverlay!);
     } else {
@@ -272,18 +285,24 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _hideMentionOverlay() {
-    _mentionOverlay?.remove();
+    final overlay = _mentionOverlay;
+    if (overlay != null && overlay.mounted) {
+      overlay.remove();
+    }
     _mentionOverlay = null;
     _mentionSuggestions = const [];
     _mentionTriggerIndex = null;
   }
 
   Widget _buildMentionOverlay(BuildContext context) {
-    if (_mentionSuggestions.isEmpty) {
+    if (_isDisposed || !mounted || _mentionSuggestions.isEmpty) {
       return const SizedBox.shrink();
     }
     final renderBox = _fieldKey.currentContext?.findRenderObject() as RenderBox?;
-    final size = renderBox?.size ?? Size.zero;
+    if (renderBox == null || !renderBox.attached) {
+      return const SizedBox.shrink();
+    }
+    final size = renderBox.size;
     final width = size.width > 0 ? size.width : MediaQuery.of(context).size.width * 0.6;
     final offsetY = size.height + 4 * widget.scale;
     final density = widget.compact
@@ -322,6 +341,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _insertMention(ChatMentionCandidate candidate) {
+    if (_isDisposed || !mounted) return;
     final trigger = _mentionTriggerIndex;
     if (trigger == null) return;
     final selection = _controller.selection;
@@ -354,12 +374,15 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   Future<void> _pickImage() async {
+    if (_isDisposed || !mounted) return;
+    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
     if (x == null) return;
     final bytes = await x.readAsBytes();
     final mime = lookupMimeType(x.path) ?? 'image/jpeg';
-    await context.read<ChatProvider>().sendFile(
+    if (_isDisposed || !mounted) return;
+    await chat.sendFile(
           roomId: widget.roomId,
           senderId: widget.senderId,
           senderName: widget.senderName,
@@ -371,12 +394,15 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   Future<void> _pickVideo() async {
+    if (_isDisposed || !mounted) return;
+    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     final x = await picker.pickVideo(source: ImageSource.gallery);
     if (x == null) return;
     final bytes = await x.readAsBytes();
     final mime = lookupMimeType(x.path) ?? 'video/mp4';
-    await context.read<ChatProvider>().sendFile(
+    if (_isDisposed || !mounted) return;
+    await chat.sendFile(
           roomId: widget.roomId,
           senderId: widget.senderId,
           senderName: widget.senderName,
@@ -388,6 +414,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   Future<void> _pickAnyFile() async {
+    if (_isDisposed || !mounted) return;
+    final chat = context.read<ChatProvider>();
     final res = await FilePicker.platform.pickFiles(withReadStream: true);
     if (res == null || res.files.isEmpty) return;
     final f = res.files.first;
@@ -402,7 +430,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
     if ((mime).startsWith('image/')) kind = 'image';
     else if (mime.startsWith('video/')) kind = 'video';
     else if (mime.startsWith('audio/')) kind = 'audio';
-    await context.read<ChatProvider>().sendFile(
+    if (_isDisposed || !mounted) return;
+    await chat.sendFile(
           roomId: widget.roomId,
           senderId: widget.senderId,
           senderName: widget.senderName,
@@ -414,6 +443,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   Future<void> _toggleRecord() async {
+    if (_isDisposed || !mounted) return;
     if (kIsWeb) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Запись аудио не поддерживается в Web')),
@@ -422,6 +452,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
     _recorder ??= AudioRecorder();
     if (!await _recorder!.hasPermission()) {
+      if (_isDisposed || !mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Нет разрешения на запись')),
       );
@@ -433,12 +464,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
       final dir = Directory.systemTemp.createTempSync('chat_audio_');
       final path = p.join(dir.path, 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
       await _recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+      if (_isDisposed || !mounted) return;
       setState(() => _recording = true);
     }
   }
 
   Future<void> _stopRecordingIfNeeded({bool notify = true}) async {
     if (!_recording || _recorder == null) return;
+    final chat = mounted && !_isDisposed ? context.read<ChatProvider>() : null;
     final path = await _recorder!.stop();
     if (notify && mounted) {
       setState(() => _recording = false);
@@ -446,11 +479,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
       _recording = false;
     }
     if (path == null) return;
+    if (chat == null || _isDisposed || !mounted) return;
     final file = File(path);
     if (!await file.exists()) return;
     final bytes = await file.readAsBytes();
     // duration неизвестна: плеер на стороне клиента покажет длину по факту воспроизведения
-    await context.read<ChatProvider>().sendFile(
+    await chat.sendFile(
           roomId: widget.roomId,
           senderId: widget.senderId,
           senderName: widget.senderName,
@@ -461,6 +495,20 @@ class _ChatInputBarState extends State<ChatInputBar> {
         );
     // очистка
     try { await file.delete(); } catch (_) {}
+  }
+
+  Future<void> _disposeRecorder() async {
+    final recorder = _recorder;
+    _recorder = null;
+    if (recorder == null) return;
+    try {
+      if (_recording) {
+        await recorder.stop();
+      }
+      await recorder.dispose();
+    } catch (_) {
+      // Recorder cleanup is best-effort during widget teardown.
+    }
   }
 
   @override
