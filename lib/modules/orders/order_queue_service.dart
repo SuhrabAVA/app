@@ -429,7 +429,8 @@ class OrderQueueService {
   Future<List<Map<String, dynamic>>> _loadNormalizedRows(String orderId) async {
     final loadSources = _loadSources;
     if (loadSources != null) {
-      return loadSources.loadNormalizedRows(orderId);
+      final rows = await loadSources.loadNormalizedRows(orderId);
+      return _groupNormalizedPlanRows(rows);
     }
     try {
       final plan = await _client
@@ -449,6 +450,17 @@ class OrderQueueService {
 
   Future<List<Map<String, dynamic>>> _selectPlanStageRows(String planId) async {
     const attempts = <({String columns, String orderColumn})>[
+      (
+        columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status,'
+            'started_at,finished_at,completed_at,executor_id,'
+            'assigned_employee_id',
+        orderColumn: 'seq',
+      ),
+      (
+        columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status,'
+            'started_at,finished_at,executor_id,assigned_employee_id',
+        orderColumn: 'seq',
+      ),
       (
         columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status',
         orderColumn: 'seq',
@@ -479,10 +491,49 @@ class OrderQueueService {
             .eq('plan_id', planId)
             .order(attempt.orderColumn, ascending: true);
         final decoded = _decodeRows(rows);
-        if (decoded.isNotEmpty) return decoded;
+        if (decoded.isNotEmpty) return _groupNormalizedPlanRows(decoded);
       } catch (_) {}
     }
     return const <Map<String, dynamic>>[];
+  }
+
+  static List<Map<String, dynamic>> _groupNormalizedPlanRows(
+    List<Map<String, dynamic>> rows,
+  ) {
+    if (rows.isEmpty) return const <Map<String, dynamic>>[];
+    final grouped = <_NormalizedPlanGroup>[];
+    final byKey = <String, _NormalizedPlanGroup>{};
+
+    for (var i = 0; i < rows.length; i++) {
+      final row = Map<String, dynamic>.from(rows[i]);
+      final stageIds = OrderQueueMapper.stageIdsFromRow(row);
+      if (stageIds.isEmpty) continue;
+      final stageId = stageIds.first;
+      final groupKey = OrderQueueMapper.stageGroupKeyFromRow(row, stageIds);
+      final effectiveGroupKey = groupKey.isEmpty ? stageId : groupKey;
+      final step = OrderQueueMapper.readStep(row, i + 1);
+      final key = effectiveGroupKey;
+
+      final group = byKey.putIfAbsent(key, () {
+        final created = _NormalizedPlanGroup(
+          key: key,
+          firstRow: row,
+          firstIndex: i,
+          step: step,
+        );
+        grouped.add(created);
+        return created;
+      });
+      group.addRow(row, stageId, step);
+    }
+
+    grouped.sort((a, b) {
+      final byStep = a.step.compareTo(b.step);
+      if (byStep != 0) return byStep;
+      return a.firstIndex.compareTo(b.firstIndex);
+    });
+
+    return grouped.map((group) => group.toRow()).toList(growable: false);
   }
 
   Future<List<Map<String, dynamic>>> _loadTemplateFallbackRows(
@@ -581,6 +632,88 @@ class OrderQueueService {
           .toList(growable: false);
     }
     return const <Map<String, dynamic>>[];
+  }
+}
+
+class _NormalizedPlanGroup {
+  _NormalizedPlanGroup({
+    required this.key,
+    required Map<String, dynamic> firstRow,
+    required this.firstIndex,
+    required this.step,
+  }) : row = Map<String, dynamic>.from(firstRow);
+
+  final String key;
+  final Map<String, dynamic> row;
+  final int firstIndex;
+  int step;
+  final List<String> stageIds = <String>[];
+
+  void addRow(Map<String, dynamic> source, String stageId, int rowStep) {
+    if (!stageIds.contains(stageId)) stageIds.add(stageId);
+    if (rowStep > 0 && (step <= 0 || rowStep < step)) step = rowStep;
+
+    final sourceStatus = source['status']?.toString().trim();
+    final currentStatus = row['status']?.toString().trim();
+    if (_statusRank(sourceStatus) > _statusRank(currentStatus)) {
+      row['status'] = sourceStatus;
+    }
+
+    for (final key in const <String>[
+      'started_at',
+      'startedAt',
+      'finished_at',
+      'finishedAt',
+      'completed_at',
+      'completedAt',
+      'executor_id',
+      'assigned_employee_id',
+    ]) {
+      row[key] ??= source[key];
+    }
+  }
+
+  Map<String, dynamic> toRow() {
+    final result = Map<String, dynamic>.from(row);
+    result['stage_group_key'] = key;
+    result['stageGroupKey'] = key;
+    result['stageId'] =
+        stageIds.isNotEmpty ? stageIds.first : result['stageId'];
+    result['stage_id'] =
+        stageIds.isNotEmpty ? stageIds.first : result['stage_id'];
+    result['workplaceId'] = result['stageId'];
+    result['workplaceIds'] = List<String>.from(stageIds);
+    if (stageIds.length > 1) {
+      result['alternativeStageIds'] = stageIds.skip(1).toList(growable: false);
+    }
+    result['step'] = step;
+    result['step_no'] = step;
+    result['seq'] = step;
+    result['order'] = step;
+    return result;
+  }
+
+  static int _statusRank(String? status) {
+    switch ((status ?? '').toLowerCase().replaceAll('-', '_')) {
+      case 'completed':
+      case 'complete':
+      case 'done':
+        return 5;
+      case 'inprogress':
+      case 'in_progress':
+      case 'started':
+        return 4;
+      case 'paused':
+      case 'problem':
+        return 3;
+      case 'available':
+      case 'ready':
+        return 2;
+      case 'waiting':
+      case 'pending':
+      default:
+        return 1;
+    }
   }
 }
 
