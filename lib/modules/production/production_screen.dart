@@ -133,6 +133,202 @@ String _stageLabel(
   return stageId;
 }
 
+List<String> _normalizeProductionLabelParts(Iterable<String> raw) {
+  final normalized = <String>[];
+  final seen = <String>{};
+  for (final value in raw) {
+    for (final part in value.split(RegExp(r'[/,]'))) {
+      final trimmed = part.trim();
+      final key = trimmed.toLowerCase();
+      if (trimmed.isEmpty || !seen.add(key)) continue;
+      normalized.add(trimmed);
+    }
+  }
+  if (normalized.length >= 4 && normalized.length.isEven) {
+    final half = normalized.length ~/ 2;
+    var mirrored = true;
+    for (var i = 0; i < half; i++) {
+      if (normalized[i].toLowerCase() !=
+          normalized[normalized.length - 1 - i].toLowerCase()) {
+        mirrored = false;
+        break;
+      }
+    }
+    if (mirrored) {
+      normalized.removeRange(half, normalized.length);
+    }
+  }
+  return normalized;
+}
+
+Map<String, _StageGroupInfo> _buildProductionStageGroupsForOrder({
+  required OrderModel order,
+  required List<TaskModel> orderTasks,
+  required Iterable<String> plannedSequence,
+  required Map<String, String> stageGroupMap,
+  required List<TemplateModel> templates,
+  required String Function(String stageId) labelForStage,
+}) {
+  final groups = <String, _StageGroupInfo>{};
+  final seenLabelKeys = <String>{};
+
+  String normalizeStageId(String id) => id.trim();
+
+  String fallbackGroupKeyForIds(List<String> ids) {
+    final canonical = ids.toSet().toList()..sort();
+    return canonical.join('|');
+  }
+
+  void addGroup(
+    List<String> sourceIds, {
+    String? explicitKey,
+    String? explicitLabel,
+  }) {
+    final ids = sourceIds
+        .map(normalizeStageId)
+        .where((id) => id.isNotEmpty)
+        .fold<List<String>>(<String>[], (acc, id) {
+      if (!acc.contains(id)) acc.add(id);
+      return acc;
+    });
+    if (ids.isEmpty) return;
+
+    final key = (explicitKey ?? '').trim().isNotEmpty
+        ? explicitKey!.trim()
+        : fallbackGroupKeyForIds(ids);
+    if (key.isEmpty || groups.containsKey(key)) return;
+
+    final labels = <String>[];
+    final explicit = explicitLabel?.trim();
+    if (explicit != null && explicit.isNotEmpty) {
+      labels.addAll(_normalizeProductionLabelParts([explicit]));
+    }
+    for (final id in ids) {
+      final resolved = labelForStage(id).trim();
+      if (resolved.isNotEmpty) {
+        labels.addAll(_normalizeProductionLabelParts([resolved]));
+      }
+    }
+    final label = _normalizeProductionLabelParts(labels).join(' / ');
+    final normalizedLabelKey =
+        (label.isEmpty ? key : label).trim().toLowerCase();
+    if (normalizedLabelKey.isNotEmpty &&
+        seenLabelKeys.contains(normalizedLabelKey)) {
+      return;
+    }
+
+    groups[key] = _StageGroupInfo(
+      key: key,
+      stageIds: ids,
+      label: label.isEmpty ? key : label,
+    );
+    if (normalizedLabelKey.isNotEmpty) {
+      seenLabelKeys.add(normalizedLabelKey);
+    }
+  }
+
+  final sequence = <String>[];
+  for (final id in plannedSequence.map(normalizeStageId)) {
+    if (id.isNotEmpty && !sequence.contains(id)) {
+      sequence.add(id);
+    }
+  }
+
+  final tasksByGroup = <String, List<TaskModel>>{};
+  final firstTaskByStage = <String, TaskModel>{};
+  for (final task in orderTasks) {
+    final stageId = normalizeStageId(task.stageId);
+    final groupKey = task.stageGroupKey.trim().isNotEmpty
+        ? task.stageGroupKey.trim()
+        : stageId;
+    if (stageId.isNotEmpty) {
+      firstTaskByStage.putIfAbsent(stageId, () => task);
+    }
+    if (groupKey.isNotEmpty) {
+      tasksByGroup.putIfAbsent(groupKey, () => <TaskModel>[]).add(task);
+    }
+  }
+
+  void addTaskBackedGroup(String groupKey, {String? sequenceStageId}) {
+    final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+    final ids = groupTasks
+        .map((task) => normalizeStageId(task.stageId))
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (ids.isEmpty && sequenceStageId != null) {
+      ids.add(sequenceStageId);
+    }
+    addGroup(ids, explicitKey: groupKey);
+  }
+
+  for (final id in sequence) {
+    final taskGroupKey = firstTaskByStage[id]?.stageGroupKey.trim();
+    final mappedGroupKey = stageGroupMap[id]?.trim();
+    final groupKey = taskGroupKey != null && taskGroupKey.isNotEmpty
+        ? taskGroupKey
+        : (mappedGroupKey != null && mappedGroupKey.isNotEmpty
+            ? mappedGroupKey
+            : id);
+    if (tasksByGroup.containsKey(groupKey)) {
+      addTaskBackedGroup(groupKey, sequenceStageId: id);
+    } else {
+      addGroup([id], explicitKey: groupKey);
+    }
+  }
+
+  for (final entry in tasksByGroup.entries) {
+    if (!groups.containsKey(entry.key)) {
+      addTaskBackedGroup(entry.key);
+    }
+  }
+
+  if (groups.isEmpty && sequence.isEmpty && orderTasks.isEmpty) {
+    final templateId = order.stageTemplateId;
+    if (templateId != null && templateId.isNotEmpty) {
+      final tpl = templates.firstWhere(
+        (t) => t.id == templateId,
+        orElse: () =>
+            TemplateModel(id: '', name: '', stages: const <PlannedStage>[]),
+      );
+      if (tpl.id.isNotEmpty) {
+        for (final stage in tpl.stages) {
+          final labels = stage.allStageNames
+              .map((name) => name.trim())
+              .where((name) => name.isNotEmpty)
+              .toSet()
+              .toList();
+          addGroup(
+            stage.allStageIds,
+            explicitLabel: labels.isEmpty ? null : labels.join(' / '),
+          );
+        }
+      }
+    }
+  }
+
+  return groups;
+}
+
+@visibleForTesting
+List<String> productionStageLabelsForTesting({
+  required OrderModel order,
+  required List<TaskModel> orderTasks,
+  required Iterable<String> plannedSequence,
+  Map<String, String> stageGroupMap = const <String, String>{},
+  Map<String, String> stageNames = const <String, String>{},
+  List<TemplateModel> templates = const <TemplateModel>[],
+}) {
+  final groups = _buildProductionStageGroupsForOrder(
+    order: order,
+    orderTasks: orderTasks,
+    plannedSequence: plannedSequence,
+    stageGroupMap: stageGroupMap,
+    templates: templates,
+    labelForStage: (stageId) => stageNames[stageId] ?? stageId,
+  );
+  return groups.values.map((group) => group.label).toList(growable: false);
+}
+
 class ProductionScreen extends StatefulWidget {
   const ProductionScreen({super.key});
 
@@ -661,171 +857,21 @@ class _ProductionTab extends StatelessWidget {
   final _ProductionSort sort;
   final String? productTypeFilter;
 
-  List<String> _normalizeLabelParts(Iterable<String> raw) {
-    final normalized = <String>[];
-    final seen = <String>{};
-    for (final value in raw) {
-      for (final part in value.split(RegExp(r'[/,]'))) {
-        final trimmed = part.trim();
-        final key = trimmed.toLowerCase();
-        if (trimmed.isEmpty || !seen.add(key)) continue;
-        normalized.add(trimmed);
-      }
-    }
-    if (normalized.length >= 4 && normalized.length.isEven) {
-      final half = normalized.length ~/ 2;
-      var mirrored = true;
-      for (var i = 0; i < half; i++) {
-        if (normalized[i].toLowerCase() !=
-            normalized[normalized.length - 1 - i].toLowerCase()) {
-          mirrored = false;
-          break;
-        }
-      }
-      if (mirrored) {
-        normalized.removeRange(half, normalized.length);
-      }
-    }
-    return normalized;
-  }
-
   Map<String, _StageGroupInfo> _stageGroupsForOrder(
     OrderModel order,
     List<TaskModel> orderTasks,
   ) {
-    final groups = <String, _StageGroupInfo>{};
-
-    String normalizeStageId(String id) => id.trim();
-
-    String groupKeyForIds(List<String> ids) {
-      final canonical = ids.toSet().toList()..sort();
-      return canonical.join('|');
-    }
-
-    final seenLabelKeys = <String>{};
-
-    void addGroup(List<String> sourceIds, {String? explicitLabel}) {
-      final ids = sourceIds
-          .map(normalizeStageId)
-          .where((id) => id.isNotEmpty)
-          .fold<List<String>>(<String>[], (acc, id) {
-        if (!acc.contains(id)) acc.add(id);
-        return acc;
-      });
-      if (ids.isEmpty) return;
-
-      final key = groupKeyForIds(ids);
-      if (groups.containsKey(key)) return;
-      final labels = <String>[];
-      final explicit = explicitLabel?.trim();
-      if (explicit != null && explicit.isNotEmpty) {
-        labels.addAll(_normalizeLabelParts([explicit]));
-      }
-      for (final id in ids) {
-        final resolved = _stageLabel(id, taskProvider, personnelProvider, order.id).trim();
-        if (resolved.isNotEmpty) {
-          labels.addAll(_normalizeLabelParts([resolved]));
-        }
-      }
-      final label = _normalizeLabelParts(labels).join(' / ');
-      final normalizedLabelKey =
-          (label.isEmpty ? key : label).trim().toLowerCase();
-      if (normalizedLabelKey.isNotEmpty &&
-          seenLabelKeys.contains(normalizedLabelKey)) {
-        return;
-      }
-
-      groups[key] = _StageGroupInfo(
-        key: key,
-        stageIds: ids,
-        label: label.isEmpty ? key : label,
-      );
-      if (normalizedLabelKey.isNotEmpty) {
-        seenLabelKeys.add(normalizedLabelKey);
-      }
-    }
-
-    final templateId = order.stageTemplateId;
-    if (templateId != null && templateId.isNotEmpty) {
-      final tpl = templateProvider.templates.firstWhere(
-        (t) => t.id == templateId,
-        orElse: () =>
-            TemplateModel(id: '', name: '', stages: const <PlannedStage>[]),
-      );
-      if (tpl.id.isNotEmpty) {
-        for (final stage in tpl.stages) {
-          final labels = stage.allStageNames
-              .map((name) => name.trim())
-              .where((name) => name.isNotEmpty)
-              .toSet()
-              .toList();
-          addGroup(
-            stage.allStageIds,
-            explicitLabel: labels.isEmpty ? null : labels.join(' / '),
-          );
-        }
-      }
-    }
-
-    final plannedSequence = taskProvider.stageSequenceForOrder(order.id) ?? const <String>[];
-    final orderedFallbackIds = <String>[];
-    for (final id in plannedSequence.map(normalizeStageId)) {
-      if (id.isNotEmpty && !orderedFallbackIds.contains(id)) {
-        orderedFallbackIds.add(id);
-      }
-    }
-    for (final id in orderTasks.map((t) => normalizeStageId(t.stageId))) {
-      if (id.isNotEmpty && !orderedFallbackIds.contains(id)) {
-        orderedFallbackIds.add(id);
-      }
-    }
-
-    for (final id in orderedFallbackIds) {
-      final existsInGroup = groups.values.any((group) => group.stageIds.contains(id));
-      if (!existsInGroup) {
-        addGroup([id]);
-      }
-    }
-
-    if (groups.length <= 1 || plannedSequence.isEmpty) {
-      return groups;
-    }
-
-    final stageIndex = <String, int>{};
-    for (var i = 0; i < plannedSequence.length; i++) {
-      final id = normalizeStageId(plannedSequence[i]);
-      if (id.isEmpty || stageIndex.containsKey(id)) continue;
-      stageIndex[id] = i;
-    }
-    if (stageIndex.isEmpty) {
-      return groups;
-    }
-
-    final indexedGroups = groups.entries.toList().asMap().entries.toList();
-    int groupPriority(_StageGroupInfo group) {
-      var best = 1 << 30;
-      for (final stageId in group.stageIds) {
-        final idx = stageIndex[normalizeStageId(stageId)];
-        if (idx != null && idx < best) {
-          best = idx;
-        }
-      }
-      return best;
-    }
-
-    indexedGroups.sort((a, b) {
-      final aPriority = groupPriority(a.value.value);
-      final bPriority = groupPriority(b.value.value);
-      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
-      return a.key.compareTo(b.key);
-    });
-
-    final orderedGroups = <String, _StageGroupInfo>{};
-    for (final entry in indexedGroups) {
-      final group = entry.value;
-      orderedGroups[group.key] = group.value;
-    }
-    return orderedGroups;
+    return _buildProductionStageGroupsForOrder(
+      order: order,
+      orderTasks: orderTasks,
+      plannedSequence:
+          taskProvider.stageSequenceForOrder(order.id) ?? const <String>[],
+      stageGroupMap: taskProvider.stageGroupMapForOrder(order.id) ??
+          const <String, String>{},
+      templates: templateProvider.templates,
+      labelForStage: (stageId) =>
+          _stageLabel(stageId, taskProvider, personnelProvider, order.id),
+    );
   }
 
   Map<String, String> _stageGroupLookup(Map<String, _StageGroupInfo> groups) {
