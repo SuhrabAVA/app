@@ -340,7 +340,9 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         try {
           final rows = await sb
               .from('v_order_plan_stages')
-              .select('stage_id, stage_name, step_no, order_id, order_code')
+              .select(
+                'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+              )
               .or('order_id.eq.$orderId,order_code.eq.$orderCode')
               .order('step_no', ascending: true);
 

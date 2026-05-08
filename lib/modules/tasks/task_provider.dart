@@ -800,7 +800,9 @@ class TaskProvider with ChangeNotifier {
       ];
       final rows = await _supabase
           .from('v_order_plan_stages')
-          .select('stage_id, stage_name, step_no, order_id, order_code')
+          .select(
+            'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+          )
           .or(filters.join(','))
           .order('step_no', ascending: true);
       final seq = await fromRows(rows);
@@ -818,7 +820,9 @@ class TaskProvider with ChangeNotifier {
       ];
       final rows = await _supabase
           .from('production.v_plan_with_stages')
-          .select('stage_id, stage_name, step_no, order_id, order_code')
+          .select(
+            'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+          )
           .or(filters.join(','))
           .order('step_no', ascending: true);
       final seq = await fromRows(rows);

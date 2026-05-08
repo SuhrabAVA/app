@@ -145,6 +145,28 @@ void main() {
     expect(entries.map((entry) => entry.step), [1, 2]);
   });
 
+  test('OrderQueueMapper keeps separate normalized rows in the same group', () {
+    final entries = OrderQueueMapper.toSyncEntries(const [
+      {
+        'stage_id': 'die-cut-a1',
+        'stage_group_key': 'die_cut',
+        'step_no': 5,
+      },
+      {
+        'stage_id': 'die-cut-a2',
+        'stage_group_key': 'die_cut',
+        'step_no': 5,
+      },
+    ]);
+
+    expect(entries.map((entry) => entry.stageId), [
+      'die-cut-a1',
+      'die-cut-a2',
+    ]);
+    expect(entries.map((entry) => entry.stageGroupKey).toSet(), {'die_cut'});
+    expect(entries.map((entry) => entry.step), [5, 5]);
+  });
+
   test('physical seq stays unique for parallel stages on the same logical step', () {
     const firstAlternative = OrderQueueSyncEntry(
       stageId: 'die-cut-a1',
