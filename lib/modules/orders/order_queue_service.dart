@@ -15,7 +15,7 @@ const String kCreateProductionTasksFailedMessage =
 ///
 /// `stageTemplateId` is intentionally not an order queue source of truth. It is
 /// kept on the order only as an editing hint/legacy reference; the factual queue
-/// must come from the saved order queue first, then normalized plan rows, then
+/// must come from normalized plan rows first, then saved order queue JSON, then
 /// legacy `production_plans.stages`, and only then from the template as a
 /// fallback for old orders that were never saved with an explicit queue.
 enum SavedOrderQueueSource {
@@ -64,10 +64,49 @@ class OrderQueueSaveException implements Exception {
   String toString() => message;
 }
 
-class OrderQueueService {
-  OrderQueueService(this._sb);
+typedef OrderQueueMapLoader = Future<Map<String, dynamic>?> Function(
+  String orderId,
+);
+typedef OrderQueueRowsLoader = Future<List<Map<String, dynamic>>> Function(
+  String orderId,
+);
 
-  final SupabaseClient _sb;
+class OrderQueueLoadSources {
+  const OrderQueueLoadSources({
+    required this.loadOrderQueueColumns,
+    required this.loadOrderData,
+    required this.loadNormalizedRows,
+    required this.loadLegacyProductionPlanRows,
+    required this.loadTemplateFallbackRows,
+  });
+
+  final OrderQueueMapLoader loadOrderQueueColumns;
+  final OrderQueueMapLoader loadOrderData;
+  final OrderQueueRowsLoader loadNormalizedRows;
+  final OrderQueueRowsLoader loadLegacyProductionPlanRows;
+  final OrderQueueRowsLoader loadTemplateFallbackRows;
+}
+
+class OrderQueueService {
+  OrderQueueService(SupabaseClient sb)
+      : _sb = sb,
+        _loadSources = null;
+
+  @visibleForTesting
+  OrderQueueService.withLoadSources(OrderQueueLoadSources loadSources)
+      : _sb = null,
+        _loadSources = loadSources;
+
+  final SupabaseClient? _sb;
+  final OrderQueueLoadSources? _loadSources;
+
+  SupabaseClient get _client {
+    final sb = _sb;
+    if (sb == null) {
+      throw StateError('SupabaseClient is not available in this test service.');
+    }
+    return sb;
+  }
 
   List<Map<String, dynamic>> buildPreviewQueue(
     OrderStageQueueDraft draft, {
@@ -102,43 +141,27 @@ class OrderQueueService {
       );
     }
 
-    // 1. Explicit saved queue columns on the order row (newer schemas).
+    // 1. Normalized plan rows are the shared source of truth for active/new
+    // plans. Read them before legacy order JSON so screens and task providers
+    // cannot display an older queue saved on the order row.
+    final normalized = await _loadNormalizedRows(id);
+    if (normalized.isNotEmpty) {
+      return SavedOrderQueue(
+        orderId: id,
+        rows: normalized,
+        source: SavedOrderQueueSource.normalizedPlanRows,
+      );
+    }
+
+    // 2. Explicit saved queue columns on the order row (newer schemas).
     try {
-      final order = await _sb
-          .from('orders')
-          .select('stage_queue, saved_stage_queue, order_stage_queue')
-          .eq('id', id)
-          .maybeSingle();
+      final order = await _loadOrderQueueColumns(id);
       if (order != null) {
-        for (final key in const [
+        final rows = _firstDecodedRows(order, const [
           'stage_queue',
           'saved_stage_queue',
           'order_stage_queue',
-        ]) {
-          final rows = _decodeRows(order[key]);
-          if (rows.isNotEmpty) {
-            return SavedOrderQueue(
-              orderId: id,
-              rows: rows,
-              source: SavedOrderQueueSource.savedOrderQueue,
-            );
-          }
-        }
-      }
-    } catch (_) {}
-
-    try {
-      final order =
-          await _sb.from('orders').select('data').eq('id', id).maybeSingle();
-      final data = order != null && order['data'] is Map
-          ? Map<String, dynamic>.from(order['data'] as Map)
-          : const <String, dynamic>{};
-      for (final key in const [
-        'stage_queue',
-        'saved_stage_queue',
-        'order_stage_queue',
-      ]) {
-        final rows = _decodeRows(data[key]);
+        ]);
         if (rows.isNotEmpty) {
           return SavedOrderQueue(
             orderId: id,
@@ -149,32 +172,31 @@ class OrderQueueService {
       }
     } catch (_) {}
 
-    // 2. Normalized plan rows are the preferred shared storage for active plans.
-    final normalized = await _loadNormalizedRows(id);
-    if (normalized.isNotEmpty) {
-      return SavedOrderQueue(
-        orderId: id,
-        rows: normalized,
-        source: SavedOrderQueueSource.normalizedPlanRows,
-      );
-    }
+    try {
+      final data = await _loadOrderData(id) ?? const <String, dynamic>{};
+      final rows = _firstDecodedRows(data, const [
+        'stage_queue',
+        'saved_stage_queue',
+        'order_stage_queue',
+      ]);
+      if (rows.isNotEmpty) {
+        return SavedOrderQueue(
+          orderId: id,
+          rows: rows,
+          source: SavedOrderQueueSource.savedOrderQueue,
+        );
+      }
+    } catch (_) {}
 
     // 3. Legacy JSON production_plans.stages.
     try {
-      final plan = await _sb
-          .from('production_plans')
-          .select('stages')
-          .eq('order_id', id)
-          .maybeSingle();
-      if (plan != null) {
-        final rows = _decodeRows(plan['stages']);
-        if (rows.isNotEmpty) {
-          return SavedOrderQueue(
-            orderId: id,
-            rows: rows,
-            source: SavedOrderQueueSource.legacyProductionPlanStages,
-          );
-        }
+      final rows = await _loadLegacyProductionPlanRows(id);
+      if (rows.isNotEmpty) {
+        return SavedOrderQueue(
+          orderId: id,
+          rows: rows,
+          source: SavedOrderQueueSource.legacyProductionPlanStages,
+        );
       }
     } catch (_) {}
 
@@ -212,12 +234,7 @@ class OrderQueueService {
     await _upsertLegacyProductionPlan(id, rows);
 
     try {
-      await _sb.from('orders').update({
-        'queue_build_status': QueueBuildStatus.built,
-        'selected_v_stage': selections['selected_v_stage'],
-        'selected_p_stage': selections['selected_p_stage'],
-        'queue_signature': signature,
-      }).eq('id', id);
+      await _updateOrderBuildMetadata(id, rows, selections, signature);
     } catch (error) {
       _debugPrintQueueSyncFailure(id, 'orders', error);
     }
@@ -248,6 +265,54 @@ class OrderQueueService {
         error,
       );
     }
+  }
+
+  Future<void> _updateOrderBuildMetadata(
+    String orderId,
+    List<Map<String, dynamic>> rows,
+    Map<String, String?> selections,
+    Map<String, dynamic>? signature,
+  ) async {
+    final basePayload = <String, dynamic>{
+      'queue_build_status': QueueBuildStatus.built,
+      'selected_v_stage': selections['selected_v_stage'],
+      'selected_p_stage': selections['selected_p_stage'],
+      'queue_signature': signature,
+    };
+    final attempts = <Map<String, dynamic>>[
+      {
+        ...basePayload,
+        'stage_queue': rows,
+        'saved_stage_queue': rows,
+        'order_stage_queue': rows,
+      },
+      {...basePayload, 'stage_queue': rows},
+      {...basePayload, 'saved_stage_queue': rows},
+      {...basePayload, 'order_stage_queue': rows},
+      basePayload,
+    ];
+
+    Object? lastError;
+    for (final payload in attempts) {
+      try {
+        await _client.from('orders').update(payload).eq('id', orderId);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!_isMissingColumnError(error)) rethrow;
+      }
+    }
+    if (lastError != null) throw lastError;
+  }
+
+  static bool _isMissingColumnError(Object error) {
+    if (error is! PostgrestException) return false;
+    final code = (error.code ?? '').trim();
+    final message = error.message.toLowerCase();
+    return code == '42703' ||
+        code == 'PGRST204' ||
+        message.contains('column') ||
+        message.contains('schema cache');
   }
 
   static bool _isLegacyNormalizedQueueSchemaError(Object error) {
@@ -296,7 +361,7 @@ class OrderQueueService {
     bool completeBobbin = false,
     String? bobbinStageId,
   }) {
-    return OrderQueueSyncService(_sb).sync(
+    return OrderQueueSyncService(_client).sync(
       orderId: orderId,
       nextQueue: OrderQueueMapper.toSyncEntries(newQueue),
       completeBobbin: completeBobbin,
@@ -309,16 +374,65 @@ class OrderQueueService {
     if (saved.rows.isEmpty) {
       throw StateError('Не найдена сохранённая очередь этапов заказа.');
     }
-    await OrderQueueSyncService(_sb).sync(
+    await OrderQueueSyncService(_client).sync(
       orderId: orderId,
       nextQueue: OrderQueueMapper.toSyncEntries(saved.rows),
     );
     await _restoreCompletedSavedStages(orderId, saved.rows);
   }
 
+  Future<Map<String, dynamic>?> _loadOrderQueueColumns(String orderId) async {
+    final loadSources = _loadSources;
+    if (loadSources != null) {
+      return loadSources.loadOrderQueueColumns(orderId);
+    }
+    final order = await _client
+        .from('orders')
+        .select('stage_queue, saved_stage_queue, order_stage_queue')
+        .eq('id', orderId)
+        .maybeSingle();
+    return order != null ? Map<String, dynamic>.from(order) : null;
+  }
+
+  Future<Map<String, dynamic>?> _loadOrderData(String orderId) async {
+    final loadSources = _loadSources;
+    if (loadSources != null) {
+      return loadSources.loadOrderData(orderId);
+    }
+    final order = await _client
+        .from('orders')
+        .select('data')
+        .eq('id', orderId)
+        .maybeSingle();
+    return order != null && order['data'] is Map
+        ? Map<String, dynamic>.from(order['data'] as Map)
+        : null;
+  }
+
+  Future<List<Map<String, dynamic>>> _loadLegacyProductionPlanRows(
+    String orderId,
+  ) async {
+    final loadSources = _loadSources;
+    if (loadSources != null) {
+      return loadSources.loadLegacyProductionPlanRows(orderId);
+    }
+    final plan = await _client
+        .from('production_plans')
+        .select('stages')
+        .eq('order_id', orderId)
+        .maybeSingle();
+    return plan != null
+        ? _decodeRows(plan['stages'])
+        : const <Map<String, dynamic>>[];
+  }
+
   Future<List<Map<String, dynamic>>> _loadNormalizedRows(String orderId) async {
+    final loadSources = _loadSources;
+    if (loadSources != null) {
+      return loadSources.loadNormalizedRows(orderId);
+    }
     try {
-      final plan = await _sb
+      final plan = await _client
           .from('prod_plans')
           .select('id')
           .eq('order_id', orderId)
@@ -359,7 +473,7 @@ class OrderQueueService {
 
     for (final attempt in attempts) {
       try {
-        final rows = await _sb
+        final rows = await _client
             .from('prod_plan_stages')
             .select(attempt.columns)
             .eq('plan_id', planId)
@@ -374,8 +488,12 @@ class OrderQueueService {
   Future<List<Map<String, dynamic>>> _loadTemplateFallbackRows(
     String orderId,
   ) async {
+    final loadSources = _loadSources;
+    if (loadSources != null) {
+      return loadSources.loadTemplateFallbackRows(orderId);
+    }
     try {
-      final order = await _sb
+      final order = await _client
           .from('orders')
           .select('stage_template_id')
           .eq('id', orderId)
@@ -384,7 +502,7 @@ class OrderQueueService {
           ? (order['stage_template_id'] ?? '').toString().trim()
           : '';
       if (templateId.isEmpty) return const <Map<String, dynamic>>[];
-      final tpl = await _sb
+      final tpl = await _client
           .from('plan_templates')
           .select('stages')
           .eq('id', templateId)
@@ -401,18 +519,18 @@ class OrderQueueService {
     String orderId,
     List<Map<String, dynamic>> rows,
   ) async {
-    final existing = await _sb
+    final existing = await _client
         .from('production_plans')
         .select('id')
         .eq('order_id', orderId)
         .maybeSingle();
     if (existing != null && existing['id'] != null) {
-      await _sb
+      await _client
           .from('production_plans')
           .update({'stages': rows})
           .eq('id', existing['id']);
     } else {
-      await _sb.from('production_plans').insert({
+      await _client.from('production_plans').insert({
         'order_id': orderId,
         'stages': rows,
       });
@@ -426,7 +544,7 @@ class OrderQueueService {
     for (final entry in OrderQueueMapper.toSyncEntries(rows)) {
       final status = entry.status.toLowerCase().trim();
       if (status != 'done' && status != 'completed') continue;
-      await _sb.from('tasks').update({
+      await _client.from('tasks').update({
         'status': 'done',
         'completed_at': DateTime.now().toIso8601String(),
       })
@@ -434,6 +552,17 @@ class OrderQueueService {
           .eq('stage_group_key', entry.stageGroupKey)
           .eq('stage_id', entry.stageId);
     }
+  }
+
+  static List<Map<String, dynamic>> _firstDecodedRows(
+    Map<String, dynamic> source,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final rows = _decodeRows(source[key]);
+      if (rows.isNotEmpty) return rows;
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   static List<Map<String, dynamic>> _decodeRows(dynamic rows) {
