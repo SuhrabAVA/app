@@ -54,6 +54,7 @@ class OrderQueueSyncSchemaOutdatedException implements Exception {
 class OrderQueueSyncEntry {
   const OrderQueueSyncEntry({
     this.id,
+    this.physicalSeq,
     required this.stageId,
     required this.stageGroupKey,
     required this.step,
@@ -62,6 +63,7 @@ class OrderQueueSyncEntry {
   });
 
   final String? id;
+  final int? physicalSeq;
   final String stageId;
   final String stageGroupKey;
   final int step;
@@ -92,6 +94,7 @@ class OrderQueueSyncEntry {
 
   OrderQueueSyncEntry copyWith({
     String? id,
+    int? physicalSeq,
     String? stageId,
     String? stageGroupKey,
     int? step,
@@ -100,6 +103,7 @@ class OrderQueueSyncEntry {
   }) {
     return OrderQueueSyncEntry(
       id: id ?? this.id,
+      physicalSeq: physicalSeq ?? this.physicalSeq,
       stageId: stageId ?? this.stageId,
       stageGroupKey: stageGroupKey ?? this.stageGroupKey,
       step: step ?? this.step,
@@ -298,6 +302,8 @@ class OrderQueueSyncService {
       action: () => _parkPendingPlanStageUpdates(updateOperations),
     );
 
+    final physicalSeqByKey = physicalSeqByIdentityKey(nextQueue);
+
     for (final op in updateOperations) {
       final current = op.current;
       final next = op.next;
@@ -306,7 +312,11 @@ class OrderQueueSyncService {
       await _runTableStep<void>(
         orderId: orderId,
         tableName: 'prod_plan_stages',
-        action: () => _updatePendingPlanStage(parkedCurrent, next),
+        action: () => _updatePendingPlanStage(
+          parkedCurrent,
+          next,
+          physicalSeqByKey[next.identityKey] ?? next.step,
+        ),
       );
       await _runTableStep<void>(
         orderId: orderId,
@@ -323,7 +333,11 @@ class OrderQueueSyncService {
       await _runTableStep<void>(
         orderId: orderId,
         tableName: 'prod_plan_stages',
-        action: () => _insertPlanStage(planId, next),
+        action: () => _insertPlanStage(
+          planId,
+          next,
+          physicalSeqByKey[next.identityKey] ?? next.step,
+        ),
       );
     }
 
@@ -417,7 +431,8 @@ class OrderQueueSyncService {
       id: row['id']?.toString(),
       stageId: stageId,
       stageGroupKey: groupKey.isEmpty ? stageId : groupKey,
-      step: _readInt(row['seq'] ?? row['step_no'] ?? row['step']),
+      step: _readInt(row['step_no'] ?? row['step'] ?? row['seq']),
+      physicalSeq: _readNullableInt(row['seq']),
       status: (row['status'] ?? 'waiting').toString(),
       row: row,
     );
@@ -440,10 +455,46 @@ class OrderQueueSyncService {
     );
   }
 
-  static int _readInt(dynamic value) {
+  static int _readInt(dynamic value) => _readNullableInt(value) ?? 0;
+
+  static int? _readNullableInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '') ?? 0;
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  @visibleForTesting
+  static Map<String, int> physicalSeqByIdentityKey(
+    List<OrderQueueSyncEntry> queue,
+  ) {
+    final stepCounts = <int, int>{};
+    for (final entry in queue) {
+      stepCounts[entry.step] = (stepCounts[entry.step] ?? 0) + 1;
+    }
+
+    final stepOffsets = <int, int>{};
+    final usedSeqs = <int>{};
+    final result = <String, int>{};
+    for (final entry in queue) {
+      final count = stepCounts[entry.step] ?? 0;
+      if (count <= 1) {
+        result[entry.identityKey] = entry.step;
+        usedSeqs.add(entry.step);
+        continue;
+      }
+
+      var offset = stepOffsets[entry.step] ?? 0;
+      var candidate = entry.step * 1000 + offset;
+      while (usedSeqs.contains(candidate) ||
+          stepCounts.containsKey(candidate)) {
+        offset += 1;
+        candidate = entry.step * 1000 + offset;
+      }
+      stepOffsets[entry.step] = offset + 1;
+      usedSeqs.add(candidate);
+      result[entry.identityKey] = candidate;
+    }
+    return result;
   }
 
   static bool _isMissingProdPlanStageGroupKey(Object error) {
@@ -500,7 +551,7 @@ class OrderQueueSyncService {
       query.eq('stage_group_key', current.stageGroupKey);
     }
     try {
-      await query.eq('seq', current.step);
+      await query.eq('seq', current.physicalSeq ?? current.step);
     } catch (error) {
       _throwIfMissingProdPlanStageId(error);
       rethrow;
@@ -523,11 +574,12 @@ class OrderQueueSyncService {
   Future<void> _updatePendingPlanStage(
     OrderQueueSyncEntry current,
     OrderQueueSyncEntry next,
+    int physicalSeq,
   ) async {
     final updates = {
       'stage_id': next.stageId,
       'stage_group_key': next.stageGroupKey,
-      'seq': next.step,
+      'seq': physicalSeq,
       'status': 'waiting',
     };
     await _updatePlanStageWithOptionalStepNo(current, updates, next.step);
@@ -536,13 +588,14 @@ class OrderQueueSyncService {
   Future<void> _insertPlanStage(
     String planId,
     OrderQueueSyncEntry next,
+    int physicalSeq,
   ) async {
     final row = {
       'plan_id': planId,
       'stage_id': next.stageId,
       'stage_group_key': next.stageGroupKey,
       'name': next.displayName,
-      'seq': next.step,
+      'seq': physicalSeq,
       'status': 'waiting',
     };
     try {
@@ -636,7 +689,7 @@ class OrderQueueSyncService {
       if (includeStageGroupKeyFilter) {
         query.eq('stage_group_key', current.stageGroupKey);
       }
-      await query.eq('seq', current.step);
+      await query.eq('seq', current.physicalSeq ?? current.step);
     }
 
     try {
@@ -684,7 +737,10 @@ class OrderQueueSyncService {
         {'seq': tempStep},
         tempStep,
       );
-      parked[current.identityKey] = current.copyWith(step: tempStep);
+      parked[current.identityKey] = current.copyWith(
+        step: tempStep,
+        physicalSeq: tempStep,
+      );
     }
     return parked;
   }

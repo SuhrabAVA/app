@@ -1417,9 +1417,9 @@ class TaskProvider with ChangeNotifier {
               final o = r['order'] ??
                   r['position'] ??
                   r['idx'] ??
-                  r['seq'] ??
                   r['step_no'] ??
                   r['step'] ??
+                  r['seq'] ??
                   0;
               final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
               if (oi > maxOrder) maxOrder = oi;
@@ -1429,9 +1429,9 @@ class TaskProvider with ChangeNotifier {
               final o = r['order'] ??
                   r['position'] ??
                   r['idx'] ??
-                  r['seq'] ??
                   r['step_no'] ??
                   r['step'] ??
+                  r['seq'] ??
                   0;
               final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
               if (oi == maxOrder) {
