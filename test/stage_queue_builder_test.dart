@@ -488,6 +488,58 @@ void main() {
     expect(result.map((stage) => stage.stageKey), contains(kBobbinStageId));
   });
 
+  test('preserves saved queue order when packaging is not last', () {
+    final savedRows = <Map<String, dynamic>>[
+      {
+        'stageId': kAutoBigStageId,
+        'stageName': 'Большой',
+        'seq': 1,
+      },
+      {
+        'stageId': kCuttingStageId,
+        'stageName': 'Резка',
+        'seq': 2,
+      },
+      {
+        'stageId': kCardboardCuttingStageId,
+        'stageName': 'Резка картона',
+        'seq': 3,
+      },
+      {
+        'stageId': kCardboardInsertStageId,
+        'stageName': 'Вставка картона',
+        'seq': 4,
+      },
+      {
+        'stageId': kPackagingStageId,
+        'stageName': 'Упаковка',
+        'seq': 5,
+      },
+      {
+        'stageId': kTwistedHandleStageId,
+        'stageName': 'Кручёная ручка',
+        'seq': 6,
+      },
+    ];
+    const expectedOrder = [
+      'Большой',
+      'Резка',
+      'Резка картона',
+      'Вставка картона',
+      'Упаковка',
+      'Кручёная ручка',
+    ];
+
+    final normalized = normalizeBuiltOrderStageQueue(savedRows);
+
+    expect(normalized.map((stage) => stage['stageName']), expectedOrder);
+    expect(
+      productionDetailsPlannedStagesFromQueueRowsForTesting(rows: savedRows)
+          .map((stage) => stage.stageName),
+      expectedOrder,
+    );
+  });
+
   test('normalizes base stage aliases without changing composition', () {
     final result = normalizeBuiltOrderStageQueue([
       {'stageId': kPackagingStageId, 'stageName': 'Упаковка'},
