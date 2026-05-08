@@ -185,6 +185,59 @@ void main() {
     );
   });
 
+  test('production All chips include planned stages without task rows', () {
+    final order = OrderModel(
+      id: 'order-with-plan-without-tasks',
+      manager: '',
+      customer: 'Planned customer',
+      orderDate: DateTime(2026, 5, 8),
+      dueDate: null,
+      product: ProductModel(
+        id: 'product',
+        type: kPTypePackageProduct,
+        quantity: 1000,
+        width: 0,
+        height: 0,
+        depth: 0,
+      ),
+      status: OrderStatus.in_production.name,
+    );
+
+    const plannedSequence = [
+      kBobbinStageId,
+      kAutoBigStageId,
+      kCuttingStageId,
+      kPackagingStageId,
+    ];
+    const stageNames = {
+      kBobbinStageId: 'Бобинорезка',
+      kAutoBigStageId: 'Автомат большой',
+      kCuttingStageId: 'Резка',
+      kPackagingStageId: 'Упаковка',
+    };
+
+    final labels = productionStageLabelsForTesting(
+      order: order,
+      orderTasks: const [],
+      plannedSequence: plannedSequence,
+      stageNames: stageNames,
+    );
+    final statuses = productionStageStatusesForTesting(
+      order: order,
+      orderTasks: const [],
+      plannedSequence: plannedSequence,
+      stageNames: stageNames,
+    );
+
+    expect(labels, [
+      'Бобинорезка',
+      'Автомат большой',
+      'Резка',
+      'Упаковка',
+    ]);
+    expect(statuses, everyElement(TaskStatus.waiting));
+  });
+
   test('inserts product stage after bobbin/flexo base stages', () {
     final queue = [
       {'stageId': kBobbinStageId, 'stageName': 'Бобинорезка'},
