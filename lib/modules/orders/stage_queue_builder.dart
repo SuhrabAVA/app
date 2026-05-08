@@ -36,7 +36,7 @@ const String kWindowStageId = '8337f16e-c2d1-42dc-966d-6277ba3c1a50';
 const String kAutoBigStageId = 'fdbf1735-a67c-47c9-a7e1-90546effe6ed';
 const String kAutoSmallStageId = 'cbcbe469-b924-4064-ae05-885ccd1b842a';
 const String kTubeStageId = 'e62fc013-4785-4375-b3ee-a3ca51f77199';
-const String kSheetCutStageId = '19a67630-8374-4f9f-ae5b-f2f66828720b';
+const String kSheetCutStageId = '19a67630-8374-49f1-ae5b-f2f66828720b';
 const String kCuttingStageId = cuttingStageId;
 const String kCardboardCuttingStageId =
     'd7d91f75-2f85-446f-8c1d-a20606bdb3b1';

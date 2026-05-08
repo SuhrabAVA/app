@@ -990,6 +990,44 @@ void main() {
       expectBuiltStages(result, [kSheetCutStageId, kPackagingStageId]);
     });
 
+    test('Листорезка uses ТЗ UUID when built and read from stage_id', () {
+      const expectedSheetCutStageId = '19a67630-8374-49f1-ae5b-f2f66828720b';
+      expect(kSheetCutStageId, expectedSheetCutStageId);
+
+      for (final productTypeId in const [
+        'Листы',
+        'Пакет из 2х листов',
+      ]) {
+        final queue = buildOrderStageQueue(
+          productTypeId: productTypeId,
+          hasCutting: false,
+          hasCardboard: false,
+          hasFlexPrinting: false,
+        );
+        final sheetCutStage = queue.singleWhere(
+          (stage) => stage['stageName'] == 'Листорезка',
+          orElse: () => fail('Листорезка missing for $productTypeId'),
+        );
+
+        expect(sheetCutStage['stageKey'], expectedSheetCutStageId);
+        expect(sheetCutStage['stageId'], expectedSheetCutStageId);
+        expect(sheetCutStage['id'], expectedSheetCutStageId);
+        expect(sheetCutStage['workplaceId'], expectedSheetCutStageId);
+        expect(sheetCutStage['selectedWorkplaceId'], expectedSheetCutStageId);
+      }
+
+      final readBack = normalizeBuiltOrderStageQueue(const [
+        {
+          'stage_id': expectedSheetCutStageId,
+          'stage_name': 'Листорезка',
+        },
+      ]);
+
+      expect(readBack.single['stageId'], expectedSheetCutStageId);
+      expect(readBack.single['workplaceId'], expectedSheetCutStageId);
+      expect(readBack.single['id'], expectedSheetCutStageId);
+    });
+
     test('Листы: adds Бабинорезка when product width is smaller', () {
       final result = buildOrderStages(
         const OrderStageQueueDraft(
