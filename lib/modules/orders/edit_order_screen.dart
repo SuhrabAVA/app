@@ -3082,7 +3082,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
-            'Очередь изменилась, нажмите Собрать очередь',
+            'Очередь изменилась и будет перестроена автоматически '
+            'при сохранении',
           ),
         ),
       );
@@ -3091,7 +3092,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
-            'Сначала соберите очередь этапов',
+            'Очередь этапов пока не построена автоматически: выберите тип '
+            'продукта и параметры заказа',
           ),
         ),
       );
@@ -5950,7 +5952,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            'Очередь изменилась, нажмите Собрать очередь',
+            'Очередь изменилась и будет перестроена автоматически '
+            'при сохранении',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.error,
                   fontWeight: FontWeight.w600,
@@ -6102,7 +6105,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if ((_stageTemplateId == null || _stageTemplateId!.isEmpty) &&
         _stagePreviewStages.isEmpty) {
       return Text(
-        'Выберите очередь, чтобы просмотреть этапы производства',
+        'Очередь будет построена автоматически после выбора типа '
+        'продукта и параметров заказа',
         style: theme.textTheme.bodySmall,
       );
     }
@@ -6135,7 +6139,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     if (_stagePreviewStages.isEmpty) {
       return Text(
-        'Для выбранной очереди не найдено этапов',
+        'Для выбранных параметров заказа не найдено этапов',
         style: theme.textTheme.bodySmall,
       );
     }
