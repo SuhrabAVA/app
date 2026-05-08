@@ -369,6 +369,50 @@ class OrderQueueService {
     );
   }
 
+  /// Persists queue edits for an order that has already been launched.
+  ///
+  /// The normalized plan/task sync intentionally runs before legacy JSON and
+  /// order metadata updates. That keeps already-started/completed stages
+  /// protected by [OrderQueueSyncService.diff] and prevents the UI from saving
+  /// a new queue signature when the normalized queue could not be reconciled.
+  Future<SaveBuiltQueueResult> saveLaunchedOrderQueue(
+    String orderId,
+    List<Map<String, dynamic>> queue,
+    Map<String, String?> selections,
+    Map<String, dynamic>? signature, {
+    bool completeBobbin = false,
+    String? bobbinStageId,
+  }) async {
+    final id = orderId.trim();
+    if (id.isEmpty) {
+      return const SaveBuiltQueueResult(productionTasksCreated: false);
+    }
+    final rows = queue.map((row) => Map<String, dynamic>.from(row)).toList();
+
+    try {
+      await syncQueueForExistingOrder(
+        id,
+        rows,
+        completeBobbin: completeBobbin,
+        bobbinStageId: bobbinStageId,
+      );
+    } on OrderQueueSyncBlockedException {
+      rethrow;
+    } catch (error) {
+      final tableName = _syncFailureTableName(error);
+      _debugPrintQueueSyncFailure(id, tableName, error);
+      throw OrderQueueSaveException(
+        kCreateProductionTasksFailedMessage,
+        error,
+      );
+    }
+
+    await _upsertLegacyProductionPlan(id, rows);
+    await _updateOrderBuildMetadata(id, rows, selections, signature);
+
+    return const SaveBuiltQueueResult(productionTasksCreated: true);
+  }
+
   Future<void> createTasksFromSavedQueue(String orderId) async {
     final saved = await loadSavedQueue(orderId);
     if (saved.rows.isEmpty) {
