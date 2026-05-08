@@ -2945,12 +2945,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       SaveBuiltQueueResult queueSaveResult;
       try {
         if (!isCreating && wasAlreadyLaunched) {
-          await _orderQueueService.syncQueueForExistingOrder(
+          queueSaveResult = await _orderQueueService.saveLaunchedOrderQueue(
             createdOrUpdatedOrder.id,
             stageMaps,
+            <String, String?>{
+              'selected_v_stage': _selectedVStage,
+              'selected_p_stage': _selectedPStage,
+            },
+            currentQueueSignature,
           );
-          queueSaveResult =
-              const SaveBuiltQueueResult(productionTasksCreated: true);
         } else {
           queueSaveResult = await _orderQueueService.saveBuiltQueue(
             createdOrUpdatedOrder.id,

@@ -843,18 +843,6 @@ class TaskProvider with ChangeNotifier {
       if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
 
-    try {
-      final plan = await _supabase
-          .from('production_plans')
-          .select('stages')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['stages'] != null) {
-        final seq = await fromRows(plan['stages']);
-        if (seq.ids.isNotEmpty) return seq;
-      }
-    } catch (_) {}
-
     return const _StageSequenceData.empty();
   }
 
