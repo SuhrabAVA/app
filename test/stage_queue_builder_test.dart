@@ -4,10 +4,15 @@ import 'package:sheet_clone/modules/orders/order_stage_filter.dart'
     hide kBottomWithCardboardAssemblyStageId,
         kCardboardCuttingStageId,
         kCardboardInsertStageId;
+import 'package:sheet_clone/modules/orders/order_model.dart';
+import 'package:sheet_clone/modules/orders/product_model.dart';
 import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
+import 'package:sheet_clone/modules/production/production_screen.dart';
+import 'package:sheet_clone/modules/production_planning/planned_stage_model.dart';
+import 'package:sheet_clone/modules/production_planning/template_model.dart';
+import 'package:sheet_clone/modules/tasks/task_model.dart';
 
 void main() {
-
   void expectBuiltStages(
     List<BuiltOrderStage> stages,
     List<String> expectedStageKeys, {
@@ -73,6 +78,112 @@ void main() {
       );
     });
   }
+
+  test('production stage groups follow saved queue and selected P workplace', () {
+    final order = OrderModel(
+      id: 'order-with-p-queue',
+      manager: '',
+      customer: 'Test customer',
+      orderDate: DateTime(2026, 5, 8),
+      dueDate: null,
+      product: ProductModel(
+        id: 'product',
+        type: kPTypePackageProduct,
+        quantity: 1000,
+        width: 0,
+        height: 0,
+        depth: 0,
+      ),
+      stageTemplateId: 'legacy-template',
+    );
+
+    const plannedSequence = [
+      kBobbinStageId,
+      kAutoBigStageId,
+      kAutoSmallStageId,
+      kTubeStageId,
+      kCuttingStageId,
+      kCardboardCuttingStageId,
+      kCardboardInsertStageId,
+      kTwistedHandleStageId,
+      kPackagingStageId,
+    ];
+    const stageNames = {
+      kBobbinStageId: 'Бобинорезка',
+      kAutoBigStageId: 'Автомат большой',
+      kAutoSmallStageId: 'Автомат маленький',
+      kTubeStageId: 'Труба',
+      kCuttingStageId: 'Резка',
+      kCardboardCuttingStageId: 'Резка картона',
+      kCardboardInsertStageId: 'Вставка картона',
+      kTwistedHandleStageId: 'Кручёная ручка',
+      kPackagingStageId: 'Упаковка',
+    };
+    const stageGroupMap = {
+      kAutoBigStageId: kSwitchablePGroupKey,
+      kAutoSmallStageId: kSwitchablePGroupKey,
+      kTubeStageId: kSwitchablePGroupKey,
+    };
+
+    TaskModel task(String stageId, {String? groupKey}) => TaskModel(
+          id: 'task-$stageId',
+          orderId: order.id,
+          stageId: stageId,
+          stageGroupKey: groupKey ?? stageId,
+        );
+
+    final labels = productionStageLabelsForTesting(
+      order: order,
+      plannedSequence: plannedSequence,
+      stageGroupMap: stageGroupMap,
+      stageNames: stageNames,
+      templates: [
+        TemplateModel(
+          id: 'legacy-template',
+          name: 'Legacy template must not override saved queue',
+          stages: [
+            PlannedStage(stageId: kPackagingStageId, stageName: 'Упаковка'),
+            PlannedStage(
+              stageId: kAutoBigStageId,
+              stageName: 'Автомат большой',
+              workplaceIds: const [
+                kAutoBigStageId,
+                kAutoSmallStageId,
+                kTubeStageId,
+              ],
+              alternativeStageNames: const [
+                'Автомат маленький',
+                'Труба',
+              ],
+            ),
+          ],
+        ),
+      ],
+      orderTasks: [
+        task(kBobbinStageId),
+        task(kAutoBigStageId, groupKey: kSwitchablePGroupKey),
+        task(kCuttingStageId),
+        task(kCardboardCuttingStageId),
+        task(kCardboardInsertStageId),
+        task(kTwistedHandleStageId),
+        task(kPackagingStageId),
+      ],
+    );
+
+    expect(labels, [
+      'Бобинорезка',
+      'Автомат большой',
+      'Резка',
+      'Резка картона',
+      'Вставка картона',
+      'Кручёная ручка',
+      'Упаковка',
+    ]);
+    expect(
+      labels,
+      isNot(contains('Автомат большой / Автомат маленький / Труба')),
+    );
+  });
 
   test('inserts product stage after bobbin/flexo base stages', () {
     final queue = [

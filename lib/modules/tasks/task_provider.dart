@@ -470,6 +470,10 @@ class TaskProvider with ChangeNotifier {
       result.add(id);
     }
 
+    addCandidate(
+      pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']),
+    );
+
     dynamic workplaceIds = pick(const ['workplaceIds', 'workplace_ids']);
     if (workplaceIds is List) {
       for (final value in workplaceIds) {
@@ -479,12 +483,6 @@ class TaskProvider with ChangeNotifier {
       for (final token in workplaceIds.split(',')) {
         addCandidate(token);
       }
-    }
-
-    if (result.isEmpty) {
-      addCandidate(
-        pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']),
-      );
     }
 
     dynamic alt = pick(const [
