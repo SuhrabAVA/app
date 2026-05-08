@@ -145,4 +145,37 @@ void main() {
     expect(entries.map((entry) => entry.step), [1, 2]);
   });
 
+  test('physical seq stays unique for parallel stages on the same logical step', () {
+    const firstAlternative = OrderQueueSyncEntry(
+      stageId: 'die-cut-a1',
+      stageGroupKey: 'die_cut',
+      step: 3,
+    );
+    const secondAlternative = OrderQueueSyncEntry(
+      stageId: 'die-cut-a2',
+      stageGroupKey: 'die_cut',
+      step: 3,
+    );
+    const nextStage = OrderQueueSyncEntry(
+      stageId: 'pack',
+      stageGroupKey: 'pack',
+      step: 4,
+    );
+    const farStage = OrderQueueSyncEntry(
+      stageId: 'far-stage',
+      stageGroupKey: 'far-stage',
+      step: 3000,
+    );
+
+    final physicalSeq = OrderQueueSyncService.physicalSeqByIdentityKey(
+      const [firstAlternative, secondAlternative, nextStage, farStage],
+    );
+
+    expect(physicalSeq[firstAlternative.identityKey], 3001);
+    expect(physicalSeq[secondAlternative.identityKey], 3002);
+    expect(physicalSeq[nextStage.identityKey], 4);
+    expect(physicalSeq[farStage.identityKey], 3000);
+    expect(physicalSeq.values.toSet(), hasLength(4));
+  });
+
 }
