@@ -232,6 +232,75 @@ void main() {
     );
   });
 
+  test(
+    'production left menu follows saved P-package queue without task rows',
+    () {
+      final order = OrderModel(
+        id: 'p-queue-left-menu',
+        manager: '',
+        customer: 'P-package customer',
+        orderDate: DateTime(2026, 5, 8),
+        dueDate: null,
+        product: ProductModel(
+          id: 'product',
+          type: kPTypePackageProduct,
+          quantity: 1000,
+          width: 0,
+          height: 0,
+          depth: 0,
+        ),
+        status: OrderStatus.in_production.name,
+      );
+
+      const selectedAutoStageId = kAutoSmallStageId;
+      const plannedSequence = [
+        kBobbinStageId,
+        selectedAutoStageId,
+        kCuttingStageId,
+        kCardboardCuttingStageId,
+        kCardboardInsertStageId,
+        kTwistedHandleStageId,
+        kPackagingStageId,
+      ];
+      const stageNames = {
+        kBobbinStageId: 'Бобинорезка',
+        kAutoBigStageId: 'Автомат большой',
+        kAutoSmallStageId: 'Автомат маленький',
+        kTubeStageId: 'Труба',
+        kCuttingStageId: 'Резка',
+        kCardboardCuttingStageId: 'Резка картона',
+        kCardboardInsertStageId: 'Вставка картона',
+        kTwistedHandleStageId: 'Кручёная ручка',
+        kPackagingStageId: 'Упаковка',
+      };
+      const stageGroupMap = {
+        kAutoBigStageId: kSwitchablePGroupKey,
+        kAutoSmallStageId: kSwitchablePGroupKey,
+        kTubeStageId: kSwitchablePGroupKey,
+      };
+
+      final menuLabels = productionVisibleWorkplaceIdsForTesting(
+        order: order,
+        orderTasks: const [],
+        plannedSequence: plannedSequence,
+        stageGroupMap: stageGroupMap,
+        stageNames: stageNames,
+      ).map((stageId) => stageNames[stageId]).toList();
+
+      expect(menuLabels, [
+        'Бобинорезка',
+        'Автомат маленький',
+        'Резка',
+        'Резка картона',
+        'Вставка картона',
+        'Кручёная ручка',
+        'Упаковка',
+      ]);
+      expect(menuLabels, isNot(contains('Автомат большой')));
+      expect(menuLabels, isNot(contains('Труба')));
+    },
+  );
+
   test('production All chips include planned stages without task rows', () {
     final order = OrderModel(
       id: 'order-with-plan-without-tasks',

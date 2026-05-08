@@ -357,6 +357,88 @@ List<String> productionStageLabelsForTesting({
   return groups.values.map((group) => group.label).toList(growable: false);
 }
 
+_OrderGroupingData _groupingForOrderData({
+  required OrderModel order,
+  required List<TaskModel> orderTasks,
+  required Iterable<String> plannedSequence,
+  required Map<String, String> stageGroupMap,
+  required List<TemplateModel> templates,
+  required String Function(String stageId) labelForStage,
+}) {
+  final stageGroups = _buildProductionStageGroupsForOrder(
+    order: order,
+    orderTasks: orderTasks,
+    plannedSequence: plannedSequence,
+    stageGroupMap: stageGroupMap,
+    templates: templates,
+    labelForStage: labelForStage,
+  );
+  final lookup = _stageGroupLookupForGroups(stageGroups);
+  final tasksByGroup = _tasksByStageGroup(orderTasks, lookup);
+  final visibleWorkplaceIds = <String>{};
+
+  String firstNonEmpty(Iterable<String?> values) {
+    for (final value in values) {
+      final trimmed = value?.trim() ?? '';
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    return '';
+  }
+
+  void addVisibleForGroup(_StageGroupInfo group) {
+    final groupTasks = tasksByGroup[group.key] ?? const <TaskModel>[];
+    final firstGroupWorkplace =
+        firstNonEmpty(group.stageIds.map((stageId) => stageId));
+    if (firstGroupWorkplace.isEmpty) return;
+
+    if (groupTasks.isEmpty) {
+      // Saved queues may describe planned stages before task rows are created.
+      // Show the current/first workplace as a waiting destination so the order
+      // still appears in the left production menu.
+      visibleWorkplaceIds.add(firstGroupWorkplace);
+      return;
+    }
+
+    if (_groupCompleted(groupTasks)) return;
+
+    final capturedWorkplace = firstNonEmpty(
+      groupTasks.map((task) => task.capturedByWorkplaceId),
+    );
+    if (capturedWorkplace.isNotEmpty) {
+      visibleWorkplaceIds.add(capturedWorkplace);
+      return;
+    }
+
+    final activeStageIds = groupTasks
+        .where((task) =>
+            task.status != TaskStatus.waiting &&
+            task.status != TaskStatus.completed)
+        .map((task) => task.stageId.trim())
+        .where((stageId) => stageId.isNotEmpty)
+        .toSet();
+    if (activeStageIds.isNotEmpty) {
+      visibleWorkplaceIds.addAll(activeStageIds);
+      return;
+    }
+
+    // For switchable groups with only waiting tasks, add the selected variant
+    // from the saved queue/group order instead of every alternative task row.
+    visibleWorkplaceIds.add(firstGroupWorkplace);
+  }
+
+  for (final group in stageGroups.values) {
+    addVisibleForGroup(group);
+  }
+
+  final completed = _orderCompletedByGroups(stageGroups, tasksByGroup);
+  return _OrderGroupingData(
+    stageGroups: stageGroups,
+    tasksByGroup: tasksByGroup,
+    visibleWorkplaceIds: visibleWorkplaceIds,
+    isCompleted: completed,
+  );
+}
+
 @visibleForTesting
 List<TaskStatus> productionStageStatusesForTesting({
   required OrderModel order,
@@ -366,7 +448,7 @@ List<TaskStatus> productionStageStatusesForTesting({
   Map<String, String> stageNames = const <String, String>{},
   List<TemplateModel> templates = const <TemplateModel>[],
 }) {
-  final groups = _buildProductionStageGroupsForOrder(
+  final grouping = _groupingForOrderData(
     order: order,
     orderTasks: orderTasks,
     plannedSequence: plannedSequence,
@@ -374,11 +456,29 @@ List<TaskStatus> productionStageStatusesForTesting({
     templates: templates,
     labelForStage: (stageId) => stageNames[stageId] ?? stageId,
   );
-  final lookup = _stageGroupLookupForGroups(groups);
-  final tasksByGroup = _tasksByStageGroup(orderTasks, lookup);
-  return groups.values
-      .map((group) => _groupStatus(tasksByGroup[group.key] ?? const []))
+  return grouping.stageGroups.values
+      .map((group) => _groupStatus(grouping.tasksByGroup[group.key] ?? const []))
       .toList(growable: false);
+}
+
+@visibleForTesting
+List<String> productionVisibleWorkplaceIdsForTesting({
+  required OrderModel order,
+  required List<TaskModel> orderTasks,
+  required Iterable<String> plannedSequence,
+  Map<String, String> stageGroupMap = const <String, String>{},
+  Map<String, String> stageNames = const <String, String>{},
+  List<TemplateModel> templates = const <TemplateModel>[],
+}) {
+  final grouping = _groupingForOrderData(
+    order: order,
+    orderTasks: orderTasks,
+    plannedSequence: plannedSequence,
+    stageGroupMap: stageGroupMap,
+    templates: templates,
+    labelForStage: (stageId) => stageNames[stageId] ?? stageId,
+  );
+  return grouping.visibleWorkplaceIds.toList(growable: false);
 }
 
 class ProductionScreen extends StatefulWidget {
@@ -594,18 +694,28 @@ class _ProductionScreenState extends State<ProductionScreen>
       tasksByOrder.putIfAbsent(task.orderId, () => []).add(task);
     }
 
-    final activeWorkplaceIds = <String>{};
+    final groupingByOrder = <String, _OrderGroupingData>{};
     for (final order in orders) {
       final orderTasks = tasksByOrder[order.id] ?? const <TaskModel>[];
-      final hasActiveTasks = orderTasks.any((task) => task.status != TaskStatus.completed);
-      if (!hasActiveTasks) continue;
-      for (final task in orderTasks) {
-        final stageId = task.stageId.trim();
-        if (stageId.isEmpty) continue;
-        if (task.status != TaskStatus.completed) {
-          activeWorkplaceIds.add(stageId);
-        }
-      }
+      groupingByOrder[order.id] = _groupingForOrderData(
+        order: order,
+        orderTasks: orderTasks,
+        plannedSequence:
+            taskProvider.stageSequenceForOrder(order.id) ?? const <String>[],
+        stageGroupMap: taskProvider.stageGroupMapForOrder(order.id) ??
+            const <String, String>{},
+        templates: templateProvider.templates,
+        labelForStage: (stageId) =>
+            _stageLabel(stageId, taskProvider, personnelProvider, order.id),
+      );
+    }
+
+    final activeWorkplaceIds = <String>{};
+    for (final order in orders) {
+      if (order.statusEnum != OrderStatus.in_production) continue;
+      final grouping = groupingByOrder[order.id];
+      if (grouping == null || grouping.isCompleted) continue;
+      activeWorkplaceIds.addAll(grouping.visibleWorkplaceIds);
     }
 
     final tabs = [
@@ -899,11 +1009,11 @@ class _ProductionTab extends StatelessWidget {
   final _ProductionSort sort;
   final String? productTypeFilter;
 
-  Map<String, _StageGroupInfo> _stageGroupsForOrder(
+  _OrderGroupingData _groupingForOrder(
     OrderModel order,
     List<TaskModel> orderTasks,
   ) {
-    return _buildProductionStageGroupsForOrder(
+    return _groupingForOrderData(
       order: order,
       orderTasks: orderTasks,
       plannedSequence:
@@ -913,45 +1023,6 @@ class _ProductionTab extends StatelessWidget {
       templates: templateProvider.templates,
       labelForStage: (stageId) =>
           _stageLabel(stageId, taskProvider, personnelProvider, order.id),
-    );
-  }
-
-  _OrderGroupingData _groupingForOrder(
-    OrderModel order,
-    List<TaskModel> orderTasks,
-  ) {
-    final stageGroups = _stageGroupsForOrder(order, orderTasks);
-    final lookup = _stageGroupLookupForGroups(stageGroups);
-    final tasksByGroup = _tasksByStageGroup(orderTasks, lookup);
-    final visibleWorkplaceIds = <String>{};
-    for (final task in orderTasks) {
-      final normalizedStageId = task.stageId.trim();
-      final persistedGroup = task.stageGroupKey.trim();
-      final groupKey = persistedGroup.isNotEmpty
-          ? persistedGroup
-          : (lookup[normalizedStageId] ?? normalizedStageId);
-      final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
-      final capturedWorkplace = groupTasks
-          .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
-          .firstWhere((id) => id.isNotEmpty, orElse: () => '');
-      if (capturedWorkplace.isNotEmpty &&
-          capturedWorkplace != normalizedStageId) {
-        continue;
-      }
-      if (_groupCompleted(groupTasks)) {
-        continue;
-      }
-      final groupHasActive = groupTasks.any((t) => t.status != TaskStatus.waiting);
-      if (!groupHasActive || task.status != TaskStatus.waiting) {
-        visibleWorkplaceIds.add(normalizedStageId);
-      }
-    }
-    final completed = _orderCompletedByGroups(stageGroups, tasksByGroup);
-    return _OrderGroupingData(
-      stageGroups: stageGroups,
-      tasksByGroup: tasksByGroup,
-      visibleWorkplaceIds: visibleWorkplaceIds,
-      isCompleted: completed,
     );
   }
 
