@@ -24,32 +24,32 @@ import 'my_app.dart';
 import 'utils/http_overrides.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  _BootLogger.log('main() started');
-
-  FlutterError.onError = (FlutterErrorDetails details) {
-    if (isTransientFlutterVisualAssertion(details)) {
-      _BootLogger.log(
-        'Suppressed transient Flutter visual assertion: '
-        '${details.exceptionAsString()}',
-      );
-      return;
-    }
-
-    FlutterError.presentError(details);
-    _BootLogger.log(
-      'FLUTTER ERROR: ${details.exceptionAsString()}\n${details.stack}',
-    );
-  };
-
-  PlatformDispatcher.instance.onError = (error, stack) {
-    _BootLogger.log('PLATFORM ERROR: $error\n$stack');
-    return true;
-  };
-
   runZonedGuarded(
-    () {
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+
+      _BootLogger.log('main() started');
+
+      FlutterError.onError = (FlutterErrorDetails details) {
+        if (isTransientFlutterVisualAssertion(details)) {
+          _BootLogger.log(
+            'Suppressed transient Flutter visual assertion: '
+            '${details.exceptionAsString()}',
+          );
+          return;
+        }
+
+        FlutterError.presentError(details);
+        _BootLogger.log(
+          'FLUTTER ERROR: ${details.exceptionAsString()}\n${details.stack}',
+        );
+      };
+
+      PlatformDispatcher.instance.onError = (error, stack) {
+        _BootLogger.log('PLATFORM ERROR: $error\n$stack');
+        return true;
+      };
+
       try {
         HttpOverrides.global = MyHttpOverrides();
         _BootLogger.log('HttpOverrides configured');
