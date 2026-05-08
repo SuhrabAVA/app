@@ -310,10 +310,39 @@ List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
     normalized.add(map);
   }
 
+  final ordered = _hasPersistedStageOrder(normalized)
+      ? normalized
+      : _withPackagingStagesLast(normalized);
+
+  for (var i = 0; i < ordered.length; i++) {
+    ordered[i]['sortOrder'] = i + 1;
+    ordered[i]['order'] = i + 1;
+  }
+  return ordered;
+}
+
+bool _hasPersistedStageOrder(List<Map<String, dynamic>> stages) {
+  return stages.any((stage) {
+    for (final key in const <String>[
+      'sortOrder',
+      'order',
+      'step',
+      'step_no',
+      'seq',
+    ]) {
+      if (stage.containsKey(key) && stage[key] != null) return true;
+    }
+    return false;
+  });
+}
+
+List<Map<String, dynamic>> _withPackagingStagesLast(
+  List<Map<String, dynamic>> stages,
+) {
   final products = <Map<String, dynamic>>[];
   final packaging = <Map<String, dynamic>>[];
 
-  for (final stage in normalized) {
+  for (final stage in stages) {
     final id = _stageIdFromMap(stage);
     if (_isPackagingStage(stage, id)) {
       packaging.add(stage);
@@ -322,15 +351,10 @@ List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
     }
   }
 
-  final ordered = <Map<String, dynamic>>[
+  return <Map<String, dynamic>>[
     ...products,
     ...packaging,
   ];
-  for (var i = 0; i < ordered.length; i++) {
-    ordered[i]['sortOrder'] = i + 1;
-    ordered[i]['order'] = i + 1;
-  }
-  return ordered;
 }
 
 String? _stageIdFromMap(Map<String, dynamic> map) => (map['stageId'] ??
