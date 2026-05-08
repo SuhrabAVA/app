@@ -9,6 +9,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'app_ui_stability.dart';
 import 'modules/analytics/analytics_provider.dart';
 import 'modules/orders/orders_provider.dart';
 import 'modules/personnel/personnel_provider.dart';
@@ -28,6 +29,14 @@ Future<void> main() async {
   _BootLogger.log('main() started');
 
   FlutterError.onError = (FlutterErrorDetails details) {
+    if (isTransientFlutterVisualAssertion(details)) {
+      _BootLogger.log(
+        'Suppressed transient Flutter visual assertion: '
+        '${details.exceptionAsString()}',
+      );
+      return;
+    }
+
     FlutterError.presentError(details);
     _BootLogger.log(
       'FLUTTER ERROR: ${details.exceptionAsString()}\n${details.stack}',
@@ -136,6 +145,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
   Widget build(BuildContext context) {
     if (!_isReady) {
       return MaterialApp(
+        theme: appTheme,
         home: Scaffold(
           body: Center(
             child: Padding(
