@@ -770,16 +770,10 @@ class OrderQueueMapper {
     final result = <OrderQueueSyncEntry>[];
     final createdKeys = <String>{};
     var fallbackStep = 1;
-    String? previousGroupKey;
-
     for (final row in rows) {
       final stageIds = stageIdsFromRow(row);
       if (stageIds.isEmpty) continue;
       final groupKey = stageGroupKeyFromRow(row, stageIds);
-      if (groupKey.isNotEmpty && groupKey == previousGroupKey) {
-        continue;
-      }
-      previousGroupKey = groupKey;
       final step = readStep(row, fallbackStep);
       final status = (row['status'] ?? 'waiting').toString();
 

@@ -251,10 +251,15 @@ class OrderQueueSyncService {
       tableName: 'prod_plans',
       action: () => _ensurePlan(orderId),
     );
-    final currentStages = await _runTableStep(
+    final loadedStages = await _runTableStep(
       orderId: orderId,
       tableName: 'prod_plan_stages',
       action: () => _loadPlanStages(planId),
+    );
+    final currentStages = await _runTableStep(
+      orderId: orderId,
+      tableName: 'prod_plan_stages',
+      action: () => _deleteDuplicatePendingPlanStages(loadedStages),
     );
     final currentTasks = await _runTableStep(
       orderId: orderId,
@@ -539,6 +544,25 @@ class OrderQueueSyncService {
     return Map<String, dynamic>.from(payload)..remove('name');
   }
 
+  Future<List<OrderQueueSyncEntry>> _deleteDuplicatePendingPlanStages(
+    List<OrderQueueSyncEntry> existing,
+  ) async {
+    final seen = <String>{};
+    final kept = <OrderQueueSyncEntry>[];
+    for (final entry in existing) {
+      if (seen.add(entry.identityKey)) {
+        kept.add(entry);
+        continue;
+      }
+      if (!isPendingStatus(entry.status)) {
+        kept.add(entry);
+        continue;
+      }
+      await _deletePendingPlanStage(entry);
+    }
+    return kept;
+  }
+
   Future<void> _deletePlanStageByQueueSlot(
     OrderQueueSyncEntry current, {
     required bool includeStageGroupKey,
@@ -782,11 +806,25 @@ class OrderQueueSyncService {
         );
   }
 
+  Future<void> _deleteDuplicatePendingTasks(
+    List<OrderQueueSyncEntry> existing,
+  ) async {
+    final seen = <String>{};
+    for (final entry in existing) {
+      if (seen.add(entry.identityKey)) continue;
+      if (!isPendingStatus(entry.status)) continue;
+      final id = entry.id?.trim() ?? '';
+      if (id.isEmpty) continue;
+      await _sb.from('tasks').delete().eq('id', id);
+    }
+  }
+
   Future<void> _createMissingTasks(
     String orderId,
     List<OrderQueueSyncEntry> nextQueue,
   ) async {
     final existing = await _loadTasks(orderId);
+    await _deleteDuplicatePendingTasks(existing);
     final existingKeys = existing.map((entry) => entry.identityKey).toSet();
     for (final next in nextQueue) {
       if (!existingKeys.add(next.identityKey)) continue;

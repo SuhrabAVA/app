@@ -4,6 +4,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../orders/order_queue_service.dart';
+
 /// Lightweight widget that reads stages for a given order (by id)
 /// from public.v_order_plan_stages and keeps them live via realtime.
 class ProductionStagesWidget extends StatefulWidget {
@@ -42,18 +44,142 @@ class _ProductionStagesWidgetState extends State<ProductionStagesWidget> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final res = await _sb
-        .from('v_order_plan_stages')
-        .select('*')
-        .eq('order_id', widget.orderId)
-        .order('step_no', ascending: true);
-    final list = (res as List).cast<Map<String, dynamic>>();
+    var list = <Map<String, dynamic>>[];
+    try {
+      final res = await _sb
+          .from('v_order_plan_stages')
+          .select('*')
+          .eq('order_id', widget.orderId)
+          .order('step_no', ascending: true);
+      if (res is List) {
+        list = res
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+      }
+    } catch (_) {
+      // Older deployments may not have the view; loadSavedQueue falls back to
+      // prod_plan_stages / saved order JSON using the same priority as the
+      // employee workspace.
+    }
+
+    if (list.isEmpty) {
+      final savedQueue = await OrderQueueService(_sb).loadSavedQueue(
+        widget.orderId,
+      );
+      list = savedQueue.rows;
+    }
+
+    list = _logicalStageRows(list);
+    if (!mounted) return;
     setState(() {
       _rows = list;
       _planId = list.isNotEmpty ? list.first['plan_id'] as String? : null;
       _loading = false;
     });
     _resubscribe();
+  }
+
+  List<Map<String, dynamic>> _logicalStageRows(
+    List<Map<String, dynamic>> rows,
+  ) {
+    final groups = <String, Map<String, dynamic>>{};
+    final order = <String>[];
+    for (var i = 0; i < rows.length; i++) {
+      final row = Map<String, dynamic>.from(rows[i]);
+      final stageId = (row['stage_id'] ?? row['stageId'] ?? row['workplaceId'])
+              ?.toString()
+              .trim() ??
+          '';
+      if (stageId.isEmpty) continue;
+      final explicitGroup = (row['stage_group_key'] ?? row['stageGroupKey'])
+              ?.toString()
+              .trim() ??
+          '';
+      final groupKey = explicitGroup.isEmpty ? stageId : explicitGroup;
+      final group = groups.putIfAbsent(groupKey, () {
+        order.add(groupKey);
+        return <String, dynamic>{
+          ...row,
+          'stage_group_key': groupKey,
+          'workplaceIds': <String>[],
+        };
+      });
+      final ids = (group['workplaceIds'] as List).cast<String>();
+      if (!ids.contains(stageId)) ids.add(stageId);
+      group['stage_id'] ??= stageId;
+      group['stageId'] ??= stageId;
+      group['stage_name'] = _stageName(group, row);
+      group['status'] = _strongerStatus(group['status'], row['status']);
+      group['step_no'] = _minInt(
+        group['step_no'] ?? group['order'],
+        row['step_no'] ?? row['order'] ?? row['seq'],
+        i + 1,
+      );
+      group['order'] = group['step_no'];
+      if (row['plan_id'] != null) group['plan_id'] ??= row['plan_id'];
+    }
+    return order.map((key) => groups[key]!).toList(growable: false)
+      ..sort(
+        (a, b) => _readInt(a['step_no']).compareTo(_readInt(b['step_no'])),
+      );
+  }
+
+  String _stageName(Map<String, dynamic> current, Map<String, dynamic> next) {
+    for (final row in [current, next]) {
+      for (final key in const [
+        'stage_name',
+        'stageName',
+        'name',
+        'workplaceName',
+      ]) {
+        final value = row[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+    return 'Этап';
+  }
+
+  int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  int _minInt(dynamic a, dynamic b, int fallback) {
+    final ai = _readInt(a);
+    final bi = _readInt(b);
+    if (ai <= 0 && bi <= 0) return fallback;
+    if (ai <= 0) return bi;
+    if (bi <= 0) return ai;
+    return ai < bi ? ai : bi;
+  }
+
+  String _strongerStatus(dynamic a, dynamic b) {
+    int rank(dynamic status) {
+      switch ((status ?? '').toString().toLowerCase().replaceAll('-', '_')) {
+        case 'completed':
+        case 'complete':
+        case 'done':
+          return 5;
+        case 'inprogress':
+        case 'in_progress':
+        case 'started':
+          return 4;
+        case 'paused':
+        case 'problem':
+          return 3;
+        case 'ready':
+        case 'available':
+          return 2;
+        default:
+          return 1;
+      }
+    }
+
+    return rank(b) > rank(a)
+        ? (b ?? 'waiting').toString()
+        : (a ?? 'waiting').toString();
   }
 
   void _resubscribe() {
@@ -66,7 +192,9 @@ class _ProductionStagesWidgetState extends State<ProductionStagesWidget> {
           schema: 'public',
           table: 'prod_plan_stages',
           filter: PostgresChangeFilter.equals('plan_id', _planId!),
-          callback: (payload) { _load(); },
+          callback: (payload) {
+            _load();
+          },
         )
         .subscribe();
 
@@ -77,7 +205,9 @@ class _ProductionStagesWidgetState extends State<ProductionStagesWidget> {
           schema: 'public',
           table: 'prod_plans',
           filter: PostgresChangeFilter.equals('id', _planId!),
-          callback: (payload) { _load(); },
+          callback: (payload) {
+            _load();
+          },
         )
         .subscribe();
   }
@@ -115,7 +245,10 @@ class _ProductionStagesWidgetState extends State<ProductionStagesWidget> {
     } else if (_rows.isEmpty) {
       body = Padding(
         padding: widget.padding,
-        child: Text('План этапов отсутствует', style: theme.textTheme.bodyMedium),
+        child: Text(
+          'План этапов отсутствует',
+          style: theme.textTheme.bodyMedium,
+        ),
       );
     } else {
       body = Padding(
@@ -142,16 +275,24 @@ class _StageChip extends StatelessWidget {
   const _StageChip({required this.row});
 
   Color _statusColor(BuildContext context, String? status) {
-    switch (status) {
-      case 'inProgress':
+    switch ((status ?? '').toLowerCase().replaceAll('-', '_')) {
+      case 'inprogress':
+      case 'in_progress':
+      case 'started':
         return Colors.blueGrey.shade400;
       case 'paused':
         return const Color(0xFFCCB389); // warm sand
       case 'problem':
         return const Color(0xFFD9A1A3); // soft red
       case 'completed':
+      case 'complete':
+      case 'done':
         return const Color(0xFFA9C4AE); // soft green
       case 'waiting':
+      case 'pending':
+      case 'planned':
+      case 'new':
+      case 'todo':
       default:
         return Colors.grey.shade300;
     }
@@ -160,9 +301,14 @@ class _StageChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = row['stage_name'] as String? ?? 'Этап';
-    final no = row['step_no'] as int?;
-    final status = row['status'] as String? ?? 'waiting';
+    final name = row['stage_name']?.toString() ?? 'Этап';
+    final rawNo = row['step_no'];
+    final no = rawNo is int
+        ? rawNo
+        : rawNo is num
+            ? rawNo.toInt()
+            : int.tryParse(rawNo?.toString() ?? '');
+    final status = row['status']?.toString() ?? 'waiting';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
