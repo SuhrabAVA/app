@@ -40,6 +40,7 @@ class TaskProvider with ChangeNotifier {
   final Map<String, List<String>> _orderStageSequences = {};
   final Map<String, Map<String, String>> _orderStageNames = {};
   final Map<String, Map<String, String>> _orderStageGroupMaps = {};
+  final Set<String> _loadedStageSequenceOrderIds = <String>{};
   RealtimeChannel? _tasksChannel;
   final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
 
@@ -292,6 +293,7 @@ class TaskProvider with ChangeNotifier {
         ..clear()
         ..addAll(List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
       final orderIds = _tasks.map((t) => t.orderId).toSet();
+      _loadedStageSequenceOrderIds.clear();
       await _preloadStageSequences(orderIds);
       notifyListeners();
     } catch (e, st) {
@@ -388,12 +390,25 @@ class TaskProvider with ChangeNotifier {
 
   // ===== updates =====
 
+  Future<void> ensureStageSequencesForOrders(Iterable<String> orderIds) async {
+    final missingOrderIds = orderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .where((id) => !_loadedStageSequenceOrderIds.contains(id))
+        .toSet();
+    if (missingOrderIds.isEmpty) return;
+
+    await _preloadStageSequences(missingOrderIds);
+    notifyListeners();
+  }
+
   Future<void> _preloadStageSequences(Iterable<String> orderIds) async {
     for (final orderId in orderIds) {
       if (orderId.isEmpty) {
         continue;
       }
       final data = await _fetchStageSequence(orderId);
+      _loadedStageSequenceOrderIds.add(orderId);
       if (data.ids.isNotEmpty) {
         _orderStageSequences[orderId] = data.ids;
       } else {

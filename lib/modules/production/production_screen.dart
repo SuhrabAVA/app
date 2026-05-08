@@ -116,6 +116,34 @@ bool _orderCompletedByGroups(
   return true;
 }
 
+Map<String, String> _stageGroupLookupForGroups(
+  Map<String, _StageGroupInfo> groups,
+) {
+  final lookup = <String, String>{};
+  for (final entry in groups.entries) {
+    for (final stageId in entry.value.stageIds) {
+      lookup[stageId] = entry.key;
+    }
+  }
+  return lookup;
+}
+
+Map<String, List<TaskModel>> _tasksByStageGroup(
+  List<TaskModel> orderTasks,
+  Map<String, String> lookup,
+) {
+  final byGroup = <String, List<TaskModel>>{};
+  for (final task in orderTasks) {
+    final normalizedStageId = task.stageId.trim();
+    final persistedGroup = task.stageGroupKey.trim();
+    final groupKey = persistedGroup.isNotEmpty
+        ? persistedGroup
+        : (lookup[normalizedStageId] ?? normalizedStageId);
+    byGroup.putIfAbsent(groupKey, () => []).add(task);
+  }
+  return byGroup;
+}
+
 String _stageLabel(
   String stageId,
   TaskProvider tasks,
@@ -329,6 +357,30 @@ List<String> productionStageLabelsForTesting({
   return groups.values.map((group) => group.label).toList(growable: false);
 }
 
+@visibleForTesting
+List<TaskStatus> productionStageStatusesForTesting({
+  required OrderModel order,
+  required List<TaskModel> orderTasks,
+  required Iterable<String> plannedSequence,
+  Map<String, String> stageGroupMap = const <String, String>{},
+  Map<String, String> stageNames = const <String, String>{},
+  List<TemplateModel> templates = const <TemplateModel>[],
+}) {
+  final groups = _buildProductionStageGroupsForOrder(
+    order: order,
+    orderTasks: orderTasks,
+    plannedSequence: plannedSequence,
+    stageGroupMap: stageGroupMap,
+    templates: templates,
+    labelForStage: (stageId) => stageNames[stageId] ?? stageId,
+  );
+  final lookup = _stageGroupLookupForGroups(groups);
+  final tasksByGroup = _tasksByStageGroup(orderTasks, lookup);
+  return groups.values
+      .map((group) => _groupStatus(tasksByGroup[group.key] ?? const []))
+      .toList(growable: false);
+}
+
 class ProductionScreen extends StatefulWidget {
   const ProductionScreen({super.key});
 
@@ -479,9 +531,6 @@ class _ProductionScreenState extends State<ProductionScreen>
 
     for (final group in groups) {
       final tasksForStage = tasksByGroup[group.key] ?? const <TaskModel>[];
-      if (tasksForStage.isEmpty) {
-        continue;
-      }
       final status = _groupStatus(tasksForStage);
       final color = _stageColor(status);
       final label = group.label;
@@ -507,13 +556,6 @@ class _ProductionScreenState extends State<ProductionScreen>
           ],
         ),
       ));
-    }
-
-    if (chips.isEmpty) {
-      return const Text(
-        'Этапы не назначены',
-        style: TextStyle(color: Colors.black54),
-      );
     }
 
     return SingleChildScrollView(
@@ -874,39 +916,13 @@ class _ProductionTab extends StatelessWidget {
     );
   }
 
-  Map<String, String> _stageGroupLookup(Map<String, _StageGroupInfo> groups) {
-    final lookup = <String, String>{};
-    for (final entry in groups.entries) {
-      for (final stageId in entry.value.stageIds) {
-        lookup[stageId] = entry.key;
-      }
-    }
-    return lookup;
-  }
-
-  Map<String, List<TaskModel>> _tasksByGroup(
-    List<TaskModel> orderTasks,
-    Map<String, String> lookup,
-  ) {
-    final byGroup = <String, List<TaskModel>>{};
-    for (final task in orderTasks) {
-      final normalizedStageId = task.stageId.trim();
-      final persistedGroup = task.stageGroupKey.trim();
-      final groupKey = persistedGroup.isNotEmpty
-          ? persistedGroup
-          : (lookup[normalizedStageId] ?? normalizedStageId);
-      byGroup.putIfAbsent(groupKey, () => []).add(task);
-    }
-    return byGroup;
-  }
-
   _OrderGroupingData _groupingForOrder(
     OrderModel order,
     List<TaskModel> orderTasks,
   ) {
     final stageGroups = _stageGroupsForOrder(order, orderTasks);
-    final lookup = _stageGroupLookup(stageGroups);
-    final tasksByGroup = _tasksByGroup(orderTasks, lookup);
+    final lookup = _stageGroupLookupForGroups(stageGroups);
+    final tasksByGroup = _tasksByStageGroup(orderTasks, lookup);
     final visibleWorkplaceIds = <String>{};
     for (final task in orderTasks) {
       final normalizedStageId = task.stageId.trim();
@@ -1019,6 +1035,12 @@ class _ProductionTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      taskProvider.ensureStageSequencesForOrders(
+        orders.map((order) => order.id),
+      );
+    });
+
     final tasksByOrder = <String, List<TaskModel>>{};
     for (final task in allTasks) {
       tasksByOrder.putIfAbsent(task.orderId, () => []).add(task);
