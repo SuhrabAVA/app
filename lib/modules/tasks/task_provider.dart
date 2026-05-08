@@ -775,7 +775,7 @@ class TaskProvider with ChangeNotifier {
       );
     }
 
-    // Shared priority: saved order queue -> normalized rows -> legacy
+    // Shared priority: normalized rows -> saved order queue -> legacy
     // production_plans.stages -> template fallback for old orders only.
     final savedQueue =
         await OrderQueueService(_supabase).loadSavedQueue(orderId);
