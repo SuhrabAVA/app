@@ -686,8 +686,10 @@ class _ProductionScreenState extends State<ProductionScreen>
     }.toList()
       ..sort();
 
-    final workplaces = List.of(personnelProvider.workplaces)
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final workplaceNamesById = {
+      for (final workplace in personnelProvider.workplaces)
+        workplace.id: workplace.name,
+    };
 
     final tasksByOrder = <String, List<TaskModel>>{};
     for (final task in tasks) {
@@ -710,19 +712,37 @@ class _ProductionScreenState extends State<ProductionScreen>
       );
     }
 
-    final activeWorkplaceIds = <String>{};
+    final activeStageTabs = <String, _ProductionTabInfo>{};
     for (final order in orders) {
       if (order.statusEnum != OrderStatus.in_production) continue;
       final grouping = groupingByOrder[order.id];
       if (grouping == null || grouping.isCompleted) continue;
-      activeWorkplaceIds.addAll(grouping.visibleWorkplaceIds);
+
+      for (final group in grouping.stageGroups.values) {
+        if (group.stageIds.isEmpty) continue;
+
+        final tabId = group.stageIds.first.trim();
+        if (tabId.isEmpty || !grouping.visibleWorkplaceIds.contains(tabId)) {
+          continue;
+        }
+
+        final groupTasks =
+            grouping.tasksByGroup[group.key] ?? const <TaskModel>[];
+        if (_groupCompleted(groupTasks)) continue;
+
+        activeStageTabs.putIfAbsent(
+          tabId,
+          () => _ProductionTabInfo(
+            id: tabId,
+            label: workplaceNamesById[tabId] ?? group.label,
+          ),
+        );
+      }
     }
 
     final tabs = [
       const _ProductionTabInfo(id: _allTabId, label: _allLabel, isAll: true),
-      for (final w in workplaces)
-        if (activeWorkplaceIds.contains(w.id))
-          _ProductionTabInfo(id: w.id, label: w.name),
+      ...activeStageTabs.values,
       const _ProductionTabInfo(
         id: _completedTabId,
         label: _completedLabel,
@@ -1070,7 +1090,8 @@ class _ProductionTab extends StatelessWidget {
       orElse: () => const _StageGroupInfo(key: '', stageIds: [], label: ''),
     );
     if (group.stageIds.isEmpty) return false;
-    final tasksForGroup = grouping.tasksByGroup[group.key] ?? const <TaskModel>[];
+    final tasksForGroup =
+        grouping.tasksByGroup[group.key] ?? const <TaskModel>[];
     return tasksForGroup.any((task) => task.status == TaskStatus.inProgress);
   }
 
