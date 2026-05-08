@@ -1428,61 +1428,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     });
   }
 
-  List<Map<String, dynamic>> _decodeAndSortStageMaps(dynamic stagesData) {
-    final stageMaps = <Map<String, dynamic>>[];
-
-    int orderOf(Map<String, dynamic> m, int fallback) {
-      final rawOrder = m['order'] ?? m['step'] ?? m['position'] ?? m['step_no'];
-      if (rawOrder is num) return rawOrder.toInt();
-      if (rawOrder is String) {
-        final parsed = int.tryParse(rawOrder);
-        if (parsed != null) return parsed;
-      }
-      return fallback;
-    }
-
-    if (stagesData is List) {
-      for (final item in stagesData.whereType<Map>()) {
-        stageMaps.add(Map<String, dynamic>.from(item));
-      }
-    } else if (stagesData is Map) {
-      final entries = stagesData.entries.toList()
-        ..sort((a, b) {
-          final ak = int.tryParse(a.key.toString());
-          final bk = int.tryParse(b.key.toString());
-          if (ak != null && bk != null) return ak.compareTo(bk);
-          if (ak != null) return -1;
-          if (bk != null) return 1;
-          return a.key.toString().compareTo(b.key.toString());
-        });
-      for (final entry in entries) {
-        if (entry.value is! Map) continue;
-        final map = Map<String, dynamic>.from(entry.value as Map);
-        final hasOrder = map.containsKey('order') ||
-            map.containsKey('step') ||
-            map.containsKey('position') ||
-            map.containsKey('step_no');
-        if (!hasOrder) {
-          final parsed = int.tryParse(entry.key.toString());
-          if (parsed != null) {
-            map['order'] = parsed;
-          }
-        }
-        stageMaps.add(map);
-      }
-    }
-
-    final entries = stageMaps.asMap().entries.toList();
-    entries.sort((a, b) {
-      final ao = orderOf(a.value, a.key);
-      final bo = orderOf(b.value, b.key);
-      final cmp = ao.compareTo(bo);
-      if (cmp != 0) return cmp;
-      return a.key.compareTo(b.key);
-    });
-    return entries.map((e) => e.value).toList(growable: true);
-  }
-
   void _onStageTemplateTextChanged() {
     if (_updatingStageTemplateText) return;
     final text = _stageTemplateController.text;
@@ -1700,19 +1645,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Future<void> _rebuildStagePreview() async {
     final templateStages = _selectedTemplateStageMaps();
 
-    // Для редактирования сначала берём уже сохранённый план заказа,
-    // чтобы сохранить выбранные вручную переключаемые этапы как источник.
-    List<Map<String, dynamic>> rawStages = <Map<String, dynamic>>[];
+    // Для редактирования сначала берём уже сохранённую очередь заказа
+    // через общий сервис, чтобы UI не выбирал источник плана напрямую.
+    List<Map<String, dynamic>> existingStages = <Map<String, dynamic>>[];
     if (widget.order != null) {
       try {
-        final plan = await _sb
-            .from('production_plans')
-            .select('stages')
-            .eq('order_id', widget.order!.id)
-            .maybeSingle();
-        rawStages = _decodeAndSortStageMaps(plan?['stages']);
+        final saved = await _orderQueueService.loadSavedQueue(widget.order!.id);
+        existingStages = saved.rows;
       } catch (_) {
-        rawStages = <Map<String, dynamic>>[];
+        existingStages = <Map<String, dynamic>>[];
       }
     }
 
@@ -1725,7 +1666,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     try {
       final queue = _buildStageQueueFromCurrentDraft(
-        existingStages: rawStages,
+        existingStages: existingStages,
         templateStages: templateStages,
       );
       if (!mounted) return;
