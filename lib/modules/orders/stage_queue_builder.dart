@@ -231,9 +231,58 @@ List<Map<String, dynamic>> buildOrderStageQueue({
     selectedSwitchableStageId: selectedFromSource,
     selectedSwitchableStageIdsByStageKey: selectedByStageKey,
   );
-  return normalizeBuiltOrderStageQueue(
+  final built = normalizeBuiltOrderStageQueue(
     buildOrderStages(draft).map((stage) => stage.toMap()).toList(),
   );
+  return _preserveSwitchableBobbinFlexOrder(built, existingStages);
+}
+
+List<Map<String, dynamic>> _preserveSwitchableBobbinFlexOrder(
+  List<Map<String, dynamic>> built,
+  List<Map<String, dynamic>> existingStages,
+) {
+  if (built.length < 2 || existingStages.length < 2) return built;
+
+  final existingBobbinIndex = existingStages.indexWhere(
+    (stage) => _isBobbinStage(stage, _stageIdFromMap(stage)),
+  );
+  final existingFlexIndex = existingStages.indexWhere(
+    (stage) => _isFlexPrintingStage(stage, _stageIdFromMap(stage)),
+  );
+  if (existingBobbinIndex < 0 || existingFlexIndex < 0) return built;
+
+  final builtBobbinIndex = built.indexWhere(
+    (stage) => _isBobbinStage(stage, _stageIdFromMap(stage)),
+  );
+  final builtFlexIndex = built.indexWhere(
+    (stage) => _isFlexPrintingStage(stage, _stageIdFromMap(stage)),
+  );
+  if (builtBobbinIndex < 0 || builtFlexIndex < 0) return built;
+
+  final existingFlexBeforeBobbin = existingFlexIndex < existingBobbinIndex;
+  final builtFlexBeforeBobbin = builtFlexIndex < builtBobbinIndex;
+  if (existingFlexBeforeBobbin == builtFlexBeforeBobbin) return built;
+
+  final reordered = built
+      .map((stage) => Map<String, dynamic>.from(stage))
+      .toList(growable: true);
+  final flexStage = reordered.removeAt(builtFlexIndex);
+  final bobbinIndexAfterRemove = reordered.indexWhere(
+    (stage) => _isBobbinStage(stage, _stageIdFromMap(stage)),
+  );
+  if (bobbinIndexAfterRemove < 0) return built;
+  reordered.insert(
+    existingFlexBeforeBobbin
+        ? bobbinIndexAfterRemove
+        : bobbinIndexAfterRemove + 1,
+    flexStage,
+  );
+
+  for (var i = 0; i < reordered.length; i++) {
+    reordered[i]['sortOrder'] = i + 1;
+    reordered[i]['order'] = i + 1;
+  }
+  return reordered;
 }
 
 
