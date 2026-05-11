@@ -301,6 +301,148 @@ void main() {
     },
   );
 
+  test(
+    'production left menu shows every workplace in a parallel stage group',
+    () {
+      final order = OrderModel(
+        id: 'parallel-group-order',
+        manager: '',
+        customer: 'Parallel customer',
+        orderDate: DateTime(2026, 5, 8),
+        dueDate: null,
+        product: ProductModel(
+          id: 'product',
+          type: kTwoSheetPackageProductTypeId,
+          quantity: 1000,
+          width: 0,
+          height: 0,
+          depth: 0,
+        ),
+        status: OrderStatus.in_production.name,
+      );
+
+      const plannedSequence = [
+        kSheetCutStageId,
+        kDieCutA1WorkplaceId,
+        kDieCutA2WorkplaceId,
+        kPackagingStageId,
+      ];
+      const stageGroupMap = {
+        kDieCutA1WorkplaceId: kDieCutA1A2StageId,
+        kDieCutA2WorkplaceId: kDieCutA1A2StageId,
+      };
+      const stageNames = {
+        kSheetCutStageId: 'Листорезка',
+        kDieCutA1WorkplaceId: 'Высечка A1',
+        kDieCutA2WorkplaceId: 'Высечка A2',
+        kPackagingStageId: 'Упаковка',
+      };
+
+      TaskModel task(String stageId, {String? groupKey}) => TaskModel(
+            id: 'task-$stageId',
+            orderId: order.id,
+            stageId: stageId,
+            stageGroupKey: groupKey ?? stageId,
+          );
+
+      final visibleWorkplaces = productionVisibleWorkplaceIdsForTesting(
+        order: order,
+        orderTasks: [
+          task(kSheetCutStageId),
+          task(kDieCutA1WorkplaceId, groupKey: kDieCutA1A2StageId),
+          task(kDieCutA2WorkplaceId, groupKey: kDieCutA1A2StageId),
+          task(kPackagingStageId),
+        ],
+        plannedSequence: plannedSequence,
+        stageGroupMap: stageGroupMap,
+        stageNames: stageNames,
+      );
+      final labels = productionStageLabelsForTesting(
+        order: order,
+        orderTasks: [
+          task(kSheetCutStageId),
+          task(kDieCutA1WorkplaceId, groupKey: kDieCutA1A2StageId),
+          task(kDieCutA2WorkplaceId, groupKey: kDieCutA1A2StageId),
+          task(kPackagingStageId),
+        ],
+        plannedSequence: plannedSequence,
+        stageGroupMap: stageGroupMap,
+        stageNames: stageNames,
+      );
+
+      expect(visibleWorkplaces, containsAll([
+        kSheetCutStageId,
+        kDieCutA1WorkplaceId,
+        kDieCutA2WorkplaceId,
+        kPackagingStageId,
+      ]));
+      expect(labels, [
+        'Листорезка',
+        'Высечка A1 / Высечка A2',
+        'Упаковка',
+      ]);
+    },
+  );
+
+  test(
+    'production saved queue keeps parallel stage group together without task rows',
+    () {
+      final order = OrderModel(
+        id: 'parallel-group-without-tasks',
+        manager: '',
+        customer: 'Parallel plan customer',
+        orderDate: DateTime(2026, 5, 8),
+        dueDate: null,
+        product: ProductModel(
+          id: 'product',
+          type: kTwoSheetPackageProductTypeId,
+          quantity: 1000,
+          width: 0,
+          height: 0,
+          depth: 0,
+        ),
+        status: OrderStatus.in_production.name,
+      );
+
+      const plannedSequence = [
+        kDieCutA1WorkplaceId,
+        kDieCutA2WorkplaceId,
+        kScotchStageId,
+      ];
+      const stageGroupMap = {
+        kDieCutA1WorkplaceId: kDieCutA1A2StageId,
+        kDieCutA2WorkplaceId: kDieCutA1A2StageId,
+      };
+      const stageNames = {
+        kDieCutA1WorkplaceId: 'Высечка A1',
+        kDieCutA2WorkplaceId: 'Высечка A2',
+        kScotchStageId: 'Скотч',
+      };
+
+      final visibleWorkplaces = productionVisibleWorkplaceIdsForTesting(
+        order: order,
+        orderTasks: const [],
+        plannedSequence: plannedSequence,
+        stageGroupMap: stageGroupMap,
+        stageNames: stageNames,
+      );
+      final labels = productionStageLabelsForTesting(
+        order: order,
+        orderTasks: const [],
+        plannedSequence: plannedSequence,
+        stageGroupMap: stageGroupMap,
+        stageNames: stageNames,
+      );
+
+      expect(visibleWorkplaces, [
+        kDieCutA1WorkplaceId,
+        kDieCutA2WorkplaceId,
+        kScotchStageId,
+      ]);
+      expect(labels, ['Высечка A1 / Высечка A2', 'Скотч']);
+    },
+  );
+
   test('production All chips include planned stages without task rows', () {
     final order = OrderModel(
       id: 'order-with-plan-without-tasks',
