@@ -69,6 +69,66 @@ void main() {
     );
   });
 
+  test(
+    'diff ignores legacy protected task group when its plan stage is unchanged',
+    () {
+      const protectedPlanStage = OrderQueueSyncEntry(
+        stageId: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        stageGroupKey: 'bobbin',
+        step: 1,
+        status: 'completed',
+        row: {'name': 'Бобинорезка'},
+      );
+      const legacyProtectedTask = OrderQueueSyncEntry(
+        stageId: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        stageGroupKey: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        step: 1,
+        status: 'completed',
+      );
+      const pendingAutoBig = OrderQueueSyncEntry(
+        stageId: 'auto-big',
+        stageGroupKey: 'p_main_switch',
+        step: 2,
+        status: 'waiting',
+        row: {'name': 'Автомат большой'},
+      );
+      const nextProtectedPlanStage = OrderQueueSyncEntry(
+        stageId: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        stageGroupKey: 'bobbin',
+        step: 1,
+      );
+      const nextAutoSmall = OrderQueueSyncEntry(
+        stageId: 'auto-small',
+        stageGroupKey: 'p_main_switch',
+        step: 2,
+        row: {'stageName': 'Автомат маленький'},
+      );
+
+      final operations = OrderQueueSyncService.diff(
+        currentStages: const [protectedPlanStage, pendingAutoBig],
+        currentTasks: const [legacyProtectedTask, pendingAutoBig],
+        nextQueue: const [nextProtectedPlanStage, nextAutoSmall],
+      );
+
+      expect(
+        operations.where((op) => op.type == OrderQueueSyncOperationType.block),
+        isEmpty,
+      );
+      expect(
+        operations.any((op) =>
+            op.type == OrderQueueSyncOperationType.cancelOrDeletePending &&
+            op.current?.stageId == 'auto-big'),
+        isTrue,
+      );
+      expect(
+        operations.any((op) =>
+            op.type == OrderQueueSyncOperationType.insert &&
+            op.next?.stageId == 'auto-small'),
+        isTrue,
+      );
+    },
+  );
+
   test('diff blocks moving a protected stage with a concrete message', () {
     const protectedStage = OrderQueueSyncEntry(
       stageId: 'print',

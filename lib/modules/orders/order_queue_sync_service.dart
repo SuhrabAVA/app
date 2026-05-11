@@ -211,10 +211,28 @@ class OrderQueueSyncService {
       }
     }
 
+    bool hasEquivalentNextStage(OrderQueueSyncEntry current) {
+      return nextQueue.any(
+        (next) =>
+            current.sameQueueSlot(next) ||
+            (current.stageId == next.stageId && current.step == next.step),
+      );
+    }
+
+    bool hasProtectedPlanStageKeptForTask(OrderQueueSyncEntry task) {
+      return currentStages.any(
+        (stage) =>
+            isProtectedStatus(stage.status) &&
+            stage.stageId == task.stageId &&
+            hasEquivalentNextStage(stage),
+      );
+    }
+
     for (final task in currentTasks) {
       final next = nextByKey[task.identityKey];
       if (next != null && task.sameQueueSlot(next)) continue;
       if (isProtectedStatus(task.status)) {
+        if (hasProtectedPlanStageKeptForTask(task)) continue;
         operations.add(OrderQueueSyncOperation(
           type: OrderQueueSyncOperationType.block,
           current: task,
