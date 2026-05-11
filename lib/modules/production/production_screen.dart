@@ -262,6 +262,17 @@ Map<String, _StageGroupInfo> _buildProductionStageGroupsForOrder({
     }
   }
 
+  final plannedIdsByGroup = <String, List<String>>{};
+  for (final id in sequence) {
+    final mappedGroupKey = stageGroupMap[id]?.trim();
+    final groupKey = mappedGroupKey != null && mappedGroupKey.isNotEmpty
+        ? mappedGroupKey
+        : id;
+    plannedIdsByGroup.putIfAbsent(groupKey, () => <String>[]);
+    final ids = plannedIdsByGroup[groupKey]!;
+    if (!ids.contains(id)) ids.add(id);
+  }
+
   final tasksByGroup = <String, List<TaskModel>>{};
   final firstTaskByStage = <String, TaskModel>{};
   for (final task in orderTasks) {
@@ -300,7 +311,7 @@ Map<String, _StageGroupInfo> _buildProductionStageGroupsForOrder({
     if (tasksByGroup.containsKey(groupKey)) {
       addTaskBackedGroup(groupKey, sequenceStageId: id);
     } else {
-      addGroup([id], explicitKey: groupKey);
+      addGroup(plannedIdsByGroup[groupKey] ?? [id], explicitKey: groupKey);
     }
   }
 
@@ -387,15 +398,15 @@ _OrderGroupingData _groupingForOrderData({
 
   void addVisibleForGroup(_StageGroupInfo group) {
     final groupTasks = tasksByGroup[group.key] ?? const <TaskModel>[];
-    final firstGroupWorkplace =
-        firstNonEmpty(group.stageIds.map((stageId) => stageId));
-    if (firstGroupWorkplace.isEmpty) return;
+    if (firstNonEmpty(group.stageIds.map((stageId) => stageId)).isEmpty) {
+      return;
+    }
 
     if (groupTasks.isEmpty) {
       // Saved queues may describe planned stages before task rows are created.
-      // Show the current/first workplace as a waiting destination so the order
-      // still appears in the left production menu.
-      visibleWorkplaceIds.add(firstGroupWorkplace);
+      // Show every workplace from a parallel stage group so the order is visible
+      // on all equivalent workstations, not only on the first one.
+      visibleWorkplaceIds.addAll(group.stageIds);
       return;
     }
 
@@ -421,9 +432,10 @@ _OrderGroupingData _groupingForOrderData({
       return;
     }
 
-    // For switchable groups with only waiting tasks, add the selected variant
-    // from the saved queue/group order instead of every alternative task row.
-    visibleWorkplaceIds.add(firstGroupWorkplace);
+    // Waiting parallel groups must be available on every equivalent
+    // workstation; switchable stages still contain only the selected workplace
+    // in the saved queue, so they remain visible on one selected tab.
+    visibleWorkplaceIds.addAll(group.stageIds);
   }
 
   for (final group in stageGroups.values) {
@@ -721,22 +733,24 @@ class _ProductionScreenState extends State<ProductionScreen>
       for (final group in grouping.stageGroups.values) {
         if (group.stageIds.isEmpty) continue;
 
-        final tabId = group.stageIds.first.trim();
-        if (tabId.isEmpty || !grouping.visibleWorkplaceIds.contains(tabId)) {
-          continue;
-        }
-
         final groupTasks =
             grouping.tasksByGroup[group.key] ?? const <TaskModel>[];
         if (_groupCompleted(groupTasks)) continue;
 
-        activeStageTabs.putIfAbsent(
-          tabId,
-          () => _ProductionTabInfo(
-            id: tabId,
-            label: workplaceNamesById[tabId] ?? group.label,
-          ),
-        );
+        for (final stageId in group.stageIds) {
+          final tabId = stageId.trim();
+          if (tabId.isEmpty || !grouping.visibleWorkplaceIds.contains(tabId)) {
+            continue;
+          }
+
+          activeStageTabs.putIfAbsent(
+            tabId,
+            () => _ProductionTabInfo(
+              id: tabId,
+              label: workplaceNamesById[tabId] ?? group.label,
+            ),
+          );
+        }
       }
     }
 
