@@ -480,6 +480,7 @@ class _OrderStageQueueBuilder {
     if (_isSheetProduct(productTypeId)) {
       _add(_stage(kSheetCutStageId, 'Листорезка'));
       if (draft.hasTrimming) _add(_stage(kCuttingStageId, 'Резка'));
+      _appendHandleStage();
       return;
     }
     if (_isVTypeProduct(productTypeId)) {
@@ -491,6 +492,7 @@ class _OrderStageQueueBuilder {
         fallbackSelectedId: kFriStageId,
       ));
       if (draft.hasTrimming) _add(_stage(kCuttingStageId, 'Резка'));
+      _appendHandleStage();
       return;
     }
     if (_isTwoSheetPackageProduct(productTypeId)) {

@@ -1248,6 +1248,31 @@ void main() {
       );
     });
 
+    test('Листы: adds flat handle as one multi-workplace stage', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kSheetProductTypeId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          handleType: OrderHandleType.flat,
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [kSheetCutStageId, kFlatHandleGroupStageId, kPackagingStageId],
+        workplaceIdsByStageKey: const {
+          kFlatHandleGroupStageId: [
+            kFlatHandleStageId,
+            kManualHandleStageId,
+          ],
+        },
+      );
+    });
+
     test('В-образные UUID products default to Фри and disable cardboard', () {
       for (final productTypeId in kVTypeProducts) {
         final result = buildOrderStages(
@@ -1327,6 +1352,40 @@ void main() {
         [kVMainSwitchStageKey, kCuttingStageId, kPackagingStageId],
         workplaceIdsByStageKey: const {
           kVMainSwitchStageKey: [kFriStageId, kWindowStageId],
+        },
+        selectedWorkplaceIdsByStageKey: const {
+          kVMainSwitchStageKey: kFriStageId,
+        },
+      );
+    });
+
+    test('В-образный: adds twisted handle as one multi-workplace stage', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kVTypeProductAltId,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: true,
+          hasCardboard: false,
+          handleType: OrderHandleType.twisted,
+        ),
+      );
+
+      expectBuiltStages(
+        result,
+        [
+          kVMainSwitchStageKey,
+          kCuttingStageId,
+          kTwistedHandleGroupStageId,
+          kPackagingStageId,
+        ],
+        workplaceIdsByStageKey: const {
+          kVMainSwitchStageKey: [kFriStageId, kWindowStageId],
+          kTwistedHandleGroupStageId: [
+            kTwistedHandleStageId,
+            kManualHandleStageId,
+          ],
         },
         selectedWorkplaceIdsByStageKey: const {
           kVMainSwitchStageKey: kFriStageId,

@@ -4,6 +4,10 @@ import 'package:sheet_clone/modules/orders/order_stage_filter.dart';
 Map<String, dynamic> _stage(String id) => {'stageId': id, 'stageName': id};
 
 void main() {
+  test('manual handle stage id matches production workplace id', () {
+    expect(manualHandleStageId, 'c25ac6fa-390a-4e87-84aa-536055e013f4');
+  });
+
   final baseStages = [
     _stage(flatHandleStageId),
     _stage(twistedHandleStageId),
