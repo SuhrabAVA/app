@@ -1363,75 +1363,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _selectSwitchablePreviewStage(stageKey, options[nextIndex].stageId);
   }
 
-  Widget? _buildSwitchableStageSelector(Map<String, dynamic> stage) {
-    if (!_isSwitchablePreviewStage(stage)) return null;
-    final stageKey = _switchableStageKeyFromPreviewStage(stage);
-    if (stageKey == null) return null;
-    final options = _switchableOptionsForStageKey(stageKey);
-    if (options.isEmpty) return null;
-    final selected = _selectedSwitchableStageIdForPreview(stageKey, stage);
-    if (selected == null) return null;
-
-    final selectedOption = options.firstWhere(
-      (option) => option.stageId == selected,
-      orElse: () => options.first,
-    );
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colors.surfaceContainerHighest.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: colors.outlineVariant.withValues(alpha: 0.45),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Этап:',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  selectedOption.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: colors.onSurface.withValues(alpha: 0.82),
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Icon(
-                Icons.touch_app_outlined,
-                size: 16,
-                color: colors.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'нажмите на этап',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   String? _persistedSelectedVStage(String queueBuildStatus) =>
       queueBuildStatus == QueueBuildStatus.built
           ? _selectedVStage
@@ -6211,7 +6142,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               '')
           .toString()
           .trim();
-      final switchableSelector = _buildSwitchableStageSelector(stage);
       final switchableStageKey = _switchableStageKeyFromPreviewStage(stage);
       final stageCard = Container(
         margin: EdgeInsets.only(top: i == 0 ? 0 : 8),
@@ -6263,7 +6193,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         style: theme.textTheme.bodySmall,
                       ),
                     ),
-                  if (switchableSelector != null) switchableSelector,
                 ],
               ),
             ),
