@@ -6,15 +6,174 @@ import '../../services/app_auth.dart';
 
 import '../orders/order_model.dart';
 import '../orders/order_queue_service.dart';
+import '../orders/stage_queue_builder.dart' as stage_queue;
 import 'task_completion_rules.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
-
 
 const String _canonicalFlexoWorkplaceId =
     '0571c01c-f086-47e4-81b2-5d8b2ab91218';
 const String _canonicalBobbinWorkplaceId =
     'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
+
+class _KnownWorkplaceAliasSpec {
+  const _KnownWorkplaceAliasSpec({
+    required this.canonicalId,
+    required this.aliases,
+    this.containsAny = const <String>{},
+  });
+
+  final String canonicalId;
+  final Set<String> aliases;
+  final Set<String> containsAny;
+
+  bool matches(String value) {
+    final normalized = _normalizeWorkplaceAlias(value);
+    if (normalized.isEmpty) return false;
+    if (aliases.contains(normalized)) return true;
+    return containsAny.any(normalized.contains);
+  }
+}
+
+String _normalizeWorkplaceAlias(String value) => value
+    .trim()
+    .toLowerCase()
+    .replaceAll('ё', 'е')
+    .replaceAll(RegExp(r'[‐‑‒–—−_/]+'), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+const List<_KnownWorkplaceAliasSpec> _knownWorkplaceAliases = [
+  _KnownWorkplaceAliasSpec(
+    canonicalId: _canonicalFlexoWorkplaceId,
+    aliases: {'w_flexoprint', 'w_flexo', 'флексопечать', 'флексо печать'},
+    containsAny: {'флекс', 'flexo'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: _canonicalBobbinWorkplaceId,
+    aliases: {
+      'w_bobiner',
+      'w_bobbin',
+      'бобинорезка',
+      'бабинорезка',
+    },
+    containsAny: {'бобин', 'бабин', 'bobbin', 'bobiner'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kPackagingStageId,
+    aliases: {'упаковка', 'упаков'},
+    containsAny: {'упаков'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kFriStageId,
+    aliases: {'фри', 'fri'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kWindowStageId,
+    aliases: {'окно', 'window'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kAutoBigStageId,
+    aliases: {'автомат большой', 'большой автомат', 'auto big', 'automatic big'},
+    containsAny: {'автомат большой', 'большой автомат', 'auto big'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kAutoSmallStageId,
+    aliases: {
+      'автомат маленький',
+      'маленький автомат',
+      'auto small',
+      'automatic small',
+    },
+    containsAny: {'автомат маленький', 'маленький автомат', 'auto small'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kTubeStageId,
+    aliases: {'труба', 'tube'},
+    containsAny: {'труба', 'tube'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kSheetCutStageId,
+    aliases: {'листорезка', 'листо резка', 'sheet cut', 'sheet cutter'},
+    containsAny: {'листорез', 'sheet cut'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kCuttingStageId,
+    aliases: {'резка', 'cutting'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kCardboardCuttingStageId,
+    aliases: {'резка картона', 'картон резка', 'cardboard cutting'},
+    containsAny: {'резка картона', 'cardboard cutting'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kCardboardInsertStageId,
+    aliases: {'вставка картона', 'картон вставка', 'cardboard insert'},
+    containsAny: {'вставка картона', 'cardboard insert'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomWithCardboardAssemblyStageId,
+    aliases: {
+      'сборка дно картон',
+      'сборка дна картон',
+      'сборка дно+картон',
+      'bottom cardboard assembly',
+    },
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kDieCutA1WorkplaceId,
+    aliases: {'высечка a1', 'высечка а1', 'die cut a1'},
+    containsAny: {'высечка a1', 'высечка а1', 'die cut a1'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kDieCutA2WorkplaceId,
+    aliases: {'высечка a2', 'высечка а2', 'die cut a2'},
+    containsAny: {'высечка a2', 'высечка а2', 'die cut a2'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kScotchStageId,
+    aliases: {'скотч', 'scotch'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kFromTwoSheetsStageId,
+    aliases: {'с 2х листов', 'с двух листов', 'из 2х листов'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kTubeAssemblyStageId,
+    aliases: {'сборка трубы', 'tube assembly'},
+    containsAny: {'сборка трубы', 'tube assembly'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomGlueWorkplaceId,
+    aliases: {'склейка дна', 'клей дна', 'bottom glue'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomGlueAltWorkplaceId,
+    aliases: {'склейка дна 2', 'клей дна 2', 'bottom glue 2'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomGlueSecondAltWorkplaceId,
+    aliases: {'склейка дна 3', 'клей дна 3', 'bottom glue 3'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kTwistedHandleWorkplaceId,
+    aliases: {'крученая ручка', 'крученная ручка', 'twisted handle'},
+    containsAny: {'крученая ручка', 'крученная ручка', 'twisted handle'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kFlatHandleWorkplaceId,
+    aliases: {'плоская ручка', 'flat handle'},
+    containsAny: {'плоская ручка', 'flat handle'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kSharedHandleWorkplaceId,
+    aliases: {'ручная ручка', 'ручки вручную', 'manual handle'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kDieCutHandleStageId,
+    aliases: {'вырубка ручки', 'вырубка', 'die cut handle'},
+  ),
+];
 
 class _StageSequenceData {
   final List<String> ids;
@@ -86,18 +245,23 @@ class TaskProvider with ChangeNotifier {
     }
 
     data['orderId'] = _normalizeId(row['order_id']);
-    final rawStageId =
-        row['stage_id'] ?? row['stageId'] ?? row['workplace_id'] ?? row['workplaceId'];
+    final rawStageId = row['stage_id'] ??
+        row['stageId'] ??
+        row['workplace_id'] ??
+        row['workplaceId'];
     final resolvedStageId = _resolveWorkplaceId(_normalizeId(rawStageId));
     data['stageId'] = resolvedStageId;
-    final rawStageGroupKey =
-        row['stage_group_key'] ?? row['stageGroupKey'] ?? row['queue_stage_key'] ?? row['queueStageKey'] ?? row['group_key'];
+    final rawStageGroupKey = row['stage_group_key'] ??
+        row['stageGroupKey'] ??
+        row['queue_stage_key'] ??
+        row['queueStageKey'] ??
+        row['group_key'];
     final normalizedGroupKey = _normalizeId(rawStageGroupKey);
     data['stageGroupKey'] =
         normalizedGroupKey.isEmpty ? resolvedStageId : normalizedGroupKey;
-    data['capturedByWorkplaceId'] = _normalizeId(
+    data['capturedByWorkplaceId'] = _resolveWorkplaceId(_normalizeId(
       row['captured_by_workplace_id'] ?? row['capturedByWorkplaceId'],
-    );
+    ));
     data['capturedByUserId'] = _normalizeId(
       row['captured_by_user_id'] ?? row['capturedByUserId'],
     );
@@ -149,18 +313,11 @@ class TaskProvider with ChangeNotifier {
     return _workplaceAliasToId[normalized.toLowerCase()] ?? normalized;
   }
 
-  bool _isFlexoAlias(String text) {
-    final lower = text.toLowerCase();
-    return lower.contains('флекс') || lower.contains('flexo');
-  }
+  bool _isFlexoAlias(String text) =>
+      _knownWorkplaceAliases[0].matches(text);
 
-  bool _isBobbinAlias(String text) {
-    final lower = text.toLowerCase();
-    return lower.contains('бобин') ||
-        lower.contains('бабин') ||
-        lower.contains('bobbin') ||
-        lower.contains('bobiner');
-  }
+  bool _isBobbinAlias(String text) =>
+      _knownWorkplaceAliases[1].matches(text);
 
   String? _detectWorkplaceIdByAlias(
       List<Map<String, dynamic>> rows, bool Function(String text) matcher) {
@@ -212,25 +369,27 @@ class TaskProvider with ChangeNotifier {
         .where((id) => id.isNotEmpty)
         .toSet();
 
-    final detectedFlexoId = _detectWorkplaceIdByAlias(rows, _isFlexoAlias) ??
-        (knownIds.contains(_canonicalFlexoWorkplaceId)
-            ? _canonicalFlexoWorkplaceId
-            : null);
-    final detectedBobbinId = _detectWorkplaceIdByAlias(rows, _isBobbinAlias) ??
-        (knownIds.contains(_canonicalBobbinWorkplaceId)
-            ? _canonicalBobbinWorkplaceId
-            : null);
+    final detectedByCanonicalId = <String, String>{};
+    for (final spec in _knownWorkplaceAliases) {
+      final detectedId = _detectWorkplaceIdByAlias(rows, spec.matches) ??
+          (knownIds.contains(spec.canonicalId) ? spec.canonicalId : null);
+      if (detectedId != null) {
+        detectedByCanonicalId[spec.canonicalId] = detectedId;
+      }
+    }
+
+    final detectedFlexoId = detectedByCanonicalId[_canonicalFlexoWorkplaceId];
+    final detectedBobbinId = detectedByCanonicalId[_canonicalBobbinWorkplaceId];
 
     final aliases = <String, String>{};
-    if (detectedFlexoId != null) {
-      aliases['w_flexoprint'] = detectedFlexoId;
-      aliases['w_flexo'] = detectedFlexoId;
-      aliases[detectedFlexoId.toLowerCase()] = detectedFlexoId;
-    }
-    if (detectedBobbinId != null) {
-      aliases['w_bobiner'] = detectedBobbinId;
-      aliases['w_bobbin'] = detectedBobbinId;
-      aliases[detectedBobbinId.toLowerCase()] = detectedBobbinId;
+    for (final spec in _knownWorkplaceAliases) {
+      final detectedId = detectedByCanonicalId[spec.canonicalId];
+      if (detectedId == null) continue;
+      aliases[_normalizeWorkplaceAlias(spec.canonicalId)] = detectedId;
+      aliases[_normalizeWorkplaceAlias(detectedId)] = detectedId;
+      for (final alias in spec.aliases) {
+        aliases[_normalizeWorkplaceAlias(alias)] = detectedId;
+      }
     }
     for (final row in rows) {
       final id = row['id']?.toString().trim() ?? '';
@@ -246,7 +405,7 @@ class TaskProvider with ChangeNotifier {
       for (final probe in probes) {
         final alias = probe?.toString().trim() ?? '';
         if (alias.isEmpty) continue;
-        final normalizedAlias = alias.toLowerCase();
+        final normalizedAlias = _normalizeWorkplaceAlias(alias);
         if (normalizedAlias == 'w_flexoprint' || normalizedAlias == 'w_flexo') {
           if (detectedFlexoId != null) {
             aliases[normalizedAlias] = detectedFlexoId;
