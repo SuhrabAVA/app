@@ -1045,15 +1045,21 @@ class TaskProvider with ChangeNotifier {
     TaskStatus status, {
     int? spentSeconds,
     int? startedAt,
+    bool clearStartedAt = false,
   }) async {
     final index = _tasks.indexWhere((t) => t.id == id);
     if (index == -1) return false;
 
     final current = _tasks[index];
+    final shouldClearStartedAt =
+        clearStartedAt || (status != TaskStatus.inProgress && startedAt == null);
+    final effectiveStartedAt =
+        shouldClearStartedAt ? null : (startedAt ?? current.startedAt);
     final updated = current.copyWith(
       status: status,
       spentSeconds: spentSeconds ?? current.spentSeconds,
-      startedAt: startedAt ?? current.startedAt,
+      startedAt: effectiveStartedAt,
+      clearStartedAt: shouldClearStartedAt,
       comments: current.comments,
       assignees: current.assignees,
     );
@@ -1061,7 +1067,7 @@ class TaskProvider with ChangeNotifier {
     final updates = <String, dynamic>{
       'status': status.name,
       'spent_seconds': updated.spentSeconds,
-      'started_at': updated.startedAt,
+      'started_at': effectiveStartedAt,
     };
     final bool becameInProgress =
         current.status != TaskStatus.inProgress && status == TaskStatus.inProgress;
@@ -1209,10 +1215,13 @@ class TaskProvider with ChangeNotifier {
         : task.stageId.trim();
     if (task.orderId.trim().isEmpty || groupKey.isEmpty) return;
 
+    final shouldClearStartedAt =
+        status != TaskStatus.inProgress && startedAt == null;
     final taskUpdates = <String, dynamic>{
       'status': status.name,
       if (spentSeconds != null) 'spent_seconds': spentSeconds,
-      if (startedAt != null) 'started_at': startedAt,
+      if (shouldClearStartedAt) 'started_at': null,
+      if (!shouldClearStartedAt && startedAt != null) 'started_at': startedAt,
       if (completedAt != null) 'completed_at': completedAt,
     };
     final startedIso = startedAt == null
@@ -1246,7 +1255,10 @@ class TaskProvider with ChangeNotifier {
           _tasks[i] = local.copyWith(
             status: status,
             spentSeconds: spentSeconds ?? local.spentSeconds,
-            startedAt: startedAt ?? local.startedAt,
+            startedAt: shouldClearStartedAt
+                ? null
+                : (startedAt ?? local.startedAt),
+            clearStartedAt: shouldClearStartedAt,
           );
         }
       }

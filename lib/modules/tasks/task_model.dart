@@ -387,6 +387,7 @@ class TaskModel {
     TaskStatus? status,
     int? spentSeconds,
     int? startedAt,
+    bool clearStartedAt = false,
     String? stageGroupKey,
     String? capturedByWorkplaceId,
     String? capturedByUserId,
@@ -404,7 +405,7 @@ class TaskModel {
       capturedAt: capturedAt ?? this.capturedAt,
       status: status ?? this.status,
       spentSeconds: spentSeconds ?? this.spentSeconds,
-      startedAt: startedAt ?? this.startedAt,
+      startedAt: clearStartedAt ? null : (startedAt ?? this.startedAt),
       assignees: assignees ?? this.assignees,
       comments: comments ?? this.comments,
     );

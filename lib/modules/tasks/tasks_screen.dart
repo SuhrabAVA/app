@@ -4780,25 +4780,28 @@ class _TasksScreenState extends State<TasksScreen>
                         (t) => t.id == task.id,
                         orElse: () => task,
                       );
-                      if (!_anyUserActive(latestTask)) {
+                      final shouldCloseStage =
+                          jointGroup != null || (jointGroup == null && separateAllDone);
+                      // Если все исполнители уже отметились как завершившие этап,
+                      // не оставляем этап в работе из-за устаревшего открытого
+                      // time_event: пользователь видит "Завершил(а) этап", значит
+                      // статус этапа должен перейти в финальное состояние.
+                      final canApplyFinish =
+                          !_anyUserActive(latestTask) || shouldCloseStage;
+                      if (canApplyFinish) {
                         final _secs = _elapsed(latestTask).inSeconds;
-                        // Для режима "Отдельный исполнитель" финальное закрытие
-                        // этапа выполняется только через отдельную кнопку
-                        // "Завершить задание" (ниже в карточке этапа).
-                        final shouldCloseStage =
-                            jointGroup != null || (jointGroup == null && separateAllDone);
                         if (_isInkConfirmationStage(task)) {
                           await _finalizeTask(task, initialQtyInput: qtyInput);
                           return;
                         }
-                        final nextStatus =
-                            shouldCloseStage && !_isInkConfirmationStage(task)
-                                ? TaskStatus.completed
-                                : TaskStatus.paused;
+                        final nextStatus = shouldCloseStage
+                            ? TaskStatus.completed
+                            : TaskStatus.paused;
                         await taskProvider.updateStatus(
                             task.id, nextStatus,
                             spentSeconds: _secs,
-                            startedAt: null);
+                            startedAt: null,
+                            clearStartedAt: true);
                         if (context.mounted &&
                             separateAllDone &&
                             jointGroup == null &&
