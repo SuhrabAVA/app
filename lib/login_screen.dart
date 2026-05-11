@@ -347,214 +347,198 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Показывает диалог ввода пароля и при успешном вводе
   /// выполняет навигацию в нужный модуль.
   Future<void> _promptPassword(BuildContext context, _UserItem user) async {
-    final TextEditingController controller = TextEditingController();
-    String? error;
-    bool isSubmitting = false;
-
-    Future<void> submitLogin(
-      BuildContext dialogContext,
-      StateSetter setState,
-      BuildContext ctx,
-    ) async {
-      if (isSubmitting) {
-        return;
-      }
-
-      setState(() {
-        isSubmitting = true;
-        error = null;
-      });
-
-      final rootNavigator = Navigator.of(context);
-      final dialogNavigator = Navigator.of(ctx);
-      final personnel = dialogContext.read<PersonnelProvider>();
-      final password = controller.text.trim();
-      if (password == user.password) {
-        // Запоминаем пользователя
-        if (user.isTechLeader) {
-          AuthHelper.setTechLeader(name: user.name);
-        } else {
-          AuthHelper.setEmployee(id: user.id, name: user.name);
-        }
-
-        // Логируем вход
-        final analytics = dialogContext.read<AnalyticsProvider>();
-        String category;
-        if (user.isTechLeader) {
-          category = 'manager';
-        } else {
-          final emp = personnel.employees.firstWhere(
-            (e) => e.id == user.id,
-            orElse: () => EmployeeModel(
-              id: user.id,
-              lastName: '',
-              firstName: '',
-              patronymic: '',
-              iin: '',
-              photoUrl: null,
-              positionIds: const [],
-              isFired: false,
-              comments: '',
-              login: '',
-              password: '',
-            ),
-          );
-          if (isManagerUser(emp, personnel)) {
-            category = 'manager';
-          } else if (isWarehouseHeadUser(emp, personnel)) {
-            category = 'warehouse';
-          } else {
-            category = 'production';
-          }
-        }
-
-        await analytics.logEvent(
-          orderId: '',
-          stageId: '',
-          userId: user.id,
-          action: 'login',
-          category: category,
-        );
-
-        if (!mounted) {
-          return;
-        }
-
-        FocusManager.instance.primaryFocus?.unfocus();
-        if (dialogNavigator.canPop()) {
-          dialogNavigator.pop();
-        }
-
-        await WidgetsBinding.instance.endOfFrame;
-        if (!mounted) {
-          return;
-        }
-
-        // Навигация
-        if (user.isTechLeader) {
-          rootNavigator.pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => const AdminPanelScreen(),
-            ),
-          );
-        } else {
-          final emp = personnel.employees.firstWhere(
-            (e) => e.id == user.id,
-            orElse: () => EmployeeModel(
-              id: user.id,
-              lastName: '',
-              firstName: '',
-              patronymic: '',
-              iin: '',
-              photoUrl: null,
-              positionIds: const [],
-              isFired: false,
-              comments: '',
-              login: '',
-              password: '',
-            ),
-          );
-
-          final screen = isManagerUser(emp, personnel)
-              ? ManagerWorkspaceScreen(employeeId: user.id)
-              : isWarehouseHeadUser(emp, personnel)
-                  ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
-                  : EmployeeWorkspaceScreen(employeeId: user.id);
-
-          rootNavigator.pushReplacement(
-            MaterialPageRoute(builder: (_) => screen),
-          );
-        }
-      } else {
-        setState(() {
-          error = 'Неверный пароль';
-          isSubmitting = false;
-        });
-      }
-    }
-
-    await showDialog(
+    final passwordAccepted = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (dialogContext, setState) {
-            return Shortcuts(
-              shortcuts: <ShortcutActivator, Intent>{
-                const SingleActivator(LogicalKeyboardKey.escape):
-                    const DismissIntent(),
-                const SingleActivator(LogicalKeyboardKey.enter):
-                    const ActivateIntent(),
-                const SingleActivator(LogicalKeyboardKey.numpadEnter):
-                    const ActivateIntent(),
-              },
-              child: Actions(
-                actions: <Type, Action<Intent>>{
-                  DismissIntent: CallbackAction<DismissIntent>(
-                    onInvoke: (_) {
-                      if (!isSubmitting) {
-                        Navigator.pop(ctx);
-                      }
-                      return null;
-                    },
-                  ),
-                  ActivateIntent: CallbackAction<ActivateIntent>(
-                    onInvoke: (_) {
-                      submitLogin(dialogContext, setState, ctx);
-                      return null;
-                    },
-                  ),
-                },
-                child: AlertDialog(
-                  title: Text('Введите пароль для ${user.name}'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: controller,
-                        autofocus: true,
-                        obscureText: true,
-                        enabled: !isSubmitting,
-                        decoration: const InputDecoration(labelText: 'Пароль'),
-                        onSubmitted: isSubmitting
-                            ? null
-                            : (_) => submitLogin(dialogContext, setState, ctx),
-                      ),
-                      if (error != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          error!,
-                          style: const TextStyle(color: Colors.red, fontSize: 12),
-                        ),
-                      ],
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: isSubmitting ? null : () => Navigator.pop(ctx),
-                      child: const Text('Отмена'),
-                    ),
-                    ElevatedButton(
-                      onPressed: isSubmitting
-                          ? null
-                          : () => submitLogin(dialogContext, setState, ctx),
-                      child: isSubmitting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Войти'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      builder: (_) => _PasswordDialog(user: user),
     );
-    controller.dispose();
+
+    if (passwordAccepted != true || !mounted) {
+      return;
+    }
+
+    final rootNavigator = Navigator.of(context);
+    final personnel = context.read<PersonnelProvider>();
+
+    // Запоминаем пользователя.
+    if (user.isTechLeader) {
+      AuthHelper.setTechLeader(name: user.name);
+    } else {
+      AuthHelper.setEmployee(id: user.id, name: user.name);
+    }
+
+    // Логируем вход.
+    final analytics = context.read<AnalyticsProvider>();
+    final emp = user.isTechLeader
+        ? null
+        : personnel.employees.firstWhere(
+            (e) => e.id == user.id,
+            orElse: () => EmployeeModel(
+              id: user.id,
+              lastName: '',
+              firstName: '',
+              patronymic: '',
+              iin: '',
+              photoUrl: null,
+              positionIds: const [],
+              isFired: false,
+              comments: '',
+              login: '',
+              password: '',
+            ),
+          );
+    final category = user.isTechLeader
+        ? 'manager'
+        : isManagerUser(emp!, personnel)
+            ? 'manager'
+            : isWarehouseHeadUser(emp, personnel)
+                ? 'warehouse'
+                : 'production';
+
+    await analytics.logEvent(
+      orderId: '',
+      stageId: '',
+      userId: user.id,
+      action: 'login',
+      category: category,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (user.isTechLeader) {
+      rootNavigator.pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const AdminPanelScreen(),
+        ),
+      );
+    } else {
+      final screen = isManagerUser(emp!, personnel)
+          ? ManagerWorkspaceScreen(employeeId: user.id)
+          : isWarehouseHeadUser(emp, personnel)
+              ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
+              : EmployeeWorkspaceScreen(employeeId: user.id);
+
+      rootNavigator.pushReplacement(
+        MaterialPageRoute(builder: (_) => screen),
+      );
+    }
+  }
+}
+
+
+class _PasswordDialog extends StatefulWidget {
+  final _UserItem user;
+
+  const _PasswordDialog({required this.user});
+
+  @override
+  State<_PasswordDialog> createState() => _PasswordDialogState();
+}
+
+class _PasswordDialogState extends State<_PasswordDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _error;
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_isSubmitting) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _error = null;
+    });
+
+    if (_controller.text.trim() == widget.user.password) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+
+    setState(() {
+      _error = 'Неверный пароль';
+      _isSubmitting = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shortcuts(
+      shortcuts: <ShortcutActivator, Intent>{
+        const SingleActivator(LogicalKeyboardKey.escape): const DismissIntent(),
+        const SingleActivator(LogicalKeyboardKey.enter): const ActivateIntent(),
+        const SingleActivator(LogicalKeyboardKey.numpadEnter):
+            const ActivateIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (_) {
+              if (!_isSubmitting) {
+                Navigator.of(context).pop(false);
+              }
+              return null;
+            },
+          ),
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              _submit();
+              return null;
+            },
+          ),
+        },
+        child: AlertDialog(
+          title: Text('Введите пароль для ${widget.user.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                obscureText: true,
+                enabled: !_isSubmitting,
+                decoration: const InputDecoration(labelText: 'Пароль'),
+                onSubmitted: _isSubmitting ? null : (_) => _submit(),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed:
+                  _isSubmitting ? null : () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: _isSubmitting ? null : _submit,
+              child: _isSubmitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Войти'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
