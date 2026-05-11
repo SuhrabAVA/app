@@ -143,17 +143,20 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[100],
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -331,6 +334,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       },
                     ),
                 ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -343,14 +348,23 @@ class _LoginScreenState extends State<LoginScreen> {
   /// выполняет навигацию в нужный модуль.
   Future<void> _promptPassword(BuildContext context, _UserItem user) async {
     final TextEditingController controller = TextEditingController();
-    final FocusNode passwordFocusNode = FocusNode();
     String? error;
+    bool isSubmitting = false;
 
     Future<void> submitLogin(
       BuildContext dialogContext,
       StateSetter setState,
       BuildContext ctx,
     ) async {
+      if (isSubmitting) {
+        return;
+      }
+
+      setState(() {
+        isSubmitting = true;
+        error = null;
+      });
+
       final rootNavigator = Navigator.of(context);
       final dialogNavigator = Navigator.of(ctx);
       final personnel = dialogContext.read<PersonnelProvider>();
@@ -406,7 +420,15 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
-        dialogNavigator.pop();
+        FocusManager.instance.primaryFocus?.unfocus();
+        if (dialogNavigator.canPop()) {
+          dialogNavigator.pop();
+        }
+
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) {
+          return;
+        }
 
         // Навигация
         if (user.isTechLeader) {
@@ -446,6 +468,7 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         setState(() {
           error = 'Неверный пароль';
+          isSubmitting = false;
         });
       }
     }
@@ -469,7 +492,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 actions: <Type, Action<Intent>>{
                   DismissIntent: CallbackAction<DismissIntent>(
                     onInvoke: (_) {
-                      Navigator.pop(ctx);
+                      if (!isSubmitting) {
+                        Navigator.pop(ctx);
+                      }
                       return null;
                     },
                   ),
@@ -487,12 +512,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       TextField(
                         controller: controller,
-                        focusNode: passwordFocusNode,
                         autofocus: true,
                         obscureText: true,
+                        enabled: !isSubmitting,
                         decoration: const InputDecoration(labelText: 'Пароль'),
-                        onSubmitted: (_) =>
-                            submitLogin(dialogContext, setState, ctx),
+                        onSubmitted: isSubmitting
+                            ? null
+                            : (_) => submitLogin(dialogContext, setState, ctx),
                       ),
                       if (error != null) ...[
                         const SizedBox(height: 8),
@@ -505,12 +531,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   actions: [
                     TextButton(
-                      onPressed: () => Navigator.pop(ctx),
+                      onPressed: isSubmitting ? null : () => Navigator.pop(ctx),
                       child: const Text('Отмена'),
                     ),
                     ElevatedButton(
-                      onPressed: () => submitLogin(dialogContext, setState, ctx),
-                      child: const Text('Войти'),
+                      onPressed: isSubmitting
+                          ? null
+                          : () => submitLogin(dialogContext, setState, ctx),
+                      child: isSubmitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Войти'),
                     ),
                   ],
                 ),
@@ -521,7 +555,6 @@ class _LoginScreenState extends State<LoginScreen> {
       },
     );
     controller.dispose();
-    passwordFocusNode.dispose();
   }
 }
 
