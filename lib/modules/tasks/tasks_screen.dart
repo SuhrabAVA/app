@@ -23,6 +23,7 @@ import '../warehouse/warehouse_provider.dart';
 import 'task_model.dart';
 import 'task_completion_rules.dart';
 import 'task_provider.dart';
+import 'task_visibility.dart';
 import 'stage_sequence_utils.dart' as stage_sequence;
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
@@ -2210,7 +2211,12 @@ class _TasksScreenState extends State<TasksScreen>
         : '';
     final stageTasksAll = _selectedWorkplaceId == null
         ? const <TaskModel>[]
-        : taskProvider.tasks.where((t) => t.stageId == _selectedWorkplaceId).toList();
+        : taskProvider.tasks
+            .where((t) => t.stageId == _selectedWorkplaceId)
+            .where((task) => isTaskOrderLaunchedForWorkspace(
+                  findOrder(task.orderId),
+                ))
+            .toList();
     final stageQueueIds = stageTasksAll
         .map((task) => _queueOrderIdForTask(task, ordersProvider))
         .where((id) => id.isNotEmpty)
@@ -4086,6 +4092,18 @@ class _TasksScreenState extends State<TasksScreen>
     if (_selectedWorkplaceId == null) return const <TaskModel>[];
 
     final ordersProvider = context.read<OrdersProvider>();
+    OrderModel? findTaskOrder(String id) {
+      for (final order in ordersProvider.orders) {
+        if (order.id == id) return order;
+      }
+      for (final order in ordersProvider.orders) {
+        if (order.assignmentId != null && order.assignmentId == id) {
+          return order;
+        }
+      }
+      return null;
+    }
+
     final templateProvider = context.read<TemplateProvider>();
     final stageGroupByOrder = <String, Map<String, String>>{};
     for (final order in ordersProvider.orders) {
@@ -4102,8 +4120,9 @@ class _TasksScreenState extends State<TasksScreen>
     String taskGroupKey(TaskModel task) {
       final lookup = stageGroupByOrder[task.orderId];
       final persistedGroup = task.stageGroupKey.trim();
-      final groupKey =
-          persistedGroup.isNotEmpty ? persistedGroup : (lookup?[task.stageId] ?? task.stageId);
+      final groupKey = persistedGroup.isNotEmpty
+          ? persistedGroup
+          : (lookup?[task.stageId] ?? task.stageId);
       return '${task.orderId}::$groupKey';
     }
 
@@ -4115,6 +4134,9 @@ class _TasksScreenState extends State<TasksScreen>
 
     return taskProvider.tasks
         .where((t) => t.stageId == _selectedWorkplaceId)
+        .where((task) => isTaskOrderLaunchedForWorkspace(
+              findTaskOrder(task.orderId),
+            ))
         .where((t) => !_isEffectivelyCompleted(t))
         .where((task) {
           final groupKey = taskGroupKey(task);
