@@ -200,4 +200,86 @@ void main() {
     expect(physicalSeq.values.toSet(), hasLength(4));
   });
 
+  test(
+    'diff allows switching a pending automatic stage after protected base stages',
+    () {
+      const protectedFlexo = OrderQueueSyncEntry(
+        stageId: 'flexo',
+        stageGroupKey: 'flexo',
+        step: 1,
+        status: 'in_progress',
+        row: {'name': 'Флексопечать'},
+      );
+      const pendingAutoBig = OrderQueueSyncEntry(
+        stageId: 'auto-big',
+        stageGroupKey: 'p_main_switch',
+        step: 2,
+        status: 'waiting',
+        row: {'name': 'Автомат большой'},
+      );
+      const nextFlexo = OrderQueueSyncEntry(
+        stageId: 'flexo',
+        stageGroupKey: 'flexo',
+        step: 1,
+      );
+      const nextAutoSmall = OrderQueueSyncEntry(
+        stageId: 'auto-small',
+        stageGroupKey: 'p_main_switch',
+        step: 2,
+        row: {'stageName': 'Автомат маленький'},
+      );
+
+      final operations = OrderQueueSyncService.diff(
+        currentStages: const [protectedFlexo, pendingAutoBig],
+        currentTasks: const [protectedFlexo, pendingAutoBig],
+        nextQueue: const [nextFlexo, nextAutoSmall],
+      );
+
+      expect(
+        operations.where((op) => op.type == OrderQueueSyncOperationType.block),
+        isEmpty,
+      );
+      expect(
+        operations.any((op) =>
+            op.type == OrderQueueSyncOperationType.cancelOrDeletePending &&
+            op.current?.stageId == 'auto-big'),
+        isTrue,
+      );
+      expect(
+        operations.any((op) =>
+            op.type == OrderQueueSyncOperationType.insert &&
+            op.next?.stageId == 'auto-small'),
+        isTrue,
+      );
+    },
+  );
+
+  test('diff blocks switching an automatic stage that has already started', () {
+    const startedAutoBig = OrderQueueSyncEntry(
+      stageId: 'auto-big',
+      stageGroupKey: 'p_main_switch',
+      step: 2,
+      status: 'started',
+      row: {'name': 'Автомат большой'},
+    );
+    const nextAutoSmall = OrderQueueSyncEntry(
+      stageId: 'auto-small',
+      stageGroupKey: 'p_main_switch',
+      step: 2,
+      row: {'stageName': 'Автомат маленький'},
+    );
+
+    final operations = OrderQueueSyncService.diff(
+      currentStages: const [startedAutoBig],
+      currentTasks: const [startedAutoBig],
+      nextQueue: const [nextAutoSmall],
+    );
+
+    final blocked = operations.where(
+      (op) => op.type == OrderQueueSyncOperationType.block,
+    );
+    expect(blocked, isNotEmpty);
+    expect(blocked.first.reason, contains('Автомат большой'));
+  });
+
 }
