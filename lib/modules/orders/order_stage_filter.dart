@@ -2,7 +2,7 @@ enum OrderHandleType { none, flat, twisted, dieCut }
 
 const String flatHandleStageId = '6ffdf2d9-3f57-45ca-9fad-dd700ac5c320';
 const String twistedHandleStageId = 'c51ebb2e-dac8-4068-9e4c-ce0d8b975626';
-const String manualHandleStageId = 'c25acbfa-390a-4e87-84aa-536055e013f4';
+const String manualHandleStageId = 'c25ac6fa-390a-4e87-84aa-536055e013f4';
 const String dieCutHandleStageId = '4925309c-a2c6-4f5f-9f5e-7dd5ff38827d';
 const String cuttingStageId = 'c828062f-a6a6-4fe5-b01b-c51e36fe5fba';
 const String kCardboardCuttingStageId =
