@@ -603,6 +603,7 @@ class OrderQueueSyncService {
     final updates = {
       'stage_id': next.stageId,
       'stage_group_key': next.stageGroupKey,
+      'name': next.displayName,
       'seq': physicalSeq,
       'status': 'waiting',
     };

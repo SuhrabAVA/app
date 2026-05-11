@@ -1326,6 +1326,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             : null);
     if (effectiveCurrent == selectedStageId) return;
 
+    final wasBuilt = _queueBuildStatus == QueueBuildStatus.built;
     setState(() {
       if (stageKey == kVMainSwitchStageKey) {
         _selectedVStage = selectedStageId;
@@ -1344,8 +1345,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       _stagePreviewStages = queue;
       _syncSwitchableStageSelectionFields(queue);
-      _queueBuildStatus = QueueBuildStatus.outdated;
-      _isStageQueueBuilt = false;
+      if (wasBuilt) {
+        // Переключение альтернативного рабочего места уже перестраивает
+        // фактическую очередь здесь. Поэтому запущенный/собранный заказ можно
+        // сохранить сразу: сервис синхронизации ниже обновит только ожидающий
+        // этап и заблокирует сохранение, если выбранный автомат уже начат.
+        _queueBuildStatus = QueueBuildStatus.built;
+        _queueSignature = _currentQueueSignature();
+        _isStageQueueBuilt = true;
+      } else {
+        _queueBuildStatus = QueueBuildStatus.outdated;
+        _isStageQueueBuilt = false;
+      }
     });
   }
 
