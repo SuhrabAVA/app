@@ -672,6 +672,8 @@ class _TasksScreenState extends State<TasksScreen>
   bool _selectionUpdateScheduled = false;
   String? _lastQueueSyncGroupId;
   String? _lastQueueSyncIdsSignature;
+  String? _lastLaunchedOrderIdsSignature;
+  bool _taskRefreshAfterLaunchScheduled = false;
   final Set<String> _startingTaskIds = <String>{};
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
@@ -778,6 +780,38 @@ class _TasksScreenState extends State<TasksScreen>
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
       );
+    });
+  }
+
+  void _scheduleTaskRefreshForLaunchedOrders({
+    required Iterable<OrderModel> orders,
+    required TaskProvider taskProvider,
+  }) {
+    final launchedOrderIds = orders
+        .where((order) =>
+            order.assignmentCreated ||
+            order.statusEnum == OrderStatus.in_production)
+        .map((order) => order.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList()
+      ..sort();
+    final signature = launchedOrderIds.join('|');
+    if (_lastLaunchedOrderIdsSignature == signature) return;
+
+    _lastLaunchedOrderIdsSignature = signature;
+    if (signature.isEmpty || _taskRefreshAfterLaunchScheduled) return;
+
+    _taskRefreshAfterLaunchScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _taskRefreshAfterLaunchScheduled = false;
+        return;
+      }
+      try {
+        await taskProvider.refresh();
+      } finally {
+        _taskRefreshAfterLaunchScheduled = false;
+      }
     });
   }
 
@@ -2007,7 +2041,12 @@ class _TasksScreenState extends State<TasksScreen>
     final templateProvider = context.watch<TemplateProvider>();
     final queue = context.watch<ProductionQueueProvider>();
 
-    final orderIds = ordersProvider.orders.map((o) => o.id).toList(growable: false);
+    final orderIds =
+        ordersProvider.orders.map((o) => o.id).toList(growable: false);
+    _scheduleTaskRefreshForLaunchedOrders(
+      orders: ordersProvider.orders,
+      taskProvider: taskProvider,
+    );
 
     final media = MediaQuery.of(context);
     final bool isTablet =
