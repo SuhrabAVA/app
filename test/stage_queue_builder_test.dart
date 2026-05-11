@@ -523,6 +523,25 @@ void main() {
     expect(kSheetProducts, {kSheetProductTypeId});
   });
 
+  test('preserves manually swapped flex printing before bobbin cutting', () {
+    final queue = buildOrderStageQueue(
+      productTypeId: kSheetProductTypeId,
+      hasCutting: false,
+      hasCardboard: false,
+      hasFlexPrinting: true,
+      requiresBobbinCutting: true,
+      existingStages: const [
+        {'stageId': kFlexPrintingStageId, 'stageName': 'Флексопечать'},
+        {'stageId': kBobbinStageId, 'stageName': 'Бобинорезка'},
+      ],
+    );
+
+    expect(queue[0]['stageId'], kFlexPrintingStageId);
+    expect(queue[1]['stageId'], kBobbinStageId);
+    expect(queue[0]['sortOrder'], 1);
+    expect(queue[1]['sortOrder'], 2);
+  });
+
   test('builds sheet queue from centralized draft rules', () {
     final result = buildOrderStages(
       const OrderStageQueueDraft(

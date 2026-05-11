@@ -221,18 +221,65 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return normalized.isEmpty ? planned.stageName : normalized.join(' / ');
   }
 
-  Future<void> _skipStageForTesting(List<TaskModel> stageTasks) async {
-    if (stageTasks.isEmpty) return;
+  String _stageGroupKeyForPlannedStage(
+    pcompat.PlannedStage planned,
+    List<String> stageIds,
+  ) {
+    for (final key in const <String>[
+      'stageGroupKey',
+      'stage_group_key',
+      'queueStageKey',
+      'queue_stage_key',
+      'groupKey',
+      'group_key',
+      'stageKey',
+      'stage_key',
+    ]) {
+      final value = planned.extra[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return stageIds.isNotEmpty ? stageIds.first : planned.stageId.trim();
+  }
+
+  Future<void> _skipStageForTesting(
+    pcompat.PlannedStage planned,
+    List<TaskModel> stageTasks,
+    List<String> stageIds,
+  ) async {
+    if (stageTasks.isEmpty && stageIds.isEmpty) return;
     final provider = context.read<TaskProvider>();
     // Тестовый режим: помечаем текущий этап завершённым и передаём заказ дальше.
-    for (final task in stageTasks) {
-      await provider.addComment(
-        taskId: task.id,
-        type: 'skip_stage_test',
-        text: 'Этап пропущен в тестовом режиме',
-        userId: 'system',
-      );
-      await provider.updateStatus(task.id, TaskStatus.completed);
+    if (stageTasks.isEmpty) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final stageId =
+          stageIds.isNotEmpty ? stageIds.first : planned.stageId.trim();
+      final stageGroupKey = _stageGroupKeyForPlannedStage(planned, stageIds);
+      await Supabase.instance.client.from('tasks').insert({
+        'order_id': widget.order.id,
+        'stage_id': stageId,
+        'stage_group_key': stageGroupKey,
+        'status': TaskStatus.completed.name,
+        'spent_seconds': 0,
+        'assignees': <String>[],
+        'comments': {
+          'skip_stage_test_$now': {
+            'type': 'skip_stage_test',
+            'text': 'Этап пропущен в тестовом режиме',
+            'userId': 'system',
+            'timestamp': now,
+          },
+        },
+      });
+    } else {
+      for (final task in stageTasks) {
+        await provider.addComment(
+          taskId: task.id,
+          type: 'skip_stage_test',
+          text: 'Этап пропущен в тестовом режиме',
+          userId: 'system',
+        );
+        await provider.updateStatus(task.id, TaskStatus.completed);
+      }
     }
     await provider.refresh();
     if (!mounted) return;
@@ -767,13 +814,16 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                         color: Colors.black54,
                                       ),
                                     ),
-                                    if (stageTasks.isNotEmpty &&
-                                        stageStatus != TaskStatus.completed) ...[
+                                    if (stageStatus != TaskStatus.completed) ...[
                                       const SizedBox(height: 6),
                                       OutlinedButton.icon(
                                         onPressed: _loadingPlan
                                             ? null
-                                            : () => _skipStageForTesting(stageTasks),
+                                            : () => _skipStageForTesting(
+                                                  planned,
+                                                  stageTasks,
+                                                  stageIds,
+                                                ),
                                         icon: const Icon(Icons.skip_next, size: 16),
                                         label: const Text('Пропустить этап'),
                                       ),

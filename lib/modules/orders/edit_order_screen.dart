@@ -1257,6 +1257,63 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return options.isEmpty ? null : options.first;
   }
 
+  bool _isBobbinPreviewStage(Map<String, dynamic> stage) {
+    final id = _selectedSwitchableIdFromPreviewStage(stage)?.toLowerCase();
+    if (id == kBobbinStageId || kLegacyBobbinStageAliases.contains(id)) {
+      return true;
+    }
+    final name = _resolveStageName(stage).toLowerCase();
+    return name.contains('бобин') ||
+        name.contains('бабин') ||
+        name.contains('bobbin');
+  }
+
+  bool _isFlexPrintingPreviewStage(Map<String, dynamic> stage) {
+    final id = _selectedSwitchableIdFromPreviewStage(stage)?.toLowerCase();
+    if (id == kFlexPrintingStageId ||
+        kLegacyFlexPrintingStageAliases.contains(id)) {
+      return true;
+    }
+    final name = _resolveStageName(stage).toLowerCase();
+    return name.contains('флекс') || name.contains('flexo');
+  }
+
+  bool _canSwapBobbinFlexStage(int index) {
+    if (index < 0 || index >= _stagePreviewStages.length) return false;
+    final stage = _stagePreviewStages[index];
+    if (!_isBobbinPreviewStage(stage) && !_isFlexPrintingPreviewStage(stage)) {
+      return false;
+    }
+    return _stagePreviewStages.any(_isBobbinPreviewStage) &&
+        _stagePreviewStages.any(_isFlexPrintingPreviewStage);
+  }
+
+  void _swapBobbinFlexStages() {
+    final bobbinIndex = _stagePreviewStages.indexWhere(_isBobbinPreviewStage);
+    final flexIndex =
+        _stagePreviewStages.indexWhere(_isFlexPrintingPreviewStage);
+    if (bobbinIndex < 0 || flexIndex < 0 || bobbinIndex == flexIndex) return;
+
+    setState(() {
+      final updated = _stagePreviewStages
+          .map((stage) => Map<String, dynamic>.from(stage))
+          .toList(growable: true);
+      final tmp = updated[bobbinIndex];
+      updated[bobbinIndex] = updated[flexIndex];
+      updated[flexIndex] = tmp;
+      for (var i = 0; i < updated.length; i++) {
+        updated[i]['sortOrder'] = i + 1;
+        updated[i]['order'] = i + 1;
+      }
+      _stagePreviewStages = updated;
+      _stageOrderManuallyChanged = true;
+      if (_queueBuildStatus == QueueBuildStatus.built) {
+        _queueSignature = _currentQueueSignature();
+        _isStageQueueBuilt = true;
+      }
+    });
+  }
+
   void _selectSwitchablePreviewStage(String stageKey, String selectedStageId) {
     final current = stageKey == kVMainSwitchStageKey
         ? _selectedVStage
@@ -1356,21 +1413,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
               ),
               const SizedBox(width: 10),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < options.length; i++) ...[
-                    _SwitchableStageDot(
-                      label: options[i].label,
-                      selected: options[i].stageId == selected,
-                      onTap: () => _selectSwitchablePreviewStage(
-                        stageKey,
-                        options[i].stageId,
-                      ),
-                    ),
-                    if (i != options.length - 1) const SizedBox(width: 8),
-                  ],
-                ],
+              Icon(
+                Icons.touch_app_outlined,
+                size: 16,
+                color: colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'нажмите на этап',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
               ),
             ],
           ),
@@ -2727,19 +2780,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Запущенный заказ больше не снимается с производства только из-за
     // редактирования очереди. OrderQueueSyncService точечно обновляет pending
     // этапы/задачи и блокирует только изменение защищённых этапов.
-    // Перед сохранением всегда строим эффективную очередь из текущего черновика,
-    // даже если пользователь не нажимал «Собрать очередь» или шаблон не выбран.
-    final stageMaps = _buildStageQueueFromCurrentDraft(
-      templateStages: _selectedTemplateStageMaps(),
-    );
-    final bool hasEffectiveStageQueue = stageMaps.isNotEmpty;
-    final bool willSaveBuiltStageQueue = hasEffectiveStageQueue;
-    if (willSaveBuiltStageQueue) {
+    // Очередь сохраняем только после явного нажатия «Собрать очередь».
+    // Если очередь не собрана или устарела, заказ остаётся черновиком и не
+    // может быть запущен.
+    final bool willSaveBuiltStageQueue =
+        nextQueueBuildStatus == QueueBuildStatus.built;
+    final stageMaps = willSaveBuiltStageQueue
+        ? _buildStageQueueFromCurrentDraft(
+            existingStages: _stagePreviewStages,
+            templateStages: _selectedTemplateStageMaps(),
+          )
+        : <Map<String, dynamic>>[];
+    final bool hasEffectiveStageQueue =
+        willSaveBuiltStageQueue && stageMaps.isNotEmpty;
+    if (hasEffectiveStageQueue) {
       _syncSwitchableStageSelectionFields(stageMaps);
-      nextQueueBuildStatus = QueueBuildStatus.built;
     }
-    // Статус заказа рассчитываем от эффективной очереди текущего черновика,
-    // а не от того, нажимал ли пользователь кнопку «Собрать очередь».
     final bool hasQueueForStatus = hasEffectiveStageQueue;
     final bool hasEnoughMaterialsForQueue = hasEnoughPaperForLaunch();
     final bool canLaunchProductionNow =
@@ -3082,8 +3138,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
-            'Очередь изменилась и будет перестроена автоматически '
-            'при сохранении',
+            'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
+            'иначе заказ останется черновиком',
           ),
         ),
       );
@@ -5952,8 +6008,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            'Очередь изменилась и будет перестроена автоматически '
-            'при сохранении',
+            'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
+            'иначе заказ останется черновиком',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.error,
                   fontWeight: FontWeight.w600,
@@ -6105,8 +6161,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if ((_stageTemplateId == null || _stageTemplateId!.isEmpty) &&
         _stagePreviewStages.isEmpty) {
       return Text(
-        'Очередь будет построена автоматически после выбора типа '
-        'продукта и параметров заказа',
+        'Выберите тип продукта и параметры заказа, затем нажмите '
+        '«Собрать очередь»',
         style: theme.textTheme.bodySmall,
       );
     }
@@ -6173,7 +6229,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: theme.textTheme.bodyMedium),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(title, style: theme.textTheme.bodyMedium),
+                      ),
+                      if (_canSwapBobbinFlexStage(i))
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Tooltip(
+                            message:
+                                'Поменять местами Флексопечать и Бобинорезку',
+                            child: IconButton.filledTonal(
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 32,
+                                height: 32,
+                              ),
+                              padding: EdgeInsets.zero,
+                              icon: const Icon(Icons.swap_vert, size: 18),
+                              onPressed: _swapBobbinFlexStages,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                   if (description.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
