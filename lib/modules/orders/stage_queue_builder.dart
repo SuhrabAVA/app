@@ -30,18 +30,18 @@ const String kBobbinStageId = 'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
 const String kFlexPrintingStageId = '0571c01c-f086-47e4-81b2-5d8b2ab91218';
 const Set<String> kLegacyBobbinStageAliases = {'w_bobiner', 'w_bobbin'};
 const Set<String> kLegacyFlexPrintingStageAliases = {'w_flexoprint', 'w_flexo'};
-const String kPackagingStageId = 'edeb85db-c7a3-4a24-8f33-70ccdda4aae1';
+const String kPackagingStageId = 'edeb85db-c7a3-4a24-8f33-70ccdd4aaae1';
 const String kFriStageId = '92d96ee9-0519-40b9-bd17-9bec475496b6';
 const String kWindowStageId = '8337f16e-c2d1-42dc-966d-6277ba3c1a50';
-const String kAutoBigStageId = 'fdbf1735-a67c-47c9-a7e1-90546effe6ed';
+const String kAutoBigStageId = 'fdbf1735-a67c-47c9-a7e1-90546e1fe6ed';
 const String kAutoSmallStageId = 'cbcbe469-b924-4064-ae05-885ccd1b842a';
-const String kTubeStageId = 'e62fc013-4785-4375-b3ee-a3ca51f77199';
-const String kSheetCutStageId = '19a67630-8374-49f1-ae5b-f2f66828720b';
+const String kTubeStageId = 'e62fc013-4785-43f3-b3ee-a3ca51777199';
+const String kSheetCutStageId = '19a67630-8374-4f9f-ae5b-f2f66828720b';
 const String kCuttingStageId = cuttingStageId;
 const String kCardboardCuttingStageId =
     'd7d91f75-2f85-446f-8c1d-a20606bdb3b1';
 const String kCardboardInsertStageId =
-    'ce15da53-34bb-4a48-acef-610ddfd4a42e';
+    'ce15da53-34bb-4a48-acef-610dddfad42e';
 const String kBottomWithCardboardAssemblyStageId =
     'd15da69b-9842-4967-96ed-28a4834b409e';
 const String kFlatHandleStageId = flatHandleStageId;
@@ -55,7 +55,8 @@ const String kBottomGlueWorkplaceId = 'dee83c5c-4624-4ca4-b36c-47673dc5cd72';
 const String kBottomGlueAltWorkplaceId = 'ad504db5-86c3-4284-8266-42bbf967b064';
 const String kBottomGlueSecondAltWorkplaceId =
     '96075b60-77d8-4fb2-91b0-bfbe6c1ed13c';
-const String kTwistedHandleWorkplaceId = 'c51ebb2e-dac8-4068-9e4c-ce0d8b975626';
+const String kTwistedHandleWorkplaceId = 'c5c1eb2e-dac8-4068-9e4c-ced8fb975626';
+                                          
 const String kSharedHandleWorkplaceId = kManualHandleStageId;
 const String kFlatHandleWorkplaceId = kFlatHandleStageId;
 
