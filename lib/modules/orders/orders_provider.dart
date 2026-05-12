@@ -967,8 +967,11 @@ class OrdersProvider with ChangeNotifier {
       debugPrint('⚠️ shipOrder: unable to fetch latest actual_qty: $e\n$st');
     }
 
-    double? actualQtyOverride =
+    final double? savedActualQty =
         _toDoubleNullable(latestRow == null ? null : latestRow['actual_qty']);
+    final double? productionActualQty =
+        await _loadLatestProductionActualQty(order.id);
+    final double? actualQtyOverride = productionActualQty ?? savedActualQty;
     final String handleOverride =
         (latestRow?['handle'] ?? order.handle).toString();
 
@@ -1983,6 +1986,156 @@ class OrdersProvider with ChangeNotifier {
     final String text = value.toString().trim();
     if (text.isEmpty) return null;
     return double.tryParse(text.replaceAll(',', '.'));
+  }
+
+  Future<double?> _loadLatestProductionActualQty(String orderId) async {
+    try {
+      final rows = await _supabase
+          .from('tasks')
+          .select('stage_id, comments, completed_at, finished_at')
+          .eq('order_id', orderId);
+      if (rows is! List || rows.isEmpty) {
+        return null;
+      }
+
+      final stageTotals = <String, double>{};
+      final stageLastTouched = <String, int>{};
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw);
+        final stageId = (row['stage_id'] ?? '').toString();
+        if (stageId.isEmpty) continue;
+
+        final comments = _normalizeTaskComments(row['comments']);
+        final quantity = _taskProductionQuantity(comments);
+        if (quantity == null || quantity <= 0) continue;
+
+        stageTotals.update(stageId, (current) => current + quantity,
+            ifAbsent: () => quantity);
+        final touchedAt = _latestTaskQuantityTimestamp(comments, row);
+        final previousTouchedAt = stageLastTouched[stageId] ?? 0;
+        if (touchedAt > previousTouchedAt) {
+          stageLastTouched[stageId] = touchedAt;
+        }
+      }
+
+      if (stageTotals.isEmpty) {
+        return null;
+      }
+
+      var latestStageId = stageTotals.keys.first;
+      var latestTouchedAt = stageLastTouched[latestStageId] ?? 0;
+      for (final stageId in stageTotals.keys.skip(1)) {
+        final touchedAt = stageLastTouched[stageId] ?? 0;
+        if (touchedAt > latestTouchedAt) {
+          latestStageId = stageId;
+          latestTouchedAt = touchedAt;
+        }
+      }
+      return stageTotals[latestStageId];
+    } catch (e, st) {
+      debugPrint('⚠️ shipOrder: unable to load production actual_qty: $e\n$st');
+      return null;
+    }
+  }
+
+  List<Map<String, dynamic>> _normalizeTaskComments(dynamic value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+    if (value is Map) {
+      return value.values
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+    return const <Map<String, dynamic>>[];
+  }
+
+  double? _taskProductionQuantity(List<Map<String, dynamic>> comments) {
+    final teamTotals = comments
+        .where((comment) => comment['type'] == 'quantity_team_total')
+        .toList(growable: false);
+    if (teamTotals.isNotEmpty) {
+      final latest = teamTotals.reduce((a, b) =>
+          _commentTimestamp(a) >= _commentTimestamp(b) ? a : b);
+      return _parseProductionQuantity(latest['text']);
+    }
+
+    double total = 0;
+    var hasQuantity = false;
+    for (final comment in comments) {
+      if (comment['type'] != 'quantity_done') continue;
+      total += _parseProductionQuantity(comment['text']);
+      hasQuantity = true;
+    }
+    return hasQuantity ? total : null;
+  }
+
+  int _latestTaskQuantityTimestamp(
+    List<Map<String, dynamic>> comments,
+    Map<String, dynamic> row,
+  ) {
+    var timestamp = _parseTimestamp(row['completed_at']);
+    final finishedAt = _parseTimestamp(row['finished_at']);
+    if (finishedAt > timestamp) timestamp = finishedAt;
+
+    for (final comment in comments) {
+      final type = comment['type'];
+      if (type != 'quantity_done' && type != 'quantity_team_total') continue;
+      final commentTimestamp = _commentTimestamp(comment);
+      if (commentTimestamp > timestamp) timestamp = commentTimestamp;
+    }
+    return timestamp;
+  }
+
+  int _commentTimestamp(Map<String, dynamic> comment) {
+    return _parseTimestamp(comment['timestamp']);
+  }
+
+  int _parseTimestamp(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toInt();
+    final text = value.toString().trim();
+    if (text.isEmpty) return 0;
+    final asInt = int.tryParse(text);
+    if (asInt != null) return asInt;
+    return DateTime.tryParse(text)?.millisecondsSinceEpoch ?? 0;
+  }
+
+  double _parseProductionQuantity(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    final normalized = value.toString().replaceAll(',', '.').trim();
+    if (normalized.isEmpty) return 0;
+
+    final totalFromFormula =
+        RegExp(r'=\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+    if (totalFromFormula != null) {
+      return double.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
+    }
+
+    final packsMatch = RegExp(r'(-?\d+(?:\.\d+)?)\s*пач',
+            caseSensitive: false)
+        .firstMatch(normalized);
+    final inPackMatch =
+        RegExp(r'[x×*]\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+    if (packsMatch != null && inPackMatch != null) {
+      final packs = double.tryParse(packsMatch.group(1) ?? '') ?? 0;
+      final inPack = double.tryParse(inPackMatch.group(1) ?? '') ?? 0;
+      return packs * inPack;
+    }
+
+    final parsed = double.tryParse(normalized);
+    if (parsed != null) return parsed;
+
+    final firstNumber = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(normalized);
+    if (firstNumber != null) {
+      return double.tryParse(firstNumber.group(0) ?? '') ?? 0;
+    }
+    return 0;
   }
 
   String _formatQtyValue(double value) {
