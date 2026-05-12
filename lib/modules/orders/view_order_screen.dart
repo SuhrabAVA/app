@@ -23,6 +23,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
   List<Map<String, dynamic>> _paints = const [];
   String? _stageTemplateName;
   String? _formImageUrl;
+  Map<String, dynamic>? _formDetails;
 
   String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
     final trimmed = rawUrl?.trim();
@@ -70,7 +71,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       if (formCode != null && formCode.isNotEmpty) {
         final res = await Supabase.instance.client
             .from('forms')
-            .select('image_url, updated_at')
+            .select()
             .eq('code', formCode)
             .maybeSingle();
         if (res != null && res is Map) {
@@ -83,7 +84,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
           formNo != null) {
         final res = await Supabase.instance.client
             .from('forms')
-            .select('image_url, updated_at')
+            .select()
             .eq('series', formSeries)
             .eq('number', formNo)
             .maybeSingle();
@@ -110,6 +111,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
         _paints = paints;
         _files = files;
         _formImageUrl = formImageUrl;
+        _formDetails = form;
         _stageTemplateName = stageTemplateName;
       });
     } catch (_) {
@@ -182,6 +184,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
                         files: _files,
                         stageTemplateName: _stageTemplateName,
                         formImageUrl: _formImageUrl,
+                        formDetails: _formDetails,
                       ),
                     ),
                   ),
