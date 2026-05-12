@@ -2076,6 +2076,25 @@ class OrdersProvider with ChangeNotifier {
     return const <Map<String, dynamic>>[];
   }
 
+  bool _isMissingColumnError(Object error, String columnName) {
+    if (error is! PostgrestException) return false;
+
+    final code = (error.code ?? '').trim();
+    final message = error.message.toLowerCase();
+    final details = (error.details ?? '').toString().toLowerCase();
+    final hint = (error.hint ?? '').toString().toLowerCase();
+    final normalizedColumn = columnName.toLowerCase();
+    final mentionsColumn = message.contains(normalizedColumn) ||
+        details.contains(normalizedColumn) ||
+        hint.contains(normalizedColumn);
+
+    return mentionsColumn &&
+        (code == '42703' ||
+            code == 'PGRST204' ||
+            message.contains('column') ||
+            message.contains('schema cache'));
+  }
+
   List<Map<String, dynamic>> _normalizeTaskComments(dynamic value) {
     if (value is List) {
       return value
