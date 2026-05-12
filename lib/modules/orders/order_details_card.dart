@@ -142,14 +142,10 @@ class OrderDetailsCard extends StatelessWidget {
 
   List<Widget> _formDetailWidgets({bool compact = false}) {
     final details = <String, String>{
-      'Название': _formDetailValue('title'),
-      'Код': _formDetailValue('code'),
+      
       'Серия': _formDetailValue('series'),
-      'Номер': _formDetailValue('number'),
-      'Размер': _formDetailValue('size'),
-      'Тип продукта': _formDetailValue('product_type'),
-      'Цвета': _formDetailValue('colors'),
-      'Доп. информация': _formDetailValue('description'),
+      
+      
     };
     return details.entries
         .where((entry) => entry.value.isNotEmpty)
