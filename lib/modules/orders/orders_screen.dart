@@ -477,18 +477,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final double plannedQty = order.product.quantity.toDouble();
     final double actualQty = order.actualQty ?? plannedQty;
     final double safeActual = actualQty < 0 ? 0 : actualQty;
-    if (safeActual < plannedQty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Нельзя отгрузить заказ: факт '
-            '${_formatQuantity(safeActual)} меньше тиража '
-            '${_formatQuantity(plannedQty)}.',
-          ),
-        ),
-      );
-      return;
-    }
     double? warehouseExtraQty;
     String? warehouseExtraSize;
     try {
@@ -515,8 +503,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
 
     final bool actualLessThanPlanned = safeActual < plannedQty;
-    final double suggestedWriteoff =
-        actualLessThanPlanned ? safeActual : plannedQty;
+    final double maxWriteoffQty = safeActual;
+    final double suggestedWriteoff = math.min(plannedQty, maxWriteoffQty);
     double customQty = suggestedWriteoff;
     ShipmentQuantityMode mode = actualLessThanPlanned
         ? ShipmentQuantityMode.actual
@@ -525,10 +513,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         TextEditingController(text: _formatQuantity(customQty));
     bool updatingCustomText = false;
 
-    double sliderMax = math.max(plannedQty, safeActual);
-    if (warehouseExtraQty != null) {
-      sliderMax = math.max(sliderMax, warehouseExtraQty);
-    }
+    double sliderMax = maxWriteoffQty;
     final bool sliderEnabled = sliderMax > 0;
     if (!sliderEnabled) {
       sliderMax = 1;
@@ -538,13 +523,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final bool customQtyExceedsMax =
+                mode == ShipmentQuantityMode.custom &&
+                    customQty > maxWriteoffQty;
             final double effectiveCustom = sliderEnabled
                 ? math.max(0, math.min(customQty, sliderMax))
-                : math.max(0, customQty);
+                : math.max(0, math.min(customQty, maxWriteoffQty));
             double currentWriteoff;
             switch (mode) {
               case ShipmentQuantityMode.tirage:
-                currentWriteoff = plannedQty;
+                currentWriteoff = math.min(plannedQty, maxWriteoffQty);
                 break;
               case ShipmentQuantityMode.actual:
                 currentWriteoff = safeActual;
@@ -554,8 +542,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 break;
             }
             if (currentWriteoff < 0) currentWriteoff = 0;
-            final double leftoverQty =
-                safeActual > currentWriteoff ? (safeActual - currentWriteoff) : 0;
+            if (currentWriteoff > maxWriteoffQty) {
+              currentWriteoff = maxWriteoffQty;
+            }
+            final double leftoverQty = safeActual > currentWriteoff
+                ? (safeActual - currentWriteoff)
+                : 0;
 
             return AlertDialog(
               title: const Text('Подтвердить отгрузку?'),
@@ -585,14 +577,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     RadioListTile<ShipmentQuantityMode>(
                       title: Text(
                           'Списать тираж (${_formatQuantity(plannedQty)})'),
+                      subtitle: plannedQty > maxWriteoffQty
+                          ? Text(
+                              'Недоступно: факт ${_formatQuantity(maxWriteoffQty)} меньше тиража',
+                            )
+                          : null,
                       value: ShipmentQuantityMode.tirage,
                       groupValue: mode,
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() {
-                          mode = value;
-                        });
-                      },
+                      onChanged: plannedQty > maxWriteoffQty
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+                              setDialogState(() {
+                                mode = value;
+                              });
+                            },
                     ),
                     RadioListTile<ShipmentQuantityMode>(
                       title: Text(
@@ -622,9 +621,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         controller: customController,
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Количество к списанию',
-                          border: OutlineInputBorder(),
+                          helperText:
+                              'Не больше факта: ${_formatQuantity(maxWriteoffQty)}',
+                          errorText: customQtyExceedsMax
+                              ? 'Количество не должно быть больше факта'
+                              : null,
+                          border: const OutlineInputBorder(),
                         ),
                         onChanged: (value) {
                           if (updatingCustomText) return;
@@ -670,7 +674,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     ],
                     const Divider(),
                     Text('К списанию: ${_formatQuantity(currentWriteoff)}'),
-                    Text('Остаток после отгрузки: ${_formatQuantity(leftoverQty)}'),
+                    Text(
+                      'Остаток после отгрузки: ${_formatQuantity(leftoverQty)}',
+                    ),
                   ],
                 ),
               ),
@@ -680,7 +686,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   child: const Text('Отмена'),
                 ),
                 ElevatedButton(
-                  onPressed: currentWriteoff <= 0
+                  onPressed: currentWriteoff <= 0 ||
+                          currentWriteoff > maxWriteoffQty ||
+                          customQtyExceedsMax
                       ? null
                       : () => Navigator.pop(ctx, currentWriteoff),
                   style: ElevatedButton.styleFrom(

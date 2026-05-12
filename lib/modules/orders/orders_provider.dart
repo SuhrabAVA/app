@@ -1,5 +1,7 @@
 // lib/modules/orders/orders_provider.dart
 import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -984,14 +986,7 @@ class OrdersProvider with ChangeNotifier {
     final double actualQty =
         orderData.actualQty ?? orderData.product.quantity.toDouble();
     final double safeActual = actualQty < 0 ? 0 : actualQty;
-    if (safeActual < plannedQty) {
-      throw Exception(
-        'Нельзя отгрузить заказ: фактическое количество '
-        '(${_formatQty(safeActual)}) меньше тиража '
-        '(${_formatQty(plannedQty)}).',
-      );
-    }
-    double writeoffQty = writeoffOverride ?? plannedQty.toDouble();
+    double writeoffQty = writeoffOverride ?? math.min(plannedQty, safeActual);
     if (writeoffQty.isNaN || writeoffQty.isInfinite) {
       writeoffQty = 0;
     }
@@ -1000,6 +995,13 @@ class OrdersProvider with ChangeNotifier {
     }
     if (writeoffQty <= 0) {
       throw Exception('Количество для списания должно быть больше нуля.');
+    }
+    if (writeoffQty > safeActual) {
+      throw Exception(
+        'Нельзя отгрузить больше фактического количества: '
+        'к отгрузке ${_formatQty(writeoffQty)}, '
+        'факт ${_formatQty(safeActual)}.',
+      );
     }
 
     final double leftoverQty =
