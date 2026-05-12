@@ -477,6 +477,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final double plannedQty = order.product.quantity.toDouble();
     final double actualQty = order.actualQty ?? plannedQty;
     final double safeActual = actualQty < 0 ? 0 : actualQty;
+    if (safeActual < plannedQty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Нельзя отгрузить заказ: факт '
+            '${_formatQuantity(safeActual)} меньше тиража '
+            '${_formatQuantity(plannedQty)}.',
+          ),
+        ),
+      );
+      return;
+    }
     double? warehouseExtraQty;
     String? warehouseExtraSize;
     try {

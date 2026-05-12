@@ -984,8 +984,14 @@ class OrdersProvider with ChangeNotifier {
     final double actualQty =
         orderData.actualQty ?? orderData.product.quantity.toDouble();
     final double safeActual = actualQty < 0 ? 0 : actualQty;
-    double writeoffQty = writeoffOverride ??
-        (safeActual < plannedQty ? safeActual : plannedQty.toDouble());
+    if (safeActual < plannedQty) {
+      throw Exception(
+        'Нельзя отгрузить заказ: фактическое количество '
+        '(${_formatQty(safeActual)}) меньше тиража '
+        '(${_formatQty(plannedQty)}).',
+      );
+    }
+    double writeoffQty = writeoffOverride ?? plannedQty.toDouble();
     if (writeoffQty.isNaN || writeoffQty.isInfinite) {
       writeoffQty = 0;
     }
@@ -1990,11 +1996,8 @@ class OrdersProvider with ChangeNotifier {
 
   Future<double?> _loadLatestProductionActualQty(String orderId) async {
     try {
-      final rows = await _supabase
-          .from('tasks')
-          .select('stage_id, comments, completed_at, finished_at')
-          .eq('order_id', orderId);
-      if (rows is! List || rows.isEmpty) {
+      final rows = await _loadProductionTaskQuantityRows(orderId);
+      if (rows.isEmpty) {
         return null;
       }
 
@@ -2036,6 +2039,41 @@ class OrdersProvider with ChangeNotifier {
       debugPrint('⚠️ shipOrder: unable to load production actual_qty: $e\n$st');
       return null;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadProductionTaskQuantityRows(
+    String orderId,
+  ) async {
+    const columnSets = <String>[
+      'stage_id, comments, completed_at, finished_at',
+      'stage_id, comments, finished_at',
+      'stage_id, comments',
+    ];
+
+    Object? lastMissingColumnError;
+    for (final columns in columnSets) {
+      try {
+        final rows = await _supabase
+            .from('tasks')
+            .select(columns)
+            .eq('order_id', orderId);
+        if (rows is! List) {
+          return const <Map<String, dynamic>>[];
+        }
+        return rows
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+      } catch (error) {
+        final canRetry = _isMissingColumnError(error, 'completed_at') ||
+            _isMissingColumnError(error, 'finished_at');
+        if (!canRetry) rethrow;
+        lastMissingColumnError = error;
+      }
+    }
+
+    if (lastMissingColumnError != null) throw lastMissingColumnError;
+    return const <Map<String, dynamic>>[];
   }
 
   List<Map<String, dynamic>> _normalizeTaskComments(dynamic value) {
