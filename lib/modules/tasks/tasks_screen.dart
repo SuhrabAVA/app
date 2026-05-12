@@ -454,18 +454,6 @@ bool _anyUserActive(TaskModel task, {String? exceptUserId}) {
   return false;
 }
 
-bool _containsFlexo(String text) {
-  final lower = text.toLowerCase();
-  return lower.contains('флекс') || lower.contains('flexo');
-}
-
-bool _containsBobbin(String text) {
-  final lower = text.toLowerCase();
-  return lower.contains('бобин') ||
-      lower.contains('бабин') ||
-      lower.contains('bobbin');
-}
-
 bool _isEffectivelyCompleted(TaskModel task) {
   return isTaskFinallyCompleted(task);
 }
@@ -523,38 +511,6 @@ String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
   final text = wp?.unit?.trim();
   if (text != null && text.isNotEmpty) return text;
   return null;
-}
-
-
-void _ensureBobbinBeforeFlexoByLabel(
-  List<String> stageIds,
-  String Function(String stageId) labelResolver,
-) {
-  if (stageIds.length <= 1) return;
-
-  bool isFlexo(String stageId) =>
-      _containsFlexo(stageId) || _containsFlexo(labelResolver(stageId));
-  bool isBobbin(String stageId) =>
-      _containsBobbin(stageId) || _containsBobbin(labelResolver(stageId));
-
-  final flexoIndex = stageIds.indexWhere(isFlexo);
-  final bobbinIndex = stageIds.indexWhere(isBobbin);
-  if (flexoIndex == -1 || bobbinIndex == -1) return;
-  if (bobbinIndex < flexoIndex) return;
-
-  final reordered = List<String>.from(stageIds);
-  final bobbinId = reordered.removeAt(bobbinIndex);
-  var targetIndex = flexoIndex;
-  if (bobbinIndex < flexoIndex) {
-    targetIndex -= 1;
-  }
-  if (targetIndex < 0) targetIndex = 0;
-  if (targetIndex > reordered.length) targetIndex = reordered.length;
-  reordered.insert(targetIndex, bobbinId);
-
-  stageIds
-    ..clear()
-    ..addAll(reordered);
 }
 
 /// Разрешить старт только для самого первого незавершённого этапа заказа
@@ -3390,27 +3346,6 @@ class _TasksScreenState extends State<TasksScreen>
           orderedGroupKeys.add(key);
         }
       }
-
-      final repToKey = <String, String>{};
-      for (final entry in groupRepresentative.entries) {
-        repToKey[entry.value] = entry.key;
-      }
-      final repIds = orderedGroupKeys
-          .map((key) => groupRepresentative[key] ?? key.split('|').first)
-          .toList();
-      _ensureBobbinBeforeFlexoByLabel(repIds, (id) {
-        return _stageLabelForOrder(
-          personnel,
-          templates,
-          ordersProvider,
-          taskProvider,
-          order.id,
-          id,
-        );
-      });
-      orderedGroupKeys
-        ..clear()
-        ..addAll(repIds.map((id) => repToKey[id] ?? id));
     } else {
       for (final id in taskStageIds) {
         final key = registerStage(id);
@@ -3422,32 +3357,18 @@ class _TasksScreenState extends State<TasksScreen>
       String labelForKey(String key) {
         final repId = groupRepresentative[key] ?? key.split('|').first;
         return _stageLabelForOrder(
-                personnel, templates, ordersProvider, taskProvider, order.id, repId)
-            .toLowerCase();
-      }
-
-      orderedGroupKeys.sort((a, b) => labelForKey(a).compareTo(labelForKey(b)));
-
-      final repToKey = <String, String>{};
-      for (final entry in groupRepresentative.entries) {
-        repToKey[entry.value] = entry.key;
-      }
-      final repIds = orderedGroupKeys
-          .map((key) => groupRepresentative[key] ?? key.split('|').first)
-          .toList();
-      _ensureBobbinBeforeFlexoByLabel(repIds, (id) {
-        return _stageLabelForOrder(
           personnel,
           templates,
           ordersProvider,
           taskProvider,
           order.id,
-          id,
-        );
-      });
-      orderedGroupKeys
-        ..clear()
-        ..addAll(repIds.map((id) => repToKey[id] ?? id));
+          repId,
+        ).toLowerCase();
+      }
+
+      orderedGroupKeys.sort(
+        (a, b) => labelForKey(a).compareTo(labelForKey(b)),
+      );
     }
 
     // Некоторые источники плана этапов возвращают дублированную
