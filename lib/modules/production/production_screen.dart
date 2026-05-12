@@ -14,6 +14,7 @@ import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../production_planning/planned_stage_model.dart';
 import 'production_details_screen.dart';
+import 'production_order_visibility.dart';
 
 const _completedLabel = 'Завершенные';
 const _completedTabId = '__completed__';
@@ -684,10 +685,9 @@ class _ProductionScreenState extends State<ProductionScreen>
     final queue = context.watch<ProductionQueueProvider>();
     final templateProvider = context.watch<TemplateProvider>();
 
-    final orders = ordersProvider.orders.where((order) {
-      return order.statusEnum == OrderStatus.in_production ||
-          order.statusEnum == OrderStatus.completed;
-    }).toList(growable: false);
+    final orders = ordersProvider.orders
+        .where(isOrderVisibleInProductionJobs)
+        .toList(growable: false);
     final tasks = taskProvider.tasks;
 
     final productTypeOptions = {
