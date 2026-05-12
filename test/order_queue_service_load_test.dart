@@ -49,6 +49,10 @@ void main() {
         saved.rows.map((row) => row['stage_id']),
         ['new-print', 'new-pack'],
       );
+      expect(
+        saved.rows.map((row) => row['stage_name']),
+        ['Печать', 'Упаковка'],
+      );
     },
   );
 
