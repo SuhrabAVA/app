@@ -847,6 +847,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (widget.order != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _loadRuntimeEditLocks();
+        _scheduleStagePreviewUpdate(immediate: true);
       });
     }
   }
@@ -995,7 +996,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String _resolveStageName(Map<String, dynamic> stage) {
     final baseName = (() {
       final dynamic raw = stage['stageName'] ??
+          stage['stage_name'] ??
           stage['workplaceName'] ??
+          stage['workplace_name'] ??
           stage['title'] ??
           stage['name'];
       if (raw is String && raw.trim().isNotEmpty) {
@@ -1007,7 +1010,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final altNames = <String>[];
     final rawAlt = stage['alternativeStageNames'];
     if (rawAlt is List) {
-      altNames.addAll(rawAlt.whereType<String>().map((e) => e.trim()).where((e) => e.isNotEmpty));
+      altNames.addAll(
+        rawAlt
+            .whereType<String>()
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty),
+      );
     }
 
     final ordered = <String>[];
@@ -1624,7 +1632,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         .toList();
   }
 
-
   List<Map<String, dynamic>> _selectedTemplateStageMaps() {
     final templateId = _stageTemplateId;
     if (templateId == null || templateId.isEmpty) {
@@ -1637,6 +1644,65 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         : _templateStageMaps(template);
   }
 
+  List<Map<String, dynamic>> _normalizeSavedPreviewStages(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows.map((source) {
+      final row = Map<String, dynamic>.from(source);
+      final stageName = (row['stageName'] ??
+              row['stage_name'] ??
+              row['workplaceName'] ??
+              row['workplace_name'] ??
+              row['name'] ??
+              row['title'] ??
+              '')
+          .toString()
+          .trim();
+      if (stageName.isNotEmpty) {
+        row['stageName'] ??= stageName;
+        row['workplaceName'] ??= stageName;
+      }
+      final stageId = (row['stageId'] ??
+              row['stage_id'] ??
+              row['stageid'] ??
+              row['workplaceId'] ??
+              row['workplace_id'] ??
+              row['id'] ??
+              '')
+          .toString()
+          .trim();
+      if (stageId.isNotEmpty) {
+        row['stageId'] ??= stageId;
+        row['workplaceId'] ??= stageId;
+        row['id'] ??= stageId;
+      }
+      return row;
+    }).toList(growable: false);
+  }
+
+  bool _shouldKeepSavedStagePreview(SavedOrderQueue saved) {
+    if (widget.order == null || saved.rows.isEmpty) return false;
+    if (_stageOrderManuallyChanged) return false;
+    if (QueueBuildStatus.normalize(_queueBuildStatus) !=
+        QueueBuildStatus.built) {
+      return false;
+    }
+    return _sameQueueSignature(_queueSignature, _currentQueueSignature()) ||
+        widget.order!.assignmentCreated;
+  }
+
+  List<Map<String, dynamic>> _currentBuiltStageMapsForSave() {
+    if (_stagePreviewStages.isNotEmpty) {
+      return _stagePreviewStages
+          .map((stage) => Map<String, dynamic>.from(stage))
+          .toList(growable: false);
+    }
+    return _buildStageQueueFromCurrentDraft(
+      existingStages: _stagePreviewStages,
+      templateStages: _selectedTemplateStageMaps(),
+    );
+  }
+
   Future<void> _rebuildStagePreview() async {
     final templateStages = _selectedTemplateStageMaps();
 
@@ -1646,7 +1712,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (widget.order != null) {
       try {
         final saved = await _orderQueueService.loadSavedQueue(widget.order!.id);
-        existingStages = saved.rows;
+        existingStages = _normalizeSavedPreviewStages(saved.rows);
+        if (_shouldKeepSavedStagePreview(saved)) {
+          if (!mounted) return;
+          setState(() {
+            _stagePreviewStages = existingStages;
+            _stagePreviewLoading = false;
+            _stagePreviewError = null;
+            _stagePreviewInitialized = true;
+            _isStageQueueBuilt = true;
+          });
+          return;
+        }
       } catch (_) {
         existingStages = <Map<String, dynamic>>[];
       }
@@ -2728,10 +2805,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final bool willSaveBuiltStageQueue =
         nextQueueBuildStatus == QueueBuildStatus.built;
     final stageMaps = willSaveBuiltStageQueue
-        ? _buildStageQueueFromCurrentDraft(
-            existingStages: _stagePreviewStages,
-            templateStages: _selectedTemplateStageMaps(),
-          )
+        ? _currentBuiltStageMapsForSave()
         : <Map<String, dynamic>>[];
     final bool hasEffectiveStageQueue =
         willSaveBuiltStageQueue && stageMaps.isNotEmpty;
