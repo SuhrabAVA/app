@@ -306,6 +306,16 @@ class WarehouseLogsRepository {
     String selectFields = '*',
     String? fallbackSelectFields,
   }) async {
+    final List<String> normalizedIds = ids
+        .map((dynamic id) => id?.toString().trim())
+        .whereType<String>()
+        .where((String id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedIds.isEmpty) {
+      return <Map<String, dynamic>>[];
+    }
+
     for (final String table in tables) {
       final List<String?> attemptedOrders = <String?>[
         orderBy,
@@ -331,14 +341,11 @@ class WarehouseLogsRepository {
           try {
             final PostgrestFilterBuilder<dynamic> baseQuery =
                 _client.from(table).select(select);
-            final PostgrestTransformBuilder<dynamic> query = ids.isEmpty
-                ? (order == null
-                    ? baseQuery
-                    : baseQuery.order(order, ascending: ascending))
-                : baseQuery
-                    .or(ids.map((dynamic e) => '$fk.eq.$e').join(','))
-                    .order(order ?? fk, ascending: ascending);
-            final dynamic data = await query;
+            final PostgrestFilterBuilder<dynamic> filteredQuery =
+                baseQuery.inFilter(fk, normalizedIds);
+            final dynamic data = order == null
+                ? await filteredQuery
+                : await filteredQuery.order(order, ascending: ascending);
             return (data as List).cast<Map<String, dynamic>>();
           } on PostgrestException catch (error) {
             final String code = (error.code?.toString() ?? '').toLowerCase();
@@ -362,7 +369,8 @@ class WarehouseLogsRepository {
             if (selectColumnMissing) {
               break;
             }
-            if (_isMissingRelationError(error, table)) {
+            if (_isMissingRelationError(error, table) ||
+                _isRecoverableSchemaProbeError(error)) {
               break;
             }
             debugPrint('WarehouseLogsRepository: $error for table $table');
@@ -375,6 +383,16 @@ class WarehouseLogsRepository {
       }
     }
     return <Map<String, dynamic>>[];
+  }
+
+  static bool _isRecoverableSchemaProbeError(PostgrestException error) {
+    final String code = (error.code?.toString() ?? '').toLowerCase();
+    final String message = (error.message?.toString() ?? '').toLowerCase();
+    final String details = (error.details?.toString() ?? '').toLowerCase();
+
+    return code == '400' &&
+        (message == 'bad request' || message.contains('bad request')) &&
+        (details.isEmpty || details == 'bad request');
   }
 
   static bool _isMissingRelationError(
