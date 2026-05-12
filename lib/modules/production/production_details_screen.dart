@@ -118,6 +118,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   List<Map<String, dynamic>> _files = const [];
   List<Map<String, dynamic>> _paints = const [];
   String? _stageTemplateName;
+  String? _formImageUrl;
+  Map<String, dynamic>? _formDetails;
 
   List<String> _decodeStringList(dynamic raw) {
     if (raw == null) return const [];
@@ -319,12 +321,62 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     super.dispose();
   }
 
+
+  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
+    final trimmed = rawUrl?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+
+    String resolvedUrl = trimmed;
+    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
+    }
+
+    final dt = DateTime.tryParse(updatedAt ?? '');
+    if (dt == null) return resolvedUrl;
+
+    final uri = Uri.tryParse(resolvedUrl);
+    if (uri == null) return resolvedUrl;
+
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['v'] = dt.millisecondsSinceEpoch.toString();
+    return uri.replace(queryParameters: query).toString();
+  }
+
+  Future<Map<String, dynamic>?> _loadFormDetails() async {
+    final formCode = widget.order.formCode?.trim();
+    final formSeries = widget.order.formSeries?.trim();
+    final formNo = widget.order.newFormNo;
+    if (formCode != null && formCode.isNotEmpty) {
+      final res = await Supabase.instance.client
+          .from('forms')
+          .select()
+          .eq('code', formCode)
+          .maybeSingle();
+      if (res != null && res is Map) return Map<String, dynamic>.from(res);
+    }
+    if (formSeries != null && formSeries.isNotEmpty && formNo != null) {
+      final res = await Supabase.instance.client
+          .from('forms')
+          .select()
+          .eq('series', formSeries)
+          .eq('number', formNo)
+          .maybeSingle();
+      if (res != null && res is Map) return Map<String, dynamic>.from(res);
+    }
+    return null;
+  }
+
   Future<void> _loadOrderDetails() async {
     setState(() => _loadingFiles = true);
     try {
       final repo = OrdersRepository();
       final paints = await repo.getPaints(widget.order.id);
       final files = await storage.listOrderFiles(widget.order.id);
+      final formDetails = await _loadFormDetails();
+      final formImageUrl = _buildFormImageUrl(
+        formDetails?['image_url']?.toString(),
+        updatedAt: formDetails?['updated_at']?.toString(),
+      );
       String? stageTemplateName;
       final tplId = widget.order.stageTemplateId;
       if (tplId != null && tplId.isNotEmpty) {
@@ -341,6 +393,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         _paints = paints;
         _files = files;
         _stageTemplateName = stageTemplateName;
+        _formImageUrl = formImageUrl;
+        _formDetails = formDetails;
       });
     } catch (_) {
       // ignore errors in read-only view
@@ -940,6 +994,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                             paints: _paints,
                             files: _files,
                             stageTemplateName: _stageTemplateName,
+                            formImageUrl: _formImageUrl,
+                            formDetails: _formDetails,
                           ),
                         ),
                       ),

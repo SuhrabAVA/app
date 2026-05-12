@@ -3210,6 +3210,7 @@ class _TasksScreenState extends State<TasksScreen>
           final resolvedFormImageUrl =
               (data != null && data.isNotEmpty ? data[0] as String? : null) ??
                   cachedFormImageUrl;
+          final resolvedFormDetails = _formImageCache[order.id]?.details;
           final resolvedPaints =
               (data != null && data.length > 1
                       ? data[1] as List<Map<String, dynamic>>
@@ -3229,6 +3230,7 @@ class _TasksScreenState extends State<TasksScreen>
                 files: resolvedFiles,
                 stageTemplateName: templateName,
                 formImageUrl: resolvedFormImageUrl,
+                formDetails: resolvedFormDetails,
                 extraSections: [
                   _buildStageList(order, scale),
                 ],
@@ -3507,6 +3509,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   bool _canFinalizeTask(TaskModel task) {
     if (task.status == TaskStatus.completed) return false;
+    if (!_hasProductionStartedForStage(task)) return false;
     if (_anyUserActive(task)) return false;
     if (_isInkConfirmationStage(task)) {
       return true;
@@ -4352,9 +4355,11 @@ class _TasksScreenState extends State<TasksScreen>
                     // allow pausing also if user resumed
                     final bool canFinishRow = isMyRow &&
                         canFinish &&
+                        _hasProductionStartedForStage(task) &&
                         userParticipatedInStage &&
                         (stateRowUser != UserRunState.idle &&
-                            stateRowUser != UserRunState.finished);
+                            stateRowUser != UserRunState.finished) &&
+                        !isSetupActiveForRow;
                     final bool canProblemRow = isMyRow &&
                         canProblem &&
                         stateRowUser == UserRunState.active;
@@ -4487,9 +4492,6 @@ class _TasksScreenState extends State<TasksScreen>
                           return;
                         }
 
-                        final bool setupInProgressForCurrentUser =
-                            _isSetupInProgressForUser(task, widget.employeeId) &&
-                                !_hasProductionStartedForStage(task);
 
                         final startedAtTs =
                             task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
@@ -4537,8 +4539,7 @@ class _TasksScreenState extends State<TasksScreen>
                         }
 
                         if (_hasMachineForStage(stage) &&
-                            !_isSetupCompletedForUser(task, widget.employeeId) &&
-                            !setupInProgressForCurrentUser) {
+                            !_isSetupCompletedForUser(task, widget.employeeId)) {
                           await _finishSetup(task, provider);
                         }
                         final isResumeAction = stateRowUser == UserRunState.paused ||
@@ -5261,9 +5262,10 @@ class _TasksScreenState extends State<TasksScreen>
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
                                       onPressed: (!shiftPaused &&
-                                              !_isSetupCompletedForStage(task) &&
-                                              !_hasPendingSetupForStage(task) &&
-                                              !_hasProductionStartedForStage(task))
+                                              _canStartOrResumeSetupForUser(
+                                                task,
+                                                widget.employeeId,
+                                              ))
                                           ? () => _startSetup(task, provider)
                                           : null,
                                       style: ElevatedButton.styleFrom(
@@ -5281,7 +5283,14 @@ class _TasksScreenState extends State<TasksScreen>
                                             : null,
                                       ),
                                       icon: const Icon(Icons.build),
-                                      label: const Text('Начать наладку'),
+                                      label: Text(
+                                        _hasUnfinishedSetupForUser(
+                                          task,
+                                          widget.employeeId,
+                                        )
+                                            ? 'Продолжить наладку'
+                                            : 'Начать наладку',
+                                      ),
                                     ),
                                     SizedBox(width: buttonSpacing),
                                   ],
@@ -5769,6 +5778,29 @@ class _TasksScreenState extends State<TasksScreen>
     return false;
   }
 
+  bool _hasUnfinishedSetupForUser(TaskModel task, String userId) {
+    var lastSetupStart = 0;
+    var lastSetupDone = 0;
+    for (final c in task.comments) {
+      if (c.userId != userId) continue;
+      if (c.type == 'setup_start' || c.type == 'setup_resume') {
+        if (c.timestamp > lastSetupStart) lastSetupStart = c.timestamp;
+      } else if (c.type == 'setup_done') {
+        if (c.timestamp > lastSetupDone) lastSetupDone = c.timestamp;
+      }
+    }
+    return lastSetupStart > 0 && lastSetupStart > lastSetupDone;
+  }
+
+  bool _canStartOrResumeSetupForUser(TaskModel task, String userId) {
+    if (_hasProductionStartedForStage(task) || _isSetupCompletedForStage(task)) {
+      return false;
+    }
+    final hasPendingSetup = _hasPendingSetupForStage(task);
+    if (!hasPendingSetup) return true;
+    return _hasUnfinishedSetupForUser(task, userId);
+  }
+
   bool _isSetupCompletedForStage(TaskModel task) {
     if (_hasPendingSetupForStage(task)) return false;
     return task.comments.any((c) => c.type == 'setup_done');
@@ -5786,7 +5818,11 @@ class _TasksScreenState extends State<TasksScreen>
       (t) => t.id == task.id,
       orElse: () => task,
     );
-    if (_hasPendingSetupForStage(latestTask) ||
+    final resumeOwnSetup = _hasUnfinishedSetupForUser(
+      latestTask,
+      widget.employeeId,
+    );
+    if ((_hasPendingSetupForStage(latestTask) && !resumeOwnSetup) ||
         _isSetupCompletedForStage(latestTask) ||
         _hasProductionStartedForStage(latestTask)) {
       if (!mounted) return;
@@ -5813,8 +5849,10 @@ class _TasksScreenState extends State<TasksScreen>
     }
     await provider.addCommentAutoUser(
       taskId: task.id,
-      type: 'setup_start',
-      text: 'Начал(а) настройку станка',
+      type: resumeOwnSetup ? 'setup_resume' : 'setup_start',
+      text: resumeOwnSetup
+          ? 'Продолжил(а) настройку станка'
+          : 'Начал(а) настройку станка',
       userIdOverride: widget.employeeId,
     );
     final participants = _participantsSnapshot(latestTask, widget.employeeId);
@@ -6047,7 +6085,7 @@ class _TasksScreenState extends State<TasksScreen>
       if (code != null && code.isNotEmpty) {
         final res = await client
             .from('forms')
-            .select('image_url, updated_at')
+            .select()
             .eq('code', code)
             .maybeSingle();
         if (res != null && res is Map) {
@@ -6062,7 +6100,7 @@ class _TasksScreenState extends State<TasksScreen>
           order.newFormNo != null) {
         final res = await client
             .from('forms')
-            .select('image_url, updated_at')
+            .select()
             .eq('series', order.formSeries!.trim())
             .eq('number', order.newFormNo!)
             .maybeSingle();
@@ -6074,11 +6112,19 @@ class _TasksScreenState extends State<TasksScreen>
         row?['image_url']?.toString(),
         updatedAt: row?['updated_at']?.toString(),
       );
-      _formImageCache[key] = _FormImageCacheEntry(url: url, fetchedAt: DateTime.now());
+      _formImageCache[key] = _FormImageCacheEntry(
+        url: url,
+        details: row,
+        fetchedAt: DateTime.now(),
+      );
       return url;
     } catch (e) {
       debugPrint('❌ load form image error: $e');
-      _formImageCache[key] = _FormImageCacheEntry(url: null, fetchedAt: DateTime.now());
+      _formImageCache[key] = _FormImageCacheEntry(
+        url: null,
+        details: null,
+        fetchedAt: DateTime.now(),
+      );
       return null;
     } finally {
       _formImagePending.remove(key);
@@ -6147,10 +6193,12 @@ class _TasksScreenState extends State<TasksScreen>
 
 class _FormImageCacheEntry {
   final String? url;
+  final Map<String, dynamic>? details;
   final DateTime fetchedAt;
 
   const _FormImageCacheEntry({
     required this.url,
+    required this.details,
     required this.fetchedAt,
   });
 }

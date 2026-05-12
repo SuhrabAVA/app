@@ -14,6 +14,7 @@ class OrderDetailsCard extends StatelessWidget {
     required this.files,
     required this.stageTemplateName,
     this.formImageUrl,
+    this.formDetails,
     this.extraSections = const <Widget>[],
   });
 
@@ -22,6 +23,7 @@ class OrderDetailsCard extends StatelessWidget {
   final List<Map<String, dynamic>> files;
   final String? stageTemplateName;
   final String? formImageUrl;
+  final Map<String, dynamic>? formDetails;
   final List<Widget> extraSections;
 
   String _fmtDate(DateTime? d) =>
@@ -123,6 +125,44 @@ class OrderDetailsCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+
+  String _formDetailValue(String key) {
+    final value = formDetails?[key];
+    if (value == null) return '';
+    if (value is List) {
+      return value
+          .map((e) => e?.toString().trim() ?? '')
+          .where((e) => e.isNotEmpty)
+          .join(', ');
+    }
+    return value.toString().trim();
+  }
+
+  List<Widget> _formDetailWidgets({bool compact = false}) {
+    final details = <String, String>{
+      'Название': _formDetailValue('title'),
+      'Код': _formDetailValue('code'),
+      'Серия': _formDetailValue('series'),
+      'Номер': _formDetailValue('number'),
+      'Размер': _formDetailValue('size'),
+      'Тип продукта': _formDetailValue('product_type'),
+      'Цвета': _formDetailValue('colors'),
+      'Доп. информация': _formDetailValue('description'),
+    };
+    return details.entries
+        .where((entry) => entry.value.isNotEmpty)
+        .map((entry) => Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${entry.key}: ${entry.value}',
+                style: compact
+                    ? const TextStyle(fontSize: 14 * _compactTextScale)
+                    : null,
+              ),
+            ))
+        .toList();
   }
 
   Widget _buildDimensionsValue({bool compact = false}) {
@@ -445,6 +485,7 @@ class OrderDetailsCard extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(_formDisplayText(o)),
+                              ..._formDetailWidgets(compact: true),
                               if (formImageUrl != null &&
                                   formImageUrl!.trim().isNotEmpty)
                                 Padding(
