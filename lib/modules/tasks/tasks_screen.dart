@@ -4701,17 +4701,15 @@ class _TasksScreenState extends State<TasksScreen>
                         (t) => t.id == task.id,
                         orElse: () => task,
                       );
-                      final shouldCloseStage =
-                          jointGroup != null || (jointGroup == null && separateAllDone);
-                      // Если все исполнители уже отметились как завершившие этап,
-                      // не оставляем этап в работе из-за устаревшего открытого
-                      // time_event: пользователь видит "Завершил(а) этап", значит
-                      // статус этапа должен перейти в финальное состояние.
-                      final canApplyFinish =
-                          !_anyUserActive(latestTask) || shouldCloseStage;
+                      // В режиме "отдельный исполнитель" кнопка в строке
+                      // фиксирует только личное завершение сотрудника. Сам этап
+                      // закрывается только отдельной кнопкой "Завершить задание"
+                      // после того, как все отдельные исполнители отметились.
+                      final shouldCloseStage = jointGroup != null;
+                      final canApplyFinish = !_anyUserActive(latestTask);
                       if (canApplyFinish) {
                         final _secs = _elapsed(latestTask).inSeconds;
-                        if (_isInkConfirmationStage(task)) {
+                        if (_isInkConfirmationStage(task) && shouldCloseStage) {
                           await _finalizeTask(task, initialQtyInput: qtyInput);
                           return;
                         }
