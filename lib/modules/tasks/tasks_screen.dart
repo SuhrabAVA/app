@@ -632,6 +632,7 @@ class _TasksScreenState extends State<TasksScreen>
   String? _lastLaunchedOrderIdsSignature;
   bool _taskRefreshAfterLaunchScheduled = false;
   final Set<String> _startingTaskIds = <String>{};
+  final Set<String> _startingSetupTaskIds = <String>{};
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
     final normalized = value?.trim();
@@ -4306,6 +4307,8 @@ class _TasksScreenState extends State<TasksScreen>
                     final bool isSetupActiveForRow =
                         _openEventForUser(task, currentRowUserId)?.type ==
                             TaskTimeType.setup;
+                    final bool isSetupStartPending =
+                        _startingSetupTaskIds.contains(task.id);
                     // Disable buttons for other users' rows
                     // Кнопка "Начать" доступна для своей строки, если
                     // пользователь может стартовать, и он либо ещё не
@@ -5262,6 +5265,7 @@ class _TasksScreenState extends State<TasksScreen>
                                   if (_hasMachineForStage(stage) && isMyRow) ...[
                                     ElevatedButton.icon(
                                       onPressed: (!shiftPaused &&
+                                              !isSetupStartPending &&
                                               _canStartOrResumeSetupForUser(
                                                 task,
                                                 widget.employeeId,
@@ -5796,6 +5800,9 @@ class _TasksScreenState extends State<TasksScreen>
     if (_hasProductionStartedForStage(task) || _isSetupCompletedForStage(task)) {
       return false;
     }
+    if (_openEventForUser(task, userId)?.type == TaskTimeType.setup) {
+      return false;
+    }
     final hasPendingSetup = _hasPendingSetupForStage(task);
     if (!hasPendingSetup) return true;
     return _hasUnfinishedSetupForUser(task, userId);
@@ -5813,81 +5820,103 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
-    await provider.refresh();
-    final latestTask = provider.tasks.firstWhere(
-      (t) => t.id == task.id,
-      orElse: () => task,
-    );
-    final resumeOwnSetup = _hasUnfinishedSetupForUser(
-      latestTask,
-      widget.employeeId,
-    );
-    if ((_hasPendingSetupForStage(latestTask) && !resumeOwnSetup) ||
-        _isSetupCompletedForStage(latestTask) ||
-        _hasProductionStartedForStage(latestTask)) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-            'Наладка уже запущена другим сотрудником. Обновите список и продолжайте работу в активном этапе.'),
-      ));
-      return;
-    }
-
-    if (latestTask.status != TaskStatus.inProgress) {
-      final startedAtTs =
-          latestTask.startedAt ?? DateTime.now().millisecondsSinceEpoch;
-      final started = await provider.updateStatus(task.id, TaskStatus.inProgress,
-          startedAt: startedAtTs);
-      if (!started) {
+    if (_startingSetupTaskIds.contains(task.id)) return;
+    setState(() => _startingSetupTaskIds.add(task.id));
+    try {
+      final latestTask = provider.tasks.firstWhere(
+        (t) => t.id == task.id,
+        orElse: () => task,
+      );
+      final resumeOwnSetup = _hasUnfinishedSetupForUser(
+        latestTask,
+        widget.employeeId,
+      );
+      final hasOwnSetupTimer =
+          _openEventForUser(latestTask, widget.employeeId)?.type ==
+              TaskTimeType.setup;
+      if (hasOwnSetupTimer ||
+          (_hasPendingSetupForStage(latestTask) && !resumeOwnSetup) ||
+          _isSetupCompletedForStage(latestTask) ||
+          _hasProductionStartedForStage(latestTask)) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
-              'Этап уже запущен другим сотрудником. Наладка недоступна для второго запуска.'),
+              'Наладка уже запущена. Обновите список и продолжайте работу в активном этапе.'),
         ));
         return;
       }
-    }
-    await provider.addCommentAutoUser(
-      taskId: task.id,
-      type: resumeOwnSetup ? 'setup_resume' : 'setup_start',
-      text: resumeOwnSetup
-          ? 'Продолжил(а) настройку станка'
-          : 'Начал(а) настройку станка',
-      userIdOverride: widget.employeeId,
-    );
-    final participants = _participantsSnapshot(latestTask, widget.employeeId);
-    final execMode = _stageExecutionMode(latestTask);
-    await provider.recordTimeEvent(
-      task: latestTask,
-      type: TaskTimeType.setup,
-      initiatedBy: widget.employeeId,
-      subjectUserId: widget.employeeId,
-      workplaceId: latestTask.stageId,
-      participantsSnapshot: participants,
-      executionMode: execMode != null ? _executionModeCode(execMode) : null,
-    );
-    final helpers = _helperIds(latestTask);
-    if (helpers.isNotEmpty && latestTask.assignees.first == widget.employeeId) {
-      for (final helperId in helpers) {
-        await provider.recordTimeEvent(
-          task: latestTask,
-          type: TaskTimeType.setup,
-          initiatedBy: widget.employeeId,
-          subjectUserId: helperId,
-          workplaceId: latestTask.stageId,
-          participantsSnapshot: participants,
-          executionMode: execMode != null ? _executionModeCode(execMode) : null,
-          helperId: helperId,
+
+      if (latestTask.status != TaskStatus.inProgress) {
+        final startedAtTs =
+            latestTask.startedAt ?? DateTime.now().millisecondsSinceEpoch;
+        final started = await provider.updateStatus(
+          task.id,
+          TaskStatus.inProgress,
+          startedAt: startedAtTs,
         );
+        if (!started) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Этап уже запущен другим сотрудником. Наладка недоступна для второго запуска.'),
+          ));
+          return;
+        }
       }
-    }
-    if (!latestTask.assignees.contains(widget.employeeId)) {
-      try {
-        await (provider as dynamic).addAssignee(task.id, widget.employeeId);
-      } catch (_) {
-        final newAssignees = List<String>.from(latestTask.assignees)
-          ..add(widget.employeeId);
-        await provider.updateAssignees(task.id, newAssignees);
+      await provider.addCommentAutoUser(
+        taskId: task.id,
+        type: resumeOwnSetup ? 'setup_resume' : 'setup_start',
+        text: resumeOwnSetup
+            ? 'Продолжил(а) настройку станка'
+            : 'Начал(а) настройку станка',
+        userIdOverride: widget.employeeId,
+      );
+      final setupTask = provider.tasks.firstWhere(
+        (t) => t.id == task.id,
+        orElse: () => latestTask,
+      );
+      final participants = _participantsSnapshot(setupTask, widget.employeeId);
+      final execMode = _stageExecutionMode(setupTask);
+      await provider.recordTimeEvent(
+        task: setupTask,
+        type: TaskTimeType.setup,
+        initiatedBy: widget.employeeId,
+        subjectUserId: widget.employeeId,
+        workplaceId: setupTask.stageId,
+        participantsSnapshot: participants,
+        executionMode: execMode != null ? _executionModeCode(execMode) : null,
+      );
+      final helpers = _helperIds(setupTask);
+      if (helpers.isNotEmpty &&
+          setupTask.assignees.first == widget.employeeId) {
+        for (final helperId in helpers) {
+          await provider.recordTimeEvent(
+            task: setupTask,
+            type: TaskTimeType.setup,
+            initiatedBy: widget.employeeId,
+            subjectUserId: helperId,
+            workplaceId: setupTask.stageId,
+            participantsSnapshot: participants,
+            executionMode:
+                execMode != null ? _executionModeCode(execMode) : null,
+            helperId: helperId,
+          );
+        }
+      }
+      if (!setupTask.assignees.contains(widget.employeeId)) {
+        try {
+          await (provider as dynamic).addAssignee(task.id, widget.employeeId);
+        } catch (_) {
+          final newAssignees = List<String>.from(setupTask.assignees)
+            ..add(widget.employeeId);
+          await provider.updateAssignees(task.id, newAssignees);
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _startingSetupTaskIds.remove(task.id));
+      } else {
+        _startingSetupTaskIds.remove(task.id);
       }
     }
   }
