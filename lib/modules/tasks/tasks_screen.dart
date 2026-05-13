@@ -4305,8 +4305,7 @@ class _TasksScreenState extends State<TasksScreen>
                     final UserRunState stateRowUser =
                         _userRunState(task, currentRowUserId);
                     final bool isSetupActiveForRow =
-                        _openEventForUser(task, currentRowUserId)?.type ==
-                            TaskTimeType.setup;
+                        _isSetupInProgressForUser(task, currentRowUserId);
                     final bool isSetupStartPending =
                         _startingSetupTaskIds.contains(task.id);
                     // Disable buttons for other users' rows
@@ -4331,12 +4330,14 @@ class _TasksScreenState extends State<TasksScreen>
                             stateRowUser == UserRunState.idle;
                     final bool hasOpenStartIntentForRowUser =
                         _hasOpenStartIntentForUser(task, currentRowUserId);
+                    final bool startIntentBlocksRow =
+                        hasOpenStartIntentForRowUser && !isSetupActiveForRow;
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !_startingTaskIds.contains(task.id) &&
                         !requiresSetupBeforeStart &&
                         !blockedByShiftResumeLock &&
-                        !hasOpenStartIntentForRowUser &&
+                        !startIntentBlocksRow &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
                         // после личного завершения (до финальной кнопки
                         // "Завершить задание").
@@ -5747,7 +5748,6 @@ class _TasksScreenState extends State<TasksScreen>
             c.userId == userId &&
             (c.type == 'start' ||
                 c.type == 'resume' ||
-                c.type == 'setup_resume' ||
                 c.type == 'pause' ||
                 c.type == 'problem' ||
                 c.type == 'user_done'))
@@ -5755,9 +5755,7 @@ class _TasksScreenState extends State<TasksScreen>
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     if (events.isEmpty) return false;
     final lastType = events.last.type;
-    return lastType == 'start' ||
-        lastType == 'resume' ||
-        lastType == 'setup_resume';
+    return lastType == 'start' || lastType == 'resume';
   }
 
   bool _hasPendingSetupForStage(TaskModel task) {
