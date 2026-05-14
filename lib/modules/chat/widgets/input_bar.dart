@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -61,19 +62,22 @@ class _ChatInputBarState extends State<ChatInputBar> {
       final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
       if (image == null) return;
       final bytes = await image.readAsBytes();
-      final mime = lookupMimeType(image.path) ?? 'image/jpeg';
+      final mime = lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
+      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
       await chat.sendFile(
-            roomId: widget.roomId,
-            senderId: widget.senderId,
-            senderName: widget.senderName,
-            bytes: bytes,
-            filename: p.basename(image.path),
-            mime: mime,
-            kind: 'image',
-          );
-    } catch (_) {
-      // Игнорируем ошибки камеры
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: bytes,
+        filename: image.name.isNotEmpty ? image.name : p.basename(image.path),
+        mime: mime,
+        body: caption,
+        kind: _kindFromMime(mime),
+      );
+      _clearAttachmentCaption();
+    } catch (error) {
+      _showErrorSnackBar('Не удалось отправить фото: $error');
     }
   }
 
@@ -373,99 +377,176 @@ class _ChatInputBarState extends State<ChatInputBar> {
     _cleanupObsoleteMentions();
   }
 
+  String? _attachmentCaption() {
+    _cleanupObsoleteMentions();
+    var prepared = _controller.text;
+    if (_selectedMentions.isNotEmpty) {
+      prepared = _applyMentionMarkup(prepared);
+    }
+    prepared = prepared.trim();
+    return prepared.isEmpty ? null : prepared;
+  }
+
+  void _clearAttachmentCaption() {
+    if (_isDisposed || !mounted) return;
+    _controller.clear();
+    _selectedMentions.clear();
+    _hideMentionOverlay();
+  }
+
+  List<int>? _mimeHeader(Uint8List bytes) {
+    if (bytes.isEmpty) return null;
+    final length = bytes.length > 12 ? 12 : bytes.length;
+    return bytes.sublist(0, length);
+  }
+
+  String _kindFromMime(String mime) {
+    final normalized = mime.toLowerCase().trim();
+    if (normalized.startsWith('image/')) return 'image';
+    if (normalized.startsWith('video/')) return 'video';
+    if (normalized.startsWith('audio/')) return 'audio';
+    return 'file';
+  }
+
+  Future<Uint8List> _readPickedFileBytes(PlatformFile file) async {
+    final bytes = file.bytes;
+    if (bytes != null) return bytes;
+
+    final stream = file.readStream;
+    if (stream != null) {
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in stream) {
+        builder.add(chunk);
+      }
+      return builder.takeBytes();
+    }
+
+    final filePath = file.path;
+    if (filePath != null) {
+      return File(filePath).readAsBytes();
+    }
+
+    throw Exception('Не удалось прочитать выбранный файл');
+  }
+
+  void _showErrorSnackBar(String message) {
+    if (_isDisposed || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _pickImage() async {
     if (_isDisposed || !mounted) return;
     final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
-    final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (x == null) return;
-    final bytes = await x.readAsBytes();
-    final mime = lookupMimeType(x.path) ?? 'image/jpeg';
-    if (_isDisposed || !mounted) return;
-    await chat.sendFile(
-          roomId: widget.roomId,
-          senderId: widget.senderId,
-          senderName: widget.senderName,
-          bytes: bytes,
-          filename: p.basename(x.path),
-          mime: mime,
-          kind: 'image',
-        );
+    try {
+      final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (x == null) return;
+      final bytes = await x.readAsBytes();
+      final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
+      final caption = _attachmentCaption();
+      if (_isDisposed || !mounted) return;
+      await chat.sendFile(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: bytes,
+        filename: x.name.isNotEmpty ? x.name : p.basename(x.path),
+        mime: mime,
+        body: caption,
+        kind: _kindFromMime(mime),
+      );
+      _clearAttachmentCaption();
+    } catch (error) {
+      _showErrorSnackBar('Не удалось отправить изображение: $error');
+    }
   }
 
   Future<void> _pickVideo() async {
     if (_isDisposed || !mounted) return;
     final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
-    final x = await picker.pickVideo(source: ImageSource.gallery);
-    if (x == null) return;
-    final bytes = await x.readAsBytes();
-    final mime = lookupMimeType(x.path) ?? 'video/mp4';
-    if (_isDisposed || !mounted) return;
-    await chat.sendFile(
-          roomId: widget.roomId,
-          senderId: widget.senderId,
-          senderName: widget.senderName,
-          bytes: bytes,
-          filename: p.basename(x.path),
-          mime: mime,
-          kind: 'video',
-        );
+    try {
+      final x = await picker.pickVideo(source: ImageSource.gallery);
+      if (x == null) return;
+      final bytes = await x.readAsBytes();
+      final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'video/mp4';
+      final caption = _attachmentCaption();
+      if (_isDisposed || !mounted) return;
+      await chat.sendFile(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: bytes,
+        filename: x.name.isNotEmpty ? x.name : p.basename(x.path),
+        mime: mime,
+        body: caption,
+        kind: _kindFromMime(mime),
+      );
+      _clearAttachmentCaption();
+    } catch (error) {
+      _showErrorSnackBar('Не удалось отправить видео: $error');
+    }
   }
 
   Future<void> _pickAnyFile() async {
     if (_isDisposed || !mounted) return;
     final chat = context.read<ChatProvider>();
-    final res = await FilePicker.platform.pickFiles(withReadStream: true);
-    if (res == null || res.files.isEmpty) return;
-    final f = res.files.first;
-    final bytes = f.bytes ?? await File(f.path!).readAsBytes();
-    final mime = lookupMimeType(
-          f.path ?? f.name,
-          headerBytes:
-              f.bytes?.sublist(0, (f.bytes?.length ?? 0) > 12 ? 12 : (f.bytes?.length ?? 0)),
-        ) ??
-        'application/octet-stream';
-    String kind = 'file';
-    if ((mime).startsWith('image/')) kind = 'image';
-    else if (mime.startsWith('video/')) kind = 'video';
-    else if (mime.startsWith('audio/')) kind = 'audio';
-    if (_isDisposed || !mounted) return;
-    await chat.sendFile(
-          roomId: widget.roomId,
-          senderId: widget.senderId,
-          senderName: widget.senderName,
-          bytes: bytes,
-          filename: f.name,
-          mime: mime,
-          kind: kind,
-        );
+    try {
+      final res = await FilePicker.platform.pickFiles(withReadStream: true);
+      if (res == null || res.files.isEmpty) return;
+      final f = res.files.first;
+      final bytes = await _readPickedFileBytes(f);
+      final mime = lookupMimeType(
+            f.path ?? f.name,
+            headerBytes: _mimeHeader(bytes),
+          ) ??
+          'application/octet-stream';
+      final caption = _attachmentCaption();
+      if (_isDisposed || !mounted) return;
+      await chat.sendFile(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: bytes,
+        filename: f.name,
+        mime: mime,
+        body: caption,
+        kind: _kindFromMime(mime),
+      );
+      _clearAttachmentCaption();
+    } catch (error) {
+      _showErrorSnackBar('Не удалось отправить файл: $error');
+    }
   }
 
   Future<void> _toggleRecord() async {
     if (_isDisposed || !mounted) return;
-    if (kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Запись аудио не поддерживается в Web')),
-      );
-      return;
-    }
-    _recorder ??= AudioRecorder();
-    if (!await _recorder!.hasPermission()) {
-      if (_isDisposed || !mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Нет разрешения на запись')),
-      );
-      return;
-    }
-    if (_recording) {
-      await _stopRecordingIfNeeded();
-    } else {
-      final dir = Directory.systemTemp.createTempSync('chat_audio_');
-      final path = p.join(dir.path, 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
-      await _recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
-      if (_isDisposed || !mounted) return;
-      setState(() => _recording = true);
+    try {
+      if (kIsWeb) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Запись аудио не поддерживается в Web')),
+        );
+        return;
+      }
+      _recorder ??= AudioRecorder();
+      if (!await _recorder!.hasPermission()) {
+        if (_isDisposed || !mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нет разрешения на запись')),
+        );
+        return;
+      }
+      if (_recording) {
+        await _stopRecordingIfNeeded();
+      } else {
+        final dir = Directory.systemTemp.createTempSync('chat_audio_');
+        final path = p.join(dir.path, 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
+        await _recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+        if (_isDisposed || !mounted) return;
+        setState(() => _recording = true);
+      }
+    } catch (error) {
+      _showErrorSnackBar('Не удалось обработать аудиозапись: $error');
     }
   }
 
@@ -482,19 +563,24 @@ class _ChatInputBarState extends State<ChatInputBar> {
     if (chat == null || _isDisposed || !mounted) return;
     final file = File(path);
     if (!await file.exists()) return;
-    final bytes = await file.readAsBytes();
-    // duration неизвестна: плеер на стороне клиента покажет длину по факту воспроизведения
-    await chat.sendFile(
-          roomId: widget.roomId,
-          senderId: widget.senderId,
-          senderName: widget.senderName,
-          bytes: bytes,
-          filename: p.basename(path),
-          mime: 'audio/mp4',
-          kind: 'audio',
-        );
-    // очистка
-    try { await file.delete(); } catch (_) {}
+    try {
+      final bytes = await file.readAsBytes();
+      const mime = 'audio/mp4';
+      // duration неизвестна: плеер на стороне клиента покажет длину по факту воспроизведения
+      await chat.sendFile(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: bytes,
+        filename: p.basename(path),
+        mime: mime,
+        kind: _kindFromMime(mime),
+      );
+    } finally {
+      try {
+        await file.delete();
+      } catch (_) {}
+    }
   }
 
   Future<void> _disposeRecorder() async {
