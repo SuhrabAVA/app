@@ -4054,6 +4054,12 @@ class _TasksScreenState extends State<TasksScreen>
                                   .toString();
                           final orderedQty =
                               (row['qty_kg'] as num?)?.toDouble() ?? 0;
+                          final reservedQty =
+                              (row['reserved_qty'] as num?)?.toDouble() ?? 0;
+                          final usedQty =
+                              (row['used_qty'] as num?)?.toDouble() ?? 0;
+                          final releasedQty =
+                              (row['released_qty'] as num?)?.toDouble() ?? 0;
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: Row(
@@ -4062,7 +4068,9 @@ class _TasksScreenState extends State<TasksScreen>
                                 Expanded(
                                   flex: 2,
                                   child: Text(
-                                    'По заказу: ${(orderedQty * 1000).toStringAsFixed(0)} г',
+                                    'По заказу: ${(orderedQty * 1000).toStringAsFixed(0)} г\n'
+                                    'Резерв: ${reservedQty.toStringAsFixed(0)} г'
+                                    '${usedQty > 0 || releasedQty > 0 ? '\nИсп.: ${usedQty.toStringAsFixed(0)} г, освоб.: ${releasedQty.toStringAsFixed(0)} г' : ''}',
                                     textAlign: TextAlign.end,
                                   ),
                                 ),
@@ -4139,6 +4147,20 @@ class _TasksScreenState extends State<TasksScreen>
       return result;
     }
     return null;
+  }
+
+  String _humanizeRpcError(Object error) {
+    if (error is PostgrestException) {
+      final message = error.message.trim();
+      if (message.isNotEmpty) return message;
+      final details = (error.details ?? '').toString().trim();
+      if (details.isNotEmpty) return details;
+    }
+    final raw = error.toString();
+    final marker = RegExp(r'Недостаточно краски: [^\n}]+');
+    final match = marker.firstMatch(raw);
+    if (match != null) return match.group(0)!;
+    return raw;
   }
 
   Future<void> _validateInkAvailability(List<Map<String, dynamic>> paints) async {
@@ -4285,7 +4307,44 @@ class _TasksScreenState extends State<TasksScreen>
     if (_isInkConfirmationStage(task)) {
       List<Map<String, dynamic>> initialPaints = const <Map<String, dynamic>>[];
       try {
-        initialPaints = await OrdersRepository().getPaints(task.orderId);
+        final repo = OrdersRepository();
+        initialPaints = await repo.getPaints(task.orderId);
+        final reservations = await repo.getPaintReservations(task.orderId);
+        final reservationsByKey = <String, Map<String, dynamic>>{};
+        for (final reservation in reservations) {
+          final id = (reservation['paint_id'] ?? '').toString().trim();
+          final name = (reservation['paint_name'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          if (id.isNotEmpty) reservationsByKey['id:$id'] = reservation;
+          if (name.isNotEmpty) reservationsByKey['name:$name'] = reservation;
+        }
+        initialPaints = initialPaints.map((paint) {
+          final merged = Map<String, dynamic>.from(paint);
+          final id = (merged['paint_id'] ?? merged['material_id'] ?? '')
+              .toString()
+              .trim();
+          final name = (merged['paint_name'] ?? merged['name'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          final reservation =
+              (id.isNotEmpty ? reservationsByKey['id:$id'] : null) ??
+                  (name.isNotEmpty ? reservationsByKey['name:$name'] : null);
+          if (reservation != null) {
+            merged.addAll({
+              'paint_id': reservation['paint_id'],
+              'paint_name': reservation['paint_name'] ??
+                  merged['paint_name'] ??
+                  merged['name'],
+              'reserved_qty': reservation['reserved_qty'],
+              'used_qty': reservation['used_qty'],
+              'released_qty': reservation['released_qty'],
+            });
+          }
+          return merged;
+        }).toList(growable: false);
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -4318,7 +4377,6 @@ class _TasksScreenState extends State<TasksScreen>
           continue;
         }
         mutablePaints = dialogResult.paints;
-        await _validateInkAvailability(mutablePaints);
         paints = mutablePaints;
         break;
       }
@@ -4357,6 +4415,37 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     final tp = context.read<TaskProvider>();
+    if (_isInkConfirmationStage(task)) {
+      final note = mounted ? await _askFinishNote() : null;
+      try {
+        await OrdersRepository().completeFlexPrintingStage(
+          taskId: task.id,
+          orderId: task.orderId,
+          stageId: task.stageId,
+          employeeId: widget.employeeId,
+          paintUsages: paints,
+          quantityDone: qtyInput?.displayText,
+          comment: note,
+        );
+        await tp.refresh();
+        if (mounted) {
+          setState(() {
+            _orderPaintsCache[task.orderId] = paints
+                .map((row) => Map<String, dynamic>.from(row))
+                .toList(growable: false);
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          final message = _humanizeRpcError(e);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
+      }
+      return;
+    }
+
     final wroteOff = await _writeoffInks(task, paints);
     if (!wroteOff) return;
 

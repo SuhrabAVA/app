@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/storage_service.dart';
+import '../../utils/auth_helper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'orders_provider.dart';
@@ -1236,6 +1237,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (rows.isNotEmpty) {
         await _sb.from('order_paints').insert(rows);
       }
+      await OrdersRepository().syncPaintReservations(
+        orderId: orderId,
+        paints: rows,
+        actor: AuthHelper.currentUserName ?? '',
+      );
     } catch (e) {
       // не блокируем сохранение заказа, просто сообщим в консоль
       debugPrint('❌ persist paints error: ' + e.toString());
