@@ -4400,50 +4400,24 @@ class _TasksScreenState extends State<TasksScreen>
       return;
     }
 
-    final wroteOff = await _writeoffInks(task, paints);
-    if (!wroteOff) return;
-
-    if (qtyInput != null) {
-      final qtyText = qtyInput.displayText;
-      await tp.addCommentAutoUser(
+    final note = mounted ? await _askFinishNote() : null;
+    try {
+      await OrdersRepository().completeTaskStage(
         taskId: task.id,
-        type: 'quantity_done',
-        text: qtyText,
-        userIdOverride: widget.employeeId,
+        orderId: task.orderId,
+        stageId: task.stageId,
+        employeeId: widget.employeeId,
+        quantityDone: qtyInput?.displayText,
+        comment: note,
       );
-    }
-
-    final latest = tp.tasks.firstWhere(
-      (t) => t.id == task.id,
-      orElse: () => task,
-    );
-    final secs = _elapsed(latest).inSeconds;
-    await tp.updateStatus(task.id, TaskStatus.completed,
-        spentSeconds: secs, startedAt: null);
-    final sameStageTasks = tp.tasks
-        .where((t) =>
-            t.id != task.id &&
-            t.orderId == task.orderId &&
-            t.stageId == task.stageId &&
-            t.status != TaskStatus.completed)
-        .toList(growable: false);
-    for (final related in sameStageTasks) {
-      await tp.updateStatus(
-        related.id,
-        TaskStatus.completed,
-        spentSeconds: related.spentSeconds,
-        startedAt: null,
-      );
-    }
-
-    if (!mounted) return;
-    final note = await _askFinishNote();
-    if (note != null && note.isNotEmpty) {
-      await tp.addCommentAutoUser(
-          taskId: task.id,
-          type: 'finish_note',
-          text: note,
-          userIdOverride: widget.employeeId);
+      await tp.refresh();
+    } catch (e) {
+      if (mounted) {
+        final message = _humanizeRpcError(e);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
     }
   }
 
@@ -5065,41 +5039,25 @@ class _TasksScreenState extends State<TasksScreen>
                       final qtyText = qtyInput.displayText;
                       final taskProvider = context.read<TaskProvider>();
                       var separateAllDone = false;
+                      var jointUserIds = <String>[];
                       if (jointGroup != null) {
                         final latestTask = taskProvider.tasks.firstWhere(
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
-                        final helperIds = latestTask.assignees
+                        jointUserIds = latestTask.assignees
                             .where((id) =>
-                                id != widget.employeeId &&
                                 _execModeForUser(latestTask, id) ==
-                                    ExecutionMode.joint)
-                            .toList();
-                        for (final id in helperIds) {
-                          await taskProvider.addComment(
-                              taskId: task.id,
-                              type: 'quantity_share',
-                              text: qtyText,
-                              userId: id);
-                          await taskProvider.addComment(
-                              taskId: task.id,
-                              type: 'user_done',
-                              text: 'done',
-                              userId: id);
+                                ExecutionMode.joint)
+                            .toSet()
+                            .toList(growable: false);
+                        if (!jointUserIds.contains(widget.employeeId)) {
+                          jointUserIds.add(widget.employeeId);
                         }
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'quantity_team_total',
-                            text: qtyText,
-                            userIdOverride: widget.employeeId);
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'user_done',
-                            text: 'done',
-                            userIdOverride: widget.employeeId);
                       } else {
-                        // SEPARATE: write personal qty, require ALL separate-mode assignees to finish
+                        // SEPARATE: write personal qty, require ALL separate-mode assignees to finish.
+                        // This path does not complete the stage; final stage completion is
+                        // performed by the backend RPC from the separate "Завершить задание" action.
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_done',
@@ -5166,36 +5124,45 @@ class _TasksScreenState extends State<TasksScreen>
                       final canApplyFinish = !_anyUserActive(latestTask);
                       if (canApplyFinish) {
                         final _secs = _elapsed(latestTask).inSeconds;
-                        if (_isInkConfirmationStage(task) && shouldCloseStage) {
-                          await _finalizeTask(task, initialQtyInput: qtyInput);
+                        if (shouldCloseStage) {
+                          if (_isInkConfirmationStage(task)) {
+                            await _finalizeTask(task, initialQtyInput: qtyInput);
+                            return;
+                          }
+                          final note =
+                              context.mounted ? await _askFinishNote() : null;
+                          try {
+                            await OrdersRepository().completeTaskStage(
+                              taskId: task.id,
+                              orderId: task.orderId,
+                              stageId: task.stageId,
+                              employeeId: widget.employeeId,
+                              quantityDone: qtyText,
+                              comment: note,
+                              jointUserIds: jointUserIds,
+                            );
+                            await taskProvider.refresh();
+                          } catch (e) {
+                            if (context.mounted) {
+                              final message = _humanizeRpcError(e);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(message)),
+                              );
+                            }
+                          }
                           return;
                         }
-                        final nextStatus = shouldCloseStage
-                            ? TaskStatus.completed
-                            : TaskStatus.paused;
+
                         await taskProvider.updateStatus(
-                            task.id, nextStatus,
+                            task.id, TaskStatus.paused,
                             spentSeconds: _secs,
                             startedAt: null,
                             clearStartedAt: true);
-                        if (context.mounted &&
-                            separateAllDone &&
-                            jointGroup == null &&
-                            nextStatus != TaskStatus.completed) {
+                        if (context.mounted && separateAllDone) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
                                 'Все исполнители завершили работу. Нажмите «Завершить задание» для закрытия этапа.',
-                              ),
-                            ),
-                          );
-                        } else if (shouldCloseStage &&
-                            nextStatus != TaskStatus.completed &&
-                            context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Для этапов «Флексопечать/Печать» завершите заказ через кнопку «Завершить задание».',
                               ),
                             ),
                           );

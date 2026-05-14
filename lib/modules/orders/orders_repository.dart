@@ -299,6 +299,29 @@ class OrdersRepository {
     return const [];
   }
 
+  Future<void> completeTaskStage({
+    required String taskId,
+    required String orderId,
+    required String stageId,
+    required String employeeId,
+    String? quantityDone,
+    String? comment,
+    List<String> jointUserIds = const <String>[],
+    String? actor,
+  }) async {
+    await ensureSignedIn();
+    await _sb.rpc('complete_task_stage', params: {
+      'p_task_id': taskId,
+      'p_order_id': orderId,
+      'p_stage_id': stageId,
+      'p_employee_id': employeeId,
+      'p_quantity_done': quantityDone,
+      'p_comment': comment,
+      'p_joint_user_ids': jointUserIds,
+      'p_actor': actor ?? '',
+    });
+  }
+
   Future<void> completeFlexPrintingStage({
     required String taskId,
     required String orderId,
