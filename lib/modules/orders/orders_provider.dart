@@ -192,6 +192,8 @@ class OrdersProvider with ChangeNotifier {
 
   Future<String> _materialShortageMessage(OrderModel order) async {
     final papers = _resolveOrderPapers(order);
+    final paintShortage = await _paintShortageMessage(order);
+    if (paintShortage.isNotEmpty) return paintShortage;
     if (papers.isEmpty) return 'Материал не выбран в заказе.';
     for (final paper in papers) {
       final requiredLength = _requiredPaperReserveQty(order, paper);
@@ -305,8 +307,83 @@ class OrdersProvider with ChangeNotifier {
         .toList(growable: false);
   }
 
+  Future<List<Map<String, dynamic>>> _paintReservationsForOrder(
+    String orderId,
+  ) async {
+    final normalizedId = orderId.trim();
+    if (normalizedId.isEmpty) return const [];
+    try {
+      final rows = await _supabase
+          .from('order_paint_reservations')
+          .select('paint_id, paint_name, reserved_qty')
+          .eq('order_id', normalizedId);
+      if (rows is! List) return const [];
+      return rows
+          .whereType<Map>()
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<double?> _fetchPaintAvailableQty(String paintId) async {
+    final id = paintId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final row = await _supabase
+          .from('paints')
+          .select('quantity')
+          .eq('id', id)
+          .maybeSingle();
+      if (row == null) return null;
+      final baseQty = _toDouble(row['quantity']);
+      final rows = await _supabase
+          .from('order_paint_reservations')
+          .select('reserved_qty')
+          .eq('paint_id', id);
+      double reservedQty = 0;
+      if (rows is List) {
+        for (final raw in rows.whereType<Map>()) {
+          reservedQty += _toDouble((raw as Map)['reserved_qty']);
+        }
+      }
+      return baseQty - reservedQty;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> _hasEnoughPaintForLaunch(OrderModel order) async {
+    final reservations = await _paintReservationsForOrder(order.id);
+    for (final row in reservations) {
+      final paintId = (row['paint_id'] ?? '').toString().trim();
+      final requiredQty = _toDouble(row['reserved_qty']);
+      if (paintId.isEmpty || requiredQty <= 0) continue;
+      final availableQty = await _fetchPaintAvailableQty(paintId);
+      if (availableQty == null || availableQty < 0) return false;
+    }
+    return true;
+  }
+
+  Future<String> _paintShortageMessage(OrderModel order) async {
+    final reservations = await _paintReservationsForOrder(order.id);
+    for (final row in reservations) {
+      final paintId = (row['paint_id'] ?? '').toString().trim();
+      if (paintId.isEmpty) continue;
+      final availableQty = await _fetchPaintAvailableQty(paintId);
+      if (availableQty != null && availableQty >= 0) continue;
+      final requiredQty = _toDouble(row['reserved_qty']);
+      final name = (row['paint_name'] ?? paintId).toString();
+      return 'Недостаточно краски "$name": требуется ${requiredQty.toStringAsFixed(2)}, '
+          'доступно ${(availableQty ?? 0).toStringAsFixed(2)}.';
+    }
+    return '';
+  }
+
   Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
     final papers = _resolveOrderPapers(order);
+    if (!await _hasEnoughPaintForLaunch(order)) return false;
     if (papers.isEmpty) return true;
     for (final paper in papers) {
       final String materialId = (paper.id ?? '').trim();
@@ -2004,7 +2081,7 @@ class OrdersProvider with ChangeNotifier {
     if (value == null) {
       return 0;
     }
-    return double.tryParse(value.toString()) ?? 0;
+    return double.tryParse(value.toString().replaceAll(',', '.')) ?? 0;
   }
 
   double? _toDoubleNullable(dynamic value) {
