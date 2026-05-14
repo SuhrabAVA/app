@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'material_model.dart';
 import 'order_model.dart';
 import 'order_queue_service.dart';
+import 'orders_repository.dart';
 import 'product_model.dart';
 import '../../utils/auth_helper.dart';
 
@@ -874,6 +875,7 @@ class OrdersProvider with ChangeNotifier {
       await _cleanupProductionQueueState(relatedOrderIds);
       // Бизнес-правило: удаление заказа освобождает весь резерв бумаги.
       await _releasePaperReservations(orderId: id);
+      await _releasePaintReservations(orderId: id);
       await _supabase.from('order_paints').delete().eq('order_id', id);
       try {
         final plan = await _supabase
@@ -1532,6 +1534,23 @@ class OrdersProvider with ChangeNotifier {
     final after = await _loadOrderReservationMap(order.id);
     await _logReservationDiff(orderId: order.id, before: before, after: after);
     return null;
+  }
+
+  Future<void> _releasePaintReservations({required String orderId}) async {
+    try {
+      await OrdersRepository(supabaseClient: _supabase).releasePaintReservations(
+        orderId: orderId,
+        reason: 'order_deleted',
+        actor: AuthHelper.currentUserName ?? '',
+      );
+    } catch (_) {
+      try {
+        await _supabase
+            .from('order_paint_reservations')
+            .delete()
+            .eq('order_id', orderId);
+      } catch (_) {}
+    }
   }
 
   Future<void> _releasePaperReservations({required String orderId}) async {

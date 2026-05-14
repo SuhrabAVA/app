@@ -193,6 +193,12 @@ class OrdersRepository {
     }
     if (list.isNotEmpty) {
       await addPaints(orderId, list);
+      await syncPaintReservations(
+        orderId: orderId,
+        paints: list
+            .map((paint) => paint.toRow(orderId))
+            .toList(growable: false),
+      );
     }
 
     if (pdf != null) {
@@ -230,6 +236,114 @@ class OrdersRepository {
     final res = await _sb.from('order_paints').insert(rows).select('id');
     if (res is List) return res.length;
     return 0;
+  }
+
+  Future<void> syncPaintReservations({
+    required String orderId,
+    required List<Map<String, dynamic>> paints,
+    String? actor,
+  }) async {
+    await ensureSignedIn();
+    final rows = paints
+        .map((row) {
+          final qtyKg = (row['qty_kg'] is num)
+              ? (row['qty_kg'] as num).toDouble()
+              : double.tryParse(
+                  (row['qty_kg'] ?? '').toString().replaceAll(',', '.'),
+                );
+          final name =
+              (row['paint_name'] ?? row['name'] ?? '').toString().trim();
+          final paintId = (row['paint_id'] ?? row['material_id'] ?? '')
+              .toString()
+              .trim();
+          return <String, dynamic>{
+            if (paintId.isNotEmpty) 'paint_id': paintId,
+            if (name.isNotEmpty) 'paint_name': name,
+            'reserved_qty': (qtyKg ?? 0) * 1000,
+          };
+        })
+        .where((row) =>
+            (((row['paint_id'] ?? '') as String).isNotEmpty ||
+                ((row['paint_name'] ?? '') as String).isNotEmpty) &&
+            ((row['reserved_qty'] as num?)?.toDouble() ?? 0) > 0)
+        .toList(growable: false);
+
+    await _sb.rpc('sync_order_paint_reservations', params: {
+      'p_order_id': orderId,
+      'p_reservations': rows,
+      'p_actor': actor ?? '',
+    });
+  }
+
+  Future<void> releasePaintReservations({
+    required String orderId,
+    String reason = 'order_deleted',
+    String? actor,
+  }) async {
+    await ensureSignedIn();
+    await _sb.rpc('release_order_paint_reservations', params: {
+      'p_order_id': orderId,
+      'p_reason': reason,
+      'p_actor': actor ?? '',
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getPaintReservations(String orderId) async {
+    final rows = await _sb
+        .from('order_paint_reservations')
+        .select('paint_id, paint_name, reserved_qty, used_qty, released_qty')
+        .eq('order_id', orderId);
+    if (rows is List) {
+      return rows.cast<Map<String, dynamic>>();
+    }
+    return const [];
+  }
+
+  Future<void> completeFlexPrintingStage({
+    required String taskId,
+    required String orderId,
+    required String stageId,
+    required String employeeId,
+    required List<Map<String, dynamic>> paintUsages,
+    String? quantityDone,
+    String? comment,
+    String? actor,
+  }) async {
+    await ensureSignedIn();
+    final usages = paintUsages
+        .map((row) {
+          final qtyKg = (row['qty_kg'] is num)
+              ? (row['qty_kg'] as num).toDouble()
+              : double.tryParse(
+                  (row['qty_kg'] ?? '').toString().replaceAll(',', '.'),
+                );
+          final name =
+              (row['paint_name'] ?? row['name'] ?? '').toString().trim();
+          final paintId = (row['paint_id'] ?? row['material_id'] ?? '')
+              .toString()
+              .trim();
+          return <String, dynamic>{
+            if (paintId.isNotEmpty) 'paint_id': paintId,
+            if (name.isNotEmpty) 'paint_name': name,
+            'used_qty': (qtyKg ?? 0) * 1000,
+          };
+        })
+        .where((row) =>
+            (((row['paint_id'] ?? '') as String).isNotEmpty ||
+                ((row['paint_name'] ?? '') as String).isNotEmpty) &&
+            ((row['used_qty'] as num?)?.toDouble() ?? 0) >= 0)
+        .toList(growable: false);
+
+    await _sb.rpc('complete_flex_printing_stage', params: {
+      'p_task_id': taskId,
+      'p_order_id': orderId,
+      'p_stage_id': stageId,
+      'p_employee_id': employeeId,
+      'p_paint_usages': usages,
+      'p_quantity_done': quantityDone,
+      'p_comment': comment,
+      'p_actor': actor ?? '',
+    });
   }
 
   Future<List<Map<String, dynamic>>> getPaints(String orderId) async {
