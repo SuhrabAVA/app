@@ -58,6 +58,7 @@ class WarehouseProvider with ChangeNotifier {
   RealtimeChannel? _chanMaterials;
   RealtimeChannel? _chanPapers;
   RealtimeChannel? _chanPaperReservations;
+  RealtimeChannel? _chanPaintReservations;
   RealtimeChannel? _chanStationery;
 
   final List<TmcModel> _allTmc = [];
@@ -378,6 +379,9 @@ class WarehouseProvider with ChangeNotifier {
     if (_chanPaperReservations != null) {
       _sb.removeChannel(_chanPaperReservations!);
     }
+    if (_chanPaintReservations != null) {
+      _sb.removeChannel(_chanPaintReservations!);
+    }
     if (_chanStationery != null) _sb.removeChannel(_chanStationery!);
     super.dispose();
   }
@@ -429,6 +433,16 @@ class WarehouseProvider with ChangeNotifier {
         )
         .subscribe();
 
+    _chanPaintReservations = _sb
+        .channel('wh:paint_reservations')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'order_paint_reservations',
+          callback: (_) => fetchTmc(),
+        )
+        .subscribe();
+
     _resubscribeStationery();
   }
 
@@ -460,13 +474,20 @@ class WarehouseProvider with ChangeNotifier {
         _loadStationeryRows(),
       ]);
       final p = results[0] as List;
+      final paintReservedQty = await _loadPaintReservedQty();
       final m = results[1] as List;
       final pr = results[2] as List;
       final pensRows = results[3] as List<Map<String, dynamic>>;
       final stationeryRows = results[4] as List<Map<String, dynamic>>;
       final List<TmcModel> merged = [];
       for (final e in p) {
-        merged.add(_fromRow(type: 'paint', row: Map<String, dynamic>.from(e)));
+        final row = Map<String, dynamic>.from(e);
+        final quantity = _toDouble(row['quantity']);
+        final reservedQty = paintReservedQty[(row['id'] ?? '').toString()] ??
+            _toDouble(row['reserved_qty']);
+        row['reserved_qty'] = reservedQty;
+        row['available_qty'] = quantity - reservedQty;
+        merged.add(_fromRow(type: 'paint', row: row));
       }
       for (final e in m) {
         merged
@@ -2282,6 +2303,10 @@ class WarehouseProvider with ChangeNotifier {
       type: type,
       description: (row['description'] ?? '').toString(),
       quantity: _d(row['quantity']),
+      reservedQty: _d(row['reserved_qty']),
+      availableQty: row.containsKey('available_qty')
+          ? _d(row['available_qty'])
+          : _d(row['quantity']) - _d(row['reserved_qty']),
       unit: (row['unit'] as String?) ?? '',
       note: row['note'] as String?,
       format: row['format'] as String?,
@@ -2297,6 +2322,58 @@ class WarehouseProvider with ChangeNotifier {
       createdAt: row['created_at']?.toString(),
       updatedAt: row['updated_at']?.toString(),
     );
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse('$value'.replaceAll(',', '.')) ?? 0.0;
+  }
+
+  Future<Map<String, double>> _loadPaintReservedQty() async {
+    try {
+      final rows = await _sb
+          .from('order_paint_reservations')
+          .select('paint_id, reserved_qty');
+      if (rows is! List) return const {};
+      final out = <String, double>{};
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final paintId = (row['paint_id'] ?? '').toString().trim();
+        if (paintId.isEmpty) continue;
+        out.update(
+          paintId,
+          (value) => value + _toDouble(row['reserved_qty']),
+          ifAbsent: () => _toDouble(row['reserved_qty']),
+        );
+      }
+      return out;
+    } catch (e) {
+      debugPrint('⚠️ paint reservations load failed: $e');
+      return const {};
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getPaintReservationsByPaint(
+    String paintId,
+  ) async {
+    final normalizedId = paintId.trim();
+    if (normalizedId.isEmpty) return const [];
+    try {
+      final rows = await _sb
+          .from('order_paint_reservations')
+          .select(
+              'order_id, reserved_qty, orders(id, customer, new_form_no, form_code)')
+          .eq('paint_id', normalizedId)
+          .order('created_at');
+      if (rows is! List) return const [];
+      return rows
+          .whereType<Map>()
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('⚠️ paint reservations details failed: $e');
+      return const [];
+    }
   }
 
   Future<String> _uploadImage(
