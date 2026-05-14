@@ -1,14 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:mime/mime.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -3081,90 +3075,17 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
 
-  List<int>? _mimeHeader(Uint8List bytes) {
-    if (bytes.isEmpty) return null;
-    return bytes.length > 16 ? bytes.sublist(0, 16) : bytes;
-  }
-
-  Future<Uint8List> _readPickedFileBytes(PlatformFile file) async {
-    if (file.bytes != null) return file.bytes!;
-    if (file.readStream != null) {
-      final builder = BytesBuilder(copy: false);
-      await for (final chunk in file.readStream!) {
-        builder.add(chunk);
-      }
-      return builder.takeBytes();
-    }
-    final path = file.path;
-    if (path == null) throw Exception('Не удалось прочитать файл');
-    return File(path).readAsBytes();
-  }
-
   bool get _shouldUseFilePickerForMedia =>
-      kIsWeb ||
-      defaultTargetPlatform == TargetPlatform.windows ||
-      defaultTargetPlatform == TargetPlatform.macOS ||
-      defaultTargetPlatform == TargetPlatform.linux;
+      AttachmentService.shouldUseFilePickerForMedia;
 
   Future<void> _pickCommentAttachment({
     required String source,
     required void Function(void Function()) updateDialogState,
   }) async {
     try {
-      AttachmentDraft? draft;
-      if (_shouldUseFilePickerForMedia && source != 'file') {
-        await _pickCommentAttachment(
-          source: 'file',
-          updateDialogState: updateDialogState,
-        );
-        return;
-      }
-      if (source == 'camera') {
-        final image = await ImagePicker().pickImage(
-          source: ImageSource.camera,
-          imageQuality: 85,
-        );
-        if (image == null) return;
-        final bytes = await image.readAsBytes();
-        draft = AttachmentDraft(
-          bytes: bytes,
-          fileName: image.name.isNotEmpty ? image.name : p.basename(image.path),
-          mimeType: lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg',
-        );
-      } else if (source == 'photo') {
-        final image = await ImagePicker().pickImage(
-          source: ImageSource.gallery,
-          imageQuality: 85,
-        );
-        if (image == null) return;
-        final bytes = await image.readAsBytes();
-        draft = AttachmentDraft(
-          bytes: bytes,
-          fileName: image.name.isNotEmpty ? image.name : p.basename(image.path),
-          mimeType: lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg',
-        );
-      } else if (source == 'video') {
-        final video = await ImagePicker().pickVideo(source: ImageSource.gallery);
-        if (video == null) return;
-        final bytes = await video.readAsBytes();
-        draft = AttachmentDraft(
-          bytes: bytes,
-          fileName: video.name.isNotEmpty ? video.name : p.basename(video.path),
-          mimeType: lookupMimeType(video.path, headerBytes: _mimeHeader(bytes)) ?? 'video/mp4',
-        );
-      } else {
-        final result = await FilePicker.platform.pickFiles(withReadStream: true);
-        if (result == null || result.files.isEmpty) return;
-        final file = result.files.first;
-        final bytes = await _readPickedFileBytes(file);
-        draft = AttachmentDraft(
-          bytes: bytes,
-          fileName: file.name,
-          mimeType: lookupMimeType(file.path ?? file.name, headerBytes: _mimeHeader(bytes)) ??
-              'application/octet-stream',
-        );
-      }
-      updateDialogState(() => _pendingCommentAttachments.add(draft!));
+      final draft = await AttachmentService().pickAttachmentDraft(source: source);
+      if (draft == null) return;
+      updateDialogState(() => _pendingCommentAttachments.add(draft));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4879,8 +4800,9 @@ class _TasksScreenState extends State<TasksScreen>
                             (stateRowUser == UserRunState.active &&
                                 isSetupActiveForRow));
                     final bool shouldShowContinueLabel =
-                        stateRowUser == UserRunState.finished &&
-                            stageExecMode == ExecutionMode.separate;
+                        stateRowUser == UserRunState.problem ||
+                            (stateRowUser == UserRunState.finished &&
+                                stageExecMode == ExecutionMode.separate);
                     final bool canPauseRow = isMyRow &&
                         canPause &&
                         stateRowUser == UserRunState.active;
@@ -5288,18 +5210,35 @@ class _TasksScreenState extends State<TasksScreen>
                       );
                       if (problemDraft == null) return;
                       final comment = problemDraft.text;
-                      await context.read<TaskProvider>().createCommentWithAttachments(
-                            taskId: task.id,
-                            type: 'problem',
-                            text: comment,
-                            userId: widget.employeeId,
-                            attachments: problemDraft.attachments,
-                          );
-                      await recordTimeEventForUser(TaskTimeType.problem,
-                          note: comment);
-                      await context
-                          .read<TaskProvider>()
-                          .updateStatus(task.id, TaskStatus.problem);
+                      final subjects = <String>[currentRowUserId];
+                      if (jointGroup != null && isMyRow) {
+                        subjects
+                          ..clear()
+                          ..addAll(jointGroup);
+                      }
+                      final saved = await taskProvider.reportProblem(
+                        taskId: task.id,
+                        text: comment,
+                        userId: widget.employeeId,
+                        participantsSnapshot:
+                            _participantsSnapshot(task, widget.employeeId),
+                        subjectUserIds: subjects,
+                        workplaceId: task.stageId,
+                        executionMode: _executionModeCode(
+                          stageExecMode ??
+                              _execModeForUser(task, widget.employeeId),
+                        ),
+                        attachments: problemDraft.attachments,
+                      );
+                      if (!saved && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Проблему можно зафиксировать только для этапа в работе.',
+                            ),
+                          ),
+                        );
+                      }
                     }
 
                     Future<void> onAddHelper() async {
@@ -5850,7 +5789,9 @@ class _TasksScreenState extends State<TasksScreen>
                                       ),
                                       child: Text(
                                           shouldShowContinueLabel
-                                              ? '▶ Продолжить'
+                                              ? (stateRowUser == UserRunState.problem
+                                                  ? '↩ Вернуть в работу'
+                                                  : '▶ Продолжить')
                                               : '▶ Начать')),
                                   ElevatedButton(
                                       onPressed: canPauseRow ? onPause : null,
@@ -6645,31 +6586,24 @@ class _TasksScreenState extends State<TasksScreen>
     );
     if (problemDraft == null) return;
     final comment = problemDraft.text;
-    final seconds = _elapsed(task).inSeconds;
-
-    await provider.updateStatus(
-      task.id,
-      TaskStatus.problem,
-      spentSeconds: seconds,
-      startedAt: null,
-    );
-
-    await provider.createCommentWithAttachments(
+    final saved = await provider.reportProblem(
       taskId: task.id,
-      type: 'problem',
       text: comment,
       userId: widget.employeeId,
+      participantsSnapshot: _participantsSnapshot(task, widget.employeeId),
+      subjectUserIds: [widget.employeeId],
+      workplaceId: task.stageId,
+      executionMode: _executionModeCode(_execModeForUser(task, widget.employeeId)),
       attachments: problemDraft.attachments,
     );
-    await provider.recordTimeEvent(
-      task: task,
-      type: TaskTimeType.problem,
-      initiatedBy: widget.employeeId,
-      subjectUserId: widget.employeeId,
-      workplaceId: task.stageId,
-      participantsSnapshot: _participantsSnapshot(task, widget.employeeId),
-      note: comment,
-    );
+    if (!saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Проблему можно зафиксировать только для этапа в работе.'),
+        ),
+      );
+      return;
+    }
 
     final analytics = context.read<AnalyticsProvider>();
     await analytics.logEvent(
@@ -6681,6 +6615,7 @@ class _TasksScreenState extends State<TasksScreen>
       details: comment,
     );
   }
+
 
   List<_StageComment> _collectOrderComments(
       TaskProvider provider, TaskModel pivot) {
