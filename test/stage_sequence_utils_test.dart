@@ -81,4 +81,59 @@ void main() {
 
     expect(canStart, isTrue);
   });
+
+  test('second stage is available after first stage has started', () {
+    final canStart = isFirstPendingStageInOrder(
+      orderId: 'order-1',
+      currentStageId: 'stage-2',
+      stageStates: const [
+        PendingStageState(
+          stageId: 'stage-1',
+          completed: false,
+          started: true,
+        ),
+        PendingStageState(stageId: 'stage-2', completed: false),
+      ],
+      orderedStages: const ['stage-1', 'stage-2', 'stage-3'],
+    );
+
+    expect(canStart, isTrue);
+  });
+
+  test('third stage remains blocked while second stage is waiting', () {
+    final canStart = isFirstPendingStageInOrder(
+      orderId: 'order-1',
+      currentStageId: 'stage-3',
+      stageStates: const [
+        PendingStageState(
+          stageId: 'stage-1',
+          completed: false,
+          started: true,
+        ),
+        PendingStageState(stageId: 'stage-2', completed: false),
+        PendingStageState(stageId: 'stage-3', completed: false),
+      ],
+      orderedStages: const ['stage-1', 'stage-2', 'stage-3'],
+    );
+
+    expect(canStart, isFalse);
+  });
+
+  test('problem stage opens the next stage', () {
+    final canStart = isFirstPendingStageInOrder(
+      orderId: 'order-1',
+      currentStageId: 'stage-2',
+      stageStates: const [
+        PendingStageState(
+          stageId: 'stage-1',
+          completed: false,
+          problem: true,
+        ),
+        PendingStageState(stageId: 'stage-2', completed: false),
+      ],
+      orderedStages: const ['stage-1', 'stage-2'],
+    );
+
+    expect(canStart, isTrue);
+  });
 }

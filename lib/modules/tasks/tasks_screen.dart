@@ -612,6 +612,27 @@ String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
 bool _canRunOutOfStageSequence(TaskModel task) =>
     task.stageId.trim() == kCardboardCuttingStageId;
 
+bool _hasStartedForStageSequence(TaskModel task) {
+  if (task.status == TaskStatus.inProgress ||
+      task.status == TaskStatus.completed ||
+      task.status == TaskStatus.problem) {
+    return true;
+  }
+
+  final hasStartComment = task.comments.any(
+    (c) =>
+        c.type == 'start' ||
+        c.type == 'resume' ||
+        c.type == 'user_done' ||
+        c.type == 'problem',
+  );
+  if (hasStartComment) return true;
+
+  return _taskTimeEvents(task).any(
+    (event) => event.type == TaskTimeType.production,
+  );
+}
+
 bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     TaskModel task,
     {stage_sequence.StageGroupingResolver? groupResolver}) {
@@ -642,6 +663,7 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
         completed: _isEffectivelyCompleted(t),
         problem: t.status == TaskStatus.problem ||
             t.comments.any((c) => c.type == 'problem'),
+        started: _hasStartedForStageSequence(t),
       ),
     ),
     orderedStages: tasks.stageSequenceForOrder(task.orderId) ?? const [],
@@ -6875,8 +6897,8 @@ class _TaskCard extends StatelessWidget {
     final double statusSize = scaled(11.5);
     final String? stageHint = showStageHint
         ? (readyForStage
-            ? 'Можно начинать: предыдущий этап завершён'
-            : 'Ожидает завершения предыдущего этапа')
+            ? 'Можно начинать: предыдущий этап начат'
+            : 'Ожидает начала предыдущего этапа')
         : null;
     final Color readyColor = Colors.green.shade600;
     final Color stageHintColor =

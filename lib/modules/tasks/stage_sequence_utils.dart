@@ -38,11 +38,13 @@ class PendingStageState {
   final String stageId;
   final bool completed;
   final bool problem;
+  final bool started;
 
   const PendingStageState({
     required this.stageId,
     required this.completed,
     this.problem = false,
+    this.started = false,
   });
 
   bool get pending => !completed;
@@ -68,11 +70,17 @@ bool isFirstPendingStageInOrder({
   for (final state in stageStates) {
     final key = groupKey(state.stageId);
     final current = stages[key] ??
-        {'pending': false, 'completed': false, 'problem': false};
+        {
+          'pending': false,
+          'completed': false,
+          'problem': false,
+          'started': false,
+        };
     stages[key] = {
       'pending': current['pending'] == true || state.pending,
       'completed': current['completed'] == true || state.completed,
       'problem': current['problem'] == true || state.problem,
+      'started': current['started'] == true || state.started,
     };
   }
 
@@ -99,10 +107,11 @@ bool isFirstPendingStageInOrder({
 
       final hasPending = prevState['pending'] == true;
       final hasProblem = prevState['problem'] == true;
+      final hasStarted = prevState['started'] == true;
       if (!hasPending && prevState['completed'] == true) {
         continue;
       }
-      return prevState['completed'] == true || hasProblem;
+      return hasStarted || prevState['completed'] == true || hasProblem;
     }
     return true;
   }
