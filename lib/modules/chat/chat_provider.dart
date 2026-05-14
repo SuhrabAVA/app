@@ -209,6 +209,7 @@ Future<void> unsubscribe(String roomId) async {
     required Uint8List bytes,
     required String filename,
     required String mime,
+    String? body,
     String kind = 'file', // image | video | audio | file
     int? durationMs,
     int? width,
@@ -216,7 +217,7 @@ Future<void> unsubscribe(String roomId) async {
   }) async {
     final id = _uuid.v4();
     final ext = p.extension(filename).replaceAll('.', '');
-    final path = '$roomId/$id.$ext';
+    final path = ext.isEmpty ? '$roomId/$id' : '$roomId/$id.$ext';
 
     final storage = _sb.storage.from('chat');
     await storage.uploadBinary(
@@ -232,19 +233,39 @@ Future<void> unsubscribe(String roomId) async {
       _namesCache[normalizedSenderId] = preparedName;
     }
 
-    await _sb.from('chat_messages').insert({
-      'id': id,
-      'room_id': roomId,
-      'sender_id': senderId,
-      'sender_name': preparedName,
-      'kind': kind,
-      'file_url': publicUrl,
-      'file_mime': mime,
-      'duration_ms': durationMs,
-      'width': width,
-      'height': height,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+    try {
+      await _sb.from('chat_messages').insert({
+        'id': id,
+        'room_id': roomId,
+        'sender_id': senderId,
+        'sender_name': preparedName,
+        'kind': _kindFromMime(mime, fallback: kind),
+        'body': body?.trim(),
+        'file_url': publicUrl,
+        'file_mime': mime,
+        'duration_ms': durationMs,
+        'width': width,
+        'height': height,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      try {
+        await storage.remove([path]);
+      } catch (_) {
+        // Очистка файла в Storage best-effort: основная ошибка — неуспешный insert.
+      }
+      throw Exception('Не удалось сохранить сообщение с файлом. Загрузка отменена, попробуйте ещё раз.');
+    }
+  }
+
+  String _kindFromMime(String mime, {String fallback = 'file'}) {
+    final normalized = mime.toLowerCase().trim();
+    if (normalized.startsWith('image/')) return 'image';
+    if (normalized.startsWith('video/')) return 'video';
+    if (normalized.startsWith('audio/')) return 'audio';
+    return fallback == 'image' || fallback == 'video' || fallback == 'audio'
+        ? fallback
+        : 'file';
   }
 
   /// Полная очистка комнаты
