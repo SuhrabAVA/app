@@ -224,6 +224,106 @@ class TaskComment {
       };
 }
 
+
+class TaskCommentAttachment {
+  final String id;
+  final String taskId;
+  final String orderId;
+  final String stageId;
+  final String commentId;
+  final String userId;
+  final String fileType;
+  final String fileName;
+  final String storagePath;
+  final String? fileUrl;
+  final String mimeType;
+  final int sizeBytes;
+  final DateTime createdAt;
+
+  const TaskCommentAttachment({
+    required this.id,
+    required this.taskId,
+    required this.orderId,
+    required this.stageId,
+    required this.commentId,
+    required this.userId,
+    required this.fileType,
+    required this.fileName,
+    required this.storagePath,
+    this.fileUrl,
+    required this.mimeType,
+    required this.sizeBytes,
+    required this.createdAt,
+  });
+
+  factory TaskCommentAttachment.fromMap(Map<String, dynamic> map) {
+    int parseSize(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    DateTime parseCreatedAt(dynamic value) {
+      if (value is DateTime) return value;
+      if (value is String) {
+        return DateTime.tryParse(value) ?? DateTime.now();
+      }
+      return DateTime.now();
+    }
+
+    return TaskCommentAttachment(
+      id: (map['id'] ?? '').toString(),
+      taskId: (map['task_id'] ?? map['taskId'] ?? '').toString(),
+      orderId: (map['order_id'] ?? map['orderId'] ?? '').toString(),
+      stageId: (map['stage_id'] ?? map['stageId'] ?? '').toString(),
+      commentId: (map['comment_id'] ?? map['commentId'] ?? '').toString(),
+      userId: (map['user_id'] ?? map['userId'] ?? '').toString(),
+      fileType: (map['file_type'] ?? map['fileType'] ?? 'file').toString(),
+      fileName: (map['file_name'] ?? map['fileName'] ?? 'attachment').toString(),
+      storagePath: (map['storage_path'] ?? map['storagePath'] ?? '').toString(),
+      fileUrl: (map['file_url'] ?? map['fileUrl'])?.toString(),
+      mimeType: (map['mime_type'] ?? map['mimeType'] ?? 'application/octet-stream').toString(),
+      sizeBytes: parseSize(map['size_bytes'] ?? map['sizeBytes']),
+      createdAt: parseCreatedAt(map['created_at'] ?? map['createdAt']),
+    );
+  }
+
+  TaskCommentAttachment copyWith({String? fileUrl}) {
+    return TaskCommentAttachment(
+      id: id,
+      taskId: taskId,
+      orderId: orderId,
+      stageId: stageId,
+      commentId: commentId,
+      userId: userId,
+      fileType: fileType,
+      fileName: fileName,
+      storagePath: storagePath,
+      fileUrl: fileUrl ?? this.fileUrl,
+      mimeType: mimeType,
+      sizeBytes: sizeBytes,
+      createdAt: createdAt,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'task_id': taskId,
+        'order_id': orderId,
+        'stage_id': stageId,
+        'comment_id': commentId,
+        'user_id': userId,
+        'file_type': fileType,
+        'file_name': fileName,
+        'storage_path': storagePath,
+        'file_url': fileUrl,
+        'mime_type': mimeType,
+        'size_bytes': sizeBytes,
+        'created_at': createdAt.toUtc().toIso8601String(),
+      };
+}
+
 /// Модель задачи, назначенной на рабочее место и конкретный этап заказа.
 ///
 /// Каждая задача содержит ссылку на заказ, идентификатор этапа, список

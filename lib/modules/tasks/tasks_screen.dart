@@ -1,7 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
@@ -27,6 +36,7 @@ import 'task_visibility.dart';
 import 'stage_sequence_utils.dart' as stage_sequence;
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
+import '../../services/attachment_service.dart';
 // Additional helpers for time formatting and aggregated timers
 const String kCardboardCuttingStageId =
     stage_sequence.kCardboardCuttingStageId;
@@ -689,6 +699,13 @@ class _TaskSelectionState extends ChangeNotifier {
 
 final Map<String, _TaskSelectionState> _selectionCache = {};
 
+class _CommentDraft {
+  final String text;
+  final List<AttachmentDraft> attachments;
+
+  const _CommentDraft({required this.text, this.attachments = const []});
+}
+
 class _InkUsageDialogResult {
   final List<Map<String, dynamic>> paints;
   final bool openPaperEditor;
@@ -710,6 +727,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _commentsScrollController = ScrollController();
+  final List<AttachmentDraft> _pendingCommentAttachments = <AttachmentDraft>[];
   late final _TaskSelectionState _selection;
   bool _selectionUpdateScheduled = false;
   String? _lastQueueSyncGroupId;
@@ -3029,12 +3047,234 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
+
+  List<int>? _mimeHeader(Uint8List bytes) {
+    if (bytes.isEmpty) return null;
+    return bytes.length > 16 ? bytes.sublist(0, 16) : bytes;
+  }
+
+  Future<Uint8List> _readPickedFileBytes(PlatformFile file) async {
+    if (file.bytes != null) return file.bytes!;
+    if (file.readStream != null) {
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in file.readStream!) {
+        builder.add(chunk);
+      }
+      return builder.takeBytes();
+    }
+    final path = file.path;
+    if (path == null) throw Exception('Не удалось прочитать файл');
+    return File(path).readAsBytes();
+  }
+
+  bool get _shouldUseFilePickerForMedia =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.linux;
+
+  Future<void> _pickCommentAttachment({
+    required String source,
+    required void Function(void Function()) updateDialogState,
+  }) async {
+    try {
+      AttachmentDraft? draft;
+      if (_shouldUseFilePickerForMedia && source != 'file') {
+        await _pickCommentAttachment(
+          source: 'file',
+          updateDialogState: updateDialogState,
+        );
+        return;
+      }
+      if (source == 'camera') {
+        final image = await ImagePicker().pickImage(
+          source: ImageSource.camera,
+          imageQuality: 85,
+        );
+        if (image == null) return;
+        final bytes = await image.readAsBytes();
+        draft = AttachmentDraft(
+          bytes: bytes,
+          fileName: image.name.isNotEmpty ? image.name : p.basename(image.path),
+          mimeType: lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg',
+        );
+      } else if (source == 'photo') {
+        final image = await ImagePicker().pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 85,
+        );
+        if (image == null) return;
+        final bytes = await image.readAsBytes();
+        draft = AttachmentDraft(
+          bytes: bytes,
+          fileName: image.name.isNotEmpty ? image.name : p.basename(image.path),
+          mimeType: lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg',
+        );
+      } else if (source == 'video') {
+        final video = await ImagePicker().pickVideo(source: ImageSource.gallery);
+        if (video == null) return;
+        final bytes = await video.readAsBytes();
+        draft = AttachmentDraft(
+          bytes: bytes,
+          fileName: video.name.isNotEmpty ? video.name : p.basename(video.path),
+          mimeType: lookupMimeType(video.path, headerBytes: _mimeHeader(bytes)) ?? 'video/mp4',
+        );
+      } else {
+        final result = await FilePicker.platform.pickFiles(withReadStream: true);
+        if (result == null || result.files.isEmpty) return;
+        final file = result.files.first;
+        final bytes = await _readPickedFileBytes(file);
+        draft = AttachmentDraft(
+          bytes: bytes,
+          fileName: file.name,
+          mimeType: lookupMimeType(file.path ?? file.name, headerBytes: _mimeHeader(bytes)) ??
+              'application/octet-stream',
+        );
+      }
+      updateDialogState(() => _pendingCommentAttachments.add(draft!));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось добавить вложение: $error')),
+      );
+    }
+  }
+
+  Widget _attachmentActionButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    required double scale,
+  }) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon, size: scale * 18),
+    );
+  }
+
+  Widget _pendingAttachmentsPreview(
+    double scale, {
+    required void Function(void Function()) updateDialogState,
+  }) {
+    if (_pendingCommentAttachments.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: scale * 6,
+      runSpacing: scale * 6,
+      children: [
+        for (var i = 0; i < _pendingCommentAttachments.length; i++)
+          Chip(
+            avatar: Icon(
+              _iconForAttachmentType(_fileTypeFromMime(_pendingCommentAttachments[i].mimeType)),
+              size: scale * 16,
+            ),
+            label: Text(
+              _pendingCommentAttachments[i].fileName,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onDeleted: () => updateDialogState(
+              () => _pendingCommentAttachments.removeAt(i),
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _fileTypeFromMime(String mimeType) {
+    final value = mimeType.toLowerCase();
+    if (value.startsWith('image/')) return 'image';
+    if (value.startsWith('video/')) return 'video';
+    if (value.startsWith('audio/')) return 'audio';
+    return 'file';
+  }
+
+  IconData _iconForAttachmentType(String fileType) {
+    switch (fileType) {
+      case 'image':
+        return Icons.image_outlined;
+      case 'video':
+        return Icons.videocam_outlined;
+      case 'audio':
+        return Icons.audiotrack_outlined;
+      default:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  Future<void> _openAttachment(TaskCommentAttachment attachment) async {
+    final url = (attachment.fileUrl ?? '').trim();
+    if (url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (!kIsWeb && uri.scheme == 'file') {
+      await OpenFilex.open(uri.toFilePath());
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Widget _attachmentTile(TaskCommentAttachment attachment, double scale) {
+    final isImage = attachment.fileType == 'image' &&
+        (attachment.fileUrl ?? '').trim().isNotEmpty;
+    return InkWell(
+      onTap: () => _openAttachment(attachment),
+      child: Container(
+        width: scale * 112,
+        padding: EdgeInsets.all(scale * 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(scale * 10),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isImage)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(scale * 8),
+                child: Image.network(
+                  attachment.fileUrl!,
+                  width: double.infinity,
+                  height: scale * 68,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Icon(
+                    _iconForAttachmentType(attachment.fileType),
+                    size: scale * 34,
+                  ),
+                ),
+              )
+            else
+              Icon(
+                _iconForAttachmentType(attachment.fileType),
+                size: scale * 34,
+                color: const Color(0xFF374151),
+              ),
+            SizedBox(height: scale * 4),
+            Text(
+              attachment.fileName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: scale * 10.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCommentsPanel(TaskModel task, double scale) {
     final isAssignee = task.assignees.contains(widget.employeeId) ||
         task.assignees.isEmpty;
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.watch<TaskProvider>();
     final aggregated = _collectOrderComments(taskProvider, task);
+    Future.microtask(
+      () => taskProvider.loadAttachmentsForComments(
+        aggregated.map((entry) => entry.comment.id),
+      ),
+    );
     _maybeAutoScrollComments(task.id, aggregated);
 
     Widget commentList() {
@@ -3130,6 +3370,24 @@ class _TasksScreenState extends State<TasksScreen>
                               _describeComment(entry.comment),
                               style: TextStyle(fontSize: scale * 12.5),
                             ),
+                            Builder(builder: (_) {
+                              final attachments = taskProvider
+                                  .attachmentsForComment(entry.comment.id);
+                              if (attachments.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              return Padding(
+                                padding: EdgeInsets.only(top: scale * 6),
+                                child: Wrap(
+                                  spacing: scale * 6,
+                                  runSpacing: scale * 6,
+                                  children: [
+                                    for (final attachment in attachments)
+                                      _attachmentTile(attachment, scale),
+                                  ],
+                                ),
+                              );
+                            }),
                           ],
                         );
                       },
@@ -3160,6 +3418,10 @@ class _TasksScreenState extends State<TasksScreen>
             ),
           ),
           SizedBox(height: scale * 6),
+          if (_pendingCommentAttachments.isNotEmpty) ...[
+            _pendingAttachmentsPreview(scale, updateDialogState: setState),
+            SizedBox(height: scale * 6),
+          ],
           Row(
             children: [
               Expanded(
@@ -3193,18 +3455,69 @@ class _TasksScreenState extends State<TasksScreen>
                   ),
                 ),
               ),
-              SizedBox(width: scale * 8),
+              SizedBox(width: scale * 4),
+              _attachmentActionButton(
+                icon: Icons.photo_outlined,
+                tooltip: 'Фото',
+                scale: scale,
+                onPressed: isAssignee
+                    ? () => _pickCommentAttachment(
+                          source: 'photo',
+                          updateDialogState: setState,
+                        )
+                    : null,
+              ),
+              _attachmentActionButton(
+                icon: Icons.videocam_outlined,
+                tooltip: 'Видео',
+                scale: scale,
+                onPressed: isAssignee
+                    ? () => _pickCommentAttachment(
+                          source: 'video',
+                          updateDialogState: setState,
+                        )
+                    : null,
+              ),
+              _attachmentActionButton(
+                icon: Icons.photo_camera_outlined,
+                tooltip: _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
+                scale: scale,
+                onPressed: isAssignee
+                    ? () => _pickCommentAttachment(
+                          source: 'camera',
+                          updateDialogState: setState,
+                        )
+                    : null,
+              ),
+              _attachmentActionButton(
+                icon: Icons.attach_file,
+                tooltip: 'Файл',
+                scale: scale,
+                onPressed: isAssignee
+                    ? () => _pickCommentAttachment(
+                          source: 'file',
+                          updateDialogState: setState,
+                        )
+                    : null,
+              ),
+              SizedBox(width: scale * 4),
               InkResponse(
                 onTap: isAssignee
                     ? () async {
                         final txt = _chatController.text.trim();
-                        if (txt.isEmpty) return;
-                        await context.read<TaskProvider>().addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'msg',
-                            text: txt,
-                            userIdOverride: widget.employeeId);
+                        final attachments = List<AttachmentDraft>.from(
+                          _pendingCommentAttachments,
+                        );
+                        if (txt.isEmpty && attachments.isEmpty) return;
+                        await context.read<TaskProvider>().createCommentWithAttachments(
+                              taskId: task.id,
+                              type: 'msg',
+                              text: txt.isEmpty ? 'Вложение' : txt,
+                              userId: widget.employeeId,
+                              attachments: attachments,
+                            );
                         _chatController.clear();
+                        setState(() => _pendingCommentAttachments.clear());
                       }
                     : null,
                 child: Container(
@@ -4847,13 +5160,19 @@ class _TasksScreenState extends State<TasksScreen>
                     }
 
                     Future<void> onProblem() async {
-                      final comment = await _askComment('Причина проблемы');
-                      if (comment == null) return;
-                      await context.read<TaskProvider>().addCommentAutoUser(
-                          taskId: task.id,
-                          type: 'problem',
-                          text: comment,
-                          userIdOverride: widget.employeeId);
+                      final problemDraft = await _askCommentDraft(
+                        'Причина проблемы',
+                        allowAttachments: true,
+                      );
+                      if (problemDraft == null) return;
+                      final comment = problemDraft.text;
+                      await context.read<TaskProvider>().createCommentWithAttachments(
+                            taskId: task.id,
+                            type: 'problem',
+                            text: comment,
+                            userId: widget.employeeId,
+                            attachments: problemDraft.attachments,
+                          );
                       await recordTimeEventForUser(TaskTimeType.problem,
                           note: comment);
                       await context
@@ -5772,31 +6091,112 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<String?> _askComment(String title) async {
+    final draft = await _askCommentDraft(title, allowAttachments: false);
+    return draft?.text;
+  }
+
+  Future<_CommentDraft?> _askCommentDraft(
+    String title, {
+    bool allowAttachments = false,
+  }) async {
     final controller = TextEditingController();
-    return showDialog<String?>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: 'Укажите причину'),
-          maxLines: 3,
+    final previousPending = List<AttachmentDraft>.from(_pendingCommentAttachments);
+    _pendingCommentAttachments.clear();
+    try {
+      return showDialog<_CommentDraft?>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            title: Text(title),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(hintText: 'Укажите причину'),
+                    maxLines: 3,
+                  ),
+                  if (allowAttachments) ...[
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 4,
+                      children: [
+                        _attachmentActionButton(
+                          icon: Icons.photo_outlined,
+                          tooltip: 'Фото',
+                          scale: 1,
+                          onPressed: () => _pickCommentAttachment(
+                            source: 'photo',
+                            updateDialogState: setDialogState,
+                          ),
+                        ),
+                        _attachmentActionButton(
+                          icon: Icons.videocam_outlined,
+                          tooltip: 'Видео',
+                          scale: 1,
+                          onPressed: () => _pickCommentAttachment(
+                            source: 'video',
+                            updateDialogState: setDialogState,
+                          ),
+                        ),
+                        _attachmentActionButton(
+                          icon: Icons.photo_camera_outlined,
+                          tooltip: _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
+                          scale: 1,
+                          onPressed: () => _pickCommentAttachment(
+                            source: 'camera',
+                            updateDialogState: setDialogState,
+                          ),
+                        ),
+                        _attachmentActionButton(
+                          icon: Icons.attach_file,
+                          tooltip: 'Файл',
+                          scale: 1,
+                          onPressed: () => _pickCommentAttachment(
+                            source: 'file',
+                            updateDialogState: setDialogState,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    _pendingAttachmentsPreview(1, updateDialogState: setDialogState),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(null),
+                child: const Text('Отмена'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final text = controller.text.trim();
+                  final attachments = List<AttachmentDraft>.from(_pendingCommentAttachments);
+                  if (text.isEmpty && attachments.isEmpty) {
+                    Navigator.of(ctx).pop(null);
+                    return;
+                  }
+                  Navigator.of(ctx).pop(_CommentDraft(
+                    text: text.isEmpty ? 'Вложение' : text,
+                    attachments: attachments,
+                  ));
+                },
+                child: const Text('Сохранить'),
+              ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(null),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () {
-              final text = controller.text.trim();
-              Navigator.of(ctx).pop(text.isEmpty ? null : text);
-            },
-            child: const Text('Сохранить'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      _pendingCommentAttachments
+        ..clear()
+        ..addAll(previousPending);
+      controller.dispose();
+    }
   }
 
   bool _hasMachineForStage(WorkplaceModel stage) {
@@ -6117,8 +6517,12 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _handleProblem(TaskModel task, TaskProvider provider) async {
-    final comment = await _askComment('Причина проблемы');
-    if (comment == null) return;
+    final problemDraft = await _askCommentDraft(
+      'Причина проблемы',
+      allowAttachments: true,
+    );
+    if (problemDraft == null) return;
+    final comment = problemDraft.text;
     final seconds = _elapsed(task).inSeconds;
 
     await provider.updateStatus(
@@ -6128,11 +6532,13 @@ class _TasksScreenState extends State<TasksScreen>
       startedAt: null,
     );
 
-    await provider.addCommentAutoUser(
-        taskId: task.id,
-        type: 'problem',
-        text: comment,
-        userIdOverride: widget.employeeId);
+    await provider.createCommentWithAttachments(
+      taskId: task.id,
+      type: 'problem',
+      text: comment,
+      userId: widget.employeeId,
+      attachments: problemDraft.attachments,
+    );
     await provider.recordTimeEvent(
       task: task,
       type: TaskTimeType.problem,

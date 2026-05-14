@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
 
 import '../../services/app_auth.dart';
+import '../../services/attachment_service.dart';
 
 import '../orders/order_model.dart';
 import '../orders/order_queue_service.dart';
@@ -193,12 +194,15 @@ class _StageSequenceData {
 
 class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
+  late final AttachmentService _attachmentService = AttachmentService(supabase: _supabase);
 
   final List<TaskModel> _tasks = [];
   final Map<String, String> _workplaceAliasToId = <String, String>{};
   final Map<String, List<String>> _orderStageSequences = {};
   final Map<String, Map<String, String>> _orderStageNames = {};
   final Map<String, Map<String, String>> _orderStageGroupMaps = {};
+  final Map<String, List<TaskCommentAttachment>> _attachmentsByComment = {};
+  final Set<String> _loadingAttachmentKeys = <String>{};
   final Set<String> _loadedStageSequenceOrderIds = <String>{};
   RealtimeChannel? _tasksChannel;
   final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
@@ -208,6 +212,8 @@ class TaskProvider with ChangeNotifier {
   }
 
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
+  List<TaskCommentAttachment> attachmentsForComment(String commentId) =>
+      List.unmodifiable(_attachmentsByComment[commentId] ?? const <TaskCommentAttachment>[]);
   List<String>? stageSequenceForOrder(String orderId) {
     final seq = _orderStageSequences[orderId];
     return seq == null ? null : List.unmodifiable(normalizeStageSequence(seq));
@@ -1337,6 +1343,167 @@ class TaskProvider with ChangeNotifier {
     return message.contains(columnName.toLowerCase()) &&
         (error.code == '42703' || error.code == 'PGRST204');
   }
+
+
+  Future<void> createCommentWithAttachments({
+    required String taskId,
+    required String type,
+    required String text,
+    required String userId,
+    List<AttachmentDraft> attachments = const <AttachmentDraft>[],
+  }) async {
+    final task = _tasks.cast<TaskModel?>().firstWhere(
+          (item) => item?.id == taskId,
+          orElse: () => null,
+        );
+    if (task == null) {
+      await addComment(
+        taskId: taskId,
+        type: type,
+        text: text,
+        userId: userId,
+      );
+      return;
+    }
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final commentId = '$timestamp';
+    final uploaded = <TaskCommentAttachment>[];
+    try {
+      for (final draft in attachments) {
+        uploaded.add(await _attachmentService.uploadTaskCommentAttachment(
+          draft: draft,
+          taskId: task.id,
+          orderId: task.orderId,
+          stageId: task.stageId,
+          commentId: commentId,
+          userId: userId,
+        ));
+      }
+      await _insertCommentWithId(
+        taskId: taskId,
+        id: commentId,
+        type: type,
+        text: text,
+        userId: userId,
+        timestamp: timestamp,
+      );
+      if (uploaded.isNotEmpty) {
+        _attachmentsByComment[commentId] = uploaded;
+        notifyListeners();
+      }
+    } catch (e, st) {
+      for (final attachment in uploaded) {
+        await _attachmentService.removeAttachment(attachment);
+      }
+      debugPrint('❌ createCommentWithAttachments error: $e\n$st');
+      rethrow;
+    }
+  }
+
+  Future<void> _insertCommentWithId({
+    required String taskId,
+    required String id,
+    required String type,
+    required String text,
+    required String userId,
+    required int timestamp,
+  }) async {
+    final row = await _supabase
+        .from('tasks')
+        .select('comments')
+        .eq('id', taskId)
+        .single();
+    final comments = _normalizeComments(row['comments']);
+    comments.add({
+      'id': id,
+      'type': type,
+      'text': text,
+      'userId': userId,
+      'timestamp': timestamp,
+    });
+    comments.sort((a, b) =>
+        _parseCommentTimestamp(a['timestamp'])
+            .compareTo(_parseCommentTimestamp(b['timestamp'])));
+    await _supabase.from('tasks').update({'comments': comments}).eq('id', taskId);
+
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx != -1) {
+      final current = _tasks[idx];
+      final updatedComments = List<TaskComment>.from(current.comments)
+        ..add(TaskComment(
+          id: id,
+          type: type,
+          text: text,
+          userId: userId,
+          timestamp: timestamp,
+        ))
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      _tasks[idx] = current.copyWith(comments: updatedComments);
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadAttachmentsForComments(Iterable<String> commentIds) async {
+    final ids = commentIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final missing = ids
+        .where((id) => !_attachmentsByComment.containsKey(id))
+        .toList(growable: false);
+    if (missing.isEmpty) return;
+    final key = 'comments:${missing.join(',')}';
+    if (_loadingAttachmentKeys.contains(key)) return;
+    _loadingAttachmentKeys.add(key);
+    try {
+      final loaded = await _attachmentService.loadTaskCommentAttachments(
+        commentIds: missing,
+      );
+      for (final id in missing) {
+        _attachmentsByComment[id] = loaded
+            .where((attachment) => attachment.commentId == id)
+            .toList(growable: false);
+      }
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('❌ loadAttachmentsForComments error: $e\n$st');
+    } finally {
+      _loadingAttachmentKeys.remove(key);
+    }
+  }
+
+  Future<void> loadAttachmentsForOrder(String orderId, {String? stageId}) async {
+    final key = 'order:$orderId:${stageId ?? ''}';
+    if (_loadingAttachmentKeys.contains(key)) return;
+    _loadingAttachmentKeys.add(key);
+    try {
+      final loaded = await _attachmentService.loadTaskCommentAttachments(
+        orderId: orderId,
+        stageId: stageId,
+      );
+      for (final attachment in loaded) {
+        final list = _attachmentsByComment.putIfAbsent(
+          attachment.commentId,
+          () => <TaskCommentAttachment>[],
+        );
+        final index = list.indexWhere((item) => item.id == attachment.id);
+        if (index == -1) {
+          list.add(attachment);
+        } else {
+          list[index] = attachment;
+        }
+      }
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('❌ loadAttachmentsForOrder error: $e\n$st');
+    } finally {
+      _loadingAttachmentKeys.remove(key);
+    }
+  }
+
+  Future<void> removeStorageObject(String storagePath) =>
+      _attachmentService.removeStorageObject(storagePath);
 
   Future<void> addComment(
       {required String taskId,
