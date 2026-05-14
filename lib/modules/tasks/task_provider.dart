@@ -1345,6 +1345,223 @@ class TaskProvider with ChangeNotifier {
   }
 
 
+  Future<bool> reportProblem({
+    required String taskId,
+    required String text,
+    required String userId,
+    required List<String> participantsSnapshot,
+    required List<String> subjectUserIds,
+    String? workplaceId,
+    String? executionMode,
+    List<AttachmentDraft> attachments = const <AttachmentDraft>[],
+  }) async {
+    final localIndex = _tasks.indexWhere((task) => task.id == taskId);
+    if (localIndex == -1) return false;
+    final localTask = _tasks[localIndex];
+    if (localTask.status != TaskStatus.inProgress) return false;
+
+    final now = DateTime.now().toUtc();
+    final timestamp = now.millisecondsSinceEpoch;
+    final commentId = '$timestamp';
+    final normalizedSubjects = subjectUserIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedSubjects.isEmpty) normalizedSubjects.add(userId);
+
+    final uploaded = <TaskCommentAttachment>[];
+    List<Map<String, dynamic>> previousComments = const <Map<String, dynamic>>[];
+    var commentsPersisted = false;
+    var statusPersisted = false;
+    Map<String, dynamic>? previousTaskUpdates;
+
+    Future<void> cleanupUploads() async {
+      for (final attachment in uploaded) {
+        await _attachmentService.removeAttachment(attachment);
+      }
+    }
+
+    try {
+      for (final draft in attachments) {
+        uploaded.add(await _attachmentService.uploadTaskCommentAttachment(
+          draft: draft,
+          taskId: localTask.id,
+          orderId: localTask.orderId,
+          stageId: localTask.stageId,
+          commentId: commentId,
+          userId: userId,
+        ));
+      }
+
+      final row = await _supabase
+          .from('tasks')
+          .select(
+            'comments,status,spent_seconds,started_at,'
+            'captured_by_workplace_id,captured_at,captured_by_user_id',
+          )
+          .eq('id', taskId)
+          .single();
+      final status = (row['status'] ?? '').toString();
+      if (status != TaskStatus.inProgress.name) {
+        await cleanupUploads();
+        await refresh();
+        return false;
+      }
+
+      previousTaskUpdates = {
+        'status': row['status'],
+        'spent_seconds': row['spent_seconds'],
+        'started_at': row['started_at'],
+        'captured_by_workplace_id': row['captured_by_workplace_id'],
+        'captured_at': row['captured_at'],
+        'captured_by_user_id': row['captured_by_user_id'],
+      };
+      previousComments = _normalizeComments(row['comments']);
+      final comments = previousComments
+          .map((comment) => Map<String, dynamic>.from(comment))
+          .toList(growable: true);
+      comments.add({
+        'id': commentId,
+        'type': 'problem',
+        'text': text,
+        'userId': userId,
+        'timestamp': timestamp,
+      });
+
+      for (final subjectUserId in normalizedSubjects) {
+        final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
+        if (openIndex != null) {
+          final open = comments[openIndex];
+          final openEvent = TaskTimeEvent.fromPayload(
+            open['text']?.toString() ?? '',
+            open['id']?.toString() ?? '',
+            _parseCommentTimestamp(open['timestamp']),
+            open['userId']?.toString() ?? '',
+          );
+          if (openEvent != null && openEvent.endTime == null) {
+            open['text'] = TaskTimeEvent.encodePayload(
+              openEvent.copyWith(endTime: now, note: text),
+            );
+          }
+        }
+
+        final event = TaskTimeEvent(
+          id: '$timestamp-$subjectUserId',
+          type: TaskTimeType.problem,
+          startTime: now,
+          endTime: null,
+          initiatedBy: userId,
+          subjectUserId: subjectUserId,
+          taskId: localTask.id,
+          workplaceId: workplaceId ?? localTask.stageId,
+          participantsSnapshot: participantsSnapshot,
+          executionMode: executionMode,
+          helperId: subjectUserId == userId ? null : subjectUserId,
+          note: text,
+        );
+        comments.add({
+          'id': event.id,
+          'type': 'time_event',
+          'text': TaskTimeEvent.encodePayload(event),
+          'userId': subjectUserId,
+          'timestamp': timestamp,
+        });
+      }
+
+      comments.sort((a, b) => _parseCommentTimestamp(a['timestamp'])
+          .compareTo(_parseCommentTimestamp(b['timestamp'])));
+      await _supabase
+          .from('tasks')
+          .update({'comments': comments}).eq('id', taskId);
+      commentsPersisted = true;
+
+      final spentSeconds = localTask.startedAt == null
+          ? localTask.spentSeconds
+          : localTask.spentSeconds +
+              ((DateTime.now().millisecondsSinceEpoch - localTask.startedAt!) ~/
+                  1000);
+      final updates = <String, dynamic>{
+        'status': TaskStatus.problem.name,
+        'spent_seconds': spentSeconds,
+        'started_at': null,
+        'captured_by_workplace_id': null,
+        'captured_at': null,
+        'captured_by_user_id': null,
+      };
+      final statusRows = await _supabase
+          .from('tasks')
+          .update(updates)
+          .eq('id', taskId)
+          .eq('status', TaskStatus.inProgress.name)
+          .select();
+      if ((statusRows as List).isEmpty) {
+        await _supabase
+            .from('tasks')
+            .update({'comments': previousComments}).eq('id', taskId);
+        await cleanupUploads();
+        await refresh();
+        return false;
+      }
+
+      statusPersisted = true;
+
+      final groupKey = localTask.stageGroupKey.trim();
+      if (groupKey.isNotEmpty) {
+        await _supabase
+            .from('tasks')
+            .update({
+              'status': TaskStatus.problem.name,
+              'spent_seconds': spentSeconds,
+              'started_at': null,
+              'captured_by_workplace_id': null,
+              'captured_at': null,
+              'captured_by_user_id': null,
+            })
+            .eq('order_id', localTask.orderId)
+            .eq('stage_group_key', groupKey);
+      }
+
+      await _syncStageGroupStatusToSharedSources(
+        localTask.copyWith(
+          status: TaskStatus.problem,
+          spentSeconds: spentSeconds,
+          startedAt: null,
+          clearStartedAt: true,
+        ),
+        TaskStatus.problem,
+        spentSeconds: spentSeconds,
+        startedAt: null,
+      );
+
+      if (uploaded.isNotEmpty) {
+        _attachmentsByComment[commentId] = uploaded;
+      }
+      await refresh();
+      notifyListeners();
+      return true;
+    } catch (e, st) {
+      if (statusPersisted && previousTaskUpdates != null) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update(previousTaskUpdates)
+              .eq('id', taskId);
+        } catch (_) {}
+      }
+      if (commentsPersisted) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update({'comments': previousComments}).eq('id', taskId);
+        } catch (_) {}
+      }
+      await cleanupUploads();
+      debugPrint('❌ reportProblem error: $e\n$st');
+      rethrow;
+    }
+  }
+
   Future<void> createCommentWithAttachments({
     required String taskId,
     required String type,
