@@ -608,6 +608,13 @@ String? _workplaceUnit(PersonnelProvider personnel, String stageId) {
   return null;
 }
 
+String _stageDisplayName(PersonnelProvider personnel, String stageId) {
+  final wp = personnel.workplaceById(stageId);
+  final name = wp?.name.trim();
+  if (name != null && name.isNotEmpty) return name;
+  return stageId;
+}
+
 /// Разрешить старт только для самого первого незавершённого этапа заказа
 bool _canRunOutOfStageSequence(TaskModel task) =>
     task.stageId.trim() == kCardboardCuttingStageId;
@@ -660,6 +667,8 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     stageStates: all.map(
       (t) => stage_sequence.PendingStageState(
         stageId: t.stageId,
+        stageName: _stageDisplayName(personnel, t.stageId),
+        stageGroupKey: t.stageGroupKey,
         completed: _isEffectivelyCompleted(t),
         problem: t.status == TaskStatus.problem ||
             t.comments.any((c) => c.type == 'problem'),
@@ -669,6 +678,8 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     orderedStages: tasks.stageSequenceForOrder(task.orderId) ?? const [],
     groupResolver: groupResolver,
     fallbackStageComparator: byName,
+    currentStageName: _stageDisplayName(personnel, task.stageId),
+    currentStageGroupKey: task.stageGroupKey,
   );
 }
 

@@ -1,3 +1,4 @@
+import '../tasks/stage_sequence_utils.dart' as stage_sequence;
 import 'order_stage_filter.dart';
 import 'material_model.dart';
 
@@ -30,7 +31,7 @@ const String kBobbinStageId = 'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
 const String kFlexPrintingStageId = '0571c01c-f086-47e4-81b2-5d8b2ab91218';
 const Set<String> kLegacyBobbinStageAliases = {'w_bobiner', 'w_bobbin'};
 const Set<String> kLegacyFlexPrintingStageAliases = {'w_flexoprint', 'w_flexo'};
-const String kPackagingStageId = 'edeb85db-c7a3-4a24-8f33-70ccdd4aaae1';
+const String kPackagingStageId = stage_sequence.kPackagingStageId;
 const String kFriStageId = '92d96ee9-0519-40b9-bd17-9bec475496b6';
 const String kWindowStageId = '8337f16e-c2d1-42dc-966d-6277ba3c1a50';
 const String kAutoBigStageId = 'fdbf1735-a67c-47c9-a7e1-90546e1fe6ed';
@@ -346,7 +347,7 @@ List<Map<String, dynamic>> normalizeBuiltOrderStageQueue(
     } else if (_isFlexPrintingStage(map, canonicalId)) {
       map['stageName'] = 'Флексопечать';
       map['workplaceName'] = 'Флексопечать';
-    } else if (_isPackagingStage(map, canonicalId)) {
+    } else if (isPackagingStage(map, canonicalId)) {
       map['stageName'] = 'Упаковка';
       map['workplaceName'] = 'Упаковка';
     }
@@ -394,7 +395,7 @@ List<Map<String, dynamic>> _withPackagingStagesLast(
 
   for (final stage in stages) {
     final id = _stageIdFromMap(stage);
-    if (_isPackagingStage(stage, id)) {
+    if (isPackagingStage(stage, id)) {
       packaging.add(stage);
     } else {
       products.add(stage);
@@ -477,10 +478,18 @@ bool _isFlexPrintingStage(Map<String, dynamic> map, String? stageId) {
   return name.contains('флекс') || name.contains('flexo');
 }
 
-bool _isPackagingStage(Map<String, dynamic> map, String? stageId) {
-  if (stageId == kPackagingStageId) return true;
-  return _stageNameFromMap(map).contains('упаков');
-}
+bool isPackagingStage(Map<String, dynamic> map, String? stageId) =>
+    stage_sequence.isPackagingStage(
+      stageId: stageId,
+      stageName: _stageNameFromMap(map),
+      stageType: (map['stageType'] ?? map['stage_type'] ?? map['type'])
+          ?.toString(),
+      stageGroupKey: (map['stageGroupKey'] ??
+              map['stage_group_key'] ??
+              map['queueStageKey'] ??
+              map['queue_stage_key'])
+          ?.toString(),
+    );
 
 String _stageNameFromMap(Map<String, dynamic> map) => (map['stageName'] ??
         map['stage_name'] ??

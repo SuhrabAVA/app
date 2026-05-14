@@ -136,4 +136,68 @@ void main() {
 
     expect(canStart, isTrue);
   });
+
+  test('isPackagingStage recognises id names types and group keys', () {
+    expect(isPackagingStage(stageId: kPackagingStageId), isTrue);
+    expect(isPackagingStage(stageName: 'Упаковка'), isTrue);
+    expect(isPackagingStage(stageName: 'упаковка'), isTrue);
+    expect(isPackagingStage(stageType: 'Packaging'), isTrue);
+    expect(isPackagingStage(stageType: 'package'), isTrue);
+    expect(isPackagingStage(stageGroupKey: 'packaging_stage'), isTrue);
+  });
+
+  test('packaging is available after cutting starts before cutting completes', () {
+    const flexo = 'flexo-stage';
+    const cutting = 'cutting-stage';
+
+    final canStartPackaging = isFirstPendingStageInOrder(
+      orderId: 'order-1',
+      currentStageId: kPackagingStageId,
+      currentStageName: 'Упаковка',
+      stageStates: const [
+        PendingStageState(stageId: flexo, completed: true),
+        PendingStageState(
+          stageId: cutting,
+          stageName: 'Резка',
+          completed: false,
+          started: true,
+        ),
+        PendingStageState(
+          stageId: kPackagingStageId,
+          stageName: 'Упаковка',
+          completed: false,
+        ),
+      ],
+      orderedStages: const [flexo, cutting, kPackagingStageId],
+    );
+
+    expect(canStartPackaging, isTrue);
+  });
+
+  test('packaging remains blocked while cutting is waiting', () {
+    const flexo = 'flexo-stage';
+    const cutting = 'cutting-stage';
+
+    final canStartPackaging = isFirstPendingStageInOrder(
+      orderId: 'order-1',
+      currentStageId: kPackagingStageId,
+      currentStageName: 'Упаковка',
+      stageStates: const [
+        PendingStageState(stageId: flexo, completed: true),
+        PendingStageState(
+          stageId: cutting,
+          stageName: 'Резка',
+          completed: false,
+        ),
+        PendingStageState(
+          stageId: kPackagingStageId,
+          stageName: 'Упаковка',
+          completed: false,
+        ),
+      ],
+      orderedStages: const [flexo, cutting, kPackagingStageId],
+    );
+
+    expect(canStartPackaging, isFalse);
+  });
 }

@@ -32,16 +32,74 @@ List<String> normalizeStageSequence(Iterable<String> rawSequence) {
 const String kCardboardCuttingStageId =
     'd7d91f75-2f85-446f-8c1d-a20606bdb3b1';
 
+const String kPackagingStageId = 'edeb85db-c7a3-4a24-8f33-70ccdd4aaae1';
+
+const Set<String> _packagingAliases = <String>{
+  'упаковка',
+  'packaging',
+  'package',
+};
+
+const Set<String> _packagingGroupKeys = <String>{
+  'pack',
+  'packing',
+  'packaging',
+  'package',
+  'packaging_stage',
+  'package_stage',
+  'packaging_group',
+  'package_group',
+  'pack_stage',
+  'упаковка',
+};
+
+String _normalizePackagingLookupValue(String? value) => (value ?? '')
+    .trim()
+    .toLowerCase()
+    .replaceAll('-', '_')
+    .replaceAll(RegExp(r'\s+'), '_');
+
+bool _matchesPackagingText(String? value) {
+  final normalized = _normalizePackagingLookupValue(value);
+  if (normalized.isEmpty) return false;
+  if (_packagingAliases.contains(normalized)) return true;
+  return normalized.contains('упаков') ||
+      normalized.contains('packaging') ||
+      normalized == 'package';
+}
+
+bool isPackagingStage({
+  String? stageId,
+  String? stageName,
+  String? stageType,
+  String? stageGroupKey,
+}) {
+  if ((stageId ?? '').trim() == kPackagingStageId) return true;
+  if (_matchesPackagingText(stageName) || _matchesPackagingText(stageType)) {
+    return true;
+  }
+
+  final normalizedGroupKey = _normalizePackagingLookupValue(stageGroupKey);
+  if (_packagingGroupKeys.contains(normalizedGroupKey)) return true;
+  return normalizedGroupKey.contains('упаков');
+}
+
 typedef StageGroupingResolver = String Function(String orderId, String stageId);
 
 class PendingStageState {
   final String stageId;
+  final String? stageName;
+  final String? stageType;
+  final String? stageGroupKey;
   final bool completed;
   final bool problem;
   final bool started;
 
   const PendingStageState({
     required this.stageId,
+    this.stageName,
+    this.stageType,
+    this.stageGroupKey,
     required this.completed,
     this.problem = false,
     this.started = false,
@@ -60,6 +118,9 @@ bool isFirstPendingStageInOrder({
   required Iterable<String> orderedStages,
   StageGroupingResolver? groupResolver,
   int Function(String a, String b)? fallbackStageComparator,
+  String? currentStageName,
+  String? currentStageType,
+  String? currentStageGroupKey,
 }) {
   if (canRunOutOfStageSequenceByStageId(currentStageId)) return true;
 
@@ -67,8 +128,25 @@ bool isFirstPendingStageInOrder({
       groupResolver?.call(orderId, stageId) ?? stageId;
 
   final stages = <String, Map<String, bool>>{};
+  var currentIsPackaging = isPackagingStage(
+    stageId: currentStageId,
+    stageName: currentStageName,
+    stageType: currentStageType,
+    stageGroupKey: currentStageGroupKey,
+  );
   for (final state in stageStates) {
     final key = groupKey(state.stageId);
+    if (state.stageId == currentStageId ||
+        (currentStageGroupKey != null &&
+            state.stageGroupKey == currentStageGroupKey)) {
+      currentIsPackaging = currentIsPackaging ||
+          isPackagingStage(
+            stageId: state.stageId,
+            stageName: state.stageName,
+            stageType: state.stageType,
+            stageGroupKey: state.stageGroupKey,
+          );
+    }
     final current = stages[key] ??
         {
           'pending': false,
@@ -100,18 +178,21 @@ bool isFirstPendingStageInOrder({
     final currentIndex = indexMap[currentKey];
     if (currentIndex == null || currentIndex <= 0) return true;
 
+    if (currentIsPackaging && currentIndex == orderedKeys.length - 1) {
+      final previousState = stages[orderedKeys[currentIndex - 1]];
+      return _stageUnlocksNext(previousState);
+    }
+
     for (var i = currentIndex - 1; i >= 0; i--) {
       final prevKey = orderedKeys[i];
       final prevState = stages[prevKey];
       if (prevState == null) continue;
 
       final hasPending = prevState['pending'] == true;
-      final hasProblem = prevState['problem'] == true;
-      final hasStarted = prevState['started'] == true;
       if (!hasPending && prevState['completed'] == true) {
         continue;
       }
-      return hasStarted || prevState['completed'] == true || hasProblem;
+      return _stageUnlocksNext(prevState);
     }
     return true;
   }
@@ -129,4 +210,11 @@ bool isFirstPendingStageInOrder({
   }
 
   return groupKey(currentStageId) == pendingStageIds.first;
+}
+
+bool _stageUnlocksNext(Map<String, bool>? stage) {
+  if (stage == null) return false;
+  return stage['started'] == true ||
+      stage['completed'] == true ||
+      stage['problem'] == true;
 }
