@@ -31,6 +31,91 @@ import '../../services/storage_service.dart';
 const String kCardboardCuttingStageId =
     stage_sequence.kCardboardCuttingStageId;
 
+const Set<String> _meterUnitAliases = <String>{
+  'м',
+  'метр',
+  'метры',
+  'm',
+  'meter',
+  'meters',
+};
+
+String _normalizeTaskQuantityUnit(String? unit) =>
+    (unit ?? '').trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+bool isTaskMeterUnit(String? unit) =>
+    _meterUnitAliases.contains(_normalizeTaskQuantityUnit(unit));
+
+double? _taskPaperLengthNumber(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  if (value is String) {
+    final normalized = value.trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    final parsed = double.tryParse(normalized);
+    if (parsed != null) return parsed;
+    return double.tryParse(normalized.replaceAll(RegExp(r'[^0-9.\-]'), ''));
+  }
+  return null;
+}
+
+double? _taskPaperLengthFromMap(Map<String, dynamic>? map) {
+  if (map == null) return null;
+  for (final key in const <String>['lengthL', 'length_l', 'length', 'L']) {
+    final parsed = _taskPaperLengthNumber(map[key]);
+    if (parsed != null && parsed > 0) return parsed;
+  }
+  final paper = map['paper'];
+  if (paper is Map) {
+    final parsed = _taskPaperLengthFromMap(Map<String, dynamic>.from(paper));
+    if (parsed != null && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+double? _taskPaperLengthFromMaterial(MaterialModel material) {
+  final extraLength = _taskPaperLengthFromMap(material.extra);
+  if (extraLength != null && extraLength > 0) return extraLength;
+  if (material.quantity > 0) return material.quantity;
+  return null;
+}
+
+double taskPaperLengthTotalForOrder(OrderModel? order) {
+  if (order == null) return 0;
+
+  final materialTotal = order.paperMaterials.fold<double>(0, (sum, material) {
+    final length = _taskPaperLengthFromMaterial(material);
+    return length == null || length <= 0 ? sum : sum + length;
+  });
+  if (materialTotal > 0) return materialTotal;
+
+  final productMap = order.product.toMap();
+  final productLength = _taskPaperLengthFromMap(productMap);
+  if (productLength != null && productLength > 0) return productLength;
+
+  final directLength = order.product.length;
+  if (directLength != null && directLength > 0) return directLength;
+
+  return 0;
+}
+
+double? initialTaskMeterQuantityForOrder({
+  required String? unit,
+  required OrderModel? order,
+}) {
+  if (!isTaskMeterUnit(unit)) return null;
+  final total = taskPaperLengthTotalForOrder(order);
+  return total > 0 ? total : null;
+}
+
+String formatTaskInitialQuantity(double value) {
+  if (value % 1 == 0) return value.toStringAsFixed(0);
+  return value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+}
+
 class TasksScreen extends StatefulWidget {
   final String employeeId;
   final bool showListOnly;
@@ -575,7 +660,7 @@ class _StageComment {
 }
 
 class _QuantityInput {
-  final int quantity;
+  final double quantity;
   final String displayText;
   final bool openPaperEditor;
   final int? packsCount;
@@ -906,6 +991,13 @@ class _TasksScreenState extends State<TasksScreen>
     } catch (_) {
       return null;
     }
+  }
+
+  double? _initialMeterQuantityForTask(TaskModel task, String? unit) {
+    return initialTaskMeterQuantityForOrder(
+      unit: unit,
+      order: _orderById(task.orderId),
+    );
   }
 
   String _queueOrderIdForTask(TaskModel task, OrdersProvider ordersProvider) {
@@ -3929,6 +4021,7 @@ class _TasksScreenState extends State<TasksScreen>
           context,
           unit: unitLabel,
           allowPaperEdit: true,
+          initialQuantity: _initialMeterQuantityForTask(task, unitLabel),
         );
         if (result == null) return;
         if (!result.openPaperEditor) {
@@ -4593,6 +4686,8 @@ class _TasksScreenState extends State<TasksScreen>
                           context,
                           unit: unitLabel,
                           allowPaperEdit: true,
+                          initialQuantity:
+                              _initialMeterQuantityForTask(task, unitLabel),
                         );
                         if (qtyInput == null) return;
                         if (!qtyInput.openPaperEditor) break;
@@ -4905,8 +5000,12 @@ class _TasksScreenState extends State<TasksScreen>
                       if (!confirmed) return;
 
                       final unitLabel = _workplaceUnit(personnel, task.stageId);
-                      final qtyInput =
-                          await _askQuantity(context, unit: unitLabel);
+                      final qtyInput = await _askQuantity(
+                        context,
+                        unit: unitLabel,
+                        initialQuantity:
+                            _initialMeterQuantityForTask(task, unitLabel),
+                      );
                       if (qtyInput == null) return;
 
                       await taskProvider.closeOpenTimeEvent(
@@ -4986,6 +5085,8 @@ class _TasksScreenState extends State<TasksScreen>
                             context,
                             unit: unitLabel,
                             allowPaperEdit: true,
+                            initialQuantity:
+                                _initialMeterQuantityForTask(task, unitLabel),
                           );
                           if (qtyInput == null) return;
                           if (!qtyInput.openPaperEditor) break;
@@ -6662,8 +6763,13 @@ Future<_QuantityInput?> _askQuantity(
   BuildContext context, {
   String? unit,
   bool allowPaperEdit = false,
+  double? initialQuantity,
 }) async {
-  final totalController = TextEditingController();
+  final totalController = TextEditingController(
+    text: initialQuantity != null && initialQuantity > 0
+        ? formatTaskInitialQuantity(initialQuantity)
+        : '',
+  );
   final unitLabel = (unit ?? '').trim();
   const paperEditValue = '__open_paper_edit__';
   final v = await showDialog<_QuantityInput?>(
@@ -6674,7 +6780,7 @@ Future<_QuantityInput?> _askQuantity(
         content: TextField(
           controller: totalController,
           autofocus: true,
-          keyboardType: TextInputType.number,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: InputDecoration(
             hintText: unitLabel.isNotEmpty
                 ? 'Введите количество в $unitLabel'
@@ -6700,9 +6806,12 @@ Future<_QuantityInput?> _askQuantity(
           ElevatedButton(
             onPressed: () {
               final raw = totalController.text.trim();
-              final n = int.tryParse(raw);
+              final n = double.tryParse(raw.replaceAll(',', '.'));
               if (n == null) return;
-              final display = unitLabel.isNotEmpty ? '$n $unitLabel' : n.toString();
+              final displayQuantity = formatTaskInitialQuantity(n);
+              final display = unitLabel.isNotEmpty
+                  ? '$displayQuantity $unitLabel'
+                  : displayQuantity;
               Navigator.pop(
                 ctx,
                 _QuantityInput(quantity: n, displayText: display),
@@ -6714,6 +6823,7 @@ Future<_QuantityInput?> _askQuantity(
       );
     },
   );
+  totalController.dispose();
   if (v == null) return null;
   if (v.openPaperEditor || v.displayText == paperEditValue) {
     return const _QuantityInput(
