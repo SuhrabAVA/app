@@ -4852,9 +4852,9 @@ class _TasksScreenState extends State<TasksScreen>
     List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
     _QuantityInput? qtyInput = initialQtyInput;
     if (_isInkConfirmationStage(task)) {
+      final repo = OrdersRepository();
       List<Map<String, dynamic>> initialPaints = const <Map<String, dynamic>>[];
       try {
-        final repo = OrdersRepository();
         initialPaints = await repo.getPaints(task.orderId);
         final currentPaintIds = initialPaints
             .map((paint) => _stringFromRow(paint, const [
