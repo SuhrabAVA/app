@@ -743,6 +743,52 @@ class _InkUsageDialogResult {
   });
 }
 
+class FlexPaintWriteoffRow {
+  final Map<String, dynamic> sourceRow;
+  final String source;
+  final String queueId;
+  final String orderId;
+  final String orderLabel;
+  final String paintId;
+  final String paintName;
+  final double plannedAmount;
+  final String unit;
+  String actualUsedText;
+  bool writeOffNow;
+  String status;
+
+  FlexPaintWriteoffRow({
+    required this.sourceRow,
+    required this.source,
+    required this.queueId,
+    required this.orderId,
+    required this.orderLabel,
+    required this.paintId,
+    required this.paintName,
+    required this.plannedAmount,
+    required this.unit,
+    required this.actualUsedText,
+    this.writeOffNow = false,
+    String? status,
+  }) : status = status ?? '' {
+    refreshStatus();
+  }
+
+  bool get isPendingSource {
+    final normalized = source.trim().toLowerCase();
+    return normalized == 'pending' ||
+        normalized == 'pending_queue' ||
+        normalized == 'queued' ||
+        normalized == 'writeoff_queue';
+  }
+
+  void refreshStatus() {
+    status = writeOffNow
+        ? 'будет списано'
+        : (isPendingSource ? 'ожидает списания' : 'не списывать сейчас');
+  }
+}
+
 class _TasksScreenState extends State<TasksScreen>
     with AutomaticKeepAliveClientMixin<TasksScreen> {
   static const Duration _formImageCacheTtl = Duration(seconds: 10);
@@ -3959,137 +4005,315 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
+  double _paintQtyKilogramsToDisplayGrams(dynamic value) {
+    if (value is num) return value.toDouble() * 1000;
+    final parsed = double.tryParse(value?.toString().replaceAll(',', '.') ?? '');
+    return (parsed ?? 0) * 1000;
+  }
+
+  double _gramsToKilogramsForPersistence(double grams) => grams / 1000;
+
+  double? _parsePositiveGrams(String text) {
+    final normalized = text.trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    final parsed = double.tryParse(normalized);
+    if (parsed == null || parsed <= 0) return null;
+    return parsed;
+  }
+
+  String _formatAmountForDialog(double value) {
+    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    return value
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  String _stringFromRow(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      final value = (row[key] ?? '').toString().trim();
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  FlexPaintWriteoffRow _paintWriteoffRowFromMap(
+    Map<String, dynamic> row,
+    String? defaultUnit,
+  ) {
+    final source = _stringFromRow(row, const [
+      'source',
+      'writeoff_source',
+      'write_off_source',
+    ]);
+    final plannedGrams = row['planned_amount'] is num
+        ? (row['planned_amount'] as num).toDouble()
+        : row['planned_qty'] is num
+            ? (row['planned_qty'] as num).toDouble()
+            : row['planned_qty_g'] is num
+                ? (row['planned_qty_g'] as num).toDouble()
+                : row['reserved_qty'] is num
+                    ? (row['reserved_qty'] as num).toDouble()
+                    : _paintQtyKilogramsToDisplayGrams(row['qty_kg']);
+    final actualUsedText = _stringFromRow(row, const [
+      'actual_used_text',
+      'actualUsedText',
+      'used_qty_text',
+    ]);
+    final orderId = _stringFromRow(row, const ['order_id', 'orderId']);
+    return FlexPaintWriteoffRow(
+      sourceRow: Map<String, dynamic>.from(row),
+      source: source.isEmpty ? 'current_order' : source,
+      queueId: _stringFromRow(row, const ['queue_id', 'queueId']),
+      orderId: orderId,
+      orderLabel: _stringFromRow(row, const [
+        'order_label',
+        'orderLabel',
+        'order_name',
+      ]).isNotEmpty
+          ? _stringFromRow(
+              row,
+              const ['order_label', 'orderLabel', 'order_name'],
+            )
+          : (orderId.isEmpty ? 'Текущий заказ' : orderId),
+      paintId: _stringFromRow(row, const ['paint_id', 'material_id', 'paintId']),
+      paintName:
+          _stringFromRow(row, const ['paint_name', 'name', 'paintName']).isEmpty
+          ? 'Краска'
+          : _stringFromRow(row, const ['paint_name', 'name', 'paintName']),
+      plannedAmount: plannedGrams,
+      unit: _stringFromRow(row, const ['unit']).isEmpty
+          ? ((defaultUnit ?? '').trim().isEmpty ? 'г' : defaultUnit!.trim())
+          : _stringFromRow(row, const ['unit']),
+      actualUsedText: actualUsedText,
+      writeOffNow: row['write_off_now'] == true || row['writeOffNow'] == true,
+    );
+  }
+
+  Widget _buildPaintWriteoffSection(
+    String title,
+    List<FlexPaintWriteoffRow> rows,
+    Map<FlexPaintWriteoffRow, TextEditingController> controllers,
+    void Function(VoidCallback fn) updateDialogState,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        if (rows.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text('Нет строк для отображения.'),
+          )
+        else
+          ...rows.map(
+            (row) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            'Заказ: ${row.orderLabel}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          Text('Краска: ${row.paintName}'),
+                          Text(
+                            'План: ${_formatAmountForDialog(row.plannedAmount)} ${row.unit}',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: TextField(
+                              controller: controllers[row],
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              decoration: const InputDecoration(
+                                labelText: 'Фактический расход',
+                                border: OutlineInputBorder(),
+                              ),
+                              onChanged: (value) => row.actualUsedText = value,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 16),
+                            child: Text(row.unit),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 3,
+                            child: CheckboxListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: row.writeOffNow,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('Списать сейчас'),
+                              subtitle: Text(row.status),
+                              onChanged: (value) {
+                                updateDialogState(() {
+                                  row.writeOffNow = value ?? false;
+                                  row.refreshStatus();
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Future<_InkUsageDialogResult?> _showInkAdjustDialog(
     List<Map<String, dynamic>> paints,
-    String? _unit, {
+    String? unit, {
     bool allowPaperEdit = false,
   }) async {
-    final mutable = paints
-        .map((row) => Map<String, dynamic>.from(row))
+    final rows = paints
+        .map((row) => _paintWriteoffRowFromMap(row, unit))
         .toList(growable: true);
-    final ctrls = <TextEditingController>[];
+    final currentRows = rows.where((row) => !row.isPendingSource).toList();
+    final pendingRows = rows.where((row) => row.isPendingSource).toList();
+    final controllers = <FlexPaintWriteoffRow, TextEditingController>{
+      for (final row in rows)
+        row: TextEditingController(text: row.actualUsedText),
+    };
     const paperEditValue = '__open_paper_edit__';
-    for (final row in mutable) {
-      final qty = (row['qty_kg'] as num?)?.toDouble() ?? 0;
-      ctrls.add(TextEditingController(text: (qty * 1000).toStringAsFixed(0)));
-    }
     final result = await showDialog<Object?>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Списание красок'),
-        content: SizedBox(
-          width: 620,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Проверьте расход по каждой краске и укажите фактический расход в граммах.',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, updateDialogState) => AlertDialog(
+          title: const Text('Списание красок'),
+          content: SizedBox(
+            width: 760,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Проверьте расход по каждой краске и отметьте строки, которые нужно списать сейчас.',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: mutable.isEmpty
-                    ? const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'В заказе не указаны краски. При необходимости вернитесь и добавьте их в заказ.',
-                        ),
-                      )
-                    : ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: mutable.length,
-                        itemBuilder: (context, index) {
-                          final row = mutable[index];
-                          final name =
-                              (row['paint_name'] ?? row['name'] ?? 'Краска')
-                                  .toString();
-                          final orderedQty =
-                              (row['qty_kg'] as num?)?.toDouble() ?? 0;
-                          final reservedQty =
-                              (row['reserved_qty'] as num?)?.toDouble() ?? 0;
-                          final usedQty =
-                              (row['used_qty'] as num?)?.toDouble() ?? 0;
-                          final releasedQty =
-                              (row['released_qty'] as num?)?.toDouble() ?? 0;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Row(
-                              children: [
-                                Expanded(flex: 3, child: Text(name)),
-                                Expanded(
-                                  flex: 2,
-                                  child: Text(
-                                    'По заказу: ${(orderedQty * 1000).toStringAsFixed(0)} г\n'
-                                    'Резерв: ${reservedQty.toStringAsFixed(0)} г'
-                                    '${usedQty > 0 || releasedQty > 0 ? '\nИсп.: ${usedQty.toStringAsFixed(0)} г, освоб.: ${releasedQty.toStringAsFixed(0)} г' : ''}',
-                                    textAlign: TextAlign.end,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  flex: 2,
-                                  child: TextField(
-                                    controller: ctrls[index],
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                            decimal: true),
-                                    decoration: const InputDecoration(
-                                      labelText: 'Факт, г',
-                                      border: OutlineInputBorder(),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                const SizedBox(height: 12),
+                Flexible(
+                  child: rows.isEmpty
+                      ? const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'В заказе не указаны краски. При необходимости вернитесь и добавьте их в заказ.',
+                          ),
+                        )
+                      : ListView(
+                          shrinkWrap: true,
+                          children: [
+                            _buildPaintWriteoffSection(
+                              'Краски текущего заказа',
+                              currentRows,
+                              controllers,
+                              updateDialogState,
                             ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          if (allowPaperEdit)
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(paperEditValue),
-              child: const Text('Изменить бумагу'),
-            ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () {
-              for (var i = 0; i < mutable.length; i++) {
-                final parsed =
-                    double.tryParse(ctrls[i].text.replaceAll(',', '.').trim());
-                if (parsed == null || parsed < 0) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          'Укажите корректное фактическое количество краски.'),
-                    ),
-                  );
-                  return;
-                }
-                mutable[i]['qty_kg'] = parsed / 1000;
-              }
-              Navigator.of(ctx).pop(
-                _InkUsageDialogResult(
-                  paints: mutable,
+                            const SizedBox(height: 16),
+                            _buildPaintWriteoffSection(
+                              'Краски, ожидающие списания',
+                              pendingRows,
+                              controllers,
+                              updateDialogState,
+                            ),
+                          ],
+                        ),
                 ),
-              );
-            },
-            child: const Text('Сохранить и завершить'),
+              ],
+            ),
           ),
-        ],
+          actions: [
+            if (allowPaperEdit)
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(paperEditValue),
+                child: const Text('Изменить бумагу'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final resultRows = <Map<String, dynamic>>[];
+                for (final row in rows) {
+                  final enteredText =
+                      controllers[row]?.text ?? row.actualUsedText;
+                  row.actualUsedText = enteredText;
+                  row.refreshStatus();
+                  final output = Map<String, dynamic>.from(row.sourceRow)
+                    ..addAll({
+                      'source': row.source,
+                      'queue_id': row.queueId,
+                      'order_id': row.orderId,
+                      'order_label': row.orderLabel,
+                      'paint_id': row.paintId,
+                      'paint_name': row.paintName,
+                      'planned_amount': row.plannedAmount,
+                      'unit': row.unit,
+                      'actual_used_text': row.actualUsedText,
+                      'write_off_now': row.writeOffNow,
+                      'status': row.status,
+                    });
+
+                  if (row.writeOffNow) {
+                    final grams = _parsePositiveGrams(enteredText);
+                    if (grams == null) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Для строк со списанием укажите фактический расход больше 0.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    output['used_qty'] = grams;
+                    output['qty_kg'] = _gramsToKilogramsForPersistence(grams);
+                  }
+                  resultRows.add(output);
+                }
+                Navigator.of(ctx).pop(
+                  _InkUsageDialogResult(
+                    paints: resultRows,
+                  ),
+                );
+              },
+              child: const Text('Сохранить и завершить'),
+            ),
+          ],
+        ),
       ),
     );
-    for (final c in ctrls) {
-      c.dispose();
+    for (final controller in controllers.values) {
+      controller.dispose();
     }
     if (result == paperEditValue) {
       return const _InkUsageDialogResult(
@@ -4148,6 +4372,9 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     for (final row in paints) {
+      if (row['write_off_now'] == false || row['writeOffNow'] == false) {
+        continue;
+      }
       final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
           ? (row['paint_id'] ?? '').toString().trim()
           : (warehouse
@@ -4186,6 +4413,9 @@ class _TasksScreenState extends State<TasksScreen>
       final humanReadableReason =
           'Списание после завершения заказа $normalizedOrderLabel';
       for (final row in paints) {
+        if (row['write_off_now'] == false || row['writeOffNow'] == false) {
+          continue;
+        }
         final paintId = (row['paint_id'] ?? '').toString().trim().isNotEmpty
             ? (row['paint_id'] ?? '').toString().trim()
             : (warehouse
@@ -4221,6 +4451,9 @@ class _TasksScreenState extends State<TasksScreen>
       }
       final updates = <PaintUsageUpdate>[];
       for (final row in paints) {
+        if (row['write_off_now'] == false || row['writeOffNow'] == false) {
+          continue;
+        }
         final id = (row['id'] ?? '').toString();
         if (id.isEmpty) continue;
         final qtyKg = (row['qty_kg'] as num?)?.toDouble() ?? 0;
@@ -4264,6 +4497,9 @@ class _TasksScreenState extends State<TasksScreen>
         final repo = OrdersRepository();
         initialPaints = await repo.getPaints(task.orderId);
         final reservations = await repo.getPaintReservations(task.orderId);
+        final order = _orderById(task.orderId);
+        final orderLabel =
+            order != null ? _orderReferenceForWriteoff(order) : task.orderId;
         final reservationsByKey = <String, Map<String, dynamic>>{};
         for (final reservation in reservations) {
           final id = (reservation['paint_id'] ?? '').toString().trim();
@@ -4286,6 +4522,11 @@ class _TasksScreenState extends State<TasksScreen>
           final reservation =
               (id.isNotEmpty ? reservationsByKey['id:$id'] : null) ??
                   (name.isNotEmpty ? reservationsByKey['name:$name'] : null);
+          merged.addAll({
+            'source': 'current_order',
+            'order_id': task.orderId,
+            'order_label': orderLabel,
+          });
           if (reservation != null) {
             merged.addAll({
               'paint_id': reservation['paint_id'],
