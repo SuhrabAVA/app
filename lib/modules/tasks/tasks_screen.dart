@@ -4037,8 +4037,6 @@ class _TasksScreenState extends State<TasksScreen>
     return (parsed ?? 0) * 1000;
   }
 
-  double _gramsToKilogramsForPersistence(double grams) => grams / 1000;
-
   String _formatAmountForDialog(double value) {
     if (value == value.roundToDouble()) return value.toStringAsFixed(0);
     return value
@@ -4337,8 +4335,6 @@ class _TasksScreenState extends State<TasksScreen>
 
                   if (row.writeOffNow) {
                     output['used_qty'] = actualGrams;
-                    output['qty_kg'] =
-                        _gramsToKilogramsForPersistence(actualGrams!);
                   }
                   resultRows.add(output);
                 }
