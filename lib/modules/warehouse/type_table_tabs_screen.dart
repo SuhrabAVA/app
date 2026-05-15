@@ -559,6 +559,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   String _orderLabelFromReservation(Map<String, dynamic> row) {
+    final order = row['orders'];
+    if (order is Map) {
+      final customer = (order['customer'] ?? '').toString().trim();
+      if (customer.isNotEmpty) return customer;
+    }
+
     final orderName = (row['order_name'] ?? '').toString().trim();
     final hasOrderName = orderName.isNotEmpty &&
         orderName.toLowerCase() != 'null' &&
@@ -567,14 +573,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         orderName != '-';
     if (hasOrderName) return orderName;
 
-    final order = row['orders'];
     if (order is Map) {
       final code = (order['form_code'] ?? '').toString().trim();
       if (code.isNotEmpty) return code;
       final no = (order['new_form_no'] ?? '').toString().trim();
       if (no.isNotEmpty) return 'Форма №$no';
-      final customer = (order['customer'] ?? '').toString().trim();
-      if (customer.isNotEmpty) return customer;
     }
 
     final orderId = (row['order_id'] ?? '').toString().trim();
