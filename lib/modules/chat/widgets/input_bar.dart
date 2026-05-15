@@ -48,6 +48,39 @@ class _ChatInputBarState extends State<ChatInputBar> {
   final List<_PendingMention> _selectedMentions = <_PendingMention>[];
   int _mentionRequestId = 0;
   bool _isDisposed = false;
+  final List<_PendingChatAttachment> _pendingAttachments = <_PendingChatAttachment>[];
+
+  void _queueAttachment(_PendingChatAttachment attachment) {
+    if (_isDisposed || !mounted) return;
+    setState(() => _pendingAttachments.add(attachment));
+  }
+
+  void _removePendingAttachment(int index) {
+    if (_isDisposed || !mounted) return;
+    setState(() => _pendingAttachments.removeAt(index));
+  }
+
+  Future<void> _sendPendingAttachments(String? caption) async {
+    if (_pendingAttachments.isEmpty) return;
+    final chat = context.read<ChatProvider>();
+    final attachments = List<_PendingChatAttachment>.from(_pendingAttachments);
+    for (var i = 0; i < attachments.length; i++) {
+      final attachment = attachments[i];
+      await chat.sendFile(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: attachment.bytes,
+        filename: attachment.filename,
+        mime: attachment.mime,
+        body: i == 0 ? caption : null,
+        kind: attachment.kind,
+      );
+    }
+    if (!_isDisposed && mounted) {
+      setState(() => _pendingAttachments.clear());
+    }
+  }
 
   /// Снимает фото через камеру устройства и отправляет его в чат. Если
   /// пользователь отменяет съёмку, ничего не происходит. Этот метод
@@ -56,26 +89,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
   /// доступны только на мобильных платформах.
   Future<void> _takePhoto() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
       if (image == null) return;
       final bytes = await image.readAsBytes();
       final mime = lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      _queueAttachment(_PendingChatAttachment(
         bytes: bytes,
         filename: image.name.isNotEmpty ? image.name : p.basename(image.path),
         mime: mime,
-        body: caption,
         kind: _kindFromMime(mime),
-      );
-      _clearAttachmentCaption();
+      ));
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить фото: $error');
     }
@@ -114,19 +140,22 @@ class _ChatInputBarState extends State<ChatInputBar> {
     if (_isDisposed || !mounted) return;
     _cleanupObsoleteMentions();
     var prepared = _controller.text;
-    if (prepared.trim().isEmpty) return;
     if (_selectedMentions.isNotEmpty) {
       prepared = _applyMentionMarkup(prepared);
     }
     prepared = prepared.trim();
-    if (prepared.isEmpty) return;
-    final chat = context.read<ChatProvider>();
-    await chat.sendText(
-      roomId: widget.roomId,
-      senderId: widget.senderId,
-      senderName: widget.senderName,
-      text: prepared,
-    );
+    if (prepared.isEmpty && _pendingAttachments.isEmpty) return;
+    if (_pendingAttachments.isNotEmpty) {
+      await _sendPendingAttachments(prepared.isEmpty ? null : prepared);
+    } else {
+      final chat = context.read<ChatProvider>();
+      await chat.sendText(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        text: prepared,
+      );
+    }
     _controller.clear();
     _selectedMentions.clear();
     _hideMentionOverlay();
@@ -436,26 +465,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   Future<void> _pickImage() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
       if (x == null) return;
       final bytes = await x.readAsBytes();
       final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      _queueAttachment(_PendingChatAttachment(
         bytes: bytes,
         filename: x.name.isNotEmpty ? x.name : p.basename(x.path),
         mime: mime,
-        body: caption,
         kind: _kindFromMime(mime),
-      );
-      _clearAttachmentCaption();
+      ));
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить изображение: $error');
     }
@@ -463,26 +485,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   Future<void> _pickVideo() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final x = await picker.pickVideo(source: ImageSource.gallery);
       if (x == null) return;
       final bytes = await x.readAsBytes();
       final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'video/mp4';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      _queueAttachment(_PendingChatAttachment(
         bytes: bytes,
         filename: x.name.isNotEmpty ? x.name : p.basename(x.path),
         mime: mime,
-        body: caption,
         kind: _kindFromMime(mime),
-      );
-      _clearAttachmentCaption();
+      ));
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить видео: $error');
     }
@@ -490,7 +505,6 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   Future<void> _pickAnyFile() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     try {
       final res = await FilePicker.platform.pickFiles(withReadStream: true);
       if (res == null || res.files.isEmpty) return;
@@ -501,19 +515,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
             headerBytes: _mimeHeader(bytes),
           ) ??
           'application/octet-stream';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      _queueAttachment(_PendingChatAttachment(
         bytes: bytes,
         filename: f.name,
         mime: mime,
-        body: caption,
         kind: _kindFromMime(mime),
-      );
-      _clearAttachmentCaption();
+      ));
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить файл: $error');
     }
@@ -609,8 +617,29 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
     return SafeArea(
       top: false,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
+          if (_pendingAttachments.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: scaled(6),
+                runSpacing: scaled(4),
+                children: [
+                  for (var i = 0; i < _pendingAttachments.length; i++)
+                    Chip(
+                      label: Text(
+                        _pendingAttachments[i].filename,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onDeleted: () => _removePendingAttachment(i),
+                    ),
+                ],
+              ),
+            ),
+          Row(
+            children: [
           IconButton(
             tooltip: 'Камера',
             visualDensity: density,
@@ -674,6 +703,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
             icon: const Icon(Icons.send),
             onPressed: _sendText,
           ),
+            ],
+          ),
         ],
       ),
     );
@@ -684,4 +715,18 @@ class _PendingMention {
   final String display;
   final String id;
   const _PendingMention({required this.display, required this.id});
+}
+
+class _PendingChatAttachment {
+  final Uint8List bytes;
+  final String filename;
+  final String mime;
+  final String kind;
+
+  const _PendingChatAttachment({
+    required this.bytes,
+    required this.filename,
+    required this.mime,
+    required this.kind,
+  });
 }

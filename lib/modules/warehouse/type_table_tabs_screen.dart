@@ -569,12 +569,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
     final order = row['orders'];
     if (order is Map) {
+      final customer = (order['customer'] ?? '').toString().trim();
+      if (customer.isNotEmpty) return customer;
       final code = (order['form_code'] ?? '').toString().trim();
       if (code.isNotEmpty) return code;
       final no = (order['new_form_no'] ?? '').toString().trim();
       if (no.isNotEmpty) return 'Форма №$no';
-      final customer = (order['customer'] ?? '').toString().trim();
-      if (customer.isNotEmpty) return customer;
     }
 
     final orderId = (row['order_id'] ?? '').toString().trim();
@@ -829,7 +829,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final rows = await Supabase.instance.client
           .from('orders')
           .select(
-              'id, assignment_id, title, name, order_name, product_name, new_form_no, data, product')
+              'id, customer, assignment_id, title, name, order_name, product_name, new_form_no, data, product')
           .inFilter('id', orderIds.toList(growable: false));
       if (rows is! List) return labels;
       for (final raw in rows.whereType<Map>()) {
@@ -851,6 +851,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
             : <String, dynamic>{};
 
         final label = _firstOrderLabel([
+          row['customer'],
+          data['customer'],
           row['assignment_id'],
           row['title'],
           row['order_name'],
