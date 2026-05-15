@@ -4369,8 +4369,26 @@ class _TasksScreenState extends State<TasksScreen>
       try {
         final repo = OrdersRepository();
         initialPaints = await repo.getPaints(task.orderId);
-        final pendingWriteoffs = await repo.getPendingPaintWriteoffs(
-          excludeOrderId: task.orderId,
+        final currentPaintIds = initialPaints
+            .map((paint) => _stringFromRow(paint, const [
+                  'paint_id',
+                  'material_id',
+                  'paintId',
+                ]))
+            .where((id) => id.isNotEmpty)
+            .toList(growable: false);
+        final currentPaintNames = initialPaints
+            .map((paint) => _stringFromRow(paint, const [
+                  'paint_name',
+                  'name',
+                  'paintName',
+                ]))
+            .where((name) => name.isNotEmpty)
+            .toList(growable: false);
+        final pendingWriteoffs = await repo.getPendingFlexPaintWriteoffs(
+          currentOrderId: task.orderId,
+          currentPaintIds: currentPaintIds,
+          currentPaintNames: currentPaintNames,
         );
         final reservations = await repo.getPaintReservations(task.orderId);
         final order = _orderById(task.orderId);
@@ -4419,18 +4437,19 @@ class _TasksScreenState extends State<TasksScreen>
           return merged;
         }).toList(growable: false);
         final pendingPaints = pendingWriteoffs.map((pending) {
-          final row = Map<String, dynamic>.from(pending);
+          final row = pending.toMap();
           return row
             ..addAll({
               'source': 'pending',
-              'pending_writeoff_id': row['id'],
-              'order_id': row['order_id'],
-              'source_order_id': row['order_id'],
-              'source_task_id': row['task_id'],
-              'order_label': row['order_id'] ?? 'Заказ',
-              'planned_amount': row['planned_amount'],
-              'actual_used_amount': row['actual_used_amount'],
-              'actual_used_text': row['actual_used_amount']?.toString() ?? '',
+              'pending_writeoff_id': pending.id,
+              'order_id': pending.orderId,
+              'source_order_id': pending.orderId,
+              'source_task_id': pending.taskId,
+              'order_label':
+                  pending.orderId.isEmpty ? 'Заказ' : pending.orderId,
+              'planned_amount': pending.plannedAmount,
+              'actual_used_amount': pending.actualUsedAmount,
+              'actual_used_text': pending.actualUsedAmount?.toString() ?? '',
             });
         }).toList(growable: false);
         initialPaints = <Map<String, dynamic>>[
