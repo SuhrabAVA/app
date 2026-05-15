@@ -53,67 +53,6 @@ class _PaintTableState extends State<PaintTable> {
     ).then((_) => _loadData());
   }
 
-  String _fmtQty(double value) => value.toStringAsFixed(2);
-
-  double _num(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse('$value'.replaceAll(',', '.')) ?? 0;
-  }
-
-  String _orderLabel(Map<String, dynamic> row) {
-    final order = row['orders'];
-    if (order is Map) {
-      final code = (order['form_code'] ?? '').toString().trim();
-      if (code.isNotEmpty) return code;
-      final no = order['new_form_no'];
-      if (no != null) return '№$no';
-      final customer = (order['customer'] ?? '').toString().trim();
-      if (customer.isNotEmpty) return customer;
-    }
-    final orderId = (row['order_id'] ?? '').toString().trim();
-    return orderId.isEmpty ? 'Заказ' : orderId;
-  }
-
-  Future<void> _showReserveDetails(TmcModel item) async {
-    final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    final rows = await provider.getPaintReservationsByPaint(item.id);
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Резервы: ${item.description}'),
-        content: SizedBox(
-          width: 420,
-          child: rows.isEmpty
-              ? const Text('Нет активных резервов')
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: rows
-                      .map(
-                        (row) => ListTile(
-                          dense: true,
-                          title: Text(_orderLabel(row)),
-                          subtitle: Text(
-                            'Заказ: ${(row['order_id'] ?? '').toString()}',
-                          ),
-                          trailing: Text(
-                            '${_fmtQty(_num(row['reserved_qty']))} ${item.unit}',
-                          ),
-                        ),
-                      )
-                      .toList(growable: false),
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Закрыть'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _editItem(TmcModel item) {
     showDialog(
       context: context,
@@ -275,9 +214,7 @@ class _PaintTableState extends State<PaintTable> {
                               DataColumn(label: Text('№')),
                               DataColumn(label: Text('Фото')),
                               DataColumn(label: Text('Название')),
-                              DataColumn(label: Text('Общий остаток')),
-                              DataColumn(label: Text('Резерв')),
-                              DataColumn(label: Text('Доступно')),
+                              DataColumn(label: Text('Кол-во')),
                               DataColumn(label: Text('Ед.')),
                               DataColumn(label: Text('Действия')),
                             ],
@@ -296,14 +233,6 @@ class _PaintTableState extends State<PaintTable> {
                                         item.quantity
                                             .toString()
                                             .toLowerCase()
-                                            .contains(query) ||
-                                        item.reservedQty
-                                            .toString()
-                                            .toLowerCase()
-                                            .contains(query) ||
-                                        item.availableQty
-                                            .toString()
-                                            .toLowerCase()
                                             .contains(query);
                                   })
                                   .toList()
@@ -318,14 +247,6 @@ class _PaintTableState extends State<PaintTable> {
                                           .contains(query) ||
                                       item.unit.toLowerCase().contains(query) ||
                                       item.quantity
-                                          .toString()
-                                          .toLowerCase()
-                                          .contains(query) ||
-                                      item.reservedQty
-                                          .toString()
-                                          .toLowerCase()
-                                          .contains(query) ||
-                                      item.availableQty
                                           .toString()
                                           .toLowerCase()
                                           .contains(query);
@@ -400,20 +321,8 @@ class _PaintTableState extends State<PaintTable> {
                                             },
                                     );
                                   }),
-                                  DataCell(
-                                    Text(item.description),
-                                    onTap: () => _showReserveDetails(item),
-                                  ),
-                                  DataCell(Text(_fmtQty(item.quantity))),
-                                  DataCell(
-                                    TextButton(
-                                      onPressed: item.reservedQty > 0
-                                          ? () => _showReserveDetails(item)
-                                          : null,
-                                      child: Text(_fmtQty(item.reservedQty)),
-                                    ),
-                                  ),
-                                  DataCell(Text(_fmtQty(item.availableQty))),
+                                  DataCell(Text(item.description)),
+                                  DataCell(Text(item.quantity.toStringAsFixed(2))),
                                   DataCell(Text(item.unit)),
                                   DataCell(Row(
                                     children: [
