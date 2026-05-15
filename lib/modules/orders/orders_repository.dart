@@ -334,7 +334,16 @@ class OrdersRepository {
   }) async {
     await ensureSignedIn();
     final usages = paintUsages
+        .where((row) =>
+            row['write_off_now'] != false && row['writeOffNow'] != false)
         .map((row) {
+          final usedQty = (row['used_qty'] is num)
+              ? (row['used_qty'] as num).toDouble()
+              : double.tryParse(
+                  (row['used_qty'] ?? row['qty_g'] ?? row['qty_grams'] ?? '')
+                      .toString()
+                      .replaceAll(',', '.'),
+                );
           final qtyKg = (row['qty_kg'] is num)
               ? (row['qty_kg'] as num).toDouble()
               : double.tryParse(
@@ -348,13 +357,13 @@ class OrdersRepository {
           return <String, dynamic>{
             if (paintId.isNotEmpty) 'paint_id': paintId,
             if (name.isNotEmpty) 'paint_name': name,
-            'used_qty': (qtyKg ?? 0) * 1000,
+            'used_qty': usedQty ?? ((qtyKg ?? 0) * 1000),
           };
         })
         .where((row) =>
             (((row['paint_id'] ?? '') as String).isNotEmpty ||
                 ((row['paint_name'] ?? '') as String).isNotEmpty) &&
-            ((row['used_qty'] as num?)?.toDouble() ?? 0) >= 0)
+            ((row['used_qty'] as num?)?.toDouble() ?? 0) > 0)
         .toList(growable: false);
 
     await _sb.rpc('complete_flex_printing_stage', params: {
