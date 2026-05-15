@@ -37,6 +37,16 @@ declare
   v_touched text[] := array[]::text[];
   v_user_id text := coalesce(nullif(trim(p_employee_id), ''), nullif(trim(p_actor), ''), 'system');
   v_assignee text;
+  v_current_written_off_by_order jsonb := '{}'::jsonb;
+  v_current_pending_by_order jsonb := '{}'::jsonb;
+  v_deferred_written_off_by_order jsonb := '{}'::jsonb;
+  v_summary_item text;
+  v_amount_text text;
+  v_written_text text;
+  v_pending_text text;
+  v_event_order_id text;
+  v_event_items jsonb;
+  v_event_message text;
 begin
   if coalesce(trim(p_task_id), '') = '' then raise exception 'task_id is required'; end if;
   if coalesce(trim(p_order_id), '') = '' then raise exception 'order_id is required'; end if;
@@ -156,6 +166,18 @@ begin
         unit = excluded.unit,
         updated_at = now();
     end if;
+
+    v_amount_text := case
+      when v_amount is null then 'не указан расход'
+      else trim(to_char(round(v_amount::numeric, 2), 'FM999999999990.##')) || ' ' || v_unit
+    end;
+    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_paint_id, 'без названия'), v_amount_text);
+    v_current_pending_by_order := jsonb_set(
+      v_current_pending_by_order,
+      array[v_source_order_id],
+      coalesce(v_current_pending_by_order -> v_source_order_id, '[]'::jsonb) || jsonb_build_array(v_summary_item),
+      true
+    );
   end loop;
 
   -- Current-order rows checked by the operator are written off immediately.
@@ -243,6 +265,16 @@ begin
                     updated_at = now();
     end if;
     v_touched := array_append(v_touched, v_paint_id);
+
+    v_unit := coalesce(nullif(trim(rec.row_data->>'unit'), ''), 'г');
+    v_amount_text := trim(to_char(round(v_amount::numeric, 2), 'FM999999999990.##')) || ' ' || v_unit;
+    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_stock_name, v_paint_id, 'без названия'), v_amount_text);
+    v_current_written_off_by_order := jsonb_set(
+      v_current_written_off_by_order,
+      array[v_source_order_id],
+      coalesce(v_current_written_off_by_order -> v_source_order_id, '[]'::jsonb) || jsonb_build_array(v_summary_item),
+      true
+    );
   end loop;
 
   -- Previously queued rows are locked and may be consumed only while still pending.
@@ -272,8 +304,10 @@ begin
       raise exception 'Краска по заказу % уже обработана или имеет статус %, повторное списание запрещено.', v_pending.order_id, v_pending.status;
     end if;
 
-    v_source_order_id := coalesce(nullif(trim(rec.row_data->>'source_order_id'), ''), v_pending.order_id);
-    v_source_task_id := coalesce(nullif(trim(rec.row_data->>'source_task_id'), ''), v_pending.task_id);
+    -- Pending write-off ownership comes only from order_paint_pending_writeoffs,
+    -- never from task comments or client-supplied source fields.
+    v_source_order_id := v_pending.order_id;
+    v_source_task_id := v_pending.task_id;
     v_paint_id := coalesce(nullif(trim(rec.row_data->>'paint_id'), ''), v_pending.paint_id);
     v_paint_name := coalesce(nullif(trim(rec.row_data->>'paint_name'), ''), v_pending.paint_name);
     v_amount := coalesce(
@@ -356,6 +390,16 @@ begin
     end if;
 
     v_touched := array_append(v_touched, v_paint_id);
+
+    v_unit := coalesce(nullif(trim(rec.row_data->>'unit'), ''), v_pending.unit, 'г');
+    v_amount_text := trim(to_char(round(v_amount::numeric, 2), 'FM999999999990.##')) || ' ' || v_unit;
+    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_stock_name, v_paint_id, 'без названия'), v_amount_text);
+    v_deferred_written_off_by_order := jsonb_set(
+      v_deferred_written_off_by_order,
+      array[v_source_order_id],
+      coalesce(v_deferred_written_off_by_order -> v_source_order_id, '[]'::jsonb) || jsonb_build_array(v_summary_item),
+      true
+    );
   end loop;
 
   for rec in
@@ -373,6 +417,64 @@ begin
   end loop;
 
   perform recalculate_paint_reserved_qty((select array_agg(distinct x) from unnest(v_touched) as x where x is not null));
+
+  v_written_text := coalesce((
+    select string_agg(elem.item #>> '{}', ', ' order by elem.ordinality)
+      from jsonb_array_elements(coalesce(v_current_written_off_by_order -> p_order_id, '[]'::jsonb))
+           with ordinality as elem(item, ordinality)
+  ), '—');
+  v_pending_text := coalesce((
+    select string_agg(elem.item #>> '{}', ', ' order by elem.ordinality)
+      from jsonb_array_elements(coalesce(v_current_pending_by_order -> p_order_id, '[]'::jsonb))
+           with ordinality as elem(item, ordinality)
+  ), '—');
+  v_event_message := format(
+    'Флексопечать завершена. Списана краска: %s. Оставлены в ожидании: %s.',
+    v_written_text,
+    v_pending_text
+  );
+  insert into order_events(order_id, event_type, description, message, payload)
+  values (
+    p_order_id,
+    'flex_printing_completed',
+    v_event_message,
+    v_event_message,
+    jsonb_build_object(
+      'task_id', p_task_id,
+      'stage_id', p_stage_id,
+      'written_off', coalesce(v_current_written_off_by_order -> p_order_id, '[]'::jsonb),
+      'left_pending', coalesce(v_current_pending_by_order -> p_order_id, '[]'::jsonb)
+    )
+  );
+
+  for v_event_order_id, v_event_items in
+    select key, value
+      from jsonb_each(v_deferred_written_off_by_order)
+     where key <> p_order_id
+  loop
+    v_written_text := coalesce((
+      select string_agg(elem.item #>> '{}', ', ' order by elem.ordinality)
+        from jsonb_array_elements(v_event_items)
+             with ordinality as elem(item, ordinality)
+    ), '—');
+    v_event_message := format(
+      'Выполнено отложенное списание краски после последующей флексопечати: %s.',
+      v_written_text
+    );
+    insert into order_events(order_id, event_type, description, message, payload)
+    values (
+      v_event_order_id,
+      'flex_printing_deferred_paint_writeoff',
+      v_event_message,
+      v_event_message,
+      jsonb_build_object(
+        'completed_order_id', p_order_id,
+        'task_id', p_task_id,
+        'stage_id', p_stage_id,
+        'written_off', v_event_items
+      )
+    );
+  end loop;
 
   v_comments := public.task_comments_to_array(v_task.comments::jsonb);
 
