@@ -4037,6 +4037,18 @@ class _TasksScreenState extends State<TasksScreen>
     return '';
   }
 
+  bool _isPendingPaintRow(Map<String, dynamic> row) {
+    final normalized = _stringFromRow(row, const [
+      'source',
+      'writeoff_source',
+      'write_off_source',
+    ]).trim().toLowerCase();
+    return normalized == 'pending' ||
+        normalized == 'pending_queue' ||
+        normalized == 'queued' ||
+        normalized == 'writeoff_queue';
+  }
+
   FlexPaintWriteoffRow _paintWriteoffRowFromMap(
     Map<String, dynamic> row,
     String? defaultUnit,
@@ -4268,24 +4280,26 @@ class _TasksScreenState extends State<TasksScreen>
                       controllers[row]?.text ?? row.actualUsedText;
                   row.actualUsedText = enteredText;
                   row.refreshStatus();
+                  final actualGrams = _parsePositiveGrams(enteredText);
                   final output = Map<String, dynamic>.from(row.sourceRow)
                     ..addAll({
                       'source': row.source,
                       'queue_id': row.queueId,
                       'order_id': row.orderId,
+                      'source_order_id': row.orderId,
                       'order_label': row.orderLabel,
                       'paint_id': row.paintId,
                       'paint_name': row.paintName,
                       'planned_amount': row.plannedAmount,
                       'unit': row.unit,
                       'actual_used_text': row.actualUsedText,
+                      'actual_used_amount': actualGrams,
                       'write_off_now': row.writeOffNow,
                       'status': row.status,
                     });
 
                   if (row.writeOffNow) {
-                    final grams = _parsePositiveGrams(enteredText);
-                    if (grams == null) {
+                    if (actualGrams == null) {
                       ScaffoldMessenger.of(ctx).showSnackBar(
                         const SnackBar(
                           content: Text(
@@ -4295,8 +4309,9 @@ class _TasksScreenState extends State<TasksScreen>
                       );
                       return;
                     }
-                    output['used_qty'] = grams;
-                    output['qty_kg'] = _gramsToKilogramsForPersistence(grams);
+                    output['used_qty'] = actualGrams;
+                    output['qty_kg'] =
+                        _gramsToKilogramsForPersistence(actualGrams);
                   }
                   resultRows.add(output);
                 }
@@ -4496,6 +4511,9 @@ class _TasksScreenState extends State<TasksScreen>
       try {
         final repo = OrdersRepository();
         initialPaints = await repo.getPaints(task.orderId);
+        final pendingWriteoffs = await repo.getPendingPaintWriteoffs(
+          excludeOrderId: task.orderId,
+        );
         final reservations = await repo.getPaintReservations(task.orderId);
         final order = _orderById(task.orderId);
         final orderLabel =
@@ -4510,7 +4528,7 @@ class _TasksScreenState extends State<TasksScreen>
           if (id.isNotEmpty) reservationsByKey['id:$id'] = reservation;
           if (name.isNotEmpty) reservationsByKey['name:$name'] = reservation;
         }
-        initialPaints = initialPaints.map((paint) {
+        final currentPaints = initialPaints.map((paint) {
           final merged = Map<String, dynamic>.from(paint);
           final id = (merged['paint_id'] ?? merged['material_id'] ?? '')
               .toString()
@@ -4525,6 +4543,8 @@ class _TasksScreenState extends State<TasksScreen>
           merged.addAll({
             'source': 'current_order',
             'order_id': task.orderId,
+            'source_order_id': task.orderId,
+            'source_task_id': task.id,
             'order_label': orderLabel,
           });
           if (reservation != null) {
@@ -4540,6 +4560,25 @@ class _TasksScreenState extends State<TasksScreen>
           }
           return merged;
         }).toList(growable: false);
+        final pendingPaints = pendingWriteoffs.map((pending) {
+          final row = Map<String, dynamic>.from(pending);
+          return row
+            ..addAll({
+              'source': 'pending',
+              'pending_writeoff_id': row['id'],
+              'order_id': row['order_id'],
+              'source_order_id': row['order_id'],
+              'source_task_id': row['task_id'],
+              'order_label': row['order_id'] ?? 'Заказ',
+              'planned_amount': row['planned_amount'],
+              'actual_used_amount': row['actual_used_amount'],
+              'actual_used_text': row['actual_used_amount']?.toString() ?? '',
+            });
+        }).toList(growable: false);
+        initialPaints = <Map<String, dynamic>>[
+          ...currentPaints,
+          ...pendingPaints,
+        ];
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -4618,7 +4657,12 @@ class _TasksScreenState extends State<TasksScreen>
           orderId: task.orderId,
           stageId: task.stageId,
           employeeId: widget.employeeId,
-          paintUsages: paints,
+          currentOrderRows: paints
+              .where((row) => !_isPendingPaintRow(row))
+              .toList(growable: false),
+          pendingRows: paints
+              .where(_isPendingPaintRow)
+              .toList(growable: false),
           quantityDone: qtyInput?.displayText,
           comment: note,
         );

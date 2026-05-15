@@ -299,6 +299,23 @@ class OrdersRepository {
     return const [];
   }
 
+  Future<List<Map<String, dynamic>>> getPendingPaintWriteoffs({
+    String? excludeOrderId,
+  }) async {
+    final query = _sb
+        .from('order_paint_pending_writeoffs')
+        .select('id, order_id, task_id, stage_id, stage_name, paint_id, '
+            'paint_name, planned_amount, actual_used_amount, unit, status')
+        .eq('status', 'pending');
+    final rows = (excludeOrderId ?? '').trim().isEmpty
+        ? await query.order('created_at')
+        : await query.neq('order_id', excludeOrderId!.trim()).order('created_at');
+    if (rows is List) {
+      return rows.cast<Map<String, dynamic>>();
+    }
+    return const [];
+  }
+
   Future<void> completeTaskStage({
     required String taskId,
     required String orderId,
@@ -327,55 +344,130 @@ class OrdersRepository {
     required String orderId,
     required String stageId,
     required String employeeId,
-    required List<Map<String, dynamic>> paintUsages,
+    List<Map<String, dynamic>> currentOrderRows = const <Map<String, dynamic>>[],
+    List<Map<String, dynamic>> pendingRows = const <Map<String, dynamic>>[],
+    List<Map<String, dynamic>>? paintUsages,
     String? quantityDone,
     String? comment,
     String? actor,
   }) async {
     await ensureSignedIn();
-    final usages = paintUsages
-        .where((row) =>
-            row['write_off_now'] != false && row['writeOffNow'] != false)
-        .map((row) {
-          final usedQty = (row['used_qty'] is num)
-              ? (row['used_qty'] as num).toDouble()
-              : double.tryParse(
-                  (row['used_qty'] ?? row['qty_g'] ?? row['qty_grams'] ?? '')
-                      .toString()
-                      .replaceAll(',', '.'),
-                );
-          final qtyKg = (row['qty_kg'] is num)
-              ? (row['qty_kg'] as num).toDouble()
-              : double.tryParse(
-                  (row['qty_kg'] ?? '').toString().replaceAll(',', '.'),
-                );
-          final name =
-              (row['paint_name'] ?? row['name'] ?? '').toString().trim();
-          final paintId = (row['paint_id'] ?? row['material_id'] ?? '')
-              .toString()
-              .trim();
-          return <String, dynamic>{
-            if (paintId.isNotEmpty) 'paint_id': paintId,
-            if (name.isNotEmpty) 'paint_name': name,
-            'used_qty': usedQty ?? ((qtyKg ?? 0) * 1000),
-          };
-        })
-        .where((row) =>
-            (((row['paint_id'] ?? '') as String).isNotEmpty ||
-                ((row['paint_name'] ?? '') as String).isNotEmpty) &&
-            ((row['used_qty'] as num?)?.toDouble() ?? 0) > 0)
-        .toList(growable: false);
+    final effectiveCurrentRows = currentOrderRows.isNotEmpty
+        ? currentOrderRows
+        : (paintUsages ?? const <Map<String, dynamic>>[]);
 
-    await _sb.rpc('complete_flex_printing_stage', params: {
+    await _sb.rpc('complete_flex_printing_stage_with_paint_queue', params: {
       'p_task_id': taskId,
       'p_order_id': orderId,
       'p_stage_id': stageId,
       'p_employee_id': employeeId,
-      'p_paint_usages': usages,
+      'p_current_order_rows': effectiveCurrentRows
+          .map((row) => _paintQueueRpcRow(
+                row,
+                fallbackOrderId: orderId,
+                fallbackTaskId: taskId,
+              ))
+          .toList(growable: false),
+      'p_pending_rows': pendingRows
+          .map((row) => _paintQueueRpcRow(row))
+          .toList(growable: false),
       'p_quantity_done': quantityDone,
       'p_comment': comment,
       'p_actor': actor ?? '',
     });
+  }
+
+  Map<String, dynamic> _paintQueueRpcRow(
+    Map<String, dynamic> row, {
+    String? fallbackOrderId,
+    String? fallbackTaskId,
+  }) {
+    final pendingWriteoffId = _trimmedString(row, const [
+      'pending_writeoff_id',
+      'pendingWriteoffId',
+      'id',
+    ]);
+    final sourceOrderId = _trimmedString(row, const [
+      'source_order_id',
+      'sourceOrderId',
+      'order_id',
+      'orderId',
+    ], fallback: fallbackOrderId);
+    final sourceTaskId = _trimmedString(row, const [
+      'source_task_id',
+      'sourceTaskId',
+      'task_id',
+      'taskId',
+    ], fallback: fallbackTaskId);
+    final paintId = _trimmedString(row, const [
+      'paint_id',
+      'paintId',
+      'material_id',
+    ]);
+    final paintName = _trimmedString(row, const [
+      'paint_name',
+      'paintName',
+      'name',
+    ]);
+    final unit = _trimmedString(row, const ['unit'], fallback: 'г');
+    final actualUsedAmount = _readDouble(row, const [
+      'actual_used_amount',
+      'actualUsedAmount',
+      'used_qty',
+      'qty_g',
+      'qty_grams',
+    ]) ?? (_readDouble(row, const ['qty_kg']) == null
+        ? null
+        : _readDouble(row, const ['qty_kg'])! * 1000);
+    final plannedAmount = _readDouble(row, const [
+      'planned_amount',
+      'plannedAmount',
+      'planned_qty',
+      'planned_qty_g',
+      'reserved_qty',
+    ]) ?? (_readDouble(row, const ['qty_kg']) == null
+        ? null
+        : _readDouble(row, const ['qty_kg'])! * 1000);
+    final writeOffNow = row['write_off_now'] == true ||
+        row['writeOffNow'] == true ||
+        row['write_off_now']?.toString().toLowerCase() == 'true' ||
+        row['writeOffNow']?.toString().toLowerCase() == 'true';
+
+    return _cleanForInsert({
+      if (pendingWriteoffId.isNotEmpty) 'pending_writeoff_id': pendingWriteoffId,
+      if (sourceOrderId.isNotEmpty) 'source_order_id': sourceOrderId,
+      if (sourceTaskId.isNotEmpty) 'source_task_id': sourceTaskId,
+      if (paintId.isNotEmpty) 'paint_id': paintId,
+      if (paintName.isNotEmpty) 'paint_name': paintName,
+      'actual_used_amount': actualUsedAmount,
+      'planned_amount': plannedAmount,
+      'unit': unit.isEmpty ? 'г' : unit,
+      'write_off_now': writeOffNow,
+    });
+  }
+
+  String _trimmedString(
+    Map<String, dynamic> row,
+    List<String> keys, {
+    String? fallback,
+  }) {
+    for (final key in keys) {
+      final value = (row[key] ?? '').toString().trim();
+      if (value.isNotEmpty) return value;
+    }
+    return (fallback ?? '').trim();
+  }
+
+  double? _readDouble(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      final value = row[key];
+      if (value is num) return value.toDouble();
+      final parsed = double.tryParse(
+        (value ?? '').toString().trim().replaceAll(',', '.'),
+      );
+      if (parsed != null) return parsed;
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> getPaints(String orderId) async {
