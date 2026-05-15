@@ -120,6 +120,32 @@ String formatTaskInitialQuantity(double value) {
       .replaceFirst(RegExp(r'\.$'), '');
 }
 
+/// Parses a paint usage value entered in the dialog as grams.
+///
+/// The function intentionally returns only the normalized numeric value and
+/// never formats the original input text, so significant zeros typed by the
+/// user remain untouched in the UI controller.
+double? parseGramsInput(String text, {required bool checked}) {
+  final normalized = text.trim().replaceAll(',', '.');
+  if (normalized.isEmpty) {
+    if (checked) {
+      throw const FormatException('Укажите фактический расход.');
+    }
+    return null;
+  }
+
+  final parsed = double.tryParse(normalized);
+  if (parsed == null) {
+    throw const FormatException('Фактический расход должен быть числом.');
+  }
+  if (parsed <= 0) {
+    throw const FormatException(
+      'Фактический расход должен быть больше 0.',
+    );
+  }
+  return parsed;
+}
+
 class TasksScreen extends StatefulWidget {
   final String employeeId;
   final bool showListOnly;
@@ -4013,14 +4039,6 @@ class _TasksScreenState extends State<TasksScreen>
 
   double _gramsToKilogramsForPersistence(double grams) => grams / 1000;
 
-  double? _parsePositiveGrams(String text) {
-    final normalized = text.trim().replaceAll(',', '.');
-    if (normalized.isEmpty) return null;
-    final parsed = double.tryParse(normalized);
-    if (parsed == null || parsed <= 0) return null;
-    return parsed;
-  }
-
   String _formatAmountForDialog(double value) {
     if (value == value.roundToDouble()) return value.toStringAsFixed(0);
     return value
@@ -4280,8 +4298,27 @@ class _TasksScreenState extends State<TasksScreen>
                       controllers[row]?.text ?? row.actualUsedText;
                   row.actualUsedText = enteredText;
                   row.refreshStatus();
-                  final actualGrams = _parsePositiveGrams(enteredText);
+                  double? actualGrams;
+                  if (row.writeOffNow) {
+                    try {
+                      actualGrams = parseGramsInput(
+                        enteredText,
+                        checked: row.writeOffNow,
+                      );
+                    } on FormatException catch (error) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        SnackBar(content: Text(error.message)),
+                      );
+                      return;
+                    }
+                  }
                   final output = Map<String, dynamic>.from(row.sourceRow)
+                    ..remove('actual_used_amount')
+                    ..remove('actualUsedAmount')
+                    ..remove('used_qty')
+                    ..remove('qty_g')
+                    ..remove('qty_grams')
+                    ..remove('qty_kg')
                     ..addAll({
                       'source': row.source,
                       'queue_id': row.queueId,
@@ -4299,19 +4336,9 @@ class _TasksScreenState extends State<TasksScreen>
                     });
 
                   if (row.writeOffNow) {
-                    if (actualGrams == null) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Для строк со списанием укажите фактический расход больше 0.',
-                          ),
-                        ),
-                      );
-                      return;
-                    }
                     output['used_qty'] = actualGrams;
                     output['qty_kg'] =
-                        _gramsToKilogramsForPersistence(actualGrams);
+                        _gramsToKilogramsForPersistence(actualGrams!);
                   }
                   resultRows.add(output);
                 }
