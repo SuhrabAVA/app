@@ -145,6 +145,76 @@ class PaintUsageUpdate {
   double get kilograms => grams / 1000.0;
 }
 
+class PaintPendingWriteoff {
+  final String id;
+  final String orderId;
+  final String taskId;
+  final String stageId;
+  final String stageName;
+  final String paintId;
+  final String paintName;
+  final double? plannedAmount;
+  final double? actualUsedAmount;
+  final String unit;
+  final String status;
+
+  const PaintPendingWriteoff({
+    required this.id,
+    required this.orderId,
+    required this.taskId,
+    required this.stageId,
+    required this.stageName,
+    required this.paintId,
+    required this.paintName,
+    this.plannedAmount,
+    this.actualUsedAmount,
+    required this.unit,
+    required this.status,
+  });
+
+  factory PaintPendingWriteoff.fromMap(Map<String, dynamic> row) {
+    return PaintPendingWriteoff(
+      id: _topLevelTrimmedString(row, 'id'),
+      orderId: _topLevelTrimmedString(row, 'order_id'),
+      taskId: _topLevelTrimmedString(row, 'task_id'),
+      stageId: _topLevelTrimmedString(row, 'stage_id'),
+      stageName: _topLevelTrimmedString(row, 'stage_name'),
+      paintId: _topLevelTrimmedString(row, 'paint_id'),
+      paintName: _topLevelTrimmedString(row, 'paint_name'),
+      plannedAmount: _topLevelReadDouble(row, 'planned_amount'),
+      actualUsedAmount: _topLevelReadDouble(row, 'actual_used_amount'),
+      unit: _topLevelTrimmedString(row, 'unit'),
+      status: _topLevelTrimmedString(row, 'status'),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+        'id': id,
+        'order_id': orderId,
+        'task_id': taskId,
+        'stage_id': stageId,
+        'stage_name': stageName,
+        'paint_id': paintId,
+        'paint_name': paintName,
+        'planned_amount': plannedAmount,
+        'actual_used_amount': actualUsedAmount,
+        'unit': unit,
+        'status': status,
+      };
+}
+
+String _topLevelTrimmedString(Map<String, dynamic> row, String key) =>
+    (row[key] ?? '').toString().trim();
+
+double? _topLevelReadDouble(Map<String, dynamic> row, String key) {
+  final value = row[key];
+  if (value is num) return value.toDouble();
+  return double.tryParse((value ?? '').toString().trim().replaceAll(',', '.'));
+}
+
+String _normalizePaintNameForMatching(String value) =>
+    value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
 class PdfAttachment {
   final Uint8List bytes;
   final String filename;
@@ -309,11 +379,60 @@ class OrdersRepository {
         .eq('status', 'pending');
     final rows = (excludeOrderId ?? '').trim().isEmpty
         ? await query.order('created_at')
-        : await query.neq('order_id', excludeOrderId!.trim()).order('created_at');
+        : await query
+            .neq('order_id', excludeOrderId!.trim())
+            .order('created_at');
     if (rows is List) {
       return rows.cast<Map<String, dynamic>>();
     }
     return const [];
+  }
+
+  Future<List<PaintPendingWriteoff>> getPendingFlexPaintWriteoffs({
+    required String currentOrderId,
+    required List<String> currentPaintIds,
+    required List<String> currentPaintNames,
+  }) async {
+    final normalizedCurrentOrderId = currentOrderId.trim();
+    final paintIds = currentPaintIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final paintNames = currentPaintNames
+        .map(_normalizePaintNameForMatching)
+        .where((name) => name.isNotEmpty)
+        .toSet();
+
+    if (paintIds.isEmpty && paintNames.isEmpty) {
+      return const <PaintPendingWriteoff>[];
+    }
+
+    final query = _sb
+        .from('order_paint_pending_writeoffs')
+        .select('id, order_id, task_id, stage_id, stage_name, paint_id, '
+            'paint_name, planned_amount, actual_used_amount, unit, status')
+        .eq('status', 'pending');
+    final rows = normalizedCurrentOrderId.isEmpty
+        ? await query.order('created_at')
+        : await query
+            .neq('order_id', normalizedCurrentOrderId)
+            .order('created_at');
+
+    if (rows is! List) {
+      return const <PaintPendingWriteoff>[];
+    }
+
+    return rows
+        .cast<Map<String, dynamic>>()
+        .map(PaintPendingWriteoff.fromMap)
+        .where((row) {
+          final hasMatchingPaintId =
+              row.paintId.isNotEmpty && paintIds.contains(row.paintId);
+          final hasMatchingPaintName = row.paintName.isNotEmpty &&
+              paintNames.contains(_normalizePaintNameForMatching(row.paintName));
+          return hasMatchingPaintId || hasMatchingPaintName;
+        })
+        .toList(growable: false);
   }
 
   Future<void> completeTaskStage({
