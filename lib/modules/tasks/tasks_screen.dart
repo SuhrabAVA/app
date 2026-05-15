@@ -726,6 +726,7 @@ class _QuantityInput {
   final double quantity;
   final String displayText;
   final bool openPaperEditor;
+  final bool openPaintEditor;
   final int? packsCount;
   final int? unitsPerPack;
 
@@ -733,6 +734,7 @@ class _QuantityInput {
     required this.quantity,
     required this.displayText,
     this.openPaperEditor = false,
+    this.openPaintEditor = false,
     this.packsCount,
     this.unitsPerPack,
   });
@@ -762,10 +764,12 @@ class _CommentDraft {
 class _InkUsageDialogResult {
   final List<Map<String, dynamic>> paints;
   final bool openPaperEditor;
+  final bool openPaintEditor;
 
   const _InkUsageDialogResult({
     required this.paints,
     this.openPaperEditor = false,
+    this.openPaintEditor = false,
   });
 }
 
@@ -1194,6 +1198,123 @@ class _TasksScreenState extends State<TasksScreen>
     return _workspacePaperItems();
   }
 
+  List<TmcModel> _workspacePaintItems() {
+    final warehouse = context.read<WarehouseProvider>();
+    bool isPaintType(TmcModel item) {
+      final raw = item.type.toLowerCase().trim();
+      return raw.contains('paint') ||
+          raw.contains('краск') ||
+          raw == 'краска';
+    }
+
+    final paints = warehouse.allTmc.where(isPaintType).toList();
+    paints.sort(
+      (a, b) => a.description.toLowerCase().compareTo(
+            b.description.toLowerCase(),
+          ),
+    );
+    return paints;
+  }
+
+  Future<List<TmcModel>> _workspacePaintItemsFresh() async {
+    final warehouse = context.read<WarehouseProvider>();
+    await warehouse.fetchTmc();
+    return _workspacePaintItems();
+  }
+
+  bool _matchPaintSearch(TmcModel paint, String query) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    final searchable = [
+      paint.description,
+      paint.note ?? '',
+      paint.unit,
+      paint.id,
+    ].join(' ').toLowerCase();
+    return normalized
+        .split(RegExp(r'[\s,;]+'))
+        .where((token) => token.isNotEmpty)
+        .every(searchable.contains);
+  }
+
+  Future<TmcModel?> _pickPaintForSlot({
+    required BuildContext context,
+    required List<TmcModel> paints,
+  }) async {
+    var search = '';
+    return showDialog<TmcModel>(
+      context: context,
+      builder: (pickerContext) {
+        return StatefulBuilder(
+          builder: (pickerContext, setPickerState) {
+            final filtered = paints
+                .where((paint) => _matchPaintSearch(paint, search))
+                .toList(growable: false);
+            return AlertDialog(
+              title: const Text('Выбор краски'),
+              content: SizedBox(
+                width: 540,
+                height: 420,
+                child: Column(
+                  children: [
+                    TextFormField(
+                      key: ValueKey(search.isEmpty),
+                      initialValue: search,
+                      decoration: InputDecoration(
+                        labelText: 'Поиск краски',
+                        hintText: 'Наименование или цвет',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: search.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  setPickerState(() {
+                                    search = '';
+                                  });
+                                },
+                                icon: const Icon(Icons.clear),
+                              ),
+                      ),
+                      onChanged: (value) =>
+                          setPickerState(() => search = value),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(child: Text('Ничего не найдено.'))
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final paint = filtered[index];
+                                return ListTile(
+                                  title: Text(paint.description),
+                                  subtitle: Text(
+                                    'Остаток: ${paint.quantity.toStringAsFixed(2)} ${paint.unit}',
+                                  ),
+                                  onTap: () =>
+                                      Navigator.of(pickerContext).pop(paint),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(pickerContext).pop(),
+                  child: const Text('Отмена'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   bool _matchPaperSearch(TmcModel paper, String query) {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return true;
@@ -1441,6 +1562,341 @@ class _TasksScreenState extends State<TasksScreen>
     }
     lines.add('Причина: ${reason.trim()}');
     return lines.join('\n');
+  }
+
+  Future<void> _addWorkspacePaintChangeComment({
+    required String orderId,
+    required String text,
+  }) async {
+    final taskProvider = context.read<TaskProvider>();
+    final candidates =
+        taskProvider.tasks.where((task) => task.orderId == orderId).toList();
+    if (candidates.isEmpty) return;
+    candidates.sort((a, b) {
+      final aPriority = (a.stageId == _selectedWorkplaceId ? 0 : 1) +
+          (_isEffectivelyCompleted(a) ? 10 : 0);
+      final bPriority = (b.stageId == _selectedWorkplaceId ? 0 : 1) +
+          (_isEffectivelyCompleted(b) ? 10 : 0);
+      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
+      return a.id.compareTo(b.id);
+    });
+    await taskProvider.addCommentAutoUser(
+      taskId: candidates.first.id,
+      type: 'paint_change',
+      text: text,
+      userIdOverride: widget.employeeId,
+    );
+  }
+
+  String _buildWorkspacePaintChangeComment({
+    required List<Map<String, dynamic>> before,
+    required List<Map<String, dynamic>> after,
+    required String reason,
+  }) {
+    String label(Map<String, dynamic> paint) {
+      final name = (paint['name'] ?? paint['paint_name'] ?? '')
+          .toString()
+          .trim();
+      final qtyKg = _readDouble(paint['qty_kg']);
+      final qtyText = qtyKg == null || qtyKg <= 0
+          ? '—'
+          : '${(qtyKg * 1000).toStringAsFixed(2)} г';
+      return '${name.isEmpty ? 'Без названия' : name}: $qtyText';
+    }
+
+    final lines = <String>[
+      'Изменение красок из рабочего пространства.',
+    ];
+    final maxLen = before.length > after.length ? before.length : after.length;
+    for (var i = 0; i < maxLen; i++) {
+      final oldPaint = i < before.length ? before[i] : null;
+      final newPaint = i < after.length ? after[i] : null;
+      final slot = i + 1;
+      if (oldPaint != null && newPaint != null) {
+        lines.add('Краска №$slot Было: ${label(oldPaint)}. '
+            'Стало: ${label(newPaint)}.');
+      } else if (oldPaint == null && newPaint != null) {
+        lines.add('Краска №$slot Добавлена: ${label(newPaint)}.');
+      } else if (oldPaint != null && newPaint == null) {
+        lines.add('Краска №$slot Удалена: ${label(oldPaint)}.');
+      }
+    }
+    lines.add('Причина: ${reason.trim()}');
+    return lines.join('\n');
+  }
+
+  double? _readDouble(dynamic raw) {
+    if (raw is num) return raw.toDouble();
+    return double.tryParse((raw ?? '').toString().trim().replaceAll(',', '.'));
+  }
+
+  Future<void> _openPaintEditDialog(OrderModel baseOrder) async {
+    final latest = _orderById(baseOrder.id) ?? baseOrder;
+    final currentPaints = await OrdersRepository().getPaints(latest.id);
+    final paints = await _workspacePaintItemsFresh();
+    if (!mounted) return;
+    if (paints.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('На складе не найдено доступных красок.')),
+      );
+      return;
+    }
+
+    final selected = currentPaints.isNotEmpty
+        ? currentPaints.map((row) {
+            final name = (row['name'] ?? row['paint_name'] ?? '').toString();
+            final paint = paints.firstWhere(
+              (item) => item.description.toLowerCase() == name.toLowerCase(),
+              orElse: () => TmcModel(
+                id: (row['paint_id'] ?? '').toString(),
+                date: '',
+                type: 'paint',
+                description: name,
+                quantity: 0,
+                unit: 'г',
+              ),
+            );
+            return paint;
+          }).toList()
+        : <TmcModel>[paints.first];
+
+    final qtyControllers = <TextEditingController>[
+      for (final row in currentPaints.isNotEmpty
+          ? currentPaints
+          : const <Map<String, dynamic>>[])
+        TextEditingController(
+          text: (() {
+            final qtyKg = _readDouble(row['qty_kg']);
+            if (qtyKg == null || qtyKg <= 0) return '';
+            final grams = qtyKg * 1000;
+            return grams % 1 == 0
+                ? grams.toStringAsFixed(0)
+                : grams.toStringAsFixed(2);
+          })(),
+        ),
+    ];
+    if (qtyControllers.isEmpty) {
+      qtyControllers.add(TextEditingController());
+    }
+    final reasonController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    String? errorText;
+    bool saving = false;
+
+    void addSlot(StateSetter setDialogState) {
+      setDialogState(() {
+        selected.add(paints.first);
+        qtyControllers.add(TextEditingController());
+      });
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Text('Изменение красок в заказе'),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < selected.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 3,
+                                  child: InkWell(
+                                    onTap: saving
+                                        ? null
+                                        : () async {
+                                            final paint =
+                                                await _pickPaintForSlot(
+                                              context: dialogContext,
+                                              paints: paints,
+                                            );
+                                            if (paint == null) return;
+                                            setDialogState(() {
+                                              selected[i] = paint;
+                                            });
+                                          },
+                                    child: InputDecorator(
+                                      decoration: const InputDecoration(
+                                        labelText: 'Краска',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      child: Text(
+                                        selected[i].description.isEmpty
+                                            ? 'Выбрать краску'
+                                            : selected[i].description,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: qtyControllers[i],
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Кол-во (г)',
+                                    ),
+                                    validator: (value) {
+                                      final qty = double.tryParse((value ?? '')
+                                          .trim()
+                                          .replaceAll(',', '.'));
+                                      if (qty == null || qty <= 0) {
+                                        return 'Введите > 0';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                if (selected.length > 1)
+                                  IconButton(
+                                    tooltip: 'Удалить краску',
+                                    onPressed: saving
+                                        ? null
+                                        : () {
+                                            final removed =
+                                                qtyControllers[i];
+                                            setDialogState(() {
+                                              selected.removeAt(i);
+                                              qtyControllers.removeAt(i);
+                                            });
+                                            WidgetsBinding.instance
+                                                .addPostFrameCallback(
+                                                    (_) => removed.dispose());
+                                          },
+                                    icon: const Icon(Icons.delete_outline),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: saving
+                                ? null
+                                : () => addSlot(setDialogState),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Добавить краску'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: reasonController,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            labelText: 'Причина изменения',
+                            hintText: 'Без причины сохранить нельзя',
+                          ),
+                          validator: (value) => (value ?? '').trim().isEmpty
+                              ? 'Укажите причину изменения'
+                              : null,
+                        ),
+                        if (errorText != null) ...[
+                          const SizedBox(height: 8),
+                          Text(errorText!,
+                              style: const TextStyle(color: Colors.red)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed:
+                      saving ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Отмена'),
+                ),
+                FilledButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setDialogState(() {
+                            saving = true;
+                            errorText = null;
+                          });
+                          final rows = <Map<String, dynamic>>[];
+                          for (var i = 0; i < selected.length; i++) {
+                            final qtyGrams = double.parse(qtyControllers[i]
+                                .text
+                                .trim()
+                                .replaceAll(',', '.'));
+                            final paint = selected[i];
+                            rows.add({
+                              'order_id': latest.id,
+                              'name': paint.description,
+                              'paint_name': paint.description,
+                              'paint_id': paint.id,
+                              'qty_kg': qtyGrams / 1000,
+                            });
+                          }
+
+                          try {
+                            final repo = OrdersRepository();
+                            await Supabase.instance.client
+                                .from('order_paints')
+                                .delete()
+                                .eq('order_id', latest.id);
+                            if (rows.isNotEmpty) {
+                              await Supabase.instance.client
+                                  .from('order_paints')
+                                  .insert(rows);
+                            }
+                            await repo.syncPaintReservations(
+                              orderId: latest.id,
+                              paints: rows,
+                              actor: widget.employeeId,
+                            );
+                            await _addWorkspacePaintChangeComment(
+                              orderId: latest.id,
+                              text: _buildWorkspacePaintChangeComment(
+                                before: currentPaints,
+                                after: rows,
+                                reason: reasonController.text,
+                              ),
+                            );
+                            if (!mounted) return;
+                            Navigator.of(dialogContext).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Краски успешно обновлены.'),
+                              ),
+                            );
+                          } catch (error) {
+                            setDialogState(() {
+                              saving = false;
+                              errorText =
+                                  'Не удалось сохранить изменения красок: $error';
+                            });
+                          }
+                        },
+                  child: Text(saving ? 'Сохранение...' : 'Сохранить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    for (final controller in qtyControllers) {
+      controller.dispose();
+    }
+    reasonController.dispose();
   }
 
   Future<void> _addWorkspacePaperChangeComment({
@@ -4285,6 +4741,10 @@ class _TasksScreenState extends State<TasksScreen>
                 child: const Text('Изменить бумагу'),
               ),
             TextButton(
+              onPressed: () => Navigator.of(ctx).pop('__open_paint_edit__'),
+              child: const Text('Изменить краски'),
+            ),
+            TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Отмена'),
             ),
@@ -4357,6 +4817,12 @@ class _TasksScreenState extends State<TasksScreen>
       return const _InkUsageDialogResult(
         paints: <Map<String, dynamic>>[],
         openPaperEditor: true,
+      );
+    }
+    if (result == '__open_paint_edit__') {
+      return const _InkUsageDialogResult(
+        paints: <Map<String, dynamic>>[],
+        openPaintEditor: true,
       );
     }
     if (result is _InkUsageDialogResult) {
@@ -4495,19 +4961,26 @@ class _TasksScreenState extends State<TasksScreen>
           allowPaperEdit: true,
         );
         if (dialogResult == null) return;
-        if (dialogResult.openPaperEditor) {
+        if (dialogResult.openPaperEditor || dialogResult.openPaintEditor) {
           final order = _orderById(task.orderId);
           if (order == null) {
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Не удалось найти заказ для редактирования бумаги.'),
+                SnackBar(
+                  content: Text(dialogResult.openPaintEditor
+                      ? 'Не удалось найти заказ для редактирования красок.'
+                      : 'Не удалось найти заказ для редактирования бумаги.'),
                 ),
               );
             }
             return;
           }
-          await _openPaperEditDialog(order);
+          if (dialogResult.openPaintEditor) {
+            await _openPaintEditDialog(order);
+            mutablePaints = await OrdersRepository().getPaints(task.orderId);
+          } else {
+            await _openPaperEditDialog(order);
+          }
           continue;
         }
         mutablePaints = dialogResult.paints;
@@ -4529,7 +5002,7 @@ class _TasksScreenState extends State<TasksScreen>
           initialQuantity: _initialMeterQuantityForTask(task, unitLabel),
         );
         if (result == null) return;
-        if (!result.openPaperEditor) {
+        if (!result.openPaperEditor && !result.openPaintEditor) {
           qtyInput = result;
           break;
         }
@@ -4544,7 +5017,11 @@ class _TasksScreenState extends State<TasksScreen>
           }
           return;
         }
-        await _openPaperEditDialog(order);
+        if (result.openPaintEditor) {
+          await _openPaintEditDialog(order);
+        } else {
+          await _openPaperEditDialog(order);
+        }
       }
     }
 
@@ -5080,7 +5557,7 @@ class _TasksScreenState extends State<TasksScreen>
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                                 content:
-                                    Text('Сначала завершите текущий активный заказ')));
+                                    Text('Сначала завершите текущий активный заказ или нажмите «Проблема»')));
                           }
                           return;
                         }
@@ -5206,7 +5683,8 @@ class _TasksScreenState extends State<TasksScreen>
                               _initialMeterQuantityForTask(task, unitLabel),
                         );
                         if (qtyInput == null) return;
-                        if (!qtyInput.openPaperEditor) break;
+                        if (!qtyInput.openPaperEditor &&
+                            !qtyInput.openPaintEditor) break;
                         if (order == null) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -5218,7 +5696,11 @@ class _TasksScreenState extends State<TasksScreen>
                           }
                           return;
                         }
-                        await _openPaperEditDialog(order);
+                        if (qtyInput.openPaintEditor) {
+                          await _openPaintEditDialog(order);
+                        } else {
+                          await _openPaperEditDialog(order);
+                        }
                       }
                       if (qtyInput == null) return;
                       final qtyText = qtyInput.displayText;
@@ -5599,7 +6081,7 @@ class _TasksScreenState extends State<TasksScreen>
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text(
-                                  'Сначала завершите текущий активный заказ')));
+                                  'Сначала завершите текущий активный заказ или нажмите «Проблема»')));
                         }
                         return;
                       }
@@ -5621,7 +6103,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 _initialMeterQuantityForTask(task, unitLabel),
                           );
                           if (qtyInput == null) return;
-                          if (!qtyInput.openPaperEditor) break;
+                          if (!qtyInput.openPaperEditor &&
+                              !qtyInput.openPaintEditor) break;
                           final order = _orderById(task.orderId);
                           if (order == null) {
                             if (context.mounted) {
@@ -5635,7 +6118,11 @@ class _TasksScreenState extends State<TasksScreen>
                             }
                             return;
                           }
-                          await _openPaperEditDialog(order);
+                          if (qtyInput.openPaintEditor) {
+                            await _openPaintEditDialog(order);
+                          } else {
+                            await _openPaperEditDialog(order);
+                          }
                         }
                         if (qtyInput == null) return;
                         final qtyText = qtyInput.displayText;
@@ -7387,6 +7874,7 @@ Future<_QuantityInput?> _askQuantity(
   );
   final unitLabel = (unit ?? '').trim();
   const paperEditValue = '__open_paper_edit__';
+  const paintEditValue = '__open_paint_edit__';
   final v = await showDialog<_QuantityInput?>(
     context: context,
     builder: (ctx) {
@@ -7415,6 +7903,18 @@ Future<_QuantityInput?> _askQuantity(
                 ),
               ),
               child: const Text('Изменить бумагу'),
+            ),
+          if (allowPaperEdit)
+            TextButton(
+              onPressed: () => Navigator.pop(
+                ctx,
+                const _QuantityInput(
+                  quantity: 0,
+                  displayText: paintEditValue,
+                  openPaintEditor: true,
+                ),
+              ),
+              child: const Text('Изменить краски'),
             ),
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
@@ -7445,6 +7945,13 @@ Future<_QuantityInput?> _askQuantity(
       quantity: 0,
       displayText: '',
       openPaperEditor: true,
+    );
+  }
+  if (v.openPaintEditor || v.displayText == paintEditValue) {
+    return const _QuantityInput(
+      quantity: 0,
+      displayText: '',
+      openPaintEditor: true,
     );
   }
   return v;
