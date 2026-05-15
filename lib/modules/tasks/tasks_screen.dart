@@ -5183,7 +5183,7 @@ class _TasksScreenState extends State<TasksScreen>
                           ..clear()
                           ..addAll(jointGroup);
                       }
-                      final saved = await taskProvider.reportProblem(
+                      final saved = await tp.reportProblem(
                         taskId: task.id,
                         text: comment,
                         userId: widget.employeeId,
