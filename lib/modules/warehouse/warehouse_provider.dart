@@ -2329,11 +2329,19 @@ class WarehouseProvider with ChangeNotifier {
     return double.tryParse('$value'.replaceAll(',', '.')) ?? 0.0;
   }
 
+  double _activePaintReserveQty(Map<String, dynamic> row) {
+    final reserved = _toDouble(row['reserved_qty']);
+    final used = _toDouble(row['used_qty']);
+    final released = _toDouble(row['released_qty']);
+    final active = reserved - used - released;
+    return active > 0 ? active : 0.0;
+  }
+
   Future<Map<String, double>> _loadPaintReservedQty() async {
     try {
       final rows = await _sb
           .from('order_paint_reservations')
-          .select('paint_id, reserved_qty');
+          .select('paint_id, reserved_qty, used_qty, released_qty');
       if (rows is! List) return const {};
       final out = <String, double>{};
       for (final raw in rows.whereType<Map>()) {
@@ -2342,8 +2350,8 @@ class WarehouseProvider with ChangeNotifier {
         if (paintId.isEmpty) continue;
         out.update(
           paintId,
-          (value) => value + _toDouble(row['reserved_qty']),
-          ifAbsent: () => _toDouble(row['reserved_qty']),
+          (value) => value + _activePaintReserveQty(row),
+          ifAbsent: () => _activePaintReserveQty(row),
         );
       }
       return out;
@@ -2362,13 +2370,20 @@ class WarehouseProvider with ChangeNotifier {
       final rows = await _sb
           .from('order_paint_reservations')
           .select(
-              'order_id, reserved_qty, orders(id, customer, new_form_no, form_code)')
+              'order_id, reserved_qty, used_qty, released_qty, orders(id, customer, new_form_no, form_code)')
           .eq('paint_id', normalizedId)
           .order('created_at');
       if (rows is! List) return const [];
       return rows
           .whereType<Map>()
-          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .map((raw) {
+            final row = Map<String, dynamic>.from(raw as Map);
+            final activeQty = _activePaintReserveQty(row);
+            row['active_reserved_qty'] = activeQty;
+            row['qty'] = activeQty;
+            return row;
+          })
+          .where((row) => _toDouble(row['active_reserved_qty']) > 0)
           .toList(growable: false);
     } catch (e) {
       debugPrint('⚠️ paint reservations details failed: $e');

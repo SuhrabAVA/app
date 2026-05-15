@@ -511,9 +511,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         ...woTables,
         ...invTables,
         ...arrTables,
-        // Бизнес-логика резерва: для бумаги обновляем таблицу
+        // Бизнес-логика резерва: для бумаги и краски обновляем таблицу
         // при любом изменении активных резервов.
         if (typeKey == 'paper') 'order_paper_reservations',
+        if (typeKey == 'paint') 'order_paint_reservations',
       ];
       for (final t in watchedTables) {
         ch.onPostgresChanges(
@@ -540,10 +541,54 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     } catch (_) {}
   }
 
+  bool _isReserveAwareType(String typeKey) => typeKey == 'paper' || typeKey == 'paint';
+
+  Future<double> _reservedQtyForItem(TmcModel item, String typeKey) {
+    if (typeKey == 'paper') {
+      return context.read<WarehouseProvider>().paperReservedQty(item.id);
+    }
+    if (typeKey == 'paint') {
+      return Future<double>.value(item.reservedQty);
+    }
+    return Future<double>.value(0);
+  }
+
+  String _reserveUnitLabel(TmcModel item, String typeKey) {
+    if (typeKey == 'paper') return 'м';
+    return item.unit.trim().isEmpty ? 'ед.' : item.unit.trim();
+  }
+
+  String _orderLabelFromReservation(Map<String, dynamic> row) {
+    final orderName = (row['order_name'] ?? '').toString().trim();
+    final hasOrderName = orderName.isNotEmpty &&
+        orderName.toLowerCase() != 'null' &&
+        orderName.toLowerCase() != 'undefined' &&
+        orderName.toLowerCase() != 'nan' &&
+        orderName != '-';
+    if (hasOrderName) return orderName;
+
+    final order = row['orders'];
+    if (order is Map) {
+      final code = (order['form_code'] ?? '').toString().trim();
+      if (code.isNotEmpty) return code;
+      final no = (order['new_form_no'] ?? '').toString().trim();
+      if (no.isNotEmpty) return 'Форма №$no';
+      final customer = (order['customer'] ?? '').toString().trim();
+      if (customer.isNotEmpty) return customer;
+    }
+
+    final orderId = (row['order_id'] ?? '').toString().trim();
+    return orderId.isEmpty ? 'Заказ без названия' : 'Заказ $orderId';
+  }
+
   Future<void> _showReserveDetails(TmcModel item) async {
-    final details =
-        await context.read<WarehouseProvider>().paperReserveDetails(item.id);
+    final typeKey = _normalizeType(widget.type);
+    final provider = context.read<WarehouseProvider>();
+    final details = typeKey == 'paint'
+        ? await provider.getPaintReservationsByPaint(item.id)
+        : await provider.paperReserveDetails(item.id);
     if (!mounted) return;
+    final unit = _reserveUnitLabel(item, typeKey);
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -551,20 +596,17 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         content: SizedBox(
           width: 420,
           child: details.isEmpty
-              ? const Text('По этой бумаге нет активного резерва.')
+              ? Text(typeKey == 'paint'
+                  ? 'По этой краске нет активного резерва.'
+                  : 'По этой бумаге нет активного резерва.')
               : ListView(
                   shrinkWrap: true,
                   children: details.map((row) {
-                    final orderName = (row['order_name'] ?? '').toString().trim();
-                    final hasOrderName = orderName.isNotEmpty &&
-                        orderName.toLowerCase() != 'null' &&
-                        orderName.toLowerCase() != 'undefined' &&
-                        orderName.toLowerCase() != 'nan' &&
-                        orderName != '-';
+                    final rawQty = row['qty'] ?? row['active_reserved_qty'];
                     final qty = (row['qty'] as num?)?.toDouble() ??
-                        double.tryParse('${row['qty']}') ??
+                        (row['active_reserved_qty'] as num?)?.toDouble() ??
+                        double.tryParse('$rawQty') ??
                         0;
-                    final orderLabel = hasOrderName ? orderName : 'Заказ без названия';
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.symmetric(
@@ -577,7 +619,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         color: Colors.grey.shade50,
                       ),
                       child: Text(
-                        '$orderLabel • ${qty.toStringAsFixed(2)} м',
+                        '${_orderLabelFromReservation(row)} • ${qty.toStringAsFixed(2)} $unit',
                         style: const TextStyle(fontWeight: FontWeight.w500),
                       ),
                     );
@@ -1522,10 +1564,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// --- Вкладка «Список» ---
   Widget _listTab() {
-    final base = _normalizeType(widget.type) == 'paper'
+    final typeKey = _normalizeType(widget.type);
+    final base = typeKey == 'paper'
         ? _applyPaperMultiFilters(List<TmcModel>.from(_items))
         : List<TmcModel>.from(_items);
     final items = _applyFilterItems(base);
+    final showReserveColumns = _isReserveAwareType(typeKey);
+    final showAvailableColumn = typeKey == 'paint';
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Card(
@@ -1548,7 +1593,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       if (items.any((i) =>
                           i.grammage != null && i.grammage!.trim().isNotEmpty))
                         const DataColumn(label: Text('Граммаж')),
-                      if (_normalizeType(widget.type) != 'paper' &&
+                      if (typeKey != 'paper' &&
                           items.any((i) => i.weight != null))
                         const DataColumn(label: Text('Вес (кг)')),
                       if (items.any(
@@ -1557,7 +1602,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       if (widget.enablePhoto)
                         const DataColumn(label: Text('Фото')),
                       const DataColumn(label: Text('Действия')),
-                      if (_normalizeType(widget.type) == 'paper')
+                      if (showAvailableColumn)
+                        const DataColumn(label: Text('Доступно')),
+                      if (showReserveColumns)
                         const DataColumn(label: Text('В резерве')),
                     ],
                     rows: List<DataRow>.generate(items.length, (i) {
@@ -1571,11 +1618,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         DataCell(Text('${i + 1}')),
                         DataCell(Text(item.description)),
                         DataCell(
-                          _normalizeType(widget.type) == 'paper'
+                          typeKey == 'paper'
                               ? FutureBuilder<double>(
-                                  future: context
-                                      .read<WarehouseProvider>()
-                                      .paperReservedQty(item.id),
+                                  future: _reservedQtyForItem(item, typeKey),
                                   builder: (context, snapshot) {
                                     final reserved = snapshot.data ?? 0;
                                     final available = item.quantity - reserved;
@@ -1594,7 +1639,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                             i.grammage != null &&
                             i.grammage!.trim().isNotEmpty))
                           DataCell(Text(item.grammage ?? '')),
-                        if (_normalizeType(widget.type) != 'paper' &&
+                        if (typeKey != 'paper' &&
                             items.any((i) => i.weight != null))
                           DataCell(Text(fmtNum(item.weight, frac: 2))),
                         if (items.any(
@@ -1658,16 +1703,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                               tooltip: 'Удалить',
                               onPressed: () => _deleteItem(item)),
                         ])),
-                        if (_normalizeType(widget.type) == 'paper')
+                        if (showAvailableColumn)
+                          DataCell(Text(
+                            fmtNum(item.availableQty < 0 ? 0 : item.availableQty,
+                                frac: 2),
+                          )),
+                        if (showReserveColumns)
                           DataCell(
                             FutureBuilder<double>(
-                              future: context
-                                  .read<WarehouseProvider>()
-                                  .paperReservedQty(item.id),
+                              future: _reservedQtyForItem(item, typeKey),
                               builder: (context, snapshot) {
-                                final reserved = snapshot.data ?? 0;
+                                final reserved = snapshot.data ?? item.reservedQty;
+                                final unit = _reserveUnitLabel(item, typeKey);
                                 final reserveLabel =
-                                    '${reserved.toStringAsFixed(2)} м';
+                                    '${reserved.toStringAsFixed(2)} $unit';
                                 return TextButton(
                                   style: ButtonStyle(
                                     foregroundColor:
