@@ -1,5 +1,4 @@
 // lib/modules/orders/orders_repository.dart (v3.1, paints fallback + events)
-import 'dart:convert';
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -601,84 +600,146 @@ class OrdersRepository {
     return const [];
   }
 
+  /// Returns planned paints from order_paints enriched with actual usage kept in
+  /// order_paint_pending_writeoffs. The original qty_kg value remains the plan.
+  Future<List<Map<String, dynamic>>> getPaintsWithPendingWriteoffs(
+    String orderId,
+  ) async {
+    final paints = await getPaints(orderId);
+    final writeoffRows = await _sb
+        .from('order_paint_pending_writeoffs')
+        .select('id, order_paint_id, order_id, task_id, stage_id, stage_name, '
+            'paint_id, paint_name, planned_amount, actual_used_amount, unit, '
+            'status, written_off_at')
+        .eq('order_id', orderId)
+        .inFilter('status', ['pending', 'written_off'])
+        .order('created_at');
+    final writeoffs = writeoffRows is List
+        ? writeoffRows.cast<Map<String, dynamic>>()
+        : const <Map<String, dynamic>>[];
+
+    final writeoffsByPaintRowId = <String, List<Map<String, dynamic>>>{};
+    final writeoffsByPaintName = <String, List<Map<String, dynamic>>>{};
+    for (final writeoff in writeoffs) {
+      final orderPaintId = (writeoff['order_paint_id'] ?? '').toString().trim();
+      if (orderPaintId.isNotEmpty) {
+        (writeoffsByPaintRowId[orderPaintId] ??= <Map<String, dynamic>>[])
+            .add(writeoff);
+      }
+      final paintName = _normalizePaintNameForMatching(
+        (writeoff['paint_name'] ?? '').toString(),
+      );
+      if (paintName.isNotEmpty) {
+        (writeoffsByPaintName[paintName] ??= <Map<String, dynamic>>[])
+            .add(writeoff);
+      }
+    }
+
+    return paints.map((paint) {
+      final paintRowId = (paint['id'] ?? '').toString().trim();
+      final paintName = _normalizePaintNameForMatching(
+        (paint['name'] ?? paint['paint_name'] ?? '').toString(),
+      );
+      final matchingWriteoffsById = <String, Map<String, dynamic>>{};
+      for (final writeoff in <Map<String, dynamic>>[
+        if (paintRowId.isNotEmpty)
+          ...(writeoffsByPaintRowId[paintRowId] ??
+              const <Map<String, dynamic>>[]),
+        if (paintName.isNotEmpty)
+          ...(writeoffsByPaintName[paintName] ??
+              const <Map<String, dynamic>>[]),
+      ]) {
+        final id = (writeoff['id'] ?? '').toString();
+        matchingWriteoffsById[id.isEmpty ? writeoff.hashCode.toString() : id] =
+            writeoff;
+      }
+      final matchingWriteoffs = matchingWriteoffsById.values.toList();
+      final actualUsedAmount = matchingWriteoffs.fold<double>(
+        0,
+        (total, writeoff) =>
+            total + (_topLevelReadDouble(writeoff, 'actual_used_amount') ?? 0),
+      );
+      return <String, dynamic>{
+        ...paint,
+        'planned_qty_kg': paint['qty_kg'],
+        'actual_used_amount': actualUsedAmount,
+        'actual_used_unit': matchingWriteoffs.isEmpty
+            ? 'г'
+            : (matchingWriteoffs.last['unit'] ?? 'г').toString(),
+        'writeoffs': matchingWriteoffs,
+      };
+    }).toList(growable: false);
+  }
+
   Future<void> applyPaintUsage(
       {required String orderId,
       required List<PaintUsageUpdate> usages}) async {
     await ensureSignedIn();
     if (usages.isEmpty) return;
 
-    for (final usage in usages) {
-      try {
-        await _sb.from('order_paints').update({
-          'qty_kg': usage.kilograms,
-        }).eq('id', usage.paintRowId);
-      } catch (e) {
-        rethrow;
+    final orderPaints = await getPaints(orderId);
+    final plannedGramsByPaintRowId = <String, double>{};
+    for (final paint in orderPaints) {
+      final id = (paint['id'] ?? '').toString().trim();
+      final qtyKg = _topLevelReadDouble(paint, 'qty_kg');
+      if (id.isNotEmpty && qtyKg != null) {
+        plannedGramsByPaintRowId[id] = qtyKg * 1000;
       }
     }
 
-    try {
-      final row = await _sb
-          .from('orders')
-          .select('product')
-          .eq('id', orderId)
-          .maybeSingle();
-      if (row == null) {
-        return;
+    final eventUsages = <Map<String, dynamic>>[];
+    for (final usage in usages.where((usage) => usage.grams > 0)) {
+      final paintRowId = usage.paintRowId.trim();
+      final pendingRow = _cleanForInsert({
+        'order_id': orderId,
+        if (paintRowId.isNotEmpty) 'order_paint_id': paintRowId,
+        'paint_name': usage.name,
+        'planned_amount': plannedGramsByPaintRowId[paintRowId],
+        'actual_used_amount': usage.grams,
+        'unit': 'г',
+        'status': 'pending',
+        'comment': 'Фактический расход зафиксирован без изменения плана заказа',
+      });
+
+      final updateData = Map<String, dynamic>.from(pendingRow)
+        ..remove('order_id')
+        ..remove('order_paint_id')
+        ..remove('status')
+        ..['updated_at'] = DateTime.now().toIso8601String();
+      dynamic updated;
+      if (paintRowId.isNotEmpty) {
+        updated = await _sb
+            .from('order_paint_pending_writeoffs')
+            .update(updateData)
+            .eq('order_paint_id', paintRowId)
+            .eq('status', 'pending')
+            .select('id');
       }
-      Map<String, dynamic> product;
-      final raw = row['product'];
-      if (raw is Map<String, dynamic>) {
-        product = Map<String, dynamic>.from(raw);
-      } else if (raw is Map) {
-        product = Map<String, dynamic>.from(raw as Map);
-      } else if (raw is String && raw.trim().isNotEmpty) {
-        try {
-          final decoded = jsonDecode(raw);
-          if (decoded is Map) {
-            product = Map<String, dynamic>.from(decoded as Map);
-          } else {
-            product = <String, dynamic>{};
-          }
-        } catch (_) {
-          product = <String, dynamic>{};
-        }
-      } else {
-        product = <String, dynamic>{};
+      if (updated is! List || updated.isEmpty) {
+        await _sb.from('order_paint_pending_writeoffs').insert(pendingRow);
       }
 
-      final currentParams = (product['parameters'] ?? '').toString();
-      final cleanRe =
-          RegExp(r'(?:^|;\s*)Краска:\s*.+?(?=(?:;\s*Краска:|$))');
-      var cleaned = currentParams.replaceAll(cleanRe, '').trim();
-      if (cleaned.endsWith(';')) {
-        cleaned = cleaned.substring(0, cleaned.length - 1).trim();
-      }
-
-      final buffer = <String>[];
-      for (final usage in usages) {
-        final info = usage.info?.trim() ?? '';
-        final grams = usage.grams;
-        if (grams <= 0) {
-          continue;
-        }
-        final entry = info.isNotEmpty
-            ? 'Краска: ${usage.name} ${_formatGrams(grams)} ($info)'
-            : 'Краска: ${usage.name} ${_formatGrams(grams)}';
-        buffer.add(entry);
-      }
-
-      String updated = cleaned;
-      if (buffer.isNotEmpty) {
-        final tail = buffer.join('; ');
-        updated = updated.isEmpty ? tail : '$updated; $tail';
-      }
-      product['parameters'] = updated.trim();
-
-      await _sb.from('orders').update({'product': product}).eq('id', orderId);
-    } catch (e) {
-      rethrow;
+      eventUsages.add(<String, dynamic>{
+        'order_paint_id': usage.paintRowId,
+        'paint_name': usage.name,
+        'actual_used_amount': usage.grams,
+        'unit': 'г',
+        if ((usage.info ?? '').trim().isNotEmpty) 'info': usage.info!.trim(),
+      });
     }
+    if (eventUsages.isEmpty) return;
+
+    await logOrderEvent(
+      orderId: orderId,
+      eventType: 'paint_usage_applied',
+      message: 'Зафиксирован фактический расход краски: '
+          '${eventUsages.map((row) {
+        final name = (row['paint_name'] ?? '').toString();
+        final grams = (row['actual_used_amount'] as num).toDouble();
+        return '$name ${_formatGrams(grams)}';
+      }).join('; ')}',
+      payload: {'paint_usages': eventUsages},
+    );
   }
 
   Future<String?> getOrderCustomer(String orderId) async {
