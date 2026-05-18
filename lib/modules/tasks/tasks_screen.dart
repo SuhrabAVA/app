@@ -27,6 +27,7 @@ import 'task_model.dart';
 import 'task_completion_rules.dart';
 import 'task_provider.dart';
 import 'task_visibility.dart';
+import 'quantity_status_service.dart';
 import 'stage_sequence_utils.dart' as stage_sequence;
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
@@ -34,83 +35,6 @@ import '../../services/attachment_service.dart';
 // Additional helpers for time formatting and aggregated timers
 const String kCardboardCuttingStageId =
     stage_sequence.kCardboardCuttingStageId;
-
-const Set<String> _meterUnitAliases = <String>{
-  'м',
-  'метр',
-  'метры',
-  'm',
-  'meter',
-  'meters',
-};
-
-String _normalizeTaskQuantityUnit(String? unit) =>
-    (unit ?? '').trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
-
-bool isTaskMeterUnit(String? unit) =>
-    _meterUnitAliases.contains(_normalizeTaskQuantityUnit(unit));
-
-double? _taskPaperLengthNumber(dynamic value) {
-  if (value == null) return null;
-  if (value is num) return value.toDouble();
-  if (value is String) {
-    final normalized = value.trim().replaceAll(',', '.');
-    if (normalized.isEmpty) return null;
-    final parsed = double.tryParse(normalized);
-    if (parsed != null) return parsed;
-    return double.tryParse(normalized.replaceAll(RegExp(r'[^0-9.\-]'), ''));
-  }
-  return null;
-}
-
-double? _taskPaperLengthFromMap(Map<String, dynamic>? map) {
-  if (map == null) return null;
-  for (final key in const <String>['lengthL', 'length_l', 'length', 'L']) {
-    final parsed = _taskPaperLengthNumber(map[key]);
-    if (parsed != null && parsed > 0) return parsed;
-  }
-  final paper = map['paper'];
-  if (paper is Map) {
-    final parsed = _taskPaperLengthFromMap(Map<String, dynamic>.from(paper));
-    if (parsed != null && parsed > 0) return parsed;
-  }
-  return null;
-}
-
-double? _taskPaperLengthFromMaterial(MaterialModel material) {
-  final extraLength = _taskPaperLengthFromMap(material.extra);
-  if (extraLength != null && extraLength > 0) return extraLength;
-  if (material.quantity > 0) return material.quantity;
-  return null;
-}
-
-double taskPaperLengthTotalForOrder(OrderModel? order) {
-  if (order == null) return 0;
-
-  final materialTotal = order.paperMaterials.fold<double>(0, (sum, material) {
-    final length = _taskPaperLengthFromMaterial(material);
-    return length == null || length <= 0 ? sum : sum + length;
-  });
-  if (materialTotal > 0) return materialTotal;
-
-  final productMap = order.product.toMap();
-  final productLength = _taskPaperLengthFromMap(productMap);
-  if (productLength != null && productLength > 0) return productLength;
-
-  final directLength = order.product.length;
-  if (directLength != null && directLength > 0) return directLength;
-
-  return 0;
-}
-
-double? initialTaskMeterQuantityForOrder({
-  required String? unit,
-  required OrderModel? order,
-}) {
-  if (!isTaskMeterUnit(unit)) return null;
-  final total = taskPaperLengthTotalForOrder(order);
-  return total > 0 ? total : null;
-}
 
 String formatTaskInitialQuantity(double value) {
   if (value % 1 == 0) return value.toStringAsFixed(0);
@@ -728,6 +652,9 @@ class _QuantityInput {
   final bool openPaperEditor;
   final int? packsCount;
   final int? unitsPerPack;
+  final double? expected;
+  final QuantityStatus status;
+  final String commentText;
 
   const _QuantityInput({
     required this.quantity,
@@ -735,7 +662,10 @@ class _QuantityInput {
     this.openPaperEditor = false,
     this.packsCount,
     this.unitsPerPack,
-  });
+    this.expected,
+    this.status = QuantityStatus.unknown,
+    String? commentText,
+  }) : commentText = commentText ?? displayText;
 }
 
 class _TaskSelectionState extends ChangeNotifier {
@@ -2451,7 +2381,8 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   String _formatQuantityDisplay(String raw) {
-    final trimmed = raw.trim();
+    final payloadText = quantityDisplayText(raw);
+    final trimmed = payloadText.trim();
     if (trimmed.isEmpty) return '0';
     final numeric = RegExp(r'^[0-9]+([.,][0-9]+)?$');
     if (!numeric.hasMatch(trimmed)) return trimmed;
@@ -3521,26 +3452,25 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  int _parseQuantity(String text) {
-    final totalFromFormula = RegExp(r'=\s*(\d+)').firstMatch(text);
-    if (totalFromFormula != null) {
-      return int.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
-    }
-    final packMatch =
-        RegExp(r'(\d+)\s*пач', caseSensitive: false).firstMatch(text);
-    final inPackMatch = RegExp(r'[x×*]\s*(\d+)').firstMatch(text);
-    if (packMatch != null && inPackMatch != null) {
-      final packs = int.tryParse(packMatch.group(1) ?? '') ?? 0;
-      final inPack = int.tryParse(inPackMatch.group(1) ?? '') ?? 0;
-      return packs * inPack;
-    }
-    final match = RegExp(r'(\d+)').firstMatch(text);
-    if (match == null) return 0;
-    return int.tryParse(match.group(1) ?? '') ?? 0;
+  double _parseQuantity(String text) {
+    return quantityActualFromText(text) ?? 0;
   }
 
-  int _sumQuantities(TaskModel task) {
-    int total = 0;
+  QuantityStatus _quantityStatusForComment(
+    TaskComment comment,
+    OrderModel order,
+    TaskModel task,
+  ) {
+    final saved = quantityStatusFromText(comment.text);
+    if (saved != null) return saved;
+    final actual = _parseQuantity(comment.text);
+    final unit = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId) ?? '';
+    final expected = getExpectedQuantity(order: order, task: task, unit: unit);
+    return getQuantityStatus(actual: actual, expected: expected);
+  }
+
+  double _sumQuantities(TaskModel task) {
+    double total = 0;
     for (final comment in task.comments) {
       if (comment.type == 'quantity_done' ||
           comment.type == 'quantity_team_total') {
@@ -3563,6 +3493,19 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _buildResultPanel(OrderModel order, TaskModel task, double scale) {
     final totalQty = _sumQuantities(task);
     final lastQty = _latestQuantityLabel(task);
+    final unit = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId) ?? '';
+    final expected = getExpectedQuantity(order: order, task: task, unit: unit);
+    final totalStatus = totalQty > 0
+        ? getQuantityStatus(actual: totalQty, expected: expected)
+        : QuantityStatus.unknown;
+    final lastComment = task.comments
+        .where((c) =>
+            c.type == 'quantity_done' || c.type == 'quantity_team_total')
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final lastStatus = lastComment.isEmpty
+        ? QuantityStatus.unknown
+        : _quantityStatusForComment(lastComment.last, order, task);
     return _sectionCard(
       '📊 Производственный результат',
       Column(
@@ -3571,10 +3514,20 @@ class _TasksScreenState extends State<TasksScreen>
           Text('Фактическое количество (заказ): '
               '${order.actualQty?.toStringAsFixed(0) ?? '—'}',
               style: TextStyle(fontSize: scale * 12)),
-          Text('Суммарно по исполнителям: ${totalQty > 0 ? totalQty : '—'}',
-              style: TextStyle(fontSize: scale * 12)),
-          Text('Последняя запись: $lastQty',
-              style: TextStyle(fontSize: scale * 12)),
+          Text(
+            'Суммарно по исполнителям: ${totalQty > 0 ? formatTaskInitialQuantity(totalQty) : '—'}',
+            style: TextStyle(
+              fontSize: scale * 12,
+              color: getQuantityStatusColor(totalStatus),
+            ),
+          ),
+          Text(
+            'Последняя запись: ${quantityDisplayText(lastQty)}',
+            style: TextStyle(
+              fontSize: scale * 12,
+              color: getQuantityStatusColor(lastStatus),
+            ),
+          ),
         ],
       ),
       scale,
@@ -3772,6 +3725,21 @@ class _TasksScreenState extends State<TasksScreen>
                     IconData icon = Icons.info_outline;
                     Color color = Colors.blueGrey;
                     final c = entry.comment;
+                    final quantityComment = c.type == 'quantity_done' ||
+                        c.type == 'quantity_team_total' ||
+                        c.type == 'quantity_share';
+                    if (quantityComment) {
+                      final relatedTask = taskProvider.tasks.firstWhere(
+                        (candidate) => candidate.id == entry.taskId,
+                        orElse: () => task,
+                      );
+                      final relatedOrder = _orderById(relatedTask.orderId);
+                      final status = relatedOrder == null
+                          ? (quantityStatusFromText(c.text) ?? QuantityStatus.unknown)
+                          : _quantityStatusForComment(c, relatedOrder, relatedTask);
+                      icon = Icons.check_circle_outline;
+                      color = getQuantityStatusColor(status);
+                    }
                     switch (c.type) {
                       case 'problem':
                         icon = Icons.error_outline;
@@ -3783,8 +3751,8 @@ class _TasksScreenState extends State<TasksScreen>
                         break;
                       case 'user_done':
                       case 'quantity_done':
-                        icon = Icons.check_circle_outline;
-                        color = Colors.green;
+                      case 'quantity_team_total':
+                      case 'quantity_share':
                         break;
                       case 'setup_start':
                       case 'setup_done':
@@ -3843,10 +3811,34 @@ class _TasksScreenState extends State<TasksScreen>
                                   color: Colors.grey,
                                 ),
                               ),
-                            Text(
-                              _describeComment(entry.comment),
-                              style: TextStyle(fontSize: scale * 12.5),
-                            ),
+                            Builder(builder: (_) {
+                              final quantityComment = c.type == 'quantity_done' ||
+                                  c.type == 'quantity_team_total' ||
+                                  c.type == 'quantity_share';
+                              var textColor = Colors.black87;
+                              if (quantityComment) {
+                                final relatedTask = taskProvider.tasks.firstWhere(
+                                  (candidate) => candidate.id == entry.taskId,
+                                  orElse: () => task,
+                                );
+                                final relatedOrder = _orderById(relatedTask.orderId);
+                                final status = relatedOrder == null
+                                    ? (quantityStatusFromText(c.text) ?? QuantityStatus.unknown)
+                                    : _quantityStatusForComment(
+                                        c,
+                                        relatedOrder,
+                                        relatedTask,
+                                      );
+                                textColor = getQuantityStatusColor(status);
+                              }
+                              return Text(
+                                _describeComment(entry.comment),
+                                style: TextStyle(
+                                  fontSize: scale * 12.5,
+                                  color: textColor,
+                                ),
+                              );
+                            }),
                             Builder(builder: (_) {
                               final attachments = taskProvider
                                   .attachmentsForComment(entry.comment.id);
@@ -5017,6 +5009,8 @@ class _TasksScreenState extends State<TasksScreen>
           unit: unitLabel,
           allowPaperEdit: true,
           initialQuantity: _initialMeterQuantityForTask(task, unitLabel),
+          order: _orderById(task.orderId),
+          task: task,
         );
         if (result == null) return;
         if (!result.openPaperEditor) {
@@ -5053,7 +5047,7 @@ class _TasksScreenState extends State<TasksScreen>
           pendingRows: paints
               .where(_isPendingPaintRow)
               .toList(growable: false),
-          quantityDone: qtyInput?.displayText,
+          quantityDone: qtyInput?.commentText,
           comment: note,
         );
         await tp.refresh();
@@ -5082,7 +5076,7 @@ class _TasksScreenState extends State<TasksScreen>
         orderId: task.orderId,
         stageId: task.stageId,
         employeeId: widget.employeeId,
-        quantityDone: qtyInput?.displayText,
+        quantityDone: qtyInput?.commentText,
         comment: note,
       );
       await tp.refresh();
@@ -5687,6 +5681,8 @@ class _TasksScreenState extends State<TasksScreen>
                           allowPaperEdit: true,
                           initialQuantity:
                               _initialMeterQuantityForTask(task, unitLabel),
+                          order: order,
+                          task: task,
                         );
                         if (qtyInput == null) return;
                         if (!qtyInput.openPaperEditor) break;
@@ -5704,7 +5700,7 @@ class _TasksScreenState extends State<TasksScreen>
                         await _openPaperEditDialog(order);
                       }
                       if (qtyInput == null) return;
-                      final qtyText = qtyInput.displayText;
+                      final qtyText = qtyInput.commentText;
                       final taskProvider = context.read<TaskProvider>();
                       var separateAllDone = false;
                       var jointUserIds = <String>[];
@@ -6020,6 +6016,8 @@ class _TasksScreenState extends State<TasksScreen>
                         unit: unitLabel,
                         initialQuantity:
                             _initialMeterQuantityForTask(task, unitLabel),
+                        order: _orderById(task.orderId),
+                        task: task,
                       );
                       if (qtyInput == null) return;
 
@@ -6102,6 +6100,8 @@ class _TasksScreenState extends State<TasksScreen>
                             allowPaperEdit: true,
                             initialQuantity:
                                 _initialMeterQuantityForTask(task, unitLabel),
+                            order: _orderById(task.orderId),
+                            task: task,
                           );
                           if (qtyInput == null) return;
                           if (!qtyInput.openPaperEditor) break;
@@ -6121,7 +6121,7 @@ class _TasksScreenState extends State<TasksScreen>
                           await _openPaperEditDialog(order);
                         }
                         if (qtyInput == null) return;
-                        final qtyText = qtyInput.displayText;
+                        final qtyText = qtyInput.commentText;
                         final helperIds = jointGroup != null && isMyRow
                             ? latestTask.assignees
                                 .where((id) =>
@@ -7862,6 +7862,8 @@ Future<_QuantityInput?> _askQuantity(
   String? unit,
   bool allowPaperEdit = false,
   double? initialQuantity,
+  OrderModel? order,
+  TaskModel? task,
 }) async {
   final totalController = TextEditingController(
     text: initialQuantity != null && initialQuantity > 0
@@ -7873,51 +7875,119 @@ Future<_QuantityInput?> _askQuantity(
   final v = await showDialog<_QuantityInput?>(
     context: context,
     builder: (ctx) {
-      return AlertDialog(
-        title: const Text('Количество выполнено'),
-        content: TextField(
-          controller: totalController,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            hintText: unitLabel.isNotEmpty
-                ? 'Введите количество в $unitLabel'
-                : 'Введите количество экземпляров',
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          if (allowPaperEdit)
-            TextButton(
-              onPressed: () => Navigator.pop(
-                ctx,
-                const _QuantityInput(
-                  quantity: 0,
-                  displayText: paperEditValue,
-                  openPaperEditor: true,
-                ),
+      String? errorText;
+      return StatefulBuilder(
+        builder: (ctx, setState) {
+          return AlertDialog(
+            title: const Text('Количество выполнено'),
+            content: TextField(
+              controller: totalController,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: unitLabel.isNotEmpty
+                    ? 'Введите количество в $unitLabel'
+                    : 'Введите количество экземпляров',
+                border: const OutlineInputBorder(),
+                errorText: errorText,
               ),
-              child: const Text('Изменить бумагу'),
+              onChanged: (_) {
+                if (errorText != null) setState(() => errorText = null);
+              },
             ),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          ElevatedButton(
-            onPressed: () {
-              final raw = totalController.text.trim();
-              final n = double.tryParse(raw.replaceAll(',', '.'));
-              if (n == null) return;
-              final displayQuantity = formatTaskInitialQuantity(n);
-              final display = unitLabel.isNotEmpty
-                  ? '$displayQuantity $unitLabel'
-                  : displayQuantity;
-              Navigator.pop(
-                ctx,
-                _QuantityInput(quantity: n, displayText: display),
-              );
-            },
-            child: const Text('OK'),
-          ),
-        ],
+            actions: [
+              if (allowPaperEdit)
+                TextButton(
+                  onPressed: () => Navigator.pop(
+                    ctx,
+                    const _QuantityInput(
+                      quantity: 0,
+                      displayText: paperEditValue,
+                      openPaperEditor: true,
+                    ),
+                  ),
+                  child: const Text('Изменить бумагу'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Отмена'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  final raw = totalController.text.trim();
+                  if (raw.isEmpty) {
+                    setState(() => errorText = 'Укажите количество.');
+                    return;
+                  }
+                  final n = double.tryParse(raw.replaceAll(',', '.'));
+                  if (n == null) {
+                    setState(() => errorText = 'Количество должно быть числом.');
+                    return;
+                  }
+                  if (n < 0) {
+                    setState(() =>
+                        errorText = 'Количество не может быть отрицательным.');
+                    return;
+                  }
+                  final expected = order != null && task != null
+                      ? getExpectedQuantity(
+                          order: order,
+                          task: task,
+                          unit: unitLabel,
+                        )
+                      : null;
+                  final status = getQuantityStatus(actual: n, expected: expected);
+                  if (status == QuantityStatus.warning ||
+                      status == QuantityStatus.danger) {
+                    final confirmed = await showDialog<bool>(
+                          context: ctx,
+                          builder: (confirmCtx) => AlertDialog(
+                            title: const Text('Проверить количество'),
+                            content: const Text(kQuantityStatusWarningMessage),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(confirmCtx).pop(false),
+                                child: const Text('Отмена'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () =>
+                                    Navigator.of(confirmCtx).pop(true),
+                                child: const Text('Продолжить'),
+                              ),
+                            ],
+                          ),
+                        ) ??
+                        false;
+                    if (!confirmed) return;
+                  }
+                  final displayQuantity = formatTaskInitialQuantity(n);
+                  final display = unitLabel.isNotEmpty
+                      ? '$displayQuantity $unitLabel'
+                      : displayQuantity;
+                  final payload = quantityStatusToJson(
+                    actual: n,
+                    unit: unitLabel,
+                    expected: expected,
+                    status: status,
+                    displayText: display,
+                  );
+                  Navigator.pop(
+                    ctx,
+                    _QuantityInput(
+                      quantity: n,
+                      displayText: display,
+                      expected: expected,
+                      status: status,
+                      commentText: payload,
+                    ),
+                  );
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
       );
     },
   );
