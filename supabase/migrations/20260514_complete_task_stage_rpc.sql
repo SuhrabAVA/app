@@ -82,14 +82,14 @@ begin
        set status = 'completed',
            started_at = null,
            completed_at = v_now_ms
-     where order_id = p_order_id
+     where order_id::text = p_order_id
        and coalesce(nullif(stage_group_key, ''), stage_id) = v_group_key
        and status <> 'completed';
   else
     update tasks
        set status = 'completed',
            started_at = null
-     where order_id = p_order_id
+     where order_id::text = p_order_id
        and coalesce(nullif(stage_group_key, ''), stage_id) = v_group_key
        and status <> 'completed';
   end if;
@@ -97,7 +97,7 @@ begin
   if to_regclass('public.prod_plans') is not null and to_regclass('public.prod_plan_stages') is not null then
     select id::text into v_plan_id
       from public.prod_plans
-     where order_id = p_order_id
+     where order_id::text = p_order_id
      limit 1;
 
     if v_plan_id is not null then
@@ -140,14 +140,14 @@ begin
   select bool_and(status = 'completed')
     into v_completed_all_stage
     from tasks
-   where order_id = p_order_id
-     and stage_id = p_stage_id;
+   where order_id::text = p_order_id
+     and stage_id::text = p_stage_id;
 
   if coalesce(v_completed_all_stage, false) then
     select exists(
       select 1 from tasks
-       where order_id = p_order_id
-         and stage_id <> p_stage_id
+       where order_id::text = p_order_id
+         and stage_id::text <> p_stage_id
          and status <> 'completed'
     ) into v_has_pending_after;
 
@@ -172,24 +172,24 @@ begin
             )
           end as qty
           from tasks
-          where order_id = p_order_id and stage_id = p_stage_id
+          where order_id::text = p_order_id and stage_id::text = p_stage_id
         ) s;
 
       update orders
          set actual_qty = v_actual_qty
-       where id = p_order_id;
+       where id::text = p_order_id;
     end if;
   end if;
 
   select bool_and(status = 'completed')
     into v_order_completed
     from tasks
-   where order_id = p_order_id;
+   where order_id::text = p_order_id;
 
   if coalesce(v_order_completed, false) then
     update orders
        set status = 'completed'
-     where id = p_order_id;
+     where id::text = p_order_id;
 
     if to_regprocedure('public.finalize_order_paper_reservations(text,text)') is not null then
       perform public.finalize_order_paper_reservations(p_order_id, p_actor);
@@ -229,7 +229,7 @@ begin
 
   select * into v_task
     from tasks
-   where id = p_task_id and order_id = p_order_id and stage_id = p_stage_id
+   where id::text = p_task_id and order_id::text = p_order_id and stage_id::text = p_stage_id
    for update;
   if not found then
     raise exception 'Задача % не найдена для заказа %.', p_task_id, p_order_id;
@@ -320,7 +320,7 @@ begin
      set comments = v_comments,
          status = 'completed',
          started_at = null
-   where id = p_task_id;
+   where id::text = p_task_id;
 
   perform public.advance_order_after_task_completion(
     p_order_id,
@@ -369,7 +369,7 @@ begin
 
   select * into v_task
     from tasks
-   where id = p_task_id and order_id = p_order_id and stage_id = p_stage_id
+   where id::text = p_task_id and order_id::text = p_order_id and stage_id::text = p_stage_id
    for update;
   if not found then
     raise exception 'Задача % не найдена для заказа %.', p_task_id, p_order_id;
@@ -438,7 +438,7 @@ begin
       into v_reserved_other
       from order_paint_reservations r
      where r.paint_id = rec.paint_id
-       and r.order_id <> p_order_id;
+       and r.order_id::text <> p_order_id;
 
     v_available := rec.total_qty - v_reserved_other;
     if v_available < rec.qty then
@@ -464,7 +464,7 @@ begin
            released_qty = greatest(reserved_qty - rec.qty, 0),
            paint_name = coalesce(paint_name, rec.paint_name, rec.stock_name),
            updated_at = now()
-     where order_id = p_order_id and paint_id = rec.paint_id;
+     where order_id::text = p_order_id and paint_id = rec.paint_id;
 
     if not found then
       insert into order_paint_reservations(order_id, paint_id, paint_name, reserved_qty, used_qty, released_qty)
@@ -481,14 +481,14 @@ begin
   for rel in
     select paint_id
       from order_paint_reservations
-     where order_id = p_order_id
+     where order_id::text = p_order_id
        and greatest(reserved_qty - used_qty - released_qty, 0) > 0
      for update
   loop
     update order_paint_reservations
        set released_qty = greatest(reserved_qty - used_qty, 0),
            updated_at = now()
-     where order_id = p_order_id and paint_id = rel.paint_id;
+     where order_id::text = p_order_id and paint_id = rel.paint_id;
     v_touched := array_append(v_touched, rel.paint_id);
   end loop;
 
@@ -546,7 +546,7 @@ begin
      set status = 'completed',
          started_at = null,
          comments = v_comments
-   where id = p_task_id;
+   where id::text = p_task_id;
 
   perform public.advance_order_after_task_completion(
     p_order_id,

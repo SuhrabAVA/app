@@ -386,6 +386,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     super.initState();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final t = widget.type.toLowerCase();
       context.read<WarehouseProvider>().setStationeryKey(
             (t.startsWith('руч') || t.startsWith('pens'))
@@ -410,6 +411,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       required List<TmcModel> items,
       WarehouseLogsBundle? bundle,
     }) {
+      if (!mounted) return;
       final writeoffs =
           bundle == null ? _writeoffs : _mapBundleLogs(bundle.writeoffs);
       final inventories =

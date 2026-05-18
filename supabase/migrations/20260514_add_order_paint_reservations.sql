@@ -244,7 +244,7 @@ begin
       into v_reserved_other
       from order_paint_reservations r
      where r.paint_id = rec.paint_id
-       and r.order_id <> p_order_id;
+       and r.order_id::text <> p_order_id;
 
     v_available := rec.total_qty - v_reserved_other;
     if v_available < rec.qty then
@@ -259,7 +259,7 @@ begin
   v_touched := v_touched || array(
     select distinct paint_id
       from order_paint_reservations
-     where order_id = p_order_id and paint_id is not null
+     where order_id::text = p_order_id and paint_id is not null
   );
 
   for rec in
@@ -299,7 +299,7 @@ begin
   loop
     if rec.qty <= 0 then
       delete from order_paint_reservations
-       where order_id = p_order_id and paint_id = rec.paint_id;
+       where order_id::text = p_order_id and paint_id = rec.paint_id;
     else
       insert into order_paint_reservations(order_id, paint_id, paint_name, reserved_qty, used_qty, released_qty)
       values (p_order_id, rec.paint_id, rec.paint_name, rec.qty, 0, 0)
@@ -314,7 +314,7 @@ begin
   end loop;
 
   delete from order_paint_reservations r
-   where r.order_id = p_order_id
+   where r.order_id::text = p_order_id
      and not exists (
        with requested as (
          select public.safe_paint_id(coalesce(value->>'paint_id', value->>'material_id')) as paint_id,
@@ -370,12 +370,12 @@ begin
 
   select array_agg(distinct paint_id) into v_touched
     from order_paint_reservations
-   where order_id = p_order_id and paint_id is not null;
+   where order_id::text = p_order_id and paint_id is not null;
 
   update order_paint_reservations
      set released_qty = greatest(reserved_qty - used_qty, 0),
          updated_at = now()
-   where order_id = p_order_id;
+   where order_id::text = p_order_id;
 
   perform recalculate_paint_reserved_qty(v_touched);
 end;
@@ -413,7 +413,7 @@ begin
   if coalesce(trim(p_order_id), '') = '' then raise exception 'order_id is required'; end if;
   if p_paint_usages is null then p_paint_usages := '[]'::jsonb; end if;
 
-  perform 1 from tasks where id = p_task_id and order_id = p_order_id for update;
+  perform 1 from tasks where id::text = p_task_id and order_id::text = p_order_id for update;
   if not found then
     raise exception 'Задача % не найдена для заказа %.', p_task_id, p_order_id;
   end if;
@@ -472,7 +472,7 @@ begin
       into v_reserved_other
       from order_paint_reservations r
      where r.paint_id = rec.paint_id
-       and r.order_id <> p_order_id;
+       and r.order_id::text <> p_order_id;
 
     v_available := rec.total_qty - v_reserved_other;
     if v_available < rec.qty then
@@ -498,7 +498,7 @@ begin
            released_qty = greatest(reserved_qty - rec.qty, 0),
            paint_name = coalesce(paint_name, rec.paint_name, rec.stock_name),
            updated_at = now()
-     where order_id = p_order_id and paint_id = rec.paint_id;
+     where order_id::text = p_order_id and paint_id = rec.paint_id;
 
     if not found then
       insert into order_paint_reservations(order_id, paint_id, paint_name, reserved_qty, used_qty, released_qty)
@@ -515,14 +515,14 @@ begin
   for rel in
     select paint_id
       from order_paint_reservations
-     where order_id = p_order_id
+     where order_id::text = p_order_id
        and greatest(reserved_qty - used_qty - released_qty, 0) > 0
      for update
   loop
     update order_paint_reservations
        set released_qty = greatest(reserved_qty - used_qty, 0),
            updated_at = now()
-     where order_id = p_order_id and paint_id = rel.paint_id;
+     where order_id::text = p_order_id and paint_id = rel.paint_id;
     v_touched := array_append(v_touched, rel.paint_id);
   end loop;
 
@@ -530,7 +530,7 @@ begin
 
   select coalesce(comments::jsonb, '[]'::jsonb) into v_comments
     from tasks
-   where id = p_task_id
+   where id::text = p_task_id
    for update;
 
   if p_quantity_done is not null and trim(p_quantity_done) <> '' then
@@ -557,13 +557,13 @@ begin
      set status = 'completed',
          started_at = null,
          comments = v_comments
-   where id = p_task_id;
+   where id::text = p_task_id;
 
   update tasks
      set status = 'completed', started_at = null
-   where order_id = p_order_id
-     and stage_id = p_stage_id
-     and id <> p_task_id
+   where order_id::text = p_order_id
+     and stage_id::text = p_stage_id
+     and id::text <> p_task_id
      and status <> 'completed';
 end;
 $$;
