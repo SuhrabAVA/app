@@ -1,5 +1,7 @@
 // lib/modules/orders/orders_repository.dart (v3.1, paints fallback + events)
 import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
@@ -484,25 +486,117 @@ class OrdersRepository {
         ? currentOrderRows
         : (paintUsages ?? const <Map<String, dynamic>>[]);
 
+    final currentRpcRows = effectiveCurrentRows
+        .map((row) => _paintQueueRpcRow(
+              row,
+              fallbackOrderId: orderId,
+              fallbackTaskId: taskId,
+            ))
+        .toList(growable: false);
+    final pendingRpcRows = pendingRows
+        .map((row) => _paintQueueRpcRow(row))
+        .toList(growable: false);
+
     await _sb.rpc('complete_flex_printing_stage_with_paint_queue', params: {
       'p_task_id': taskId,
       'p_order_id': orderId,
       'p_stage_id': stageId,
       'p_employee_id': employeeId,
-      'p_current_order_rows': effectiveCurrentRows
-          .map((row) => _paintQueueRpcRow(
-                row,
-                fallbackOrderId: orderId,
-                fallbackTaskId: taskId,
-              ))
-          .toList(growable: false),
-      'p_pending_rows': pendingRows
-          .map((row) => _paintQueueRpcRow(row))
-          .toList(growable: false),
+      'p_current_order_rows': currentRpcRows,
+      'p_pending_rows': pendingRpcRows,
       'p_quantity_done': quantityDone,
       'p_comment': comment,
       'p_actor': actor ?? '',
     });
+
+    await _applyPaintReservationUsage(<Map<String, dynamic>>[
+      ...currentRpcRows,
+      ...pendingRpcRows,
+    ]);
+  }
+
+  Future<void> _applyPaintReservationUsage(
+    List<Map<String, dynamic>> writeoffRows,
+  ) async {
+    final rowsToApply = writeoffRows.where((row) {
+      final writeOffNow = row['write_off_now'] == true ||
+          row['write_off_now']?.toString().toLowerCase() == 'true';
+      final qty = _readDouble(row, const ['actual_used_amount', 'used_qty']) ?? 0;
+      final sourceOrderId = _trimmedString(row, const ['source_order_id']);
+      return writeOffNow && qty > 0 && sourceOrderId.isNotEmpty;
+    }).toList(growable: false);
+    if (rowsToApply.isEmpty) return;
+
+    for (final row in rowsToApply) {
+      final sourceOrderId = _trimmedString(row, const ['source_order_id']);
+      final paintId = _trimmedString(row, const ['paint_id']);
+      final paintName = _normalizePaintNameForMatching(
+        _trimmedString(row, const ['paint_name']),
+      );
+      final usedQty =
+          _readDouble(row, const ['actual_used_amount', 'used_qty']) ?? 0;
+      if (sourceOrderId.isEmpty || usedQty <= 0) continue;
+      if (paintId.isEmpty && paintName.isEmpty) continue;
+
+      try {
+        var query = _sb
+            .from('order_paint_reservations')
+            .select('id, paint_id, paint_name, reserved_qty, used_qty, released_qty')
+            .eq('order_id', sourceOrderId);
+        if (paintId.isNotEmpty) {
+          query = query.eq('paint_id', paintId);
+        }
+        final response = await query;
+        final reservations = response is List
+            ? response
+                .whereType<Map>()
+                .map((raw) => Map<String, dynamic>.from(raw as Map))
+                .where((reservation) {
+                  if (paintId.isNotEmpty) return true;
+                  return _normalizePaintNameForMatching(
+                        (reservation['paint_name'] ?? '').toString(),
+                      ) ==
+                      paintName;
+                })
+                .toList(growable: true)
+            : <Map<String, dynamic>>[];
+        if (reservations.isEmpty) continue;
+
+        var remainingToApply = usedQty;
+        for (final reservation in reservations) {
+          if (remainingToApply <= 0) break;
+          final reserved = _readDouble(reservation, const ['reserved_qty']) ?? 0;
+          final alreadyUsed = _readDouble(reservation, const ['used_qty']) ?? 0;
+          final released = _readDouble(reservation, const ['released_qty']) ?? 0;
+          final active = reserved - alreadyUsed - released;
+          if (active <= 0) continue;
+          final applyQty = active < remainingToApply ? active : remainingToApply;
+          final nextUsed = alreadyUsed + applyQty;
+          final reservationId = _trimmedString(reservation, const ['id']);
+          var update = _sb
+              .from('order_paint_reservations')
+              .update({'used_qty': nextUsed});
+          if (reservationId.isNotEmpty) {
+            update = update.eq('id', reservationId);
+          } else {
+            update = update.eq('order_id', sourceOrderId);
+            final reservationPaintId =
+                _trimmedString(reservation, const ['paint_id']);
+            if (reservationPaintId.isNotEmpty) {
+              update = update.eq('paint_id', reservationPaintId);
+            } else {
+              update = update.eq('paint_name', reservation['paint_name']);
+            }
+          }
+          await update;
+          remainingToApply -= applyQty;
+        }
+      } catch (error) {
+        debugPrint(
+          '⚠️ Не удалось обновить резерв краски после списания: $error',
+        );
+      }
+    }
   }
 
   Map<String, dynamic> _paintQueueRpcRow(

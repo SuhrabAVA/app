@@ -456,6 +456,245 @@ class WarehouseLogsRepository {
     return null;
   }
 
+  static final RegExp _uuidLikePattern = RegExp(
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+  );
+
+  static bool _isUuidLike(String value) => _uuidLikePattern.hasMatch(value.trim());
+
+  static String _firstMeaningful(Iterable<dynamic> values) {
+    for (final dynamic value in values) {
+      final String text = (value ?? '').toString().trim();
+      if (text.isEmpty) continue;
+      final String lower = text.toLowerCase();
+      if (lower == 'null' || lower == 'undefined' || lower == 'nan') continue;
+      if (text == '-' || text == '—') continue;
+      if (_isUuidLike(text)) continue;
+      return text;
+    }
+    return '';
+  }
+
+  static String _shortId(String id) {
+    final String trimmed = id.trim();
+    if (trimmed.length <= 8) return trimmed;
+    return trimmed.substring(0, 8);
+  }
+
+  static String? _extractOrderIdFromNote(String? note) {
+    final String source = (note ?? '').trim();
+    if (source.isEmpty) return null;
+    return _uuidLikePattern.firstMatch(source)?.group(0);
+  }
+
+  static Set<String> _extractOrderIdsFromWriteoffRows(
+    List<Map<String, dynamic>> rows,
+    String typeKey,
+  ) {
+    final Set<String> ids = <String>{};
+    for (final Map<String, dynamic> row in rows) {
+      final String orderId = (_pickStr(row, const <String?>[
+                'order_id',
+                'orderId',
+                'source_order_id',
+                'sourceOrderId',
+              ]) ??
+              '')
+          .trim();
+      if (orderId.isNotEmpty) ids.add(orderId);
+      final String? note = _pickStr(row, <String?>[
+        _woMap[typeKey]?['note'],
+        'note',
+        'reason',
+        'comment',
+      ]);
+      final String? noteOrderId = _extractOrderIdFromNote(note);
+      if (noteOrderId != null && noteOrderId.trim().isNotEmpty) {
+        ids.add(noteOrderId.trim());
+      }
+    }
+    return ids;
+  }
+
+  static Set<String> _extractEmployeeIdsFromWriteoffRows(
+    List<Map<String, dynamic>> rows,
+  ) {
+    final Set<String> ids = <String>{};
+    for (final Map<String, dynamic> row in rows) {
+      for (final String? key in const <String?>[
+        'employee_id',
+        'employeeId',
+        'worker_id',
+        'user_id',
+        'userId',
+        'by_id',
+        'byId',
+      ]) {
+        final String value = (_pickStr(row, <String?>[key]) ?? '').trim();
+        if (value.isNotEmpty) ids.add(value);
+      }
+      final String displayed = (_pickStr(row, const <String?>[
+                'by_name',
+                'byName',
+                'by',
+                'user_name',
+                'employee_name',
+                'employee',
+                'operator',
+                'who',
+              ]) ??
+              '')
+          .trim();
+      if (displayed.isNotEmpty && _isUuidLike(displayed)) ids.add(displayed);
+    }
+    return ids;
+  }
+
+  static Future<Map<String, String>> _loadOrderLabelsByIds(
+    Set<String> orderIds,
+  ) async {
+    if (orderIds.isEmpty) return const <String, String>{};
+    final List<Map<String, dynamic>> rows = await _selectByIdsAny(
+      tables: const <String>['orders'],
+      fk: 'id',
+      ids: orderIds.toList(growable: false),
+      selectFields:
+          'id, assignment_id, title, name, order_name, product_name, customer, new_form_no, form_code, data, product',
+      fallbackSelectFields: '*',
+    );
+    final Map<String, String> labels = <String, String>{};
+    for (final Map<String, dynamic> row in rows) {
+      final String orderId = (row['id'] ?? '').toString().trim();
+      if (orderId.isEmpty) continue;
+      final dynamic dataRaw = row['data'];
+      final Map<String, dynamic> data = dataRaw is Map
+          ? Map<String, dynamic>.from(dataRaw as Map)
+          : <String, dynamic>{};
+      final dynamic productRaw = row['product'];
+      final Map<String, dynamic> product = productRaw is Map
+          ? Map<String, dynamic>.from(productRaw as Map)
+          : <String, dynamic>{};
+      final dynamic dataProductRaw = data['product'];
+      final Map<String, dynamic> dataProduct = dataProductRaw is Map
+          ? Map<String, dynamic>.from(dataProductRaw as Map)
+          : <String, dynamic>{};
+
+      final String formNo = _firstMeaningful(<dynamic>[
+        row['new_form_no'],
+        row['form_code'],
+        data['new_form_no'],
+        data['form_code'],
+      ]);
+      final String title = _firstMeaningful(<dynamic>[
+        row['assignment_id'],
+        row['title'],
+        row['order_name'],
+        row['product_name'],
+        row['customer'],
+        data['assignment_id'],
+        data['title'],
+        data['order_name'],
+        data['product_name'],
+        data['customer'],
+        product['name'],
+        product['title'],
+        dataProduct['name'],
+        dataProduct['title'],
+        row['name'],
+        data['name'],
+      ]);
+      if (formNo.isNotEmpty && title.isNotEmpty) {
+        labels[orderId] = '№$formNo / $title';
+      } else if (formNo.isNotEmpty) {
+        labels[orderId] = '№$formNo';
+      } else if (title.isNotEmpty) {
+        labels[orderId] = title;
+      }
+    }
+    return labels;
+  }
+
+  static Future<Map<String, String>> _loadEmployeeLabelsByIds(
+    Set<String> employeeIds,
+  ) async {
+    if (employeeIds.isEmpty) return const <String, String>{};
+    final List<Map<String, dynamic>> rows = await _selectByIdsAny(
+      tables: const <String>['employees_view', 'employees'],
+      fk: 'id',
+      ids: employeeIds.toList(growable: false),
+      selectFields:
+          'id, last_name, first_name, patronymic, full_name, display_name, name, login',
+      fallbackSelectFields: '*',
+    );
+    final Map<String, String> labels = <String, String>{};
+    for (final Map<String, dynamic> row in rows) {
+      final String employeeId = (row['id'] ?? '').toString().trim();
+      if (employeeId.isEmpty) continue;
+      final String fullName = _firstMeaningful(<dynamic>[
+        row['full_name'],
+        row['display_name'],
+        row['name'],
+      ]);
+      final String composed = <String>[
+        (row['last_name'] ?? row['lastName'] ?? '').toString().trim(),
+        (row['first_name'] ?? row['firstName'] ?? '').toString().trim(),
+        (row['patronymic'] ?? '').toString().trim(),
+      ].where((String part) => part.isNotEmpty).join(' ');
+      final String login = _firstMeaningful(<dynamic>[row['login']]);
+      final String label = _firstMeaningful(<dynamic>[fullName, composed, login]);
+      if (label.isNotEmpty) labels[employeeId] = label;
+    }
+    return labels;
+  }
+
+  static String _humanizeWriteoffNote(
+    String? rawNote,
+    Map<String, String> orderLabels,
+  ) {
+    final String note = (rawNote ?? '').trim();
+    if (note.isEmpty) return '';
+    final String? orderId = _extractOrderIdFromNote(note);
+    if (orderId == null || orderId.isEmpty) return note;
+    final String? label = orderLabels[orderId];
+    if (label == null || label.trim().isEmpty) return note;
+    return note.replaceFirst(orderId, label.trim());
+  }
+
+  static String? _resolveWriteoffEmployeeName(
+    Map<String, dynamic> row,
+    Map<String, String> employeeLabels,
+  ) {
+    final String explicitId = (_pickStr(row, const <String?>[
+              'employee_id',
+              'employeeId',
+              'worker_id',
+              'user_id',
+              'userId',
+              'by_id',
+              'byId',
+            ]) ??
+            '')
+        .trim();
+    if (explicitId.isNotEmpty && employeeLabels[explicitId]?.isNotEmpty == true) {
+      return employeeLabels[explicitId];
+    }
+    final String raw = (_pickStr(row, const <String?>[
+              'by_name',
+              'byName',
+              'by',
+              'user_name',
+              'employee_name',
+              'employee',
+              'operator',
+              'who',
+            ]) ??
+            '')
+        .trim();
+    if (raw.isEmpty) return null;
+    if (_isUuidLike(raw)) return employeeLabels[raw] ?? _shortId(raw);
+    return raw;
+  }
+
   static String _resolveDescription({
     Map<String, dynamic>? baseRow,
     required Map<String, dynamic> raw,
@@ -679,6 +918,13 @@ class WarehouseLogsRepository {
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
+    final Map<String, String> orderLabels = await _loadOrderLabelsByIds(
+      _extractOrderIdsFromWriteoffRows(rawLogs, typeKey),
+    );
+    final Map<String, String> employeeLabels = await _loadEmployeeLabelsByIds(
+      _extractEmployeeIdsFromWriteoffRows(rawLogs),
+    );
+
     return rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
       final Map<String, dynamic>? baseRow =
@@ -691,8 +937,34 @@ class WarehouseLogsRepository {
             'count',
           ]) ??
           0;
+      final Map<String, dynamic> displayRaw = Map<String, dynamic>.from(e);
+      final String? rawNote = _pickStr(displayRaw, <String?>[
+        _woMap[typeKey]?['note'],
+        'note',
+        'reason',
+        'comment',
+      ]);
+      final String noteColumn = _woMap[typeKey]?['note'] ?? 'reason';
+      final String explicitOrderId = (_pickStr(displayRaw, const <String?>[
+                'order_id',
+                'orderId',
+                'source_order_id',
+                'sourceOrderId',
+              ]) ??
+              '')
+          .trim();
+      final String humanizedNote = _humanizeWriteoffNote(rawNote, orderLabels);
+      displayRaw[noteColumn] = humanizedNote.isNotEmpty
+          ? humanizedNote
+          : (orderLabels[explicitOrderId]?.isNotEmpty == true
+              ? 'Заказ ${orderLabels[explicitOrderId]}'
+              : humanizedNote);
+      displayRaw['by_name'] = _resolveWriteoffEmployeeName(
+        displayRaw,
+        employeeLabels,
+      );
       return _mapToEntry(
-        raw: e,
+        raw: displayRaw,
         baseRow: baseRow,
         typeKey: typeKey,
         action: WarehouseLogAction.writeoff,
@@ -749,6 +1021,13 @@ class WarehouseLogsRepository {
         <String, Map<String, dynamic>>{
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
+
+    final Map<String, String> orderLabels = await _loadOrderLabelsByIds(
+      _extractOrderIdsFromWriteoffRows(rawLogs, typeKey),
+    );
+    final Map<String, String> employeeLabels = await _loadEmployeeLabelsByIds(
+      _extractEmployeeIdsFromWriteoffRows(rawLogs),
+    );
 
     return rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
@@ -819,6 +1098,13 @@ class WarehouseLogsRepository {
         <String, Map<String, dynamic>>{
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
+
+    final Map<String, String> orderLabels = await _loadOrderLabelsByIds(
+      _extractOrderIdsFromWriteoffRows(rawLogs, typeKey),
+    );
+    final Map<String, String> employeeLabels = await _loadEmployeeLabelsByIds(
+      _extractEmployeeIdsFromWriteoffRows(rawLogs),
+    );
 
     return rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
