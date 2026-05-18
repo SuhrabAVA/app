@@ -485,7 +485,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
             note: entry.note,
             format: entry.format,
             grammage: entry.grammage,
-            byName: entry.byName,
+            byName: _displayEmployeeName(entry.byName),
             itemId: entry.itemId,
             sourceTable: entry.sourceTable,
             action: entry.action,
@@ -897,6 +897,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     return note.replaceFirst(orderId, label.trim());
   }
 
+  String _displayEmployeeName(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return '';
+    final match = _uuidLikePattern.firstMatch(text);
+    if (match != null && match.group(0) == text && text.length > 8) {
+      return text.substring(0, 8);
+    }
+    return text;
+  }
+
   Future<List<Map<String, dynamic>>> _selectByIdsAny({
     required List<String> tables,
     required String fk,
@@ -1019,7 +1029,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         note: note,
         format: fmt,
         grammage: gram,
-        byName: by,
+        byName: _displayEmployeeName(by),
         itemId: baseId,
         action: WarehouseLogAction.writeoff,
         canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
@@ -1117,7 +1127,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         note: note,
         format: fmt,
         grammage: gram,
-        byName: by,
+        byName: _displayEmployeeName(by),
         itemId: baseId,
         action: WarehouseLogAction.inventory,
         canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
@@ -1212,7 +1222,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         note: note,
         format: fmt,
         grammage: gram,
-        byName: by,
+        byName: _displayEmployeeName(by),
         itemId: baseId,
         action: WarehouseLogAction.arrival,
         canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
