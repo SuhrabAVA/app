@@ -26,6 +26,7 @@ class ProductionQueueProvider with ChangeNotifier {
   Timer? _pollingTimer;
 
   bool _loaded = false;
+  bool _isSyncingOrders = false;
 
   bool get isReady => _loaded;
 
@@ -148,6 +149,47 @@ class ProductionQueueProvider with ChangeNotifier {
         .toList();
   }
 
+  bool _stringListsEqual(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (_normalizeOrderId(left[i]) != _normalizeOrderId(right[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _stringSetsEqual(Set<String> left, Set<String> right) {
+    if (left.length != right.length) return false;
+    for (final value in left) {
+      if (!right.contains(_normalizeOrderId(value))) return false;
+    }
+    return true;
+  }
+
+  bool _remoteStateMatches(
+    Map<String, List<String>> nextSequences,
+    Map<String, Set<String>> nextHidden,
+  ) {
+    if (_orderSequences.length != nextSequences.length ||
+        _hiddenOrders.length != nextHidden.length) {
+      return false;
+    }
+    for (final entry in nextSequences.entries) {
+      final current = _orderSequences[entry.key];
+      if (current == null || !_stringListsEqual(current, entry.value)) {
+        return false;
+      }
+    }
+    for (final entry in nextHidden.entries) {
+      final current = _hiddenOrders[entry.key];
+      if (current == null || !_stringSetsEqual(current, entry.value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   Future<void> _loadRemote() async {
     try {
       await _ensureAuthed();
@@ -163,11 +205,16 @@ class ProductionQueueProvider with ChangeNotifier {
         final map = Map<String, dynamic>.from(row as Map);
         final groupId = _normalizeGroup(map['group_id']?.toString() ?? '');
         nextSequences[groupId] = _decodeStringList(map['order_sequence']);
-        nextHidden[groupId] = _decodeStringList(map['hidden_order_ids']).toSet();
+        nextHidden[groupId] =
+            _decodeStringList(map['hidden_order_ids']).toSet();
       }
 
       if (nextSequences.isEmpty && nextHidden.isEmpty) {
         await _pushLocalStateToRemote();
+        return;
+      }
+
+      if (_remoteStateMatches(nextSequences, nextHidden)) {
         return;
       }
 
@@ -261,95 +308,96 @@ class ProductionQueueProvider with ChangeNotifier {
 
   /// Добавляем недостающие id и удаляем отсутствующие в [ids].
   void syncOrders(Iterable<String> ids, {String groupId = _defaultGroup}) {
-    unawaited(_bootstrapRemoteSync());
-    final normalizedIds = <String>[];
-    final seen = <String>{};
-    for (final raw in ids) {
-      final id = _normalizeOrderId(raw);
-      if (id.isEmpty || !seen.add(id)) continue;
-      normalizedIds.add(id);
-    }
-    final set = normalizedIds.toSet();
-    final sequence = _sequenceForGroup(groupId);
-    final hidden = _hiddenForGroup(groupId);
-    bool changed = false;
+    if (_isSyncingOrders) return;
+    _isSyncingOrders = true;
+    try {
+      unawaited(_bootstrapRemoteSync());
+      final normalizedIds = <String>[];
+      final seen = <String>{};
+      for (final raw in ids) {
+        final id = _normalizeOrderId(raw);
+        if (id.isEmpty || !seen.add(id)) continue;
+        normalizedIds.add(id);
+      }
+      final sequence = _sequenceForGroup(groupId);
+      bool changed = false;
 
-    // Keep stored sequence canonical to avoid duplicates caused by whitespace
-    // variants from different data sources.
-    final canonicalSequence = <String>[];
-    final canonicalSeen = <String>{};
-    for (final raw in sequence) {
-      final id = _normalizeOrderId(raw);
-      if (id.isEmpty || !canonicalSeen.add(id)) {
+      // Keep stored sequence canonical to avoid duplicates caused by whitespace
+      // variants from different data sources.
+      final canonicalSequence = <String>[];
+      final canonicalSeen = <String>{};
+      for (final raw in sequence) {
+        final id = _normalizeOrderId(raw);
+        if (id.isEmpty || !canonicalSeen.add(id)) {
+          changed = true;
+          continue;
+        }
+        canonicalSequence.add(id);
+      }
+      if (!_stringListsEqual(canonicalSequence, sequence)) {
+        sequence
+          ..clear()
+          ..addAll(canonicalSequence);
         changed = true;
-        continue;
       }
-      canonicalSequence.add(id);
-    }
-    if (canonicalSequence.length != sequence.length) {
-      sequence
-        ..clear()
-        ..addAll(canonicalSequence);
-    }
 
-    // Always append newly discovered orders to the tail of the queue.
-    // This guarantees that a freshly created order never jumps to the top,
-    // even if upstream lists are sorted by "newest first".
-    final missingIds = <String>[];
-    for (final id in normalizedIds) {
-      if (!sequence.contains(id)) {
-        missingIds.add(id);
+      // Always append newly discovered orders to the tail of the queue.
+      // This guarantees that a freshly created order never jumps to the top,
+      // even if upstream lists are sorted by "newest first".
+      final missingIds = <String>[];
+      for (final id in normalizedIds) {
+        if (!sequence.contains(id)) {
+          missingIds.add(id);
+        }
       }
-    }
 
-    // Не удаляем id, которые временно отсутствуют в текущем наборе.
-    // Иначе очередь "схлопывается" на каждом фильтре/переключении вкладок,
-    // а затем id добавляются повторно и визуально скачут по списку.
+      // Не удаляем id, которые временно отсутствуют в текущем наборе.
+      // Иначе очередь "схлопывается" на каждом фильтре/переключении вкладок,
+      // а затем id добавляются повторно и визуально скачут по списку.
 
-    if (missingIds.isNotEmpty) {
-      sequence.addAll(missingIds);
-      changed = true;
-    }
+      if (missingIds.isNotEmpty) {
+        sequence.addAll(missingIds);
+        changed = true;
+      }
 
-    if (changed) {
-      _persistEverywhere(groupId: groupId);
-      notifyListeners();
+      if (changed) {
+        _persistEverywhere(groupId: groupId);
+        notifyListeners();
+      }
+    } finally {
+      _isSyncingOrders = false;
     }
   }
 
-  /// Возвращает приоритет (индекс) заказа. Новые id получают самый низкий
-  /// приоритет (в конец списка).
+  /// Возвращает приоритет (индекс) заказа без изменения очереди.
+  /// Новые id считаются самым низким приоритетом до следующего [syncOrders].
   int priorityOf(String orderId, {String groupId = _defaultGroup}) {
     final normalizedOrderId = _normalizeOrderId(orderId);
     if (normalizedOrderId.isEmpty) {
       return 1 << 30;
     }
-    final sequence = _sequenceForGroup(groupId);
-    final idx = sequence.indexOf(normalizedOrderId);
+    final sequence = _orderSequences[_normalizeGroup(groupId)];
+    final idx = sequence?.indexOf(normalizedOrderId) ?? -1;
     if (idx != -1) return idx;
-    sequence.add(normalizedOrderId);
-    return sequence.length - 1;
+    return 1 << 30;
   }
 
-  /// Сортирует заказы по сохранённой очереди.
-  List<T> sortByPriority<T>(List<T> items, String Function(T) idSelector,
-      {String groupId = _defaultGroup}) {
-    unawaited(_bootstrapRemoteSync());
-    final copy = [...items];
-    if (copy.length < 2) return copy;
-
-    final normalizedIds = <String>[];
-    final seen = <String>{};
-    for (final item in copy) {
-      final id = _normalizeOrderId(idSelector(item));
-      if (id.isEmpty || !seen.add(id)) continue;
-      normalizedIds.add(id);
+  /// Возвращает новую коллекцию, отсортированную по сохранённой очереди.
+  /// Метод безопасен для вызова во время build: он не синхронизирует очередь,
+  /// не меняет внутреннее состояние и не вызывает notifyListeners().
+  List<T> getSortedByPriority<T>(
+    List<T> items,
+    String Function(T) idSelector, {
+    String groupId = _defaultGroup,
+  }) {
+    final indexed = <({T item, int index})>[];
+    for (var i = 0; i < items.length; i++) {
+      indexed.add((item: items[i], index: i));
     }
-    if (normalizedIds.isNotEmpty) {
-      syncOrders(normalizedIds, groupId: groupId);
-    }
+    if (indexed.length < 2) return indexed.map((entry) => entry.item).toList();
 
-    final sequence = _sequenceForGroup(groupId);
+    final sequence =
+        _orderSequences[_normalizeGroup(groupId)] ?? const <String>[];
     final indexById = <String, int>{};
     for (var i = 0; i < sequence.length; i++) {
       final id = _normalizeOrderId(sequence[i]);
@@ -357,18 +405,27 @@ class ProductionQueueProvider with ChangeNotifier {
       indexById[id] = i;
     }
 
-    copy.sort((a, b) {
-      final aId = _normalizeOrderId(idSelector(a));
-      final bId = _normalizeOrderId(idSelector(b));
+    indexed.sort((a, b) {
+      final aId = _normalizeOrderId(idSelector(a.item));
+      final bId = _normalizeOrderId(idSelector(b.item));
       final aPriority = indexById[aId] ?? (1 << 30);
       final bPriority = indexById[bId] ?? (1 << 30);
-      return aPriority.compareTo(bPriority);
+      final priorityComparison = aPriority.compareTo(bPriority);
+      if (priorityComparison != 0) return priorityComparison;
+      return a.index.compareTo(b.index);
     });
-    return copy;
+    return indexed.map((entry) => entry.item).toList();
+  }
+
+  /// Сортирует заказы по сохранённой очереди без побочных эффектов.
+  List<T> sortByPriority<T>(List<T> items, String Function(T) idSelector,
+      {String groupId = _defaultGroup}) {
+    return getSortedByPriority(items, idSelector, groupId: groupId);
   }
 
   /// Переставляет видимые заказы, сохраняя положение остальных.
-  void applyVisibleReorder(List<String> orderedIds, {String groupId = _defaultGroup}) {
+  void applyVisibleReorder(List<String> orderedIds,
+      {String groupId = _defaultGroup}) {
     unawaited(_bootstrapRemoteSync());
     if (orderedIds.isEmpty) return;
     final normalizedOrderedIds = <String>[];
@@ -399,8 +456,11 @@ class ProductionQueueProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  bool isHidden(String orderId, {String groupId = _defaultGroup}) =>
-      _hiddenForGroup(groupId).contains(_normalizeOrderId(orderId));
+  bool isHidden(String orderId, {String groupId = _defaultGroup}) {
+    final hidden = _hiddenOrders[_normalizeGroup(groupId)];
+    if (hidden == null) return false;
+    return hidden.contains(_normalizeOrderId(orderId));
+  }
 
   void hideOrder(String orderId, {String groupId = _defaultGroup}) {
     unawaited(_bootstrapRemoteSync());

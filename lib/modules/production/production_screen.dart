@@ -1009,7 +1009,7 @@ class _ProductionScreenState extends State<ProductionScreen>
   }
 }
 
-class _ProductionTab extends StatelessWidget {
+class _ProductionTab extends StatefulWidget {
   const _ProductionTab({
     required this.tab,
     required this.allTasks,
@@ -1042,6 +1042,74 @@ class _ProductionTab extends StatelessWidget {
   final String searchQuery;
   final _ProductionSort sort;
   final String? productTypeFilter;
+
+  @override
+  State<_ProductionTab> createState() => _ProductionTabState();
+}
+
+class _ProductionTabState extends State<_ProductionTab> {
+  _ProductionTabInfo get tab => widget.tab;
+  List<TaskModel> get allTasks => widget.allTasks;
+  TaskProvider get taskProvider => widget.taskProvider;
+  PersonnelProvider get personnelProvider => widget.personnelProvider;
+  List<OrderModel> get orders => widget.orders;
+  ProductionQueueProvider get queue => widget.queue;
+  TemplateProvider get templateProvider => widget.templateProvider;
+  String Function(DateTime) get dateFormatter => widget.dateFormatter;
+  String Function(OrderModel) get dimensionFormatter =>
+      widget.dimensionFormatter;
+  Widget Function(
+    Map<String, _StageGroupInfo>,
+    Map<String, List<TaskModel>>,
+  ) get stageBuilder => widget.stageBuilder;
+  String get searchQuery => widget.searchQuery;
+  _ProductionSort get sort => widget.sort;
+  String? get productTypeFilter => widget.productTypeFilter;
+
+  String? _lastQueueSyncGroupId;
+  String? _lastQueueSyncIdsSignature;
+  String? _lastStageSequenceSignature;
+
+  String _idsSignature(Iterable<String> ids) {
+    final normalized = <String>[];
+    final seen = <String>{};
+    for (final raw in ids) {
+      final id = raw.trim();
+      if (id.isEmpty || !seen.add(id)) continue;
+      normalized.add(id);
+    }
+    normalized.sort();
+    return normalized.join('|');
+  }
+
+  void _scheduleStageSequenceEnsureIfNeeded(Iterable<String> ids) {
+    final signature = _idsSignature(ids);
+    if (_lastStageSequenceSignature == signature) return;
+    _lastStageSequenceSignature = signature;
+    final orderIds = ids.toList(growable: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      taskProvider.ensureStageSequencesForOrders(orderIds);
+    });
+  }
+
+  void _scheduleQueueSyncIfNeeded({
+    required String groupId,
+    required Iterable<String> ids,
+  }) {
+    final signature = _idsSignature(ids);
+    if (_lastQueueSyncGroupId == groupId &&
+        _lastQueueSyncIdsSignature == signature) {
+      return;
+    }
+    _lastQueueSyncGroupId = groupId;
+    _lastQueueSyncIdsSignature = signature;
+    final orderIds = ids.toList(growable: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      queue.syncOrders(orderIds, groupId: groupId);
+    });
+  }
 
   _OrderGroupingData _groupingForOrder(
     OrderModel order,
@@ -1141,11 +1209,7 @@ class _ProductionTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      taskProvider.ensureStageSequencesForOrders(
-        orders.map((order) => order.id),
-      );
-    });
+    _scheduleStageSequenceEnsureIfNeeded(orders.map((order) => order.id));
 
     final tasksByOrder = <String, List<TaskModel>>{};
     for (final task in allTasks) {
@@ -1181,13 +1245,18 @@ class _ProductionTab extends StatelessWidget {
       }).toList();
 
       if (sort == _ProductionSort.queue && !_hasActiveFilters) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          queue.syncOrders(visible.map((o) => o.id), groupId: tab.id);
-        });
+        _scheduleQueueSyncIfNeeded(
+          groupId: tab.id,
+          ids: visible.map((o) => o.id),
+        );
       }
 
       if (sort == _ProductionSort.queue) {
-        ordered = queue.sortByPriority(visible, (o) => o.id, groupId: tab.id);
+        ordered = queue.getSortedByPriority(
+          visible,
+          (o) => o.id,
+          groupId: tab.id,
+        );
       } else {
         ordered = _sortOrders(visible);
       }
@@ -1203,7 +1272,10 @@ class _ProductionTab extends StatelessWidget {
     }
 
     final canReorder =
-        !tab.isCompleted && !tab.isAll && sort == _ProductionSort.queue && !_hasActiveFilters;
+        !tab.isCompleted &&
+        !tab.isAll &&
+        sort == _ProductionSort.queue &&
+        !_hasActiveFilters;
 
     final Widget listView = tab.isCompleted
         ? ListView.builder(
