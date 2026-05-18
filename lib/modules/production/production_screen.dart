@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -1383,18 +1385,29 @@ class _ProductionTabState extends State<_ProductionTab> {
                   final updated = List.of(ordered);
                   final item = updated.removeAt(oldIndex);
                   updated.insert(newIndex, item);
-                  queue.applyVisibleTaskReorder(
-                    workplaceId: tab.id,
-                    orderedKeys: updated
-                        .map((order) => WorkplaceQueueItemKey.fromEntry(
-                              _queueEntryForOrder(
-                                order,
-                                groupingByOrder[order.id]!,
-                                tab.id,
-                              ),
-                            ))
-                        .toList(growable: false),
-                  );
+                  unawaited(() async {
+                    try {
+                      await queue.applyVisibleTaskReorder(
+                        workplaceId: tab.id,
+                        orderedKeys: updated
+                            .map((order) => WorkplaceQueueItemKey.fromEntry(
+                                  _queueEntryForOrder(
+                                    order,
+                                    groupingByOrder[order.id]!,
+                                    tab.id,
+                                  ),
+                                ))
+                            .toList(growable: false),
+                      );
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Не удалось сохранить очередь: $e'),
+                        ),
+                      );
+                    }
+                  }());
                 },
                 itemBuilder: (context, index) {
                   final order = ordered[index];

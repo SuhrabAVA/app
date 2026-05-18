@@ -56,7 +56,7 @@ begin
 
   select * into v_task
     from tasks
-   where id = p_task_id and order_id = p_order_id and stage_id = p_stage_id
+   where id::text = p_task_id and order_id::text = p_order_id and stage_id::text = p_stage_id
    for update;
   if not found then
     raise exception 'Задача % не найдена для заказа %.', p_task_id, p_order_id;
@@ -233,7 +233,7 @@ begin
       into v_reserved_other
       from order_paint_reservations r
      where r.paint_id = v_paint_id
-       and r.order_id <> v_source_order_id;
+       and r.order_id::text <> v_source_order_id;
     v_available := v_stock_qty - v_reserved_other;
     if v_available < v_amount then
       raise exception 'Недостаточно краски: %. Доступно: %, требуется: %',
@@ -255,7 +255,7 @@ begin
            released_qty = greatest(reserved_qty - v_amount, 0),
            paint_name = coalesce(paint_name, v_paint_name, v_stock_name),
            updated_at = now()
-     where order_id = v_source_order_id and paint_id = v_paint_id;
+     where order_id::text = v_source_order_id and paint_id = v_paint_id;
     if not found then
       insert into order_paint_reservations(order_id, paint_id, paint_name, reserved_qty, used_qty, released_qty)
       values (v_source_order_id, v_paint_id, coalesce(v_paint_name, v_stock_name), v_amount, v_amount, 0)
@@ -341,7 +341,7 @@ begin
       into v_reserved_other
       from order_paint_reservations r
      where r.paint_id = v_paint_id
-       and r.order_id <> v_source_order_id;
+       and r.order_id::text <> v_source_order_id;
     v_available := v_stock_qty - v_reserved_other;
     if v_available < v_amount then
       raise exception 'Недостаточно краски: %. Доступно: %, требуется: %',
@@ -363,7 +363,7 @@ begin
            released_qty = greatest(reserved_qty - v_amount, 0),
            paint_name = coalesce(paint_name, v_paint_name, v_stock_name),
            updated_at = now()
-     where order_id = v_source_order_id and paint_id = v_paint_id;
+     where order_id::text = v_source_order_id and paint_id = v_paint_id;
     if not found then
       insert into order_paint_reservations(order_id, paint_id, paint_name, reserved_qty, used_qty, released_qty)
       values (v_source_order_id, v_paint_id, coalesce(v_paint_name, v_stock_name), v_amount, v_amount, 0)
@@ -405,14 +405,14 @@ begin
   for rec in
     select paint_id
       from order_paint_reservations
-     where order_id = p_order_id
+     where order_id::text = p_order_id
        and greatest(reserved_qty - used_qty - released_qty, 0) > 0
      for update
   loop
     update order_paint_reservations
        set released_qty = greatest(reserved_qty - used_qty, 0),
            updated_at = now()
-     where order_id = p_order_id and paint_id = rec.paint_id;
+     where order_id::text = p_order_id and paint_id = rec.paint_id;
     v_touched := array_append(v_touched, rec.paint_id);
   end loop;
 
@@ -528,7 +528,7 @@ begin
      set status = 'completed',
          started_at = null,
          comments = v_comments
-   where id = p_task_id;
+   where id::text = p_task_id;
 
   perform public.advance_order_after_task_completion(
     p_order_id,

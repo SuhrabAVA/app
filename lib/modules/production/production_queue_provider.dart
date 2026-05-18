@@ -867,17 +867,65 @@ class ProductionQueueProvider with ChangeNotifier {
     final byKey = {
       for (final position in current) position.queueKey: position,
     };
-    for (var i = 0; i < nextKeys.length; i++) {
-      final position = byKey[nextKeys[i]];
-      if (position == null) continue;
-      final nextPosition = i + 1;
-      if (position.queuePosition == nextPosition) continue;
-      await _sb.from(_positionsTable).update({
-        'queue_position': nextPosition,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', position.id);
+
+    // Apply the new order in memory before the network roundtrip. Without this
+    // optimistic update the next build can re-render the old queue and make a
+    // successful drag look like it was ignored until realtime/polling catches up.
+    _applyLocalVisibleReorder(
+      workplaceId: normalized,
+      nextKeys: nextKeys,
+      byKey: byKey,
+    );
+
+    try {
+      for (var i = 0; i < nextKeys.length; i++) {
+        final position = byKey[nextKeys[i]];
+        if (position == null) continue;
+        final nextPosition = i + 1;
+        if (position.queuePosition == nextPosition) continue;
+        await _sb.from(_positionsTable).update({
+          'queue_position': nextPosition,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        }).eq('id', position.id);
+      }
+    } catch (_) {
+      await loadPositionsForWorkplace(normalized);
+      rethrow;
     }
     await loadPositionsForWorkplace(normalized);
+  }
+
+  void _applyLocalVisibleReorder({
+    required String workplaceId,
+    required List<String> nextKeys,
+    required Map<String, WorkplaceQueuePosition> byKey,
+  }) {
+    final currentMap = _positionsByWorkplace[workplaceId];
+    if (currentMap == null || currentMap.isEmpty) return;
+    var changed = false;
+    final updated = Map<String, WorkplaceQueuePosition>.from(currentMap);
+    for (var i = 0; i < nextKeys.length; i++) {
+      final key = nextKeys[i];
+      final position = byKey[key];
+      if (position == null) continue;
+      final nextPosition = i + 1;
+      if (position.queuePosition == nextPosition && position.hasQueuePosition) {
+        continue;
+      }
+      updated[key] = WorkplaceQueuePosition(
+        id: position.id,
+        workplaceId: position.workplaceId,
+        taskId: position.taskId,
+        orderId: position.orderId,
+        stageId: position.stageId,
+        stageGroupKey: position.stageGroupKey,
+        queuePosition: nextPosition,
+      );
+      changed = true;
+    }
+    if (!changed) return;
+    _positionsByWorkplace[workplaceId] = updated;
+    notifyListeners();
   }
 
   /// Legacy/fallback order sync. Manual workplace ordering must use
