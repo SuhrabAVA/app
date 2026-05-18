@@ -517,16 +517,21 @@ class OrdersRepository {
       'task_id',
       'taskId',
     ], fallback: fallbackTaskId);
-    final paintId = _trimmedString(row, const [
+    final rawPaintId = _trimmedString(row, const [
       'paint_id',
       'paintId',
       'material_id',
     ]);
-    final paintName = _trimmedString(row, const [
+    final isValidPaintUuid = _isUuidString(rawPaintId);
+    final paintId = isValidPaintUuid ? rawPaintId : '';
+    final explicitPaintName = _trimmedString(row, const [
       'paint_name',
       'paintName',
       'name',
     ]);
+    final paintName = explicitPaintName.isNotEmpty
+        ? explicitPaintName
+        : (isValidPaintUuid ? '' : rawPaintId);
     final unit = _trimmedString(row, const ['unit'], fallback: 'г');
     final actualUsedAmount = _readDouble(row, const [
       'actual_used_amount',
@@ -562,6 +567,12 @@ class OrdersRepository {
       'unit': unit.isEmpty ? 'г' : unit,
       'write_off_now': writeOffNow,
     });
+  }
+
+  bool _isUuidString(String value) {
+    return RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+    ).hasMatch(value.trim());
   }
 
   String _trimmedString(
