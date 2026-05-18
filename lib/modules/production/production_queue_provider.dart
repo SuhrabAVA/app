@@ -1,5 +1,5 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,21 +7,110 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/app_auth.dart';
 
-/// Отвечает за ручную очередь производственных заказов и скрытые записи.
+class WorkplaceQueuePosition {
+  final String id;
+  final String workplaceId;
+  final String? taskId;
+  final String orderId;
+  final String stageId;
+  final String? stageGroupKey;
+  final int queuePosition;
+
+  const WorkplaceQueuePosition({
+    required this.id,
+    required this.workplaceId,
+    required this.taskId,
+    required this.orderId,
+    required this.stageId,
+    required this.stageGroupKey,
+    required this.queuePosition,
+  });
+
+  String get queueKey => ProductionQueueProvider.queueKeyFor(
+        workplaceId: workplaceId,
+        taskId: taskId,
+        orderId: orderId,
+        stageId: stageId,
+        stageGroupKey: stageGroupKey,
+      );
+
+  static WorkplaceQueuePosition fromMap(Map<String, dynamic> map) {
+    return WorkplaceQueuePosition(
+      id: (map['id'] ?? '').toString(),
+      workplaceId: (map['workplace_id'] ?? '').toString(),
+      taskId: _nullableTrimmed(map['task_id']),
+      orderId: (map['order_id'] ?? '').toString(),
+      stageId: (map['stage_id'] ?? '').toString(),
+      stageGroupKey: _nullableTrimmed(map['stage_group_key']),
+      queuePosition: _intFrom(map['queue_position']) ?? (1 << 30),
+    );
+  }
+
+  static String? _nullableTrimmed(dynamic value) {
+    final trimmed = value?.toString().trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  static int? _intFrom(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+}
+
+class WorkplaceQueueEntry {
+  final String workplaceId;
+  final String? taskId;
+  final String orderId;
+  final String stageId;
+  final String? stageGroupKey;
+
+  const WorkplaceQueueEntry({
+    required this.workplaceId,
+    required this.taskId,
+    required this.orderId,
+    required this.stageId,
+    this.stageGroupKey,
+  });
+
+  String get queueKey => ProductionQueueProvider.queueKeyFor(
+        workplaceId: workplaceId,
+        taskId: taskId,
+        orderId: orderId,
+        stageId: stageId,
+        stageGroupKey: stageGroupKey,
+      );
+
+  Map<String, dynamic> toInsertMap(int queuePosition) => {
+        'workplace_id': workplaceId.trim(),
+        if (taskId?.trim().isNotEmpty == true) 'task_id': taskId!.trim(),
+        'order_id': orderId.trim(),
+        'stage_id': stageId.trim(),
+        if (stageGroupKey?.trim().isNotEmpty == true)
+          'stage_group_key': stageGroupKey!.trim(),
+        'queue_position': queuePosition,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      };
+}
+
+/// Отвечает за ручную очередь производственных заданий рабочих мест и скрытые записи.
 ///
-/// Очередь хранится локально (SharedPreferences), чтобы соблюсти порядок
-/// отображения и сортировки задач между сессиями. Чем ниже индекс — тем выше
-/// приоритет заказа.
+/// Ручная очередь рабочих мест хранится в Supabase в
+/// `public.workplace_queue_positions`. Старый `production_queue_state` остаётся
+/// только для скрытых заказов и fallback-совместимости старых экранов.
 class ProductionQueueProvider with ChangeNotifier {
   static const _prefsKeyOrder = 'production_order_sequence';
   static const _prefsKeyHidden = 'production_hidden_orders';
   static const _defaultGroup = 'global';
-  static const _remoteTable = 'production_queue_state';
+  static const _legacyRemoteTable = 'production_queue_state';
+  static const _positionsTable = 'workplace_queue_positions';
 
   final Map<String, List<String>> _orderSequences = {};
   final Map<String, Set<String>> _hiddenOrders = {};
+  final Map<String, Map<String, WorkplaceQueuePosition>> _positionsByWorkplace = {};
   final SupabaseClient _sb = Supabase.instance.client;
-  RealtimeChannel? _channel;
+  RealtimeChannel? _legacyChannel;
+  RealtimeChannel? _positionsChannel;
   Future<void>? _remoteBootstrap;
   Timer? _pollingTimer;
 
@@ -35,16 +124,31 @@ class ProductionQueueProvider with ChangeNotifier {
     _startPollingFallback();
   }
 
+  static String queueKeyFor({
+    required String workplaceId,
+    String? taskId,
+    required String orderId,
+    required String stageId,
+    String? stageGroupKey,
+  }) {
+    final workplace = workplaceId.trim();
+    final task = taskId?.trim() ?? '';
+    if (task.isNotEmpty) return '$workplace::task::$task';
+    return '$workplace::order::${orderId.trim()}::stage::${stageId.trim()}::group::${(stageGroupKey ?? '').trim()}';
+  }
+
   void _startPollingFallback() {
     _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      unawaited(_loadRemote());
+      unawaited(_loadLegacyRemote());
+      unawaited(_loadAllWorkplacePositions());
     });
   }
 
   Future<void> _init() async {
     await _loadLocal();
-    await _loadRemote();
+    await _loadLegacyRemote();
+    await _loadAllWorkplacePositions();
     await _subscribeRemote();
   }
 
@@ -64,6 +168,8 @@ class ProductionQueueProvider with ChangeNotifier {
   }
 
   String _normalizeOrderId(String orderId) => orderId.trim();
+
+  String _normalizeWorkplaceId(String workplaceId) => workplaceId.trim();
 
   List<String> _sequenceForGroup(String groupId) {
     final key = _normalizeGroup(groupId);
@@ -102,13 +208,17 @@ class ProductionQueueProvider with ChangeNotifier {
       if (rawHiddenMap != null && rawHiddenMap.isNotEmpty) {
         final decoded = jsonDecode(rawHiddenMap);
         if (decoded is List) {
-          _hiddenOrders[_defaultGroup] =
-              decoded.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toSet();
+          _hiddenOrders[_defaultGroup] = decoded
+              .map((e) => e?.toString() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toSet();
         } else if (decoded is Map) {
           decoded.forEach((key, value) {
             if (value is List) {
-              _hiddenOrders[key.toString()] =
-                  value.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toSet();
+              _hiddenOrders[key.toString()] = value
+                  .map((e) => e?.toString() ?? '')
+                  .where((e) => e.isNotEmpty)
+                  .toSet();
             }
           });
         }
@@ -131,9 +241,7 @@ class ProductionQueueProvider with ChangeNotifier {
     try {
       await AppAuth.ensureSignedIn();
       return;
-    } catch (_) {
-      // fallback for setups with anon access
-    }
+    } catch (_) {}
     final auth = _sb.auth;
     if (auth.currentUser != null) return;
     try {
@@ -152,9 +260,7 @@ class ProductionQueueProvider with ChangeNotifier {
   bool _stringListsEqual(List<String> left, List<String> right) {
     if (left.length != right.length) return false;
     for (var i = 0; i < left.length; i++) {
-      if (_normalizeOrderId(left[i]) != _normalizeOrderId(right[i])) {
-        return false;
-      }
+      if (_normalizeOrderId(left[i]) != _normalizeOrderId(right[i])) return false;
     }
     return true;
   }
@@ -167,34 +273,28 @@ class ProductionQueueProvider with ChangeNotifier {
     return true;
   }
 
-  bool _remoteStateMatches(
+  bool _legacyRemoteStateMatches(
     Map<String, List<String>> nextSequences,
     Map<String, Set<String>> nextHidden,
   ) {
     if (_orderSequences.length != nextSequences.length ||
-        _hiddenOrders.length != nextHidden.length) {
-      return false;
-    }
+        _hiddenOrders.length != nextHidden.length) return false;
     for (final entry in nextSequences.entries) {
       final current = _orderSequences[entry.key];
-      if (current == null || !_stringListsEqual(current, entry.value)) {
-        return false;
-      }
+      if (current == null || !_stringListsEqual(current, entry.value)) return false;
     }
     for (final entry in nextHidden.entries) {
       final current = _hiddenOrders[entry.key];
-      if (current == null || !_stringSetsEqual(current, entry.value)) {
-        return false;
-      }
+      if (current == null || !_stringSetsEqual(current, entry.value)) return false;
     }
     return true;
   }
 
-  Future<void> _loadRemote() async {
+  Future<void> _loadLegacyRemote() async {
     try {
       await _ensureAuthed();
       final raw = await _sb
-          .from(_remoteTable)
+          .from(_legacyRemoteTable)
           .select('group_id, order_sequence, hidden_order_ids');
       if (raw is! List) return;
 
@@ -205,18 +305,14 @@ class ProductionQueueProvider with ChangeNotifier {
         final map = Map<String, dynamic>.from(row as Map);
         final groupId = _normalizeGroup(map['group_id']?.toString() ?? '');
         nextSequences[groupId] = _decodeStringList(map['order_sequence']);
-        nextHidden[groupId] =
-            _decodeStringList(map['hidden_order_ids']).toSet();
+        nextHidden[groupId] = _decodeStringList(map['hidden_order_ids']).toSet();
       }
 
       if (nextSequences.isEmpty && nextHidden.isEmpty) {
-        await _pushLocalStateToRemote();
+        await _pushLocalStateToLegacyRemote();
         return;
       }
-
-      if (_remoteStateMatches(nextSequences, nextHidden)) {
-        return;
-      }
+      if (_legacyRemoteStateMatches(nextSequences, nextHidden)) return;
 
       _orderSequences
         ..clear()
@@ -228,26 +324,116 @@ class ProductionQueueProvider with ChangeNotifier {
       await _persist();
       notifyListeners();
     } catch (e) {
-      debugPrint('⚠️ Failed to load production queue from Supabase: $e');
+      debugPrint('⚠️ Failed to load legacy production queue from Supabase: $e');
     }
+  }
+
+  Future<void> _loadAllWorkplacePositions() async {
+    try {
+      await _ensureAuthed();
+      final raw = await _sb
+          .from(_positionsTable)
+          .select('id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
+          .order('workplace_id')
+          .order('queue_position');
+      if (raw is! List) return;
+      final next = <String, Map<String, WorkplaceQueuePosition>>{};
+      for (final row in raw) {
+        if (row is! Map) continue;
+        final position = WorkplaceQueuePosition.fromMap(Map<String, dynamic>.from(row as Map));
+        final workplaceId = _normalizeWorkplaceId(position.workplaceId);
+        if (workplaceId.isEmpty || position.orderId.trim().isEmpty || position.stageId.trim().isEmpty) continue;
+        next.putIfAbsent(workplaceId, () => <String, WorkplaceQueuePosition>{})[position.queueKey] = position;
+      }
+      _positionsByWorkplace
+        ..clear()
+        ..addAll(next);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('⚠️ Failed to load workplace queue positions from Supabase: $e');
+    }
+  }
+
+  Future<List<WorkplaceQueuePosition>> loadPositionsForWorkplace(String workplaceId) async {
+    final normalized = _normalizeWorkplaceId(workplaceId);
+    if (normalized.isEmpty) return const <WorkplaceQueuePosition>[];
+    try {
+      await _ensureAuthed();
+      final raw = await _sb
+          .from(_positionsTable)
+          .select('id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
+          .eq('workplace_id', normalized)
+          .order('queue_position');
+      if (raw is! List) return positionsForWorkplace(normalized);
+      final positions = raw
+          .whereType<Map>()
+          .map((row) => WorkplaceQueuePosition.fromMap(Map<String, dynamic>.from(row)))
+          .toList();
+      _positionsByWorkplace[normalized] = {
+        for (final position in positions) position.queueKey: position,
+      };
+      notifyListeners();
+      return positions;
+    } catch (e) {
+      debugPrint('⚠️ Failed to load workplace queue positions for "$normalized": $e');
+      return positionsForWorkplace(normalized);
+    }
+  }
+
+  List<WorkplaceQueuePosition> positionsForWorkplace(String workplaceId) {
+    final values = _positionsByWorkplace[_normalizeWorkplaceId(workplaceId)]?.values.toList() ??
+        <WorkplaceQueuePosition>[];
+    values.sort((a, b) => a.queuePosition.compareTo(b.queuePosition));
+    return values;
+  }
+
+  int priorityOfEntry(WorkplaceQueueEntry entry) {
+    final workplaceId = _normalizeWorkplaceId(entry.workplaceId);
+    if (workplaceId.isEmpty) return 1 << 30;
+    return _positionsByWorkplace[workplaceId]?[entry.queueKey]?.queuePosition ?? (1 << 30);
+  }
+
+  List<T> getSortedByWorkplaceQueue<T>(
+    List<T> items,
+    WorkplaceQueueEntry Function(T) entrySelector,
+  ) {
+    final indexed = <({T item, int index})>[];
+    for (var i = 0; i < items.length; i++) {
+      indexed.add((item: items[i], index: i));
+    }
+    indexed.sort((a, b) {
+      final priorityComparison = priorityOfEntry(entrySelector(a.item))
+          .compareTo(priorityOfEntry(entrySelector(b.item)));
+      if (priorityComparison != 0) return priorityComparison;
+      return a.index.compareTo(b.index);
+    });
+    return indexed.map((entry) => entry.item).toList();
   }
 
   Future<void> _subscribeRemote() async {
     try {
       await _ensureAuthed();
-      _channel?.unsubscribe();
-      if (_channel != null) {
-        _sb.removeChannel(_channel!);
-      }
-      _channel = _sb
-          .channel('realtime:$_remoteTable')
+      _legacyChannel?.unsubscribe();
+      if (_legacyChannel != null) _sb.removeChannel(_legacyChannel!);
+      _legacyChannel = _sb
+          .channel('realtime:$_legacyRemoteTable')
           .onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
-            table: _remoteTable,
-            callback: (_) async {
-              await _loadRemote();
-            },
+            table: _legacyRemoteTable,
+            callback: (_) async => _loadLegacyRemote(),
+          )
+          .subscribe();
+
+      _positionsChannel?.unsubscribe();
+      if (_positionsChannel != null) _sb.removeChannel(_positionsChannel!);
+      _positionsChannel = _sb
+          .channel('realtime:$_positionsTable')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: _positionsTable,
+            callback: (_) async => _loadAllWorkplacePositions(),
           )
           .subscribe();
     } catch (e) {
@@ -255,27 +441,27 @@ class ProductionQueueProvider with ChangeNotifier {
     }
   }
 
-  Future<void> _pushLocalStateToRemote() async {
+  Future<void> _pushLocalStateToLegacyRemote() async {
     for (final entry in _orderSequences.entries) {
-      await _upsertRemoteGroup(entry.key);
+      await _upsertLegacyRemoteGroup(entry.key);
     }
     for (final groupId in _hiddenOrders.keys) {
       if (_orderSequences.containsKey(groupId)) continue;
-      await _upsertRemoteGroup(groupId);
+      await _upsertLegacyRemoteGroup(groupId);
     }
   }
 
-  Future<void> _upsertRemoteGroup(String groupId) async {
+  Future<void> _upsertLegacyRemoteGroup(String groupId) async {
     try {
       await _ensureAuthed();
-      await _sb.from(_remoteTable).upsert({
+      await _sb.from(_legacyRemoteTable).upsert({
         'group_id': _normalizeGroup(groupId),
         'order_sequence': _sequenceForGroup(groupId),
         'hidden_order_ids': _hiddenForGroup(groupId).toList(),
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
     } catch (e) {
-      debugPrint('⚠️ Failed to upsert production queue group "$groupId": $e');
+      debugPrint('⚠️ Failed to upsert legacy production queue group "$groupId": $e');
     }
   }
 
@@ -300,13 +486,148 @@ class ProductionQueueProvider with ChangeNotifier {
   Future<void> _persistEverywhere({String? groupId}) async {
     await _persist();
     if (groupId != null) {
-      await _upsertRemoteGroup(groupId);
+      await _upsertLegacyRemoteGroup(groupId);
       return;
     }
-    await _pushLocalStateToRemote();
+    await _pushLocalStateToLegacyRemote();
   }
 
-  /// Добавляем недостающие id и удаляем отсутствующие в [ids].
+  Future<int> _nextPositionForWorkplace(String workplaceId) async {
+    final normalized = _normalizeWorkplaceId(workplaceId);
+    final cached = _positionsByWorkplace[normalized]?.values ?? const <WorkplaceQueuePosition>[];
+    var maxPosition = 0;
+    for (final item in cached) {
+      if (item.queuePosition > maxPosition) maxPosition = item.queuePosition;
+    }
+    try {
+      final raw = await _sb
+          .from(_positionsTable)
+          .select('queue_position')
+          .eq('workplace_id', normalized)
+          .order('queue_position', ascending: false)
+          .limit(1);
+      if (raw is List && raw.isNotEmpty && raw.first is Map) {
+        final remoteMax = WorkplaceQueuePosition._intFrom((raw.first as Map)['queue_position']);
+        if (remoteMax != null && remoteMax > maxPosition) maxPosition = remoteMax;
+      }
+    } catch (_) {}
+    return maxPosition + 1;
+  }
+
+  Future<void> ensureEntryAtTail(WorkplaceQueueEntry entry) async {
+    final workplaceId = _normalizeWorkplaceId(entry.workplaceId);
+    if (workplaceId.isEmpty || entry.orderId.trim().isEmpty || entry.stageId.trim().isEmpty) return;
+    if (_positionsByWorkplace[workplaceId]?.containsKey(entry.queueKey) == true) return;
+    try {
+      await _ensureAuthed();
+      final position = await _nextPositionForWorkplace(workplaceId);
+      await _sb.from(_positionsTable).insert(entry.toInsertMap(position));
+      await loadPositionsForWorkplace(workplaceId);
+    } catch (e) {
+      debugPrint('⚠️ Failed to append workplace queue entry "${entry.queueKey}": $e');
+      await loadPositionsForWorkplace(workplaceId);
+    }
+  }
+
+  /// Синхронизирует задания рабочего места: существующие позиции не меняются,
+  /// новые записи добавляются в конец очереди только внутри [workplaceId].
+  void syncWorkplaceEntries(
+    Iterable<WorkplaceQueueEntry> entries, {
+    required String workplaceId,
+  }) {
+    if (_isSyncingOrders) return;
+    final normalizedWorkplace = _normalizeWorkplaceId(workplaceId);
+    if (normalizedWorkplace.isEmpty) return;
+    _isSyncingOrders = true;
+    try {
+      unawaited(_bootstrapRemoteSync());
+      final normalizedEntries = <WorkplaceQueueEntry>[];
+      final seen = <String>{};
+      for (final entry in entries) {
+        if (_normalizeWorkplaceId(entry.workplaceId) != normalizedWorkplace) continue;
+        if (entry.orderId.trim().isEmpty || entry.stageId.trim().isEmpty) continue;
+        if (!seen.add(entry.queueKey)) continue;
+        normalizedEntries.add(entry);
+      }
+      unawaited(() async {
+        try {
+          await loadPositionsForWorkplace(normalizedWorkplace);
+          for (final entry in normalizedEntries) {
+            await ensureEntryAtTail(entry);
+          }
+          await normalizePositions(workplaceId: normalizedWorkplace);
+        } finally {
+          _isSyncingOrders = false;
+        }
+      }());
+    } catch (_) {
+      _isSyncingOrders = false;
+    }
+  }
+
+  Future<void> normalizePositions({required String workplaceId}) async {
+    final normalized = _normalizeWorkplaceId(workplaceId);
+    if (normalized.isEmpty) return;
+    final positions = await loadPositionsForWorkplace(normalized);
+    var changed = false;
+    for (var i = 0; i < positions.length; i++) {
+      final expected = i + 1;
+      if (positions[i].queuePosition == expected) continue;
+      changed = true;
+      await _sb.from(_positionsTable).update({
+        'queue_position': expected,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', positions[i].id);
+    }
+    if (changed) await loadPositionsForWorkplace(normalized);
+  }
+
+  Future<void> saveWorkplaceReorder(
+    Iterable<WorkplaceQueueEntry> orderedEntries, {
+    required String workplaceId,
+  }) async {
+    final normalized = _normalizeWorkplaceId(workplaceId);
+    if (normalized.isEmpty) return;
+    final entries = <WorkplaceQueueEntry>[];
+    final seen = <String>{};
+    for (final entry in orderedEntries) {
+      if (_normalizeWorkplaceId(entry.workplaceId) != normalized) continue;
+      if (!seen.add(entry.queueKey)) continue;
+      entries.add(entry);
+    }
+    if (entries.isEmpty) return;
+
+    await loadPositionsForWorkplace(normalized);
+    for (final entry in entries) {
+      await ensureEntryAtTail(entry);
+    }
+    final current = positionsForWorkplace(normalized);
+    final orderedKeys = entries.map((entry) => entry.queueKey).toSet();
+    final remaining = current
+        .where((position) => !orderedKeys.contains(position.queueKey))
+        .toList();
+    final nextKeys = <String>[
+      ...entries.map((entry) => entry.queueKey),
+      ...remaining.map((position) => position.queueKey),
+    ];
+    final byKey = {
+      for (final position in positionsForWorkplace(normalized)) position.queueKey: position,
+    };
+    for (var i = 0; i < nextKeys.length; i++) {
+      final position = byKey[nextKeys[i]];
+      if (position == null) continue;
+      final nextPosition = i + 1;
+      if (position.queuePosition == nextPosition) continue;
+      await _sb.from(_positionsTable).update({
+        'queue_position': nextPosition,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', position.id);
+    }
+    await loadPositionsForWorkplace(normalized);
+  }
+
+  /// Legacy/fallback order sync. Manual workplace ordering must use
+  /// [syncWorkplaceEntries] instead.
   void syncOrders(Iterable<String> ids, {String groupId = _defaultGroup}) {
     if (_isSyncingOrders) return;
     _isSyncingOrders = true;
@@ -322,8 +643,6 @@ class ProductionQueueProvider with ChangeNotifier {
       final sequence = _sequenceForGroup(groupId);
       bool changed = false;
 
-      // Keep stored sequence canonical to avoid duplicates caused by whitespace
-      // variants from different data sources.
       final canonicalSequence = <String>[];
       final canonicalSeen = <String>{};
       for (final raw in sequence) {
@@ -341,19 +660,10 @@ class ProductionQueueProvider with ChangeNotifier {
         changed = true;
       }
 
-      // Always append newly discovered orders to the tail of the queue.
-      // This guarantees that a freshly created order never jumps to the top,
-      // even if upstream lists are sorted by "newest first".
       final missingIds = <String>[];
       for (final id in normalizedIds) {
-        if (!sequence.contains(id)) {
-          missingIds.add(id);
-        }
+        if (!sequence.contains(id)) missingIds.add(id);
       }
-
-      // Не удаляем id, которые временно отсутствуют в текущем наборе.
-      // Иначе очередь "схлопывается" на каждом фильтре/переключении вкладок,
-      // а затем id добавляются повторно и визуально скачут по списку.
 
       if (missingIds.isNotEmpty) {
         sequence.addAll(missingIds);
@@ -369,22 +679,19 @@ class ProductionQueueProvider with ChangeNotifier {
     }
   }
 
-  /// Возвращает приоритет (индекс) заказа без изменения очереди.
-  /// Новые id считаются самым низким приоритетом до следующего [syncOrders].
+  /// Legacy/fallback priority. Manual workplace ordering must use
+  /// [priorityOfEntry] instead.
   int priorityOf(String orderId, {String groupId = _defaultGroup}) {
     final normalizedOrderId = _normalizeOrderId(orderId);
-    if (normalizedOrderId.isEmpty) {
-      return 1 << 30;
-    }
+    if (normalizedOrderId.isEmpty) return 1 << 30;
     final sequence = _orderSequences[_normalizeGroup(groupId)];
     final idx = sequence?.indexOf(normalizedOrderId) ?? -1;
     if (idx != -1) return idx;
     return 1 << 30;
   }
 
-  /// Возвращает новую коллекцию, отсортированную по сохранённой очереди.
-  /// Метод безопасен для вызова во время build: он не синхронизирует очередь,
-  /// не меняет внутреннее состояние и не вызывает notifyListeners().
+  /// Legacy/fallback sorting. Manual workplace ordering must use
+  /// [getSortedByWorkplaceQueue] instead.
   List<T> getSortedByPriority<T>(
     List<T> items,
     String Function(T) idSelector, {
@@ -396,8 +703,7 @@ class ProductionQueueProvider with ChangeNotifier {
     }
     if (indexed.length < 2) return indexed.map((entry) => entry.item).toList();
 
-    final sequence =
-        _orderSequences[_normalizeGroup(groupId)] ?? const <String>[];
+    final sequence = _orderSequences[_normalizeGroup(groupId)] ?? const <String>[];
     final indexById = <String, int>{};
     for (var i = 0; i < sequence.length; i++) {
       final id = _normalizeOrderId(sequence[i]);
@@ -417,15 +723,14 @@ class ProductionQueueProvider with ChangeNotifier {
     return indexed.map((entry) => entry.item).toList();
   }
 
-  /// Сортирует заказы по сохранённой очереди без побочных эффектов.
   List<T> sortByPriority<T>(List<T> items, String Function(T) idSelector,
       {String groupId = _defaultGroup}) {
     return getSortedByPriority(items, idSelector, groupId: groupId);
   }
 
-  /// Переставляет видимые заказы, сохраняя положение остальных.
-  void applyVisibleReorder(List<String> orderedIds,
-      {String groupId = _defaultGroup}) {
+  /// Legacy/fallback reorder. Manual workplace ordering must use
+  /// [saveWorkplaceReorder] instead.
+  void applyVisibleReorder(List<String> orderedIds, {String groupId = _defaultGroup}) {
     unawaited(_bootstrapRemoteSync());
     if (orderedIds.isEmpty) return;
     final normalizedOrderedIds = <String>[];
@@ -441,9 +746,7 @@ class ProductionQueueProvider with ChangeNotifier {
     final set = normalizedOrderedIds.toSet();
 
     for (final id in normalizedOrderedIds) {
-      if (!sequence.contains(id)) {
-        sequence.add(id);
-      }
+      if (!sequence.contains(id)) sequence.add(id);
     }
 
     final anchor = sequence.indexWhere(set.contains);
@@ -484,10 +787,15 @@ class ProductionQueueProvider with ChangeNotifier {
   void dispose() {
     _pollingTimer?.cancel();
     _pollingTimer = null;
-    if (_channel != null) {
-      _channel!.unsubscribe();
-      _sb.removeChannel(_channel!);
-      _channel = null;
+    if (_legacyChannel != null) {
+      _legacyChannel!.unsubscribe();
+      _sb.removeChannel(_legacyChannel!);
+      _legacyChannel = null;
+    }
+    if (_positionsChannel != null) {
+      _positionsChannel!.unsubscribe();
+      _sb.removeChannel(_positionsChannel!);
+      _positionsChannel = null;
     }
     super.dispose();
   }
