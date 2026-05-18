@@ -156,25 +156,84 @@ class WorkplaceQueuePositionPlanner {
     required Iterable<WorkplaceQueueEntry> orderedEntries,
     required String workplaceId,
   }) {
+    return reorderedQueueKeys(
+      current: current,
+      orderedKeys: orderedEntries.map(
+        (entry) => WorkplaceQueueItemKey.fromEntry(entry),
+      ),
+      workplaceId: workplaceId,
+    );
+  }
+
+  static List<String> reorderedQueueKeys({
+    required Iterable<WorkplaceQueuePosition> current,
+    required Iterable<WorkplaceQueueItemKey> orderedKeys,
+    required String workplaceId,
+  }) {
     final normalizedWorkplace = workplaceId.trim();
-    final entries = <WorkplaceQueueEntry>[];
+    final visibleKeys = <String>[];
     final seen = <String>{};
-    for (final entry in orderedEntries) {
-      if (entry.workplaceId.trim() != normalizedWorkplace) continue;
-      if (!seen.add(entry.queueKey)) continue;
-      entries.add(entry);
+    for (final key in orderedKeys) {
+      if (key.workplaceId.trim() != normalizedWorkplace) continue;
+      final queueKey = key.queueKey;
+      if (!seen.add(queueKey)) continue;
+      visibleKeys.add(queueKey);
     }
 
     final currentForWorkplace = sortedPositions(current.where(
       (position) => position.workplaceId.trim() == normalizedWorkplace,
     ));
-    final orderedKeys = entries.map((entry) => entry.queueKey).toSet();
+    final visibleKeySet = visibleKeys.toSet();
     return <String>[
-      ...entries.map((entry) => entry.queueKey),
+      ...visibleKeys,
       ...currentForWorkplace
-          .where((position) => !orderedKeys.contains(position.queueKey))
+          .where((position) => !visibleKeySet.contains(position.queueKey))
           .map((position) => position.queueKey),
     ];
+  }
+}
+
+class WorkplaceQueueItemKey {
+  final String workplaceId;
+  final String? taskId;
+  final String orderId;
+  final String stageId;
+  final String? stageGroupKey;
+
+  const WorkplaceQueueItemKey({
+    required this.workplaceId,
+    this.taskId,
+    required this.orderId,
+    required this.stageId,
+    this.stageGroupKey,
+  });
+
+  factory WorkplaceQueueItemKey.fromEntry(WorkplaceQueueEntry entry) {
+    return WorkplaceQueueItemKey(
+      workplaceId: entry.workplaceId,
+      taskId: entry.taskId,
+      orderId: entry.orderId,
+      stageId: entry.stageId,
+      stageGroupKey: entry.stageGroupKey,
+    );
+  }
+
+  String get queueKey => ProductionQueueProvider.queueKeyFor(
+        workplaceId: workplaceId,
+        taskId: taskId,
+        orderId: orderId,
+        stageId: stageId,
+        stageGroupKey: stageGroupKey,
+      );
+
+  WorkplaceQueueEntry toEntry() {
+    return WorkplaceQueueEntry(
+      workplaceId: workplaceId,
+      taskId: taskId,
+      orderId: orderId,
+      stageId: stageId,
+      stageGroupKey: stageGroupKey,
+    );
   }
 }
 
@@ -769,25 +828,40 @@ class ProductionQueueProvider with ChangeNotifier {
     Iterable<WorkplaceQueueEntry> orderedEntries, {
     required String workplaceId,
   }) async {
+    await applyVisibleTaskReorder(
+      workplaceId: workplaceId,
+      orderedKeys: orderedEntries
+          .map((entry) => WorkplaceQueueItemKey.fromEntry(entry))
+          .toList(growable: false),
+    );
+  }
+
+  /// Applies the visible task/stage order for one workplace and rewrites only
+  /// that workplace's queue positions to a normalized 1-based sequence.
+  Future<void> applyVisibleTaskReorder({
+    required String workplaceId,
+    required List<WorkplaceQueueItemKey> orderedKeys,
+  }) async {
     final normalized = _normalizeWorkplaceId(workplaceId);
     if (normalized.isEmpty) return;
-    final entries = <WorkplaceQueueEntry>[];
+    final visibleKeys = <WorkplaceQueueItemKey>[];
     final seen = <String>{};
-    for (final entry in orderedEntries) {
-      if (_normalizeWorkplaceId(entry.workplaceId) != normalized) continue;
-      if (!seen.add(entry.queueKey)) continue;
-      entries.add(entry);
+    for (final key in orderedKeys) {
+      if (_normalizeWorkplaceId(key.workplaceId) != normalized) continue;
+      if (key.orderId.trim().isEmpty || key.stageId.trim().isEmpty) continue;
+      if (!seen.add(key.queueKey)) continue;
+      visibleKeys.add(key);
     }
-    if (entries.isEmpty) return;
+    if (visibleKeys.isEmpty) return;
 
     await loadPositionsForWorkplace(normalized);
-    for (final entry in entries) {
-      await ensureEntryAtTail(entry);
+    for (final key in visibleKeys) {
+      await ensureEntryAtTail(key.toEntry());
     }
     final current = positionsForWorkplace(normalized);
-    final nextKeys = WorkplaceQueuePositionPlanner.reorderedKeys(
+    final nextKeys = WorkplaceQueuePositionPlanner.reorderedQueueKeys(
       current: current,
-      orderedEntries: entries,
+      orderedKeys: visibleKeys,
       workplaceId: normalized,
     );
     final byKey = {
