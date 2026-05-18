@@ -2369,12 +2369,12 @@ class WarehouseProvider with ChangeNotifier {
     try {
       final rows = await _sb
           .from('order_paint_reservations')
-          .select(
-              'order_id, reserved_qty, used_qty, released_qty, orders(id, customer, new_form_no, form_code)')
+          .select('order_id, reserved_qty, used_qty, released_qty, created_at')
           .eq('paint_id', normalizedId)
           .order('created_at');
       if (rows is! List) return const [];
-      return rows
+
+      final reservationRows = rows
           .whereType<Map>()
           .map((raw) {
             final row = Map<String, dynamic>.from(raw as Map);
@@ -2385,6 +2385,39 @@ class WarehouseProvider with ChangeNotifier {
           })
           .where((row) => _toDouble(row['active_reserved_qty']) > 0)
           .toList(growable: false);
+      if (reservationRows.isEmpty) return const [];
+
+      final orderIds = reservationRows
+          .map((row) => (row['order_id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (orderIds.isEmpty) return reservationRows;
+
+      final ordersById = <String, Map<String, dynamic>>{};
+      try {
+        final orderRows = await _sb
+            .from('orders')
+            .select('id, customer, new_form_no, form_code')
+            .inFilter('id', orderIds);
+        if (orderRows is List) {
+          for (final raw in orderRows.whereType<Map>()) {
+            final order = Map<String, dynamic>.from(raw as Map);
+            final orderId = (order['id'] ?? '').toString().trim();
+            if (orderId.isNotEmpty) ordersById[orderId] = order;
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ paint reservation orders load failed: $e');
+      }
+
+      return reservationRows.map((row) {
+        final next = Map<String, dynamic>.from(row);
+        final orderId = (next['order_id'] ?? '').toString().trim();
+        final order = ordersById[orderId];
+        if (order != null) next['orders'] = order;
+        return next;
+      }).toList(growable: false);
     } catch (e) {
       debugPrint('⚠️ paint reservations details failed: $e');
       return const [];
