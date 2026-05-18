@@ -1,34 +1,56 @@
 -- Persistent queue for pending paint write-offs created while completing order stages.
 
-create table if not exists public.order_paint_pending_writeoffs (
-  id uuid primary key default gen_random_uuid(),
-  order_id text not null references public.orders(id) on delete cascade,
-  task_id text,
-  stage_id text,
-  stage_name text,
-  paint_id text references public.paints(id),
-  paint_name text,
-  planned_amount double precision,
-  actual_used_amount double precision,
-  unit text not null default 'г',
-  status text not null default 'pending' check (status in ('pending', 'written_off')),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  written_off_at timestamptz,
-  created_by text,
-  written_off_by text,
-  comment text,
-  constraint order_paint_pending_writeoffs_amounts_nonnegative check (
-    (planned_amount is null or planned_amount >= 0)
-    and (actual_used_amount is null or actual_used_amount >= 0)
-  ),
-  constraint order_paint_pending_writeoffs_has_paint check (
-    paint_id is not null or coalesce(trim(paint_name), '') <> ''
-  ),
-  constraint order_paint_pending_writeoffs_written_off_at check (
-    status <> 'written_off' or written_off_at is not null
-  )
-);
+do $$
+declare
+  v_paint_id_type text;
+begin
+  select format_type(a.atttypid, a.atttypmod)
+    into v_paint_id_type
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relname = 'paints'
+     and a.attname = 'id'
+     and a.attnum > 0
+     and not a.attisdropped;
+
+  if v_paint_id_type is null then
+    raise exception 'public.paints.id column was not found';
+  end if;
+
+  execute format($sql$
+    create table if not exists public.order_paint_pending_writeoffs (
+      id uuid primary key default gen_random_uuid(),
+      order_id text not null references public.orders(id) on delete cascade,
+      task_id text,
+      stage_id text,
+      stage_name text,
+      paint_id %1$s references public.paints(id),
+      paint_name text,
+      planned_amount double precision,
+      actual_used_amount double precision,
+      unit text not null default 'г',
+      status text not null default 'pending' check (status in ('pending', 'written_off')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      written_off_at timestamptz,
+      created_by text,
+      written_off_by text,
+      comment text,
+      constraint order_paint_pending_writeoffs_amounts_nonnegative check (
+        (planned_amount is null or planned_amount >= 0)
+        and (actual_used_amount is null or actual_used_amount >= 0)
+      ),
+      constraint order_paint_pending_writeoffs_has_paint check (
+        paint_id is not null or coalesce(trim(paint_name), '') <> ''
+      ),
+      constraint order_paint_pending_writeoffs_written_off_at check (
+        status <> 'written_off' or written_off_at is not null
+      )
+    )
+  $sql$, v_paint_id_type);
+end $$;
 
 create index if not exists order_paint_pending_writeoffs_status_paint_idx
   on public.order_paint_pending_writeoffs(status, paint_id);

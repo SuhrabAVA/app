@@ -20,7 +20,7 @@ declare
   v_task tasks%rowtype;
   v_pending order_paint_pending_writeoffs%rowtype;
   rec record;
-  v_paint_id text;
+  v_paint_id public.paints.id%type;
   v_paint_name text;
   v_stock_name text;
   v_stock_qty double precision;
@@ -34,7 +34,7 @@ declare
   v_rows_updated integer;
   v_now_ms bigint := floor(extract(epoch from clock_timestamp()) * 1000);
   v_comments jsonb;
-  v_touched text[] := array[]::text[];
+  v_touched public.paints.id%type[] := '{}';
   v_user_id text := coalesce(nullif(trim(p_employee_id), ''), nullif(trim(p_actor), ''), 'system');
   v_assignee text;
   v_current_written_off_by_order jsonb := '{}'::jsonb;
@@ -84,7 +84,7 @@ begin
     v_amount := null;
     v_source_order_id := coalesce(nullif(trim(rec.row_data->>'source_order_id'), ''), p_order_id);
     v_source_task_id := coalesce(nullif(trim(rec.row_data->>'source_task_id'), ''), p_task_id);
-    v_paint_id := nullif(trim(coalesce(rec.row_data->>'paint_id', rec.row_data->>'material_id')), '');
+    v_paint_id := public.safe_paint_id(coalesce(rec.row_data->>'paint_id', rec.row_data->>'material_id'));
     v_paint_name := nullif(trim(coalesce(rec.row_data->>'paint_name', rec.row_data->>'name')), '');
     v_amount := coalesce(
       nullif(rec.row_data->>'actual_used_amount', '')::double precision,
@@ -95,11 +95,11 @@ begin
     );
     v_unit := coalesce(nullif(trim(rec.row_data->>'unit'), ''), 'г');
 
-    if coalesce(v_paint_id, '') = '' and coalesce(v_paint_name, '') = '' then
+    if v_paint_id is null and coalesce(v_paint_name, '') = '' then
       continue;
     end if;
     if v_amount is not null and v_amount < 0 then
-      raise exception 'Нельзя поставить в очередь отрицательный расход краски (%).', coalesce(v_paint_name, v_paint_id);
+      raise exception 'Нельзя поставить в очередь отрицательный расход краски (%).', coalesce(v_paint_name, v_paint_id::text);
     end if;
 
     if v_paint_id is not null then
@@ -171,7 +171,7 @@ begin
       when v_amount is null then 'не указан расход'
       else trim(to_char(round(v_amount::numeric, 2), 'FM999999999990.##')) || ' ' || v_unit
     end;
-    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_paint_id, 'без названия'), v_amount_text);
+    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_paint_id::text, 'без названия'), v_amount_text);
     v_current_pending_by_order := jsonb_set(
       v_current_pending_by_order,
       array[v_source_order_id],
@@ -192,7 +192,7 @@ begin
     v_stock_qty := null;
     v_amount := null;
     v_source_order_id := coalesce(nullif(trim(rec.row_data->>'source_order_id'), ''), p_order_id);
-    v_paint_id := nullif(trim(coalesce(rec.row_data->>'paint_id', rec.row_data->>'material_id')), '');
+    v_paint_id := public.safe_paint_id(coalesce(rec.row_data->>'paint_id', rec.row_data->>'material_id'));
     v_paint_name := nullif(trim(coalesce(rec.row_data->>'paint_name', rec.row_data->>'name')), '');
     v_amount := coalesce(
       nullif(rec.row_data->>'actual_used_amount', '')::double precision,
@@ -203,7 +203,7 @@ begin
       0
     );
     if v_amount <= 0 then
-      raise exception 'Для краски % укажите фактический расход больше 0.', coalesce(v_paint_name, v_paint_id, 'без названия');
+      raise exception 'Для краски % укажите фактический расход больше 0.', coalesce(v_paint_name, v_paint_id::text, 'без названия');
     end if;
 
     if v_paint_id is null then
@@ -226,7 +226,7 @@ begin
        for update;
     end if;
     if v_paint_id is null or v_stock_qty is null then
-      raise exception 'Краска % не найдена на складе.', coalesce(v_paint_name, v_paint_id);
+      raise exception 'Краска % не найдена на складе.', coalesce(v_paint_name, v_paint_id::text);
     end if;
 
     select coalesce(sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0)), 0)
@@ -237,7 +237,7 @@ begin
     v_available := v_stock_qty - v_reserved_other;
     if v_available < v_amount then
       raise exception 'Недостаточно краски: %. Доступно: %, требуется: %',
-        coalesce(v_stock_name, v_paint_name, v_paint_id), round(v_available::numeric, 2), round(v_amount::numeric, 2);
+        coalesce(v_stock_name, v_paint_name, v_paint_id::text), round(v_available::numeric, 2), round(v_amount::numeric, 2);
     end if;
 
     insert into paints_writeoffs(paint_id, qty, reason, by_name)
@@ -268,7 +268,7 @@ begin
 
     v_unit := coalesce(nullif(trim(rec.row_data->>'unit'), ''), 'г');
     v_amount_text := trim(to_char(round(v_amount::numeric, 2), 'FM999999999990.##')) || ' ' || v_unit;
-    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_stock_name, v_paint_id, 'без названия'), v_amount_text);
+    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_stock_name, v_paint_id::text, 'без названия'), v_amount_text);
     v_current_written_off_by_order := jsonb_set(
       v_current_written_off_by_order,
       array[v_source_order_id],
@@ -308,7 +308,7 @@ begin
     -- never from task comments or client-supplied source fields.
     v_source_order_id := v_pending.order_id;
     v_source_task_id := v_pending.task_id;
-    v_paint_id := coalesce(nullif(trim(rec.row_data->>'paint_id'), ''), v_pending.paint_id);
+    v_paint_id := coalesce(public.safe_paint_id(rec.row_data->>'paint_id'), v_pending.paint_id);
     v_paint_name := coalesce(nullif(trim(rec.row_data->>'paint_name'), ''), v_pending.paint_name);
     v_amount := coalesce(
       nullif(rec.row_data->>'actual_used_amount', '')::double precision,
@@ -334,7 +334,7 @@ begin
        for update;
     end if;
     if v_paint_id is null or v_stock_qty is null then
-      raise exception 'Краска % не найдена на складе.', coalesce(v_paint_name, v_paint_id);
+      raise exception 'Краска % не найдена на складе.', coalesce(v_paint_name, v_paint_id::text);
     end if;
 
     select coalesce(sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0)), 0)
@@ -345,7 +345,7 @@ begin
     v_available := v_stock_qty - v_reserved_other;
     if v_available < v_amount then
       raise exception 'Недостаточно краски: %. Доступно: %, требуется: %',
-        coalesce(v_stock_name, v_paint_name, v_paint_id), round(v_available::numeric, 2), round(v_amount::numeric, 2);
+        coalesce(v_stock_name, v_paint_name, v_paint_id::text), round(v_available::numeric, 2), round(v_amount::numeric, 2);
     end if;
 
     insert into paints_writeoffs(paint_id, qty, reason, by_name)
@@ -393,7 +393,7 @@ begin
 
     v_unit := coalesce(nullif(trim(rec.row_data->>'unit'), ''), v_pending.unit, 'г');
     v_amount_text := trim(to_char(round(v_amount::numeric, 2), 'FM999999999990.##')) || ' ' || v_unit;
-    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_stock_name, v_paint_id, 'без названия'), v_amount_text);
+    v_summary_item := format('%s: %s', coalesce(v_paint_name, v_stock_name, v_paint_id::text, 'без названия'), v_amount_text);
     v_deferred_written_off_by_order := jsonb_set(
       v_deferred_written_off_by_order,
       array[v_source_order_id],

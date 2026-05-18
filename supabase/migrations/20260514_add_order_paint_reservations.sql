@@ -3,23 +3,88 @@
 alter table if exists public.paints
   add column if not exists reserved_qty double precision not null default 0;
 
-create table if not exists public.order_paint_reservations (
-  id uuid primary key default gen_random_uuid(),
-  order_id text not null references public.orders(id) on delete cascade,
-  paint_id text references public.paints(id),
-  paint_name text,
-  reserved_qty double precision not null default 0,
-  used_qty double precision not null default 0,
-  released_qty double precision not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint order_paint_reservations_qty_nonnegative check (
-    reserved_qty >= 0 and used_qty >= 0 and released_qty >= 0
-  ),
-  constraint order_paint_reservations_has_paint check (
-    paint_id is not null or coalesce(trim(paint_name), '') <> ''
-  )
-);
+do $$
+declare
+  v_paint_id_type text;
+begin
+  select format_type(a.atttypid, a.atttypmod)
+    into v_paint_id_type
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relname = 'paints'
+     and a.attname = 'id'
+     and a.attnum > 0
+     and not a.attisdropped;
+
+  if v_paint_id_type is null then
+    raise exception 'public.paints.id column was not found';
+  end if;
+
+  execute format($sql$
+    create table if not exists public.order_paint_reservations (
+      id uuid primary key default gen_random_uuid(),
+      order_id text not null references public.orders(id) on delete cascade,
+      paint_id %1$s references public.paints(id),
+      paint_name text,
+      reserved_qty double precision not null default 0,
+      used_qty double precision not null default 0,
+      released_qty double precision not null default 0,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      constraint order_paint_reservations_qty_nonnegative check (
+        reserved_qty >= 0 and used_qty >= 0 and released_qty >= 0
+      ),
+      constraint order_paint_reservations_has_paint check (
+        paint_id is not null or coalesce(trim(paint_name), '') <> ''
+      )
+    )
+  $sql$, v_paint_id_type);
+end $$;
+
+do $$
+declare
+  v_paint_id_type text;
+begin
+  select format_type(a.atttypid, a.atttypmod)
+    into v_paint_id_type
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relname = 'paints'
+     and a.attname = 'id'
+     and a.attnum > 0
+     and not a.attisdropped;
+
+  execute 'drop function if exists public.safe_paint_id(text)';
+  if v_paint_id_type = 'uuid' then
+    execute $sql$
+      create function public.safe_paint_id(p_value text)
+      returns uuid
+      language sql
+      immutable
+      as $fn$
+        select case
+          when nullif(trim(p_value), '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+            then nullif(trim(p_value), '')::uuid
+          else null
+        end
+      $fn$
+    $sql$;
+  else
+    execute format($sql$
+      create function public.safe_paint_id(p_value text)
+      returns %1$s
+      language sql
+      immutable
+      as $fn$
+        select nullif(trim(p_value), '')::%1$s
+      $fn$
+    $sql$, v_paint_id_type);
+  end if;
+end $$;
 
 create unique index if not exists order_paint_reservations_order_paint_idx
   on public.order_paint_reservations(order_id, paint_id)
@@ -56,31 +121,50 @@ begin
   end if;
 end $$;
 
-create or replace function public.recalculate_paint_reserved_qty(p_paint_ids text[] default null)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
+do $$
+declare
+  v_paint_id_type text;
 begin
-  if p_paint_ids is null then
-    update paints p
-       set reserved_qty = coalesce((
-             select sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0))
-               from order_paint_reservations r
-              where r.paint_id = p.id
-           ), 0);
-  else
-    update paints p
-       set reserved_qty = coalesce((
-             select sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0))
-               from order_paint_reservations r
-              where r.paint_id = p.id
-           ), 0)
-     where p.id = any(p_paint_ids);
-  end if;
-end;
-$$;
+  select format_type(a.atttypid, a.atttypmod)
+    into v_paint_id_type
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relname = 'paints'
+     and a.attname = 'id'
+     and a.attnum > 0
+     and not a.attisdropped;
+
+  execute 'drop function if exists public.recalculate_paint_reserved_qty(' || v_paint_id_type || '[])';
+  execute format($sql$
+    create function public.recalculate_paint_reserved_qty(p_paint_ids %1$s[] default null)
+    returns void
+    language plpgsql
+    security definer
+    set search_path = public
+    as $fn$
+    begin
+      if p_paint_ids is null then
+        update paints p
+           set reserved_qty = coalesce((
+                 select sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0))
+                   from order_paint_reservations r
+                  where r.paint_id = p.id
+               ), 0);
+      else
+        update paints p
+           set reserved_qty = coalesce((
+                 select sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0))
+                   from order_paint_reservations r
+                  where r.paint_id = p.id
+               ), 0)
+         where p.id = any(p_paint_ids);
+      end if;
+    end;
+    $fn$
+  $sql$, v_paint_id_type);
+end $$;
 
 create or replace function public.sync_order_paint_reservations(
   p_order_id text,
@@ -97,7 +181,7 @@ declare
   v_available double precision;
   v_reserved_other double precision;
   v_paint_name text;
-  v_touched text[] := array[]::text[];
+  v_touched public.paints.id%type[] := '{}';
 begin
   if coalesce(trim(p_order_id), '') = '' then
     raise exception 'order_id is required';
@@ -110,7 +194,7 @@ begin
   for rec in
     with requested as (
       select
-        nullif(trim(coalesce(value->>'paint_id', value->>'material_id')), '') as paint_id,
+        public.safe_paint_id(coalesce(value->>'paint_id', value->>'material_id')) as paint_id,
         nullif(trim(coalesce(value->>'paint_name', value->>'name')), '') as paint_name,
         coalesce(
           nullif(value->>'reserved_qty', '')::double precision,
@@ -149,11 +233,11 @@ begin
     for update of p
   loop
     if rec.qty < 0 then
-      raise exception 'Нельзя зарезервировать отрицательное количество краски (%).', coalesce(rec.stock_name, rec.paint_name, rec.paint_id);
+      raise exception 'Нельзя зарезервировать отрицательное количество краски (%).', coalesce(rec.stock_name, rec.paint_name, rec.paint_id::text);
     end if;
 
     if rec.paint_id is null or rec.total_qty is null then
-      raise exception 'Краска % не найдена на складе.', coalesce(rec.paint_name, rec.paint_id);
+      raise exception 'Краска % не найдена на складе.', coalesce(rec.paint_name, rec.paint_id::text);
     end if;
 
     select coalesce(sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0)), 0)
@@ -164,7 +248,7 @@ begin
 
     v_available := rec.total_qty - v_reserved_other;
     if v_available < rec.qty then
-      v_paint_name := coalesce(rec.stock_name, rec.paint_name, rec.paint_id);
+      v_paint_name := coalesce(rec.stock_name, rec.paint_name, rec.paint_id::text);
       raise exception 'Недостаточно краски: %. Доступно: %, требуется: %',
         v_paint_name, round(v_available::numeric, 2), round(rec.qty::numeric, 2);
     end if;
@@ -181,7 +265,7 @@ begin
   for rec in
     with requested as (
       select
-        nullif(trim(coalesce(value->>'paint_id', value->>'material_id')), '') as paint_id,
+        public.safe_paint_id(coalesce(value->>'paint_id', value->>'material_id')) as paint_id,
         nullif(trim(coalesce(value->>'paint_name', value->>'name')), '') as paint_name,
         coalesce(
           nullif(value->>'reserved_qty', '')::double precision,
@@ -233,7 +317,7 @@ begin
    where r.order_id = p_order_id
      and not exists (
        with requested as (
-         select nullif(trim(coalesce(value->>'paint_id', value->>'material_id')), '') as paint_id,
+         select public.safe_paint_id(coalesce(value->>'paint_id', value->>'material_id')) as paint_id,
                 nullif(trim(coalesce(value->>'paint_name', value->>'name')), '') as paint_name,
                 coalesce(
                   nullif(value->>'reserved_qty', '')::double precision,
@@ -278,7 +362,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_touched text[];
+  v_touched public.paints.id%type[];
 begin
   if coalesce(trim(p_order_id), '') = '' then
     raise exception 'order_id is required';
@@ -323,7 +407,7 @@ declare
   v_paint_name text;
   v_now_ms bigint := floor(extract(epoch from clock_timestamp()) * 1000);
   v_comments jsonb;
-  v_touched text[] := array[]::text[];
+  v_touched public.paints.id%type[] := '{}';
 begin
   if coalesce(trim(p_task_id), '') = '' then raise exception 'task_id is required'; end if;
   if coalesce(trim(p_order_id), '') = '' then raise exception 'order_id is required'; end if;
@@ -337,7 +421,7 @@ begin
   for rec in
     with requested as (
       select
-        nullif(trim(coalesce(value->>'paint_id', value->>'material_id')), '') as paint_id,
+        public.safe_paint_id(coalesce(value->>'paint_id', value->>'material_id')) as paint_id,
         nullif(trim(coalesce(value->>'paint_name', value->>'name')), '') as paint_name,
         coalesce(
           nullif(value->>'used_qty', '')::double precision,
@@ -375,13 +459,13 @@ begin
     for update of p
   loop
     if rec.qty < 0 then
-      raise exception 'Нельзя списать отрицательное количество краски (%).', coalesce(rec.stock_name, rec.paint_name, rec.paint_id);
+      raise exception 'Нельзя списать отрицательное количество краски (%).', coalesce(rec.stock_name, rec.paint_name, rec.paint_id::text);
     end if;
     if rec.qty = 0 then
       continue;
     end if;
     if rec.paint_id is null or rec.total_qty is null then
-      raise exception 'Краска % не найдена на складе.', coalesce(rec.paint_name, rec.paint_id);
+      raise exception 'Краска % не найдена на складе.', coalesce(rec.paint_name, rec.paint_id::text);
     end if;
 
     select coalesce(sum(greatest(r.reserved_qty - r.used_qty - r.released_qty, 0)), 0)
@@ -392,7 +476,7 @@ begin
 
     v_available := rec.total_qty - v_reserved_other;
     if v_available < rec.qty then
-      v_paint_name := coalesce(rec.stock_name, rec.paint_name, rec.paint_id);
+      v_paint_name := coalesce(rec.stock_name, rec.paint_name, rec.paint_id::text);
       raise exception 'Недостаточно краски: %. Доступно: %, требуется: %',
         v_paint_name, round(v_available::numeric, 2), round(rec.qty::numeric, 2);
     end if;
