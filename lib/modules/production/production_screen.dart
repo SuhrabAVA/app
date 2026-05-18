@@ -1095,20 +1095,60 @@ class _ProductionTabState extends State<_ProductionTab> {
 
   void _scheduleQueueSyncIfNeeded({
     required String groupId,
-    required Iterable<String> ids,
+    required Iterable<WorkplaceQueueEntry> entries,
   }) {
-    final signature = _idsSignature(ids);
+    final entryList = entries.toList(growable: false);
+    final signature = _idsSignature(entryList.map((entry) => entry.queueKey));
     if (_lastQueueSyncGroupId == groupId &&
         _lastQueueSyncIdsSignature == signature) {
       return;
     }
     _lastQueueSyncGroupId = groupId;
     _lastQueueSyncIdsSignature = signature;
-    final orderIds = ids.toList(growable: false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      queue.syncOrders(orderIds, groupId: groupId);
+      queue.syncWorkplaceEntries(entryList, workplaceId: groupId);
     });
+  }
+
+  WorkplaceQueueEntry _queueEntryForOrder(
+    OrderModel order,
+    _OrderGroupingData grouping,
+    String workplaceId,
+  ) {
+    final normalizedWorkplaceId = workplaceId.trim();
+    final group = grouping.stageGroups.values.firstWhere(
+      (entry) => entry.stageIds.contains(normalizedWorkplaceId),
+      orElse: () => _StageGroupInfo(
+        key: normalizedWorkplaceId,
+        stageIds: [normalizedWorkplaceId],
+        label: normalizedWorkplaceId,
+      ),
+    );
+    final tasksForGroup = grouping.tasksByGroup[group.key] ?? const <TaskModel>[];
+    TaskModel? task;
+    for (final candidate in tasksForGroup) {
+      if (candidate.capturedByWorkplaceId?.trim() == normalizedWorkplaceId ||
+          candidate.stageId.trim() == normalizedWorkplaceId) {
+        task = candidate;
+        break;
+      }
+    }
+    task ??= tasksForGroup.isNotEmpty ? tasksForGroup.first : null;
+    final taskStageId = task?.stageId.trim() ?? '';
+    final taskStageGroupKey = task?.stageGroupKey.trim() ?? '';
+    final fallbackStageId = group.stageIds.contains(normalizedWorkplaceId)
+        ? normalizedWorkplaceId
+        : (group.stageIds.isNotEmpty
+            ? group.stageIds.first
+            : normalizedWorkplaceId);
+    return WorkplaceQueueEntry(
+      workplaceId: normalizedWorkplaceId,
+      taskId: task?.id,
+      orderId: order.id,
+      stageId: taskStageId.isNotEmpty ? taskStageId : fallbackStageId,
+      stageGroupKey: taskStageGroupKey.isNotEmpty ? taskStageGroupKey : group.key,
+    );
   }
 
   _OrderGroupingData _groupingForOrder(
@@ -1247,15 +1287,22 @@ class _ProductionTabState extends State<_ProductionTab> {
       if (sort == _ProductionSort.queue && !_hasActiveFilters) {
         _scheduleQueueSyncIfNeeded(
           groupId: tab.id,
-          ids: visible.map((o) => o.id),
+          entries: visible.map((order) => _queueEntryForOrder(
+                order,
+                groupingByOrder[order.id]!,
+                tab.id,
+              )),
         );
       }
 
       if (sort == _ProductionSort.queue) {
-        ordered = queue.getSortedByPriority(
+        ordered = queue.getSortedByWorkplaceQueue(
           visible,
-          (o) => o.id,
-          groupId: tab.id,
+          (order) => _queueEntryForOrder(
+            order,
+            groupingByOrder[order.id]!,
+            tab.id,
+          ),
         );
       } else {
         ordered = _sortOrders(visible);
@@ -1336,9 +1383,13 @@ class _ProductionTabState extends State<_ProductionTab> {
                   final updated = List.of(ordered);
                   final item = updated.removeAt(oldIndex);
                   updated.insert(newIndex, item);
-                  queue.applyVisibleReorder(
-                    updated.map((e) => e.id).toList(),
-                    groupId: tab.id,
+                  queue.saveWorkplaceReorder(
+                    updated.map((order) => _queueEntryForOrder(
+                          order,
+                          groupingByOrder[order.id]!,
+                          tab.id,
+                        )),
+                    workplaceId: tab.id,
                   );
                 },
                 itemBuilder: (context, index) {

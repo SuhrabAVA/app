@@ -993,6 +993,15 @@ class OrdersProvider with ChangeNotifier {
     if (removedOrderIds.isEmpty) return;
 
     try {
+      try {
+        await _supabase
+            .from('workplace_queue_positions')
+            .delete()
+            .inFilter('order_id', removedOrderIds.toList(growable: false));
+      } catch (_) {
+        // Таблица появляется только после миграции очередей рабочих мест.
+      }
+
       final rows = await _supabase
           .from('production_queue_state')
           .select('group_id, order_sequence, hidden_order_ids');
