@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../personnel/personnel_provider.dart';
 import '../tasks/task_model.dart';
+import '../tasks/quantity_status_service.dart';
 import 'id_format.dart';
 import 'order_model.dart';
 
@@ -51,6 +52,8 @@ class OrderTimelineDialog extends StatelessWidget {
   }
 
   String _formatQuantity(String text, double? parsed) {
+    final payloadDisplay = quantityDisplayText(text);
+    if (payloadDisplay != text) return payloadDisplay;
     if (parsed != null) {
       final bool isInt = (parsed - parsed.round()).abs() < 0.0001;
       final display = isInt ? parsed.round().toString() : parsed.toStringAsFixed(2);
