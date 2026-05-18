@@ -7929,6 +7929,11 @@ Future<_QuantityInput?> _askQuantity(
                         errorText = 'Количество не может быть отрицательным.');
                     return;
                   }
+                  if (n == 0) {
+                    setState(() =>
+                        errorText = 'Количество должно быть больше 0.');
+                    return;
+                  }
                   final expected = order != null && task != null
                       ? getExpectedQuantity(
                           order: order,
