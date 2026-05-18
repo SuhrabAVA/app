@@ -107,6 +107,54 @@ void main() {
       expect(printKeys, [printFirst.queueKey, printSecond.queueKey]);
     });
 
+    test('reorders by concrete task keys inside selected workplace only', () {
+      final cutPaint = _position(
+        'cut',
+        'order-1',
+        1,
+        taskId: 'task-paint',
+        stageId: 'paint',
+        stageGroupKey: 'finish',
+      );
+      final cutCut = _position(
+        'cut',
+        'order-1',
+        2,
+        taskId: 'task-cut',
+        stageId: 'cut',
+        stageGroupKey: 'cut',
+      );
+      final print = _position('print', 'order-2', 1, taskId: 'task-print');
+
+      final keys = WorkplaceQueuePositionPlanner.reorderedQueueKeys(
+        current: [cutPaint, cutCut, print],
+        orderedKeys: [
+          WorkplaceQueueItemKey.fromEntry(_entry(
+            'cut',
+            'order-1',
+            taskId: 'task-cut',
+            stageId: 'cut',
+            stageGroupKey: 'cut',
+          )),
+          WorkplaceQueueItemKey.fromEntry(_entry(
+            'cut',
+            'order-1',
+            taskId: 'task-paint',
+            stageId: 'paint',
+            stageGroupKey: 'finish',
+          )),
+          WorkplaceQueueItemKey.fromEntry(_entry(
+            'print',
+            'order-2',
+            taskId: 'task-print',
+          )),
+        ],
+        workplaceId: 'cut',
+      );
+
+      expect(keys, [cutCut.queueKey, cutPaint.queueKey]);
+    });
+
     test('sync plan does not delete or reorder existing positions', () {
       final existing = [
         _position('pack', 'order-1', 10),

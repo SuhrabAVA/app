@@ -1383,13 +1383,17 @@ class _ProductionTabState extends State<_ProductionTab> {
                   final updated = List.of(ordered);
                   final item = updated.removeAt(oldIndex);
                   updated.insert(newIndex, item);
-                  queue.saveWorkplaceReorder(
-                    updated.map((order) => _queueEntryForOrder(
-                          order,
-                          groupingByOrder[order.id]!,
-                          tab.id,
-                        )),
+                  queue.applyVisibleTaskReorder(
                     workplaceId: tab.id,
+                    orderedKeys: updated
+                        .map((order) => WorkplaceQueueItemKey.fromEntry(
+                              _queueEntryForOrder(
+                                order,
+                                groupingByOrder[order.id]!,
+                                tab.id,
+                              ),
+                            ))
+                        .toList(growable: false),
                   );
                 },
                 itemBuilder: (context, index) {
@@ -1400,6 +1404,9 @@ class _ProductionTabState extends State<_ProductionTab> {
                     grouping.tasksByGroup,
                   );
                   final qty = order.product.quantity.toDouble();
+
+                  final queueEntry =
+                      _queueEntryForOrder(order, grouping, tab.id);
 
                   return _buildOrderRow(
                     context: context,
@@ -1412,6 +1419,7 @@ class _ProductionTabState extends State<_ProductionTab> {
                     orderLabel: _orderLabel(order),
                     showDragHandle: true,
                     dragIndex: index,
+                    rowKey: ValueKey(queueEntry.queueKey),
                   );
                 },
               )
@@ -1497,9 +1505,10 @@ class _ProductionTabState extends State<_ProductionTab> {
     required String orderLabel,
     required bool showDragHandle,
     int? dragIndex,
+    Key? rowKey,
   }) {
     return Container(
-      key: ValueKey(order.id),
+      key: rowKey ?? ValueKey(order.id),
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
         color: completed ? Colors.green.withOpacity(0.08) : Colors.white,
