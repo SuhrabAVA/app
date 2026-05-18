@@ -1660,62 +1660,95 @@ class _TasksScreenState extends State<TasksScreen>
                     for (var i = 0; i < selected.length; i++)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              flex: 3,
-                              child: OutlinedButton(
-                                onPressed: saving ? null : () => choosePaint(i, setDialogState),
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(_paintNameFromRow(selected[i]).isEmpty
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final compact = constraints.maxWidth < 640;
+                            final deleteButton = selected.length > 1
+                                ? IconButton(
+                                    tooltip: 'Удалить краску',
+                                    onPressed: saving
+                                        ? null
+                                        : () {
+                                            final removedQty = qtyControllers[i];
+                                            final removedInfo = infoControllers[i];
+                                            setDialogState(() {
+                                              selected.removeAt(i);
+                                              qtyControllers.removeAt(i);
+                                              infoControllers.removeAt(i);
+                                            });
+                                            WidgetsBinding.instance
+                                                .addPostFrameCallback((_) {
+                                              removedQty.dispose();
+                                              removedInfo.dispose();
+                                            });
+                                          },
+                                    icon: const Icon(Icons.delete_outline),
+                                  )
+                                : const SizedBox.shrink();
+                            final paintButton = OutlinedButton(
+                              onPressed: saving
+                                  ? null
+                                  : () => choosePaint(i, setDialogState),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  _paintNameFromRow(selected[i]).isEmpty
                                       ? 'Выбрать краску'
-                                      : _paintNameFromRow(selected[i])),
+                                      : _paintNameFromRow(selected[i]),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                controller: qtyControllers[i],
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(labelText: 'Кол-во, кг'),
-                                validator: (value) {
-                                  final qty = double.tryParse((value ?? '').trim().replaceAll(',', '.'));
-                                  if (qty == null || qty <= 0) return 'Введите > 0';
-                                  return null;
-                                },
+                            );
+                            final qtyField = TextFormField(
+                              controller: qtyControllers[i],
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                decimal: true,
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              flex: 2,
-                              child: TextFormField(
-                                controller: infoControllers[i],
-                                decoration: const InputDecoration(labelText: 'Инфо'),
-                              ),
-                            ),
-                            if (selected.length > 1)
-                              IconButton(
-                                tooltip: 'Удалить краску',
-                                onPressed: saving
-                                    ? null
-                                    : () {
-                                        final removedQty = qtyControllers[i];
-                                        final removedInfo = infoControllers[i];
-                                        setDialogState(() {
-                                          selected.removeAt(i);
-                                          qtyControllers.removeAt(i);
-                                          infoControllers.removeAt(i);
-                                        });
-                                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                                          removedQty.dispose();
-                                          removedInfo.dispose();
-                                        });
-                                      },
-                                icon: const Icon(Icons.delete_outline),
-                              ),
-                          ],
+                              decoration:
+                                  const InputDecoration(labelText: 'Кол-во, кг'),
+                              validator: (value) {
+                                final qty = double.tryParse((value ?? '')
+                                    .trim()
+                                    .replaceAll(',', '.'));
+                                if (qty == null || qty <= 0) return 'Введите > 0';
+                                return null;
+                              },
+                            );
+                            final infoField = TextFormField(
+                              controller: infoControllers[i],
+                              decoration: const InputDecoration(labelText: 'Инфо'),
+                            );
+
+                            if (compact) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(child: paintButton),
+                                      if (selected.length > 1) deleteButton,
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  qtyField,
+                                  const SizedBox(height: 8),
+                                  infoField,
+                                ],
+                              );
+                            }
+
+                            return Row(
+                              children: [
+                                Expanded(flex: 3, child: paintButton),
+                                const SizedBox(width: 12),
+                                Expanded(child: qtyField),
+                                const SizedBox(width: 12),
+                                Expanded(flex: 2, child: infoField),
+                                if (selected.length > 1) deleteButton,
+                              ],
+                            );
+                          },
                         ),
                       ),
                     Align(
@@ -1793,11 +1826,10 @@ class _TasksScreenState extends State<TasksScreen>
                         });
                       }
                       try {
-                        final sb = Supabase.instance.client;
-                        await sb.from('order_paints').delete().eq('order_id', latest.id);
-                        if (nextRows.isNotEmpty) {
-                          await sb.from('order_paints').insert(nextRows);
-                        }
+                        await repo.saveOrderPaints(
+                          orderId: latest.id,
+                          paints: nextRows,
+                        );
                         await repo.syncPaintReservations(
                           orderId: latest.id,
                           paints: nextRows,
@@ -4615,46 +4647,56 @@ class _TasksScreenState extends State<TasksScreen>
                         ],
                       ),
                       const SizedBox(height: 10),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            flex: 3,
-                            child: TextField(
-                              controller: controllers[row],
-                              keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true,
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 560;
+                          final fieldWidth = compact
+                              ? constraints.maxWidth
+                              : (constraints.maxWidth - 96) / 2;
+                          return Wrap(
+                            spacing: 12,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: fieldWidth,
+                                child: TextField(
+                                  controller: controllers[row],
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Фактический расход',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (value) => row.actualUsedText = value,
+                                ),
                               ),
-                              decoration: const InputDecoration(
-                                labelText: 'Фактический расход',
-                                border: OutlineInputBorder(),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: Text(row.unit),
                               ),
-                              onChanged: (value) => row.actualUsedText = value,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Padding(
-                            padding: const EdgeInsets.only(top: 16),
-                            child: Text(row.unit),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 3,
-                            child: CheckboxListTile(
-                              contentPadding: EdgeInsets.zero,
-                              value: row.writeOffNow,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              title: const Text('Списать сейчас'),
-                              subtitle: Text(row.status),
-                              onChanged: (value) {
-                                updateDialogState(() {
-                                  row.writeOffNow = value ?? false;
-                                  row.refreshStatus();
-                                });
-                              },
-                            ),
-                          ),
-                        ],
+                              SizedBox(
+                                width: fieldWidth,
+                                child: CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  value: row.writeOffNow,
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  title: const Text('Списать сейчас'),
+                                  subtitle: Text(row.status),
+                                  onChanged: (value) {
+                                    updateDialogState(() {
+                                      row.writeOffNow = value ?? false;
+                                      row.refreshStatus();
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ],
                   ),

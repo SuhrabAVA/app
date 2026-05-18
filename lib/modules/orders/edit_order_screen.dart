@@ -2429,13 +2429,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     // 4) Перезаписываем таблицу order_paints
     try {
-      // удаляем старые
-      await _sb.from('order_paints').delete().eq('order_id', orderId);
-      // вставляем новые
-      if (rows.isNotEmpty) {
-        await _sb.from('order_paints').insert(rows);
-      }
-      await OrdersRepository().syncPaintReservations(
+      final repo = OrdersRepository();
+      await repo.saveOrderPaints(orderId: orderId, paints: rows);
+      await repo.syncPaintReservations(
         orderId: orderId,
         paints: rows,
         actor: AuthHelper.currentUserName ?? '',

@@ -302,9 +302,19 @@ class OrdersRepository {
   Future<int> addPaints(String orderId, List<PaintItem> paints) async {
     if (paints.isEmpty) return 0;
     final rows = paints.map((p) => p.toRow(orderId)).toList();
-    final res = await _sb.from('order_paints').insert(rows).select('id');
-    if (res is List) return res.length;
-    return 0;
+    await saveOrderPaints(orderId: orderId, paints: rows);
+    return rows.length;
+  }
+
+  Future<void> saveOrderPaints({
+    required String orderId,
+    required List<Map<String, dynamic>> paints,
+  }) async {
+    await ensureSignedIn();
+    await _sb.rpc('save_order_paints', params: {
+      'p_order_id': orderId,
+      'p_paints': paints,
+    });
   }
 
   Future<void> syncPaintReservations({
