@@ -15,6 +15,7 @@ class WorkplaceQueuePosition {
   final String stageId;
   final String? stageGroupKey;
   final int queuePosition;
+  final bool hasQueuePosition;
 
   const WorkplaceQueuePosition({
     required this.id,
@@ -24,6 +25,7 @@ class WorkplaceQueuePosition {
     required this.stageId,
     required this.stageGroupKey,
     required this.queuePosition,
+    this.hasQueuePosition = true,
   });
 
   String get queueKey => ProductionQueueProvider.queueKeyFor(
@@ -43,6 +45,7 @@ class WorkplaceQueuePosition {
       stageId: (map['stage_id'] ?? '').toString(),
       stageGroupKey: _nullableTrimmed(map['stage_group_key']),
       queuePosition: _intFrom(map['queue_position']) ?? (1 << 30),
+      hasQueuePosition: _intFrom(map['queue_position']) != null,
     );
   }
 
@@ -55,6 +58,123 @@ class WorkplaceQueuePosition {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
+  }
+}
+
+@visibleForTesting
+class WorkplaceQueuePositionInsertPlan {
+  const WorkplaceQueuePositionInsertPlan({
+    required this.entry,
+    required this.queuePosition,
+  });
+
+  final WorkplaceQueueEntry entry;
+  final int queuePosition;
+}
+
+@visibleForTesting
+class WorkplaceQueuePositionPlanner {
+  const WorkplaceQueuePositionPlanner._();
+
+  static int comparePositions(
+    WorkplaceQueuePosition left,
+    WorkplaceQueuePosition right,
+  ) {
+    if (left.hasQueuePosition != right.hasQueuePosition) {
+      return left.hasQueuePosition ? -1 : 1;
+    }
+    final byPosition = left.queuePosition.compareTo(right.queuePosition);
+    if (byPosition != 0) return byPosition;
+    return left.id.compareTo(right.id);
+  }
+
+  static List<WorkplaceQueuePosition> sortedPositions(
+    Iterable<WorkplaceQueuePosition> positions,
+  ) {
+    final sorted = positions.toList(growable: false);
+    sorted.sort(comparePositions);
+    return sorted;
+  }
+
+  static int maxAssignedPosition(Iterable<WorkplaceQueuePosition> positions) {
+    var maxPosition = 0;
+    for (final position in positions) {
+      if (!position.hasQueuePosition) continue;
+      if (position.queuePosition > maxPosition) {
+        maxPosition = position.queuePosition;
+      }
+    }
+    return maxPosition;
+  }
+
+  static List<WorkplaceQueueEntry> missingEntries({
+    required Iterable<WorkplaceQueuePosition> existing,
+    required Iterable<WorkplaceQueueEntry> entries,
+    required String workplaceId,
+  }) {
+    final normalizedWorkplace = workplaceId.trim();
+    final existingKeys = {
+      for (final position in existing)
+        if (position.workplaceId.trim() == normalizedWorkplace) position.queueKey,
+    };
+    final missing = <WorkplaceQueueEntry>[];
+    final seen = <String>{};
+    for (final entry in entries) {
+      if (entry.workplaceId.trim() != normalizedWorkplace) continue;
+      if (entry.orderId.trim().isEmpty || entry.stageId.trim().isEmpty) {
+        continue;
+      }
+      if (existingKeys.contains(entry.queueKey)) continue;
+      if (!seen.add(entry.queueKey)) continue;
+      missing.add(entry);
+    }
+    return missing;
+  }
+
+  static List<WorkplaceQueuePositionInsertPlan> appendMissingAfterMax({
+    required Iterable<WorkplaceQueuePosition> existing,
+    required Iterable<WorkplaceQueueEntry> entries,
+    required String workplaceId,
+  }) {
+    final missing = missingEntries(
+      existing: existing,
+      entries: entries,
+      workplaceId: workplaceId,
+    );
+    var nextPosition = maxAssignedPosition(existing) + 1;
+    return [
+      for (final entry in missing)
+        WorkplaceQueuePositionInsertPlan(
+          entry: entry,
+          queuePosition: nextPosition++,
+        ),
+    ];
+  }
+
+  static List<String> reorderedKeys({
+    required Iterable<WorkplaceQueuePosition> current,
+    required Iterable<WorkplaceQueueEntry> orderedEntries,
+    required String workplaceId,
+  }) {
+    final normalizedWorkplace = workplaceId.trim();
+    final entries = <WorkplaceQueueEntry>[];
+    final seen = <String>{};
+    for (final entry in orderedEntries) {
+      if (entry.workplaceId.trim() != normalizedWorkplace) continue;
+      if (!seen.add(entry.queueKey)) continue;
+      entries.add(entry);
+    }
+
+    final currentForWorkplace = sortedPositions(current.where(
+      (position) => position.workplaceId.trim() == normalizedWorkplace,
+    ));
+    final orderedKeys = entries.map((entry) => entry.queueKey).toSet();
+    return <String>[
+      ...entries.map((entry) => entry.queueKey),
+      ...currentForWorkplace
+          .where((position) => !orderedKeys.contains(position.queueKey))
+          .map((position) => position.queueKey),
+    ];
   }
 }
 
@@ -365,10 +485,13 @@ class ProductionQueueProvider with ChangeNotifier {
           .eq('workplace_id', normalized)
           .order('queue_position');
       if (raw is! List) return positionsForWorkplace(normalized);
-      final positions = raw
-          .whereType<Map>()
-          .map((row) => WorkplaceQueuePosition.fromMap(Map<String, dynamic>.from(row)))
-          .toList();
+      final positions = WorkplaceQueuePositionPlanner.sortedPositions(
+        raw.whereType<Map>().map(
+              (row) => WorkplaceQueuePosition.fromMap(
+                Map<String, dynamic>.from(row),
+              ),
+            ),
+      );
       _positionsByWorkplace[normalized] = {
         for (final position in positions) position.queueKey: position,
       };
@@ -383,8 +506,7 @@ class ProductionQueueProvider with ChangeNotifier {
   List<WorkplaceQueuePosition> positionsForWorkplace(String workplaceId) {
     final values = _positionsByWorkplace[_normalizeWorkplaceId(workplaceId)]?.values.toList() ??
         <WorkplaceQueuePosition>[];
-    values.sort((a, b) => a.queuePosition.compareTo(b.queuePosition));
-    return values;
+    return WorkplaceQueuePositionPlanner.sortedPositions(values);
   }
 
   int priorityOfEntry(WorkplaceQueueEntry entry) {
@@ -494,21 +616,27 @@ class ProductionQueueProvider with ChangeNotifier {
 
   Future<int> _nextPositionForWorkplace(String workplaceId) async {
     final normalized = _normalizeWorkplaceId(workplaceId);
-    final cached = _positionsByWorkplace[normalized]?.values ?? const <WorkplaceQueuePosition>[];
+    final cached = _positionsByWorkplace[normalized]?.values ??
+        const <WorkplaceQueuePosition>[];
     var maxPosition = 0;
     for (final item in cached) {
+      if (!item.hasQueuePosition) continue;
       if (item.queuePosition > maxPosition) maxPosition = item.queuePosition;
     }
     try {
       final raw = await _sb
           .from(_positionsTable)
           .select('queue_position')
-          .eq('workplace_id', normalized)
-          .order('queue_position', ascending: false)
-          .limit(1);
-      if (raw is List && raw.isNotEmpty && raw.first is Map) {
-        final remoteMax = WorkplaceQueuePosition._intFrom((raw.first as Map)['queue_position']);
-        if (remoteMax != null && remoteMax > maxPosition) maxPosition = remoteMax;
+          .eq('workplace_id', normalized);
+      if (raw is List) {
+        for (final row in raw.whereType<Map>()) {
+          final remoteMax = WorkplaceQueuePosition._intFrom(
+            row['queue_position'],
+          );
+          if (remoteMax != null && remoteMax > maxPosition) {
+            maxPosition = remoteMax;
+          }
+        }
       }
     } catch (_) {}
     return maxPosition + 1;
@@ -516,7 +644,9 @@ class ProductionQueueProvider with ChangeNotifier {
 
   Future<void> ensureEntryAtTail(WorkplaceQueueEntry entry) async {
     final workplaceId = _normalizeWorkplaceId(entry.workplaceId);
-    if (workplaceId.isEmpty || entry.orderId.trim().isEmpty || entry.stageId.trim().isEmpty) return;
+    if (workplaceId.isEmpty ||
+        entry.orderId.trim().isEmpty ||
+        entry.stageId.trim().isEmpty) return;
     if (_positionsByWorkplace[workplaceId]?.containsKey(entry.queueKey) == true) return;
     try {
       await _ensureAuthed();
@@ -524,44 +654,97 @@ class ProductionQueueProvider with ChangeNotifier {
       await _sb.from(_positionsTable).insert(entry.toInsertMap(position));
       await loadPositionsForWorkplace(workplaceId);
     } catch (e) {
-      debugPrint('⚠️ Failed to append workplace queue entry "${entry.queueKey}": $e');
+      debugPrint(
+        '⚠️ Failed to append workplace queue entry "${entry.queueKey}": $e',
+      );
       await loadPositionsForWorkplace(workplaceId);
     }
   }
 
-  /// Синхронизирует задания рабочего места: существующие позиции не меняются,
-  /// новые записи добавляются в конец очереди только внутри [workplaceId].
+  /// Синхронизирует задания рабочих мест: существующие позиции не меняются,
+  /// новые записи добавляются в конец очереди только внутри своего workplace.
   void syncWorkplaceEntries(
     Iterable<WorkplaceQueueEntry> entries, {
-    required String workplaceId,
+    String? workplaceId,
   }) {
     if (_isSyncingOrders) return;
-    final normalizedWorkplace = _normalizeWorkplaceId(workplaceId);
-    if (normalizedWorkplace.isEmpty) return;
+    final requestedWorkplace =
+        workplaceId == null ? null : _normalizeWorkplaceId(workplaceId);
+    if (workplaceId != null && requestedWorkplace!.isEmpty) return;
     _isSyncingOrders = true;
     try {
       unawaited(_bootstrapRemoteSync());
-      final normalizedEntries = <WorkplaceQueueEntry>[];
-      final seen = <String>{};
+      final entriesByWorkplace = <String, List<WorkplaceQueueEntry>>{};
+      final seenByWorkplace = <String, Set<String>>{};
       for (final entry in entries) {
-        if (_normalizeWorkplaceId(entry.workplaceId) != normalizedWorkplace) continue;
-        if (entry.orderId.trim().isEmpty || entry.stageId.trim().isEmpty) continue;
+        final normalized = _normalizeWorkplaceId(entry.workplaceId);
+        if (normalized.isEmpty) continue;
+        if (requestedWorkplace != null && normalized != requestedWorkplace) {
+          continue;
+        }
+        if (entry.orderId.trim().isEmpty || entry.stageId.trim().isEmpty) {
+          continue;
+        }
+        final seen = seenByWorkplace.putIfAbsent(normalized, () => <String>{});
         if (!seen.add(entry.queueKey)) continue;
-        normalizedEntries.add(entry);
+        entriesByWorkplace
+            .putIfAbsent(normalized, () => <WorkplaceQueueEntry>[])
+            .add(entry);
+      }
+      if (entriesByWorkplace.isEmpty) {
+        _isSyncingOrders = false;
+        return;
       }
       unawaited(() async {
         try {
-          await loadPositionsForWorkplace(normalizedWorkplace);
-          for (final entry in normalizedEntries) {
-            await ensureEntryAtTail(entry);
+          for (final workplaceEntry in entriesByWorkplace.entries) {
+            await _syncSingleWorkplaceEntries(
+              workplaceEntry.value,
+              workplaceId: workplaceEntry.key,
+            );
           }
-          await normalizePositions(workplaceId: normalizedWorkplace);
         } finally {
           _isSyncingOrders = false;
         }
       }());
     } catch (_) {
       _isSyncingOrders = false;
+    }
+  }
+
+  Future<void> _syncSingleWorkplaceEntries(
+    List<WorkplaceQueueEntry> entries, {
+    required String workplaceId,
+  }) async {
+    final positions = await loadPositionsForWorkplace(workplaceId);
+    if (positions.any((position) => !position.hasQueuePosition)) {
+      await normalizePositions(workplaceId: workplaceId);
+    }
+    final current = positionsForWorkplace(workplaceId);
+    final insertPlans = WorkplaceQueuePositionPlanner.appendMissingAfterMax(
+      existing: current,
+      entries: entries,
+      workplaceId: workplaceId,
+    );
+    for (final plan in insertPlans) {
+      await _insertEntryAtPosition(plan.entry, plan.queuePosition);
+    }
+    if (insertPlans.isNotEmpty) {
+      await loadPositionsForWorkplace(workplaceId);
+    }
+  }
+
+  Future<void> _insertEntryAtPosition(
+    WorkplaceQueueEntry entry,
+    int queuePosition,
+  ) async {
+    try {
+      await _ensureAuthed();
+      await _sb.from(_positionsTable).insert(entry.toInsertMap(queuePosition));
+    } catch (e) {
+      debugPrint(
+        '⚠️ Failed to append workplace queue entry "${entry.queueKey}": $e',
+      );
     }
   }
 
@@ -602,16 +785,13 @@ class ProductionQueueProvider with ChangeNotifier {
       await ensureEntryAtTail(entry);
     }
     final current = positionsForWorkplace(normalized);
-    final orderedKeys = entries.map((entry) => entry.queueKey).toSet();
-    final remaining = current
-        .where((position) => !orderedKeys.contains(position.queueKey))
-        .toList();
-    final nextKeys = <String>[
-      ...entries.map((entry) => entry.queueKey),
-      ...remaining.map((position) => position.queueKey),
-    ];
+    final nextKeys = WorkplaceQueuePositionPlanner.reorderedKeys(
+      current: current,
+      orderedEntries: entries,
+      workplaceId: normalized,
+    );
     final byKey = {
-      for (final position in positionsForWorkplace(normalized)) position.queueKey: position,
+      for (final position in current) position.queueKey: position,
     };
     for (var i = 0; i < nextKeys.length; i++) {
       final position = byKey[nextKeys[i]];
