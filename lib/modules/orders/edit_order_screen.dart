@@ -47,6 +47,9 @@ class EditOrderScreen extends StatefulWidget {
   State<EditOrderScreen> createState() => _EditOrderScreenState();
 }
 
+const bool _disableSwitchableStageDotTooltipDiagnostic =
+    bool.fromEnvironment('DISABLE_SWITCHABLE_STAGE_DOT_TOOLTIP_DIAGNOSTIC');
+
 class _SwitchableStageOption {
   const _SwitchableStageOption(this.stageId, this.label);
 
@@ -75,37 +78,46 @@ class _SwitchableStageDot extends StatelessWidget {
         ? colors.primary.withValues(alpha: 0.72)
         : colors.outlineVariant.withValues(alpha: 0.9);
 
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        button: true,
-        selected: selected,
-        label: label,
-        child: InkResponse(
-          onTap: onTap,
-          radius: 18,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOut,
-            width: 20,
-            height: 20,
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: fillColor,
-              border: Border.all(color: borderColor, width: 1.5),
-            ),
-            child: selected
-                ? DecoratedBox(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: colors.primary.withValues(alpha: 0.78),
-                    ),
-                  )
-                : null,
+    final dot = Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 18,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          width: 20,
+          height: 20,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: fillColor,
+            border: Border.all(color: borderColor, width: 1.5),
           ),
+          child: selected
+              ? DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colors.primary.withValues(alpha: 0.78),
+                  ),
+                )
+              : null,
         ),
       ),
+    );
+
+    // Diagnostic-only escape hatch for Windows accessibility spam checks.
+    // Keep this local to the suspected form-choice dot instead of disabling
+    // Tooltip, SnackBar, FocusNode, or Semantics globally.
+    if (_disableSwitchableStageDotTooltipDiagnostic) {
+      return dot;
+    }
+
+    return Tooltip(
+      message: label,
+      child: dot,
     );
   }
 }

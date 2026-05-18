@@ -3,13 +3,15 @@ import 'package:flutter/material.dart';
 
 /// Shared UI defaults that avoid transient framework assertions from visual
 /// effects whose owner widget can be removed during fast navigation/rebuilds.
+///
+/// Keep accessibility-affecting widgets (for example [Tooltip], [SnackBar],
+/// [FocusNode], and [Semantics]) enabled by default. If a specific control
+/// needs investigation, gate that control locally with an explicit diagnostic
+/// flag instead of changing global theme behavior.
 final ThemeData appTheme = ThemeData(
   splashFactory: NoSplash.splashFactory,
   splashColor: Colors.transparent,
   highlightColor: Colors.transparent,
-  tooltipTheme: const TooltipThemeData(
-    triggerMode: TooltipTriggerMode.manual,
-  ),
 );
 
 /// Some Flutter builds can still finish a paint/build pass for an ink feature
