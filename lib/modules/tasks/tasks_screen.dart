@@ -678,7 +678,7 @@ bool canStartPackagingEarly({
     currentStageGroupKey: task.stageGroupKey,
     hasPackagingAccess:
         _isPackagingAvailableByEmployeeAccess(personnel, employeeId),
-    enforceSinglePerformer: true,
+    enforceSinglePerformer: false,
   );
 }
 
