@@ -627,39 +627,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   );
 }
 
-bool canStartPackagingEarly({
-  required TaskModel task,
-  required TaskProvider tasks,
-  required PersonnelProvider personnel,
-  required String employeeId,
-  required stage_sequence.StageGroupingResolver groupResolver,
-}) {
-  final stageId = task.stageId.trim();
-  if (stageId != stage_sequence.kPackagingStageId) return false;
-  if (task.status == TaskStatus.completed) return false;
-  if (task.status == TaskStatus.inProgress &&
-      !task.assignees.contains(employeeId)) {
-    return false;
-  }
-
-  if (personnel.workplaceById(stageId) == null) return false;
-
-  final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
-  if (all.isEmpty) return false;
-  final sequence = tasks.stageSequenceForOrder(task.orderId) ?? const <String>[];
-  if (sequence.length < 2 ||
-      sequence.last.trim() != stage_sequence.kPackagingStageId) {
-    return false;
-  }
-
-  final prevGroupKey =
-      groupResolver(task.orderId, sequence[sequence.length - 2]);
-  final prevGroupTasks =
-      all.where((t) => groupResolver(t.orderId, t.stageId) == prevGroupKey);
-  if (prevGroupTasks.isEmpty) return false;
-  return prevGroupTasks.any(_hasStartedForStageSequence);
-}
-
 bool _hasWorkplaceQueueActivity(TaskModel task) {
   if (task.status != TaskStatus.waiting) return true;
   return task.comments.any(
@@ -3050,19 +3017,12 @@ class _TasksScreenState extends State<TasksScreen>
                     );
                     final readyForStage = task.status == TaskStatus.waiting &&
                         unlockedByQueue &&
-                        (_isFirstPendingStage(
-                              taskProvider,
-                              personnel,
-                              task,
-                              groupResolver: _stageGroupKey,
-                            ) ||
-                            canStartPackagingEarly(
-                              task: task,
-                              tasks: taskProvider,
-                              personnel: personnel,
-                              employeeId: widget.employeeId,
-                              groupResolver: _stageGroupKey,
-                            ));
+                        _isFirstPendingStage(
+                          taskProvider,
+                          personnel,
+                          task,
+                          groupResolver: _stageGroupKey,
+                        );
                     const canOpen = true;
                     return _TaskCard(
                       task: task,
@@ -5449,14 +5409,7 @@ class _TasksScreenState extends State<TasksScreen>
         (_canRunOutOfStageSequence(task) ||
             _isFirstPendingStage(context.read<TaskProvider>(),
                 context.read<PersonnelProvider>(), task,
-                groupResolver: _stageGroupKey) ||
-            canStartPackagingEarly(
-              task: task,
-              tasks: context.read<TaskProvider>(),
-              personnel: context.read<PersonnelProvider>(),
-              employeeId: widget.employeeId,
-              groupResolver: _stageGroupKey,
-            )) &&
+                groupResolver: _stageGroupKey)) &&
         stageModeAllowsJoin &&
         !shiftPaused &&
         !groupLocked &&
@@ -5710,19 +5663,10 @@ class _TasksScreenState extends State<TasksScreen>
                         final taskProvider = context.read<TaskProvider>();
                         final personnelProvider = personnel;
                         // Sequential stage guard
-                        final canStartPackagingOutOfOrder =
-                            canStartPackagingEarly(
-                          task: task,
-                          tasks: taskProvider,
-                          personnel: personnelProvider,
-                          employeeId: widget.employeeId,
-                          groupResolver: _stageGroupKey,
-                        );
                         if (!_canRunOutOfStageSequence(task) &&
                             !_isFirstPendingStage(
                                 taskProvider, personnelProvider, task,
-                                groupResolver: _stageGroupKey) &&
-                            !canStartPackagingOutOfOrder) {
+                                groupResolver: _stageGroupKey)) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                                 content: Text(
@@ -7670,7 +7614,7 @@ class _TaskCard extends StatelessWidget {
     final double statusSize = scaled(11.5);
     final String? stageHint = showStageHint
         ? (readyForStage
-            ? 'Доступно, так как предыдущий этап уже начат'
+            ? 'Можно начинать: предыдущий этап начат'
             : 'Ожидает начала предыдущего этапа')
         : null;
     final Color readyColor = Colors.green.shade600;
