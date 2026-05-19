@@ -30,6 +30,7 @@ import '../tasks/task_completion_rules.dart';
 // УДАЛЕНО: import '../production_planning/planned_stage_model.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
+import '../orders/order_comments_timeline.dart';
 import '../../services/app_auth.dart';
 import '../orders/order_details_card.dart';
 
@@ -699,51 +700,13 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
-            if (comments.isEmpty)
-              const Text(
-                'Нет комментариев',
-                style: TextStyle(color: Colors.grey),
-              )
-            else
-              Column(
-                children: [
-                  for (final c in comments)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            c.type == 'problem'
-                                ? Icons.error_outline
-                                : c.type == 'pause'
-                                    ? Icons.pause_circle_outline
-                                    : Icons.info_outline,
-                            size: 18,
-                            color: c.type == 'problem'
-                                ? Colors.redAccent
-                                : c.type == 'pause'
-                                    ? Colors.orange
-                                    : Colors.blueGrey,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildCommentMeta(c, personnel.employees),
-                                Text(
-                                  _renderCommentText(c, personnel.employees),
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
+            SizedBox(
+              height: 220,
+              child: OrderCommentsTimeline(
+                comments: comments,
+                attachmentsByComment: const {},
               ),
+            ),
             const Divider(height: 24),
             const Text(
               'Этапы производства',
