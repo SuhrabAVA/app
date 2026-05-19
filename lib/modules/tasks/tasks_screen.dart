@@ -655,6 +655,9 @@ bool canStartPackagingOutOfQueue({
   required String employeeId,
   stage_sequence.StageGroupingResolver? groupResolver,
 }) {
+  // Обход очереди разрешаем только для целевого этапа "Упаковка".
+  if (task.stageId != kPackagingStageId) return false;
+
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return false;
 
@@ -5442,29 +5445,30 @@ class _TasksScreenState extends State<TasksScreen>
       groupResolver: _stageGroupKey,
     );
 
+    // Спец-правило упаковки имеет приоритет над строгой проверкой позиции
+    // в очереди рабочего места: если упаковку можно стартовать вне очереди,
+    // не блокируем запуск из-за того, что задача не первая.
+    if (canStartPackagingEarlyNow) {
+      return true;
+    }
+
     for (var i = 0; i < index; i++) {
       final previous = queued[i];
       if (strictSequentialByPreviousCompletion) {
         final bool previousCompleted = _isEffectivelyCompleted(previous);
         final bool previousInProblem = previous.status == TaskStatus.problem ||
             previous.comments.any((c) => c.type == 'problem');
-        final bool isDirectPrevious = i == index - 1;
-        final bool previousStarted = _hasStartedForStageSequence(previous);
         // Бизнес-правило для "Одиночная/Совместная": следующий заказ можно
         // стартовать только после завершения предыдущего, либо если он в "Проблеме".
         // Исключение: для последнего этапа упаковки разрешаем ранний старт,
         // когда непосредственный предыдущий этап уже начат.
-        if (!previousCompleted &&
-            !previousInProblem &&
-            !(canStartPackagingEarlyNow && isDirectPrevious && previousStarted)) {
+        if (!previousCompleted && !previousInProblem) {
           return false;
         }
         continue;
       }
       if (!_hasWorkplaceQueueActivity(previous)) {
-        if (!(canStartPackagingEarlyNow && i == index - 1 && _hasStartedForStageSequence(previous))) {
-          return false;
-        }
+        return false;
       }
     }
     return true;
