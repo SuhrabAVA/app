@@ -770,6 +770,7 @@ class FlexPaintWriteoffRow {
   final double plannedAmount;
   final String unit;
   String actualUsedText;
+  bool carryOver;
   bool writeOffNow;
   String status;
 
@@ -784,6 +785,7 @@ class FlexPaintWriteoffRow {
     required this.plannedAmount,
     required this.unit,
     required this.actualUsedText,
+    this.carryOver = false,
     this.writeOffNow = false,
     String? status,
   }) : status = status ?? '' {
@@ -799,9 +801,9 @@ class FlexPaintWriteoffRow {
   }
 
   void refreshStatus() {
-    status = writeOffNow
-        ? 'будет списано'
-        : (isPendingSource ? 'ожидает списания' : 'не списывать сейчас');
+    status = carryOver
+        ? 'перенесено дальше'
+        : (isPendingSource ? 'ожидает списания' : 'будет списано');
   }
 }
 
@@ -4750,6 +4752,11 @@ class _TasksScreenState extends State<TasksScreen>
             : _stringFromRow(row, const ['unit']),
       ),
       actualUsedText: actualUsedText,
+      carryOver:
+          row['carry_over'] == true ||
+          row['carryOver'] == true ||
+          row['write_off_now'] == false ||
+          row['writeOffNow'] == false,
       writeOffNow: row['write_off_now'] == true || row['writeOffNow'] == true,
     );
   }
@@ -4834,14 +4841,18 @@ class _TasksScreenState extends State<TasksScreen>
                                 width: fieldWidth,
                                 child: CheckboxListTile(
                                   contentPadding: EdgeInsets.zero,
-                                  value: row.writeOffNow,
+                                  value: row.carryOver,
                                   controlAffinity:
                                       ListTileControlAffinity.leading,
-                                  title: const Text('Списать сейчас'),
-                                  subtitle: Text(row.status),
+                                  title: const Text(
+                                    'Эта краска будет использоваться дальше',
+                                  ),
+                                  subtitle: const Text(
+                                    'Использовать дальше, не списывать сейчас',
+                                  ),
                                   onChanged: (value) {
                                     updateDialogState(() {
-                                      row.writeOffNow = value ?? false;
+                                      row.carryOver = value ?? false;
                                       row.refreshStatus();
                                     });
                                   },
@@ -4947,6 +4958,7 @@ class _TasksScreenState extends State<TasksScreen>
                   final enteredText =
                       controllers[row]?.text ?? row.actualUsedText;
                   row.actualUsedText = enteredText;
+                  row.writeOffNow = !row.carryOver;
                   row.refreshStatus();
                   double? actualGrams;
                   if (row.writeOffNow) {
@@ -4981,7 +4993,8 @@ class _TasksScreenState extends State<TasksScreen>
                       'unit': row.unit,
                       'actual_used_text': row.actualUsedText,
                       'actual_used_amount': actualGrams,
-                      'write_off_now': row.writeOffNow,
+                      'carry_over': row.carryOver,
+                      'write_off_now': !row.carryOver,
                       'status': row.status,
                     });
 
