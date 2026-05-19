@@ -4577,8 +4577,7 @@ class _TasksScreenState extends State<TasksScreen>
     if (orderName.isNotEmpty) return orderName;
     if (orderNumber.isNotEmpty) return '№$orderNumber';
 
-    final fallback = (fallbackId ?? '').trim();
-    return fallback.isEmpty ? 'Предыдущий заказ' : 'Заказ';
+    return 'Заказ без указанного клиента';
   }
 
   Future<Map<String, String>> _loadReadableOrderLabelsByIds(
@@ -4739,7 +4738,7 @@ class _TasksScreenState extends State<TasksScreen>
               row,
               const ['order_label', 'orderLabel', 'order_name'],
             )
-          : (orderId.isEmpty ? 'Текущий заказ' : orderId),
+          : 'Заказ без указанного клиента',
       paintId: _stringFromRow(row, const ['paint_id', 'material_id', 'paintId']),
       paintName:
           _stringFromRow(row, const ['paint_name', 'name', 'paintName']).isEmpty
@@ -4797,7 +4796,7 @@ class _TasksScreenState extends State<TasksScreen>
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
-                            'Заказ: ${row.orderLabel}',
+                            'Заказ: ${row.isPendingSource ? 'Предыдущий заказ: ${row.orderLabel}' : row.orderLabel}',
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           Text('Краска: ${row.paintName}'),
