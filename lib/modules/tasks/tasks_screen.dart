@@ -5102,8 +5102,7 @@ class _TasksScreenState extends State<TasksScreen>
           const <Map<String, dynamic>>[];
       List<Map<String, dynamic>> mergedDisplayItems =
           const <Map<String, dynamic>>[];
-      try {
-        Future<List<Map<String, dynamic>>> loadCurrentOrderPaints() async {
+      Future<List<Map<String, dynamic>>> loadCurrentOrderPaints() async {
           final rawCurrentPaints = await repo.getPaints(task.orderId);
           final reservations = await repo.getPaintReservations(task.orderId);
           final order = _orderById(task.orderId);
@@ -5151,9 +5150,9 @@ class _TasksScreenState extends State<TasksScreen>
             }
             return merged;
           }).toList(growable: false);
-        }
+      }
 
-        Future<List<Map<String, dynamic>>> loadPendingPreviousOrderPaints(
+      Future<List<Map<String, dynamic>>> loadPendingPreviousOrderPaints(
           List<Map<String, dynamic>> loadedCurrentOrderPaints,
         ) async {
           final currentPaintIds = loadedCurrentOrderPaints
@@ -5206,8 +5205,9 @@ class _TasksScreenState extends State<TasksScreen>
                     'pending:$pendingWriteoffId:$sourceOrderId:$paintId',
               });
           }).toList(growable: false);
-        }
+      }
 
+      try {
         currentOrderPaints = await loadCurrentOrderPaints();
         pendingPreviousOrderPaints =
             await loadPendingPreviousOrderPaints(currentOrderPaints);

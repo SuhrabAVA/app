@@ -36,6 +36,7 @@ import '../common/pdf_view_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
 import 'order_comments_timeline.dart';
+import '../tasks/task_model.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -3703,7 +3704,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           id: 'legacy-${order.id}',
                           userId: '',
                           text: legacy,
-                          timestamp: order.orderDate,
+                          timestamp: order.orderDate.millisecondsSinceEpoch,
+                          type: 'comment',
                         )
                       ];
                 await showModalBottomSheet<void>(
@@ -3761,7 +3763,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                           id: 'legacy-${order.id}',
                           userId: '',
                           text: legacy,
-                          timestamp: order.orderDate,
+                          timestamp: order.orderDate.millisecondsSinceEpoch,
+                          type: 'comment',
                         )
                       ];
                 await showModalBottomSheet<void>(
