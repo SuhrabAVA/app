@@ -117,6 +117,16 @@ class WorkplaceQueuePositionPlanner {
       for (final position in existing)
         if (position.workplaceId.trim() == normalizedWorkplace) position.queueKey,
     };
+    final existingSemanticKeys = {
+      for (final position in existing)
+        if (position.workplaceId.trim() == normalizedWorkplace)
+          ProductionQueueProvider.queueSemanticKeyFor(
+            workplaceId: position.workplaceId,
+            orderId: position.orderId,
+            stageId: position.stageId,
+            stageGroupKey: position.stageGroupKey,
+          ),
+    };
     final missing = <WorkplaceQueueEntry>[];
     final seen = <String>{};
     for (final entry in entries) {
@@ -125,6 +135,13 @@ class WorkplaceQueuePositionPlanner {
         continue;
       }
       if (existingKeys.contains(entry.queueKey)) continue;
+      final semanticKey = ProductionQueueProvider.queueSemanticKeyFor(
+        workplaceId: entry.workplaceId,
+        orderId: entry.orderId,
+        stageId: entry.stageId,
+        stageGroupKey: entry.stageGroupKey,
+      );
+      if (existingSemanticKeys.contains(semanticKey)) continue;
       if (!seen.add(entry.queueKey)) continue;
       missing.add(entry);
     }
@@ -314,6 +331,16 @@ class ProductionQueueProvider with ChangeNotifier {
     final task = taskId?.trim() ?? '';
     if (task.isNotEmpty) return '$workplace::task::$task';
     return '$workplace::order::${orderId.trim()}::stage::${stageId.trim()}::group::${(stageGroupKey ?? '').trim()}';
+  }
+
+  static String queueSemanticKeyFor({
+    required String workplaceId,
+    required String orderId,
+    required String stageId,
+    String? stageGroupKey,
+  }) {
+    return '${
+        workplaceId.trim()}::order::${orderId.trim()}::stage::${stageId.trim()}::group::${(stageGroupKey ?? '').trim()}';
   }
 
   void _startPollingFallback() {
@@ -571,7 +598,28 @@ class ProductionQueueProvider with ChangeNotifier {
   int priorityOfEntry(WorkplaceQueueEntry entry) {
     final workplaceId = _normalizeWorkplaceId(entry.workplaceId);
     if (workplaceId.isEmpty) return 1 << 30;
-    return _positionsByWorkplace[workplaceId]?[entry.queueKey]?.queuePosition ?? (1 << 30);
+    final workplaceMap = _positionsByWorkplace[workplaceId];
+    if (workplaceMap == null || workplaceMap.isEmpty) return 1 << 30;
+    final exact = workplaceMap[entry.queueKey];
+    if (exact != null) return exact.queuePosition;
+    final semanticKey = queueSemanticKeyFor(
+      workplaceId: workplaceId,
+      orderId: entry.orderId,
+      stageId: entry.stageId,
+      stageGroupKey: entry.stageGroupKey,
+    );
+    for (final position in workplaceMap.values) {
+      if (queueSemanticKeyFor(
+            workplaceId: position.workplaceId,
+            orderId: position.orderId,
+            stageId: position.stageId,
+            stageGroupKey: position.stageGroupKey,
+          ) ==
+          semanticKey) {
+        return position.queuePosition;
+      }
+    }
+    return 1 << 30;
   }
 
   List<T> getSortedByWorkplaceQueue<T>(
