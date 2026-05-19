@@ -4547,7 +4547,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   String _orderDisplayNameForWriteoff(OrderModel order) {
     final customer = order.customer.trim();
-    if (customer.isNotEmpty && !_looksLikeOrderCode(customer)) {
+    if (customer.isNotEmpty) {
       return customer;
     }
     final productName = order.product.type.trim();
