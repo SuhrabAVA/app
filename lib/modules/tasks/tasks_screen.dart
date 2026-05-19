@@ -5097,103 +5097,124 @@ class _TasksScreenState extends State<TasksScreen>
 
     if (_isInkConfirmationStage(task)) {
       final repo = OrdersRepository();
-      List<Map<String, dynamic>> initialPaints = const <Map<String, dynamic>>[];
+      List<Map<String, dynamic>> currentOrderPaints =
+          const <Map<String, dynamic>>[];
+      List<Map<String, dynamic>> pendingPreviousOrderPaints =
+          const <Map<String, dynamic>>[];
+      List<Map<String, dynamic>> mergedDisplayItems =
+          const <Map<String, dynamic>>[];
       try {
-        initialPaints = await repo.getPaints(task.orderId);
-        final currentPaintIds = initialPaints
-            .map((paint) => _stringFromRow(paint, const [
-                  'paint_id',
-                  'material_id',
-                  'paintId',
-                ]))
-            .where((id) => id.isNotEmpty)
-            .toList(growable: false);
-        final currentPaintNames = initialPaints
-            .map((paint) => _stringFromRow(paint, const [
-                  'paint_name',
-                  'name',
-                  'paintName',
-                ]))
-            .where((name) => name.isNotEmpty)
-            .toList(growable: false);
-        final pendingWriteoffs = await repo.getPendingFlexPaintWriteoffs(
-          currentOrderId: task.orderId,
-          currentPaintIds: currentPaintIds,
-          currentPaintNames: currentPaintNames,
-        );
-        final reservations = await repo.getPaintReservations(task.orderId);
-        final order = _orderById(task.orderId);
-        final orderLabel =
-            order != null ? _orderReferenceForWriteoff(order) : task.orderId;
-        final reservationsByKey = <String, Map<String, dynamic>>{};
-        for (final reservation in reservations) {
-          final id = (reservation['paint_id'] ?? '').toString().trim();
-          final name = (reservation['paint_name'] ?? '')
-              .toString()
-              .trim()
-              .toLowerCase();
-          if (id.isNotEmpty) reservationsByKey['id:$id'] = reservation;
-          if (name.isNotEmpty) reservationsByKey['name:$name'] = reservation;
-        }
-        final currentPaints = initialPaints.map((paint) {
-          final merged = Map<String, dynamic>.from(paint);
-          final id = (merged['paint_id'] ?? merged['material_id'] ?? '')
-              .toString()
-              .trim();
-          final name = (merged['paint_name'] ?? merged['name'] ?? '')
-              .toString()
-              .trim()
-              .toLowerCase();
-          final reservation =
-              (id.isNotEmpty ? reservationsByKey['id:$id'] : null) ??
-                  (name.isNotEmpty ? reservationsByKey['name:$name'] : null);
-          merged.addAll({
-            'source': 'current_order',
-            'order_id': task.orderId,
-            'source_order_id': task.orderId,
-            'source_task_id': task.id,
-            'order_label': orderLabel,
-          });
-          if (reservation != null) {
-            merged.addAll({
-              'paint_id': reservation['paint_id'],
-              'paint_name': reservation['paint_name'] ??
-                  merged['paint_name'] ??
-                  merged['name'],
-              'reserved_qty': reservation['reserved_qty'],
-              'used_qty': reservation['used_qty'],
-              'released_qty': reservation['released_qty'],
-            });
+        Future<List<Map<String, dynamic>>> loadCurrentOrderPaints() async {
+          final rawCurrentPaints = await repo.getPaints(task.orderId);
+          final reservations = await repo.getPaintReservations(task.orderId);
+          final order = _orderById(task.orderId);
+          final orderLabel =
+              order != null ? _orderReferenceForWriteoff(order) : task.orderId;
+          final reservationsByKey = <String, Map<String, dynamic>>{};
+          for (final reservation in reservations) {
+            final id = (reservation['paint_id'] ?? '').toString().trim();
+            final name = (reservation['paint_name'] ?? '')
+                .toString()
+                .trim()
+                .toLowerCase();
+            if (id.isNotEmpty) reservationsByKey['id:$id'] = reservation;
+            if (name.isNotEmpty) reservationsByKey['name:$name'] = reservation;
           }
-          return merged;
-        }).toList(growable: false);
-        final pendingOrderIds = pendingWriteoffs
-            .map((pending) => pending.orderId.trim())
-            .where((id) => id.isNotEmpty)
-            .toSet();
-        final pendingOrderLabels =
-            await _loadReadableOrderLabelsByIds(pendingOrderIds);
-        final pendingPaints = pendingWriteoffs.map((pending) {
-          final row = pending.toMap();
-          final readableOrderLabel =
-              pendingOrderLabels[pending.orderId.trim()] ??
-                  _buildReadableOrderLabel(row, fallbackId: pending.orderId);
-          return row
-            ..addAll({
-              'source': 'pending',
-              'pending_writeoff_id': pending.id,
-              'order_id': pending.orderId,
-              'source_order_id': pending.orderId,
-              'source_task_id': pending.taskId,
-              'order_label': readableOrderLabel,
-              'planned_amount': pending.plannedAmount,
-              'actual_used_amount': pending.actualUsedAmount,
-              'actual_used_text': pending.actualUsedAmount?.toString() ?? '',
+          return rawCurrentPaints.map((paint) {
+            final merged = Map<String, dynamic>.from(paint);
+            final id = (merged['paint_id'] ?? merged['material_id'] ?? '')
+                .toString()
+                .trim();
+            final name = (merged['paint_name'] ?? merged['name'] ?? '')
+                .toString()
+                .trim()
+                .toLowerCase();
+            final reservation =
+                (id.isNotEmpty ? reservationsByKey['id:$id'] : null) ??
+                    (name.isNotEmpty ? reservationsByKey['name:$name'] : null);
+            merged.addAll({
+              'source': 'current_order',
+              'order_id': task.orderId,
+              'source_order_id': task.orderId,
+              'source_task_id': task.id,
+              'order_label': orderLabel,
             });
-        }).toList(growable: false);
-        initialPaints = <Map<String, dynamic>>[
-          ...currentPaints,
-          ...pendingPaints,
+            if (reservation != null) {
+              merged.addAll({
+                'paint_id': reservation['paint_id'],
+                'paint_name': reservation['paint_name'] ??
+                    merged['paint_name'] ??
+                    merged['name'],
+                'reserved_qty': reservation['reserved_qty'],
+                'used_qty': reservation['used_qty'],
+                'released_qty': reservation['released_qty'],
+              });
+            }
+            return merged;
+          }).toList(growable: false);
+        }
+
+        Future<List<Map<String, dynamic>>> loadPendingPreviousOrderPaints(
+          List<Map<String, dynamic>> loadedCurrentOrderPaints,
+        ) async {
+          final currentPaintIds = loadedCurrentOrderPaints
+              .map((paint) => _stringFromRow(paint, const [
+                    'paint_id',
+                    'material_id',
+                    'paintId',
+                  ]))
+              .where((id) => id.isNotEmpty)
+              .toList(growable: false);
+          final currentPaintNames = loadedCurrentOrderPaints
+              .map((paint) => _stringFromRow(paint, const [
+                    'paint_name',
+                    'name',
+                    'paintName',
+                  ]))
+              .where((name) => name.isNotEmpty)
+              .toList(growable: false);
+          final pendingWriteoffs = await repo.getPendingFlexPaintWriteoffs(
+            currentOrderId: task.orderId,
+            currentPaintIds: currentPaintIds,
+            currentPaintNames: currentPaintNames,
+          );
+          final pendingOrderIds = pendingWriteoffs
+              .map((pending) => pending.orderId.trim())
+              .where((id) => id.isNotEmpty)
+              .toSet();
+          final pendingOrderLabels =
+              await _loadReadableOrderLabelsByIds(pendingOrderIds);
+          return pendingWriteoffs.map((pending) {
+            final row = pending.toMap();
+            final readableOrderLabel =
+                pendingOrderLabels[pending.orderId.trim()] ??
+                    _buildReadableOrderLabel(row, fallbackId: pending.orderId);
+            final pendingWriteoffId = pending.id.trim();
+            final sourceOrderId = pending.orderId.trim();
+            final paintId = pending.paintId.trim();
+            return row
+              ..addAll({
+                'source': 'pending',
+                'pending_writeoff_id': pendingWriteoffId,
+                'order_id': pending.orderId,
+                'source_order_id': pending.orderId,
+                'source_task_id': pending.taskId,
+                'order_label': readableOrderLabel,
+                'planned_amount': pending.plannedAmount,
+                'actual_used_amount': pending.actualUsedAmount,
+                'actual_used_text': pending.actualUsedAmount?.toString() ?? '',
+                'ui_identity':
+                    'pending:$pendingWriteoffId:$sourceOrderId:$paintId',
+              });
+          }).toList(growable: false);
+        }
+
+        currentOrderPaints = await loadCurrentOrderPaints();
+        pendingPreviousOrderPaints =
+            await loadPendingPreviousOrderPaints(currentOrderPaints);
+        mergedDisplayItems = <Map<String, dynamic>>[
+          ...currentOrderPaints,
+          ...pendingPreviousOrderPaints,
         ];
       } catch (e) {
         if (mounted) {
@@ -5203,7 +5224,7 @@ class _TasksScreenState extends State<TasksScreen>
         }
         return;
       }
-      var mutablePaints = initialPaints;
+      var mutablePaints = mergedDisplayItems;
       while (true) {
         final dialogResult = await _showInkAdjustDialog(
           mutablePaints,
@@ -5226,8 +5247,14 @@ class _TasksScreenState extends State<TasksScreen>
           }
           await _openPaintEditDialog(order);
           try {
-            final refreshedPaints = await repo.getPaints(task.orderId);
-            mutablePaints = refreshedPaints;
+            currentOrderPaints = await loadCurrentOrderPaints();
+            pendingPreviousOrderPaints =
+                await loadPendingPreviousOrderPaints(currentOrderPaints);
+            mergedDisplayItems = <Map<String, dynamic>>[
+              ...currentOrderPaints,
+              ...pendingPreviousOrderPaints,
+            ];
+            mutablePaints = mergedDisplayItems;
           } catch (_) {}
           continue;
         }
