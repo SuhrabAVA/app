@@ -20,6 +20,7 @@ import 'stage_queue_builder.dart';
 import 'order_queue_service.dart';
 import 'orders_repository.dart';
 import 'order_model.dart';
+import 'order_form_rules.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
@@ -650,6 +651,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Форма: отдельная галочка наличия + выбор старая/новая.
   bool _hasForm = false;
   bool _isOldForm = false;
+  bool _userManuallySelectedFormType = false;
   bool _editingForm = false;
   bool _formStateInitialized = false;
   // Список существующих форм (номера) из склада
@@ -779,6 +781,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ..clear()
       ..addAll(initialPapers.skip(1));
     _hasForm = template?.hasForm ?? false;
+    final initialFormResult = applyOrderFormRules(
+      draft: _buildCurrentOrderDraft(),
+      hasPaints: _hasAnyPaints(),
+      userManuallySelectedFormType: _userManuallySelectedFormType,
+    );
+    _hasForm = initialFormResult.hasForm;
+    _isOldForm = initialFormResult.isOldForm;
 
     // Инициализация каскадных полей (если есть материал в шаблоне)
     _matNameCtl.text = (_selectedMaterial?.name ?? '').trim();
@@ -1477,6 +1486,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   void _handlePaintsChanged() {
+    final formResult = applyOrderFormRules(
+      draft: _buildCurrentOrderDraft(),
+      hasPaints: _hasAnyPaints(),
+      userManuallySelectedFormType: _userManuallySelectedFormType,
+    );
+    _hasForm = formResult.hasForm;
+    _isOldForm = formResult.isOldForm;
+    _orderFormNo = formResult.newFormNo;
+    _orderFormSeries = formResult.formSeries;
+    _orderFormCode = formResult.formCode;
+
     final filled = _hasAnyPaints();
     if (_lastPreviewPaintsFilled != filled) {
       _lastPreviewPaintsFilled = filled;
@@ -1484,6 +1504,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     } else if (filled) {
       _scheduleStagePreviewUpdate();
     }
+  }
+
+  OrderModel _buildCurrentOrderDraft() {
+    final source = widget.order ?? widget.initialOrder;
+    final base = source ??
+        OrderModel(
+          id: '',
+          manager: '',
+          customer: '',
+          orderDate: DateTime.now(),
+          dueDate: null,
+          product: _product,
+        );
+    return base.copyWith(
+      hasForm: _hasForm,
+      isOldForm: _isOldForm,
+      newFormNo: _orderFormNo,
+      formSeries: _orderFormSeries,
+      formCode: _orderFormCode,
+    );
   }
 
   void _validatePaintNames() {
@@ -6696,6 +6736,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _formSearchDebounce?.cancel();
           setState(() {
             _isOldForm = val;
+            _userManuallySelectedFormType = true;
             if (_isOldForm) {
               _newFormImageBytes = null;
               if (_formSearchCtl.text.trim().isEmpty) {

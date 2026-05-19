@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'material_model.dart';
 import 'order_model.dart';
+import 'order_form_rules.dart';
 import 'order_queue_service.dart';
 import 'orders_repository.dart';
 import 'product_model.dart';
@@ -497,9 +498,13 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final normalizedOrder = _applyOrderFormRulesForPersist(
+        order,
+        hasPaints: _orderHasPaints(order),
+      );
       final inserted = await _supabase
           .from('orders')
-          .insert(order.toMap())
+          .insert(normalizedOrder.toMap())
           .select()
           .single() as Map<String, dynamic>;
 
@@ -521,6 +526,27 @@ class OrdersProvider with ChangeNotifier {
       notifyListeners();
       debugPrint('❌ addOrder error: $e\n$st');
     }
+  }
+
+  bool _orderHasPaints(OrderModel order) {
+    final params = order.product.parameters.toLowerCase();
+    return params.contains('краска:');
+  }
+
+  OrderModel _applyOrderFormRulesForPersist(OrderModel order,
+      {required bool hasPaints}) {
+    final result = applyOrderFormRules(
+      draft: order,
+      hasPaints: hasPaints,
+      userManuallySelectedFormType: order.isOldForm || order.newFormNo != null,
+    );
+    return order.copyWith(
+      hasForm: result.hasForm,
+      isOldForm: result.isOldForm,
+      newFormNo: result.newFormNo,
+      formSeries: result.formSeries,
+      formCode: result.formCode,
+    );
   }
 
   /// Создаёт заказ — id возвращает БД. Возвращает созданную модель или null при ошибке.
@@ -555,7 +581,8 @@ class OrdersProvider with ChangeNotifier {
 
     // Local temp id for optimistic UI
     final tempLocalId = 'local-${DateTime.now().microsecondsSinceEpoch}';
-    final localOrder = OrderModel(
+    final localOrder = _applyOrderFormRulesForPersist(
+      OrderModel(
       id: tempLocalId,
       manager: manager,
       customer: customer,
@@ -582,6 +609,8 @@ class OrdersProvider with ChangeNotifier {
       queueSignature: queueSignature,
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
+    ),
+      hasPaints: product.parameters.toLowerCase().contains('краска:'),
     );
 
     // Optimistic add
@@ -646,9 +675,13 @@ class OrdersProvider with ChangeNotifier {
       );
       // Причина изменения бумаги валидируется только в рабочем пространстве.
       // В модулях оформления/редактирования заказа не блокируем сохранение.
+      final normalizedUpdated = _applyOrderFormRulesForPersist(
+        updated,
+        hasPaints: _orderHasPaints(updated),
+      );
       await _supabase
           .from('orders')
-          .update(updated.toMap(includeNulls: true)..remove('id'))
+          .update(normalizedUpdated.toMap(includeNulls: true)..remove('id'))
           .eq('id', updated.id);
       if (updated.assignmentCreated ||
           updated.statusEnum == OrderStatus.in_production) {
