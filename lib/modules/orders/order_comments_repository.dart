@@ -59,7 +59,7 @@ class OrderCommentsRepository {
       id: commentId,
       userId: userId,
       text: text,
-      timestamp: DateTime.now(),
+      timestamp: DateTime.now().millisecondsSinceEpoch,
       type: type,
     );
     comments[commentId] = comment.toMap();
