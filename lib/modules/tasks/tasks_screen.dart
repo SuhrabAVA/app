@@ -645,10 +645,11 @@ bool _isPackagingAvailableByEmployeeAccess(
     }
   }
   if (employee == null) return false;
+  final emp = employee;
   final packagingWorkplace = personnel.workplaceById(kPackagingStageId);
   if (packagingWorkplace == null) return false;
   return packagingWorkplace.positionIds
-      .any((p) => employee.positionIds.contains(p));
+      .any((p) => emp.positionIds.contains(p));
 }
 
 bool canStartPackagingEarly({
