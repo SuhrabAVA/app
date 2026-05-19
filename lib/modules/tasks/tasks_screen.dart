@@ -629,10 +629,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
 }
 
 
-
-bool _isPackagingStageTask(TaskModel task) =>
-    task.stageId.trim() == kPackagingStageId;
-
 bool _isPackagingAvailableByEmployeeAccess(
   PersonnelProvider personnel,
   String employeeId,
@@ -659,32 +655,31 @@ bool canStartPackagingEarly({
   required String employeeId,
   stage_sequence.StageGroupingResolver? groupResolver,
 }) {
-  if (!_isPackagingStageTask(task)) return false;
-  if (_isEffectivelyCompleted(task)) return false;
-  if (task.status == TaskStatus.inProgress) return false;
-  if (!_isPackagingAvailableByEmployeeAccess(personnel, employeeId)) return false;
-
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return false;
 
-  final sequence = tasks.stageSequenceForOrder(task.orderId) ?? const <String>[];
-  if (sequence.isEmpty) return false;
-
-  String g(String stageId) => groupResolver?.call(task.orderId, stageId) ?? stageId;
-  final orderedKeys = <String>[];
-  for (final id in sequence) {
-    final key = g(id);
-    if (!orderedKeys.contains(key)) orderedKeys.add(key);
-  }
-  final taskKey = g(task.stageId);
-  final index = orderedKeys.indexOf(taskKey);
-  if (index != orderedKeys.length - 1 || index <= 0) return false;
-
-  final previousKey = orderedKeys[index - 1];
-  final previousStarted = all.any((t) => g(t.stageId) == previousKey && _hasStartedForStageSequence(t));
-  if (!previousStarted) return false;
-
-  return true;
+  return stage_sequence.canStartPackagingEarly(
+    orderId: task.orderId,
+    currentStageId: task.stageId,
+    stageStates: all.map(
+      (t) => stage_sequence.PendingStageState(
+        stageId: t.stageId,
+        stageName: _stageDisplayName(personnel, t.stageId),
+        stageGroupKey: t.stageGroupKey,
+        completed: _isEffectivelyCompleted(t),
+        problem: t.status == TaskStatus.problem ||
+            t.comments.any((c) => c.type == 'problem'),
+        started: _hasStartedForStageSequence(t),
+      ),
+    ),
+    orderedStages: tasks.stageSequenceForOrder(task.orderId) ?? const <String>[],
+    groupResolver: groupResolver,
+    currentStageName: _stageDisplayName(personnel, task.stageId),
+    currentStageGroupKey: task.stageGroupKey,
+    hasPackagingAccess:
+        _isPackagingAvailableByEmployeeAccess(personnel, employeeId),
+    enforceSinglePerformer: true,
+  );
 }
 
 bool _hasWorkplaceQueueActivity(TaskModel task) {
@@ -7711,7 +7706,7 @@ class _TaskCard extends StatelessWidget {
     final double statusSize = scaled(11.5);
     final String? stageHint = showStageHint
         ? (readyForStage
-            ? 'Можно начинать: предыдущий этап начат'
+            ? 'Доступно, так как предыдущий этап уже начат'
             : 'Ожидает начала предыдущего этапа')
         : null;
     final Color readyColor = Colors.green.shade600;

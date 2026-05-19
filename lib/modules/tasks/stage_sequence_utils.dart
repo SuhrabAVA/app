@@ -212,6 +212,68 @@ bool isFirstPendingStageInOrder({
   return groupKey(currentStageId) == pendingStageIds.first;
 }
 
+
+bool canStartPackagingEarly({
+  required String orderId,
+  required String currentStageId,
+  required Iterable<PendingStageState> stageStates,
+  required Iterable<String> orderedStages,
+  required bool hasPackagingAccess,
+  StageGroupingResolver? groupResolver,
+  String? currentStageName,
+  String? currentStageType,
+  String? currentStageGroupKey,
+  bool enforceSinglePerformer = true,
+}) {
+  final currentIsPackaging = isPackagingStage(
+    stageId: currentStageId,
+    stageName: currentStageName,
+    stageType: currentStageType,
+    stageGroupKey: currentStageGroupKey,
+  );
+  if (!currentIsPackaging) return false;
+  if (!hasPackagingAccess) return false;
+
+  String groupKey(String stageId) =>
+      groupResolver?.call(orderId, stageId) ?? stageId;
+
+  final orderedList = orderedStages.toList(growable: false);
+  if (orderedList.isEmpty) return false;
+
+  final orderedKeys = <String>[];
+  for (final id in orderedList) {
+    final key = groupKey(id);
+    if (!orderedKeys.contains(key)) orderedKeys.add(key);
+  }
+
+  final currentKey = groupKey(currentStageId);
+  final currentIndex = orderedKeys.indexOf(currentKey);
+  if (currentIndex != orderedKeys.length - 1 || currentIndex <= 0) return false;
+
+  final previousKey = orderedKeys[currentIndex - 1];
+
+  bool packagingCompleted = false;
+  bool packagingAlreadyStarted = false;
+  bool previousStarted = false;
+
+  for (final state in stageStates) {
+    final key = groupKey(state.stageId);
+    if (key == currentKey) {
+      if (state.completed) packagingCompleted = true;
+      if (state.started) packagingAlreadyStarted = true;
+    }
+    if (key == previousKey && (state.started || state.completed || state.problem)) {
+      previousStarted = true;
+    }
+  }
+
+  if (packagingCompleted) return false;
+  if (!previousStarted) return false;
+  if (enforceSinglePerformer && packagingAlreadyStarted) return false;
+
+  return true;
+}
+
 bool _stageUnlocksNext(Map<String, bool>? stage) {
   if (stage == null) return false;
   return stage['started'] == true ||
