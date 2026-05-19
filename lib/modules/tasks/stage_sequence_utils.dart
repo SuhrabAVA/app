@@ -213,7 +213,7 @@ bool isFirstPendingStageInOrder({
 }
 
 
-bool canStartPackagingEarly({
+bool canStartPackagingOutOfQueue({
   required String orderId,
   required String currentStageId,
   required Iterable<PendingStageState> stageStates,
@@ -273,6 +273,32 @@ bool canStartPackagingEarly({
 
   return true;
 }
+
+@Deprecated('Use canStartPackagingOutOfQueue')
+bool canStartPackagingEarly({
+  required String orderId,
+  required String currentStageId,
+  required Iterable<PendingStageState> stageStates,
+  required Iterable<String> orderedStages,
+  required bool hasPackagingAccess,
+  StageGroupingResolver? groupResolver,
+  String? currentStageName,
+  String? currentStageType,
+  String? currentStageGroupKey,
+  bool enforceSinglePerformer = true,
+}) =>
+    canStartPackagingOutOfQueue(
+      orderId: orderId,
+      currentStageId: currentStageId,
+      stageStates: stageStates,
+      orderedStages: orderedStages,
+      hasPackagingAccess: hasPackagingAccess,
+      groupResolver: groupResolver,
+      currentStageName: currentStageName,
+      currentStageType: currentStageType,
+      currentStageGroupKey: currentStageGroupKey,
+      enforceSinglePerformer: enforceSinglePerformer,
+    );
 
 bool _stageUnlocksNext(Map<String, bool>? stage) {
   if (stage == null) return false;

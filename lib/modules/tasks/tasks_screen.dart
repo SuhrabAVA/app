@@ -648,7 +648,7 @@ bool _isPackagingAvailableByEmployeeAccess(
       .any((p) => emp.positionIds.contains(p));
 }
 
-bool canStartPackagingEarly({
+bool canStartPackagingOutOfQueue({
   required TaskModel task,
   required TaskProvider tasks,
   required PersonnelProvider personnel,
@@ -658,7 +658,7 @@ bool canStartPackagingEarly({
   final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
   if (all.isEmpty) return false;
 
-  return stage_sequence.canStartPackagingEarly(
+  return stage_sequence.canStartPackagingOutOfQueue(
     orderId: task.orderId,
     currentStageId: task.stageId,
     stageStates: all.map(
@@ -3070,7 +3070,7 @@ class _TasksScreenState extends State<TasksScreen>
                       queue,
                       workplace,
                     );
-                    final canStartEarlyPackaging = canStartPackagingEarly(
+                    final canStartEarlyPackaging = canStartPackagingOutOfQueue(
                       task: task,
                       tasks: taskProvider,
                       personnel: personnel,
@@ -5289,13 +5289,53 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   bool _hasBlockingActiveOrder(TaskProvider provider, TaskModel currentTask) {
+    final canStartPackagingNow = canStartPackagingOutOfQueue(
+      task: currentTask,
+      tasks: provider,
+      personnel: context.read<PersonnelProvider>(),
+      employeeId: widget.employeeId,
+      groupResolver: _stageGroupKey,
+    );
     return provider.tasks.any((task) {
       if (task.id == currentTask.id) return false;
       if (task.assignees.contains(widget.employeeId) == false) return false;
       if (_isEffectivelyCompleted(task)) return false;
       final state = _userRunState(task, widget.employeeId);
+      if (state == UserRunState.active &&
+          canStartPackagingNow &&
+          _isAllowedParallelPackagingPair(
+            provider: provider,
+            packagingTask: currentTask,
+            activeTask: task,
+          )) {
+        return false;
+      }
       return state == UserRunState.active;
     });
+  }
+
+  bool _isAllowedParallelPackagingPair({
+    required TaskProvider provider,
+    required TaskModel packagingTask,
+    required TaskModel activeTask,
+  }) {
+    if (packagingTask.orderId != activeTask.orderId) return false;
+    final sequence = provider.stageSequenceForOrder(packagingTask.orderId);
+    if (sequence == null || sequence.isEmpty) return false;
+    final orderedKeys = <String>[];
+    for (final stageId in sequence) {
+      final key = _stageGroupKey(packagingTask.orderId, stageId);
+      if (!orderedKeys.contains(key)) orderedKeys.add(key);
+    }
+    final packagingKey =
+        _stageGroupKey(packagingTask.orderId, packagingTask.stageId);
+    final packagingIndex = orderedKeys.indexOf(packagingKey);
+    if (packagingIndex <= 0 || packagingIndex != orderedKeys.length - 1) {
+      return false;
+    }
+    final previousKey = orderedKeys[packagingIndex - 1];
+    final activeKey = _stageGroupKey(activeTask.orderId, activeTask.stageId);
+    return activeKey == previousKey;
   }
 
   List<TaskModel> _tasksForWorkplace(TaskProvider taskProvider) {
@@ -5394,7 +5434,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final bool strictSequentialByPreviousCompletion =
         workplace != null && workplace.executionMode != WorkplaceExecutionMode.separate;
-    final canStartPackagingEarlyNow = canStartPackagingEarly(
+    final canStartPackagingEarlyNow = canStartPackagingOutOfQueue(
       task: task,
       tasks: taskProvider,
       personnel: context.read<PersonnelProvider>(),
@@ -5487,7 +5527,7 @@ class _TasksScreenState extends State<TasksScreen>
             _isFirstPendingStage(context.read<TaskProvider>(),
                 context.read<PersonnelProvider>(), task,
                 groupResolver: _stageGroupKey) ||
-            canStartPackagingEarly(
+            canStartPackagingOutOfQueue(
               task: task,
               tasks: context.read<TaskProvider>(),
               personnel: context.read<PersonnelProvider>(),
@@ -5747,7 +5787,7 @@ class _TasksScreenState extends State<TasksScreen>
                         final taskProvider = context.read<TaskProvider>();
                         final personnelProvider = personnel;
                         // Sequential stage guard
-                        final canStartEarlyPackaging = canStartPackagingEarly(
+                        final canStartEarlyPackaging = canStartPackagingOutOfQueue(
                           task: task,
                           tasks: taskProvider,
                           personnel: personnelProvider,
