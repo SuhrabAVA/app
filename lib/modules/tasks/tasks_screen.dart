@@ -35,7 +35,6 @@ import '../../services/attachment_service.dart';
 // Additional helpers for time formatting and aggregated timers
 const String kCardboardCuttingStageId =
     stage_sequence.kCardboardCuttingStageId;
-const String kPackagingStageId = stage_sequence.kPackagingStageId;
 
 String formatTaskInitialQuantity(double value) {
   if (value % 1 == 0) return value.toStringAsFixed(0);
@@ -626,64 +625,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
     currentStageName: _stageDisplayName(personnel, task.stageId),
     currentStageGroupKey: task.stageGroupKey,
   );
-}
-
-
-
-bool _isPackagingStageTask(TaskModel task) =>
-    task.stageId.trim() == kPackagingStageId;
-
-bool _isPackagingAvailableByEmployeeAccess(
-  PersonnelProvider personnel,
-  String employeeId,
-) {
-  EmployeeModel? employee;
-  for (final candidate in personnel.employees) {
-    if (candidate.id == employeeId) {
-      employee = candidate;
-      break;
-    }
-  }
-  if (employee == null) return false;
-  final packagingWorkplace = personnel.workplaceById(kPackagingStageId);
-  if (packagingWorkplace == null) return false;
-  return packagingWorkplace.positionIds
-      .any((p) => employee.positionIds.contains(p));
-}
-
-bool canStartPackagingEarly({
-  required TaskModel task,
-  required TaskProvider tasks,
-  required PersonnelProvider personnel,
-  required String employeeId,
-  stage_sequence.StageGroupingResolver? groupResolver,
-}) {
-  if (!_isPackagingStageTask(task)) return false;
-  if (_isEffectivelyCompleted(task)) return false;
-  if (task.status == TaskStatus.inProgress) return false;
-  if (!_isPackagingAvailableByEmployeeAccess(personnel, employeeId)) return false;
-
-  final all = tasks.tasks.where((t) => t.orderId == task.orderId).toList();
-  if (all.isEmpty) return false;
-
-  final sequence = tasks.stageSequenceForOrder(task.orderId) ?? const <String>[];
-  if (sequence.isEmpty) return false;
-
-  String g(String stageId) => groupResolver?.call(task.orderId, stageId) ?? stageId;
-  final orderedKeys = <String>[];
-  for (final id in sequence) {
-    final key = g(id);
-    if (!orderedKeys.contains(key)) orderedKeys.add(key);
-  }
-  final taskKey = g(task.stageId);
-  final index = orderedKeys.indexOf(taskKey);
-  if (index != orderedKeys.length - 1 || index <= 0) return false;
-
-  final previousKey = orderedKeys[index - 1];
-  final previousStarted = all.any((t) => g(t.stageId) == previousKey && _hasStartedForStageSequence(t));
-  if (!previousStarted) return false;
-
-  return true;
 }
 
 bool _hasWorkplaceQueueActivity(TaskModel task) {
@@ -3074,21 +3015,14 @@ class _TasksScreenState extends State<TasksScreen>
                       queue,
                       workplace,
                     );
-                    final canStartEarlyPackaging = canStartPackagingEarly(
-                      task: task,
-                      tasks: taskProvider,
-                      personnel: personnel,
-                      employeeId: widget.employeeId,
-                      groupResolver: _stageGroupKey,
-                    );
                     final readyForStage = task.status == TaskStatus.waiting &&
                         unlockedByQueue &&
-                        (_isFirstPendingStage(
+                        _isFirstPendingStage(
                           taskProvider,
                           personnel,
                           task,
                           groupResolver: _stageGroupKey,
-                        ) || canStartEarlyPackaging);
+                        );
                     const canOpen = true;
                     return _TaskCard(
                       task: task,
@@ -4559,7 +4493,6 @@ class _TasksScreenState extends State<TasksScreen>
   String _orderReferenceForWriteoff(OrderModel order) {
     return _orderDisplayNameForWriteoff(order);
   }
-
   String _buildReadableOrderLabel(Map<String, dynamic> row, {String? fallbackId}) {
     String pick(List<String> keys) => _stringFromRow(row, keys);
 
@@ -4581,17 +4514,37 @@ class _TasksScreenState extends State<TasksScreen>
     return fallback.isEmpty ? 'Предыдущий заказ' : 'Заказ';
   }
 
-  Future<Map<String, String>> _loadReadableOrderLabelsByIds(Set<String> orderIds) async {
+  Future<Map<String, String>> _loadReadableOrderLabelsByIds(
+    Set<String> orderIds,
+  ) async {
     final normalizedIds = orderIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
     if (normalizedIds.isEmpty) return const <String, String>{};
+    final ids = normalizedIds.toList(growable: false);
 
-    final rows = await Supabase.instance.client
-        .from('orders')
-        .select('id, customer_name, client_name, customer, order_name, title, name, order_number, number, order_no')
-        .inFilter('id', normalizedIds.toList(growable: false));
+    Future<List<dynamic>> runSelect(String selectClause) async {
+      final dynamic rows = await Supabase.instance.client
+          .from('orders')
+          .select(selectClause)
+          .inFilter('id', ids);
+      if (rows is List<dynamic>) return rows;
+      return const <dynamic>[];
+    }
+
+    List<dynamic> rows;
+    try {
+      rows = await runSelect(
+        'id, customer_name, client_name, customer, order_name, title, name, order_number, number, order_no',
+      );
+    } catch (_) {
+      try {
+        rows = await runSelect('id, customer, name');
+      } catch (_) {
+        return const <String, String>{};
+      }
+    }
 
     final result = <String, String>{};
-    for (final dynamic item in (rows as List<dynamic>)) {
+    for (final dynamic item in rows) {
       if (item is! Map<String, dynamic>) continue;
       final id = _stringFromRow(item, const ['id']);
       if (id.isEmpty) continue;
@@ -4609,6 +4562,8 @@ class _TasksScreenState extends State<TasksScreen>
     if (normalized == 'г' || normalized == 'гр') return normalized;
     return 'гр';
   }
+
+
 
   bool _looksLikeOrderCode(String value) {
     final normalized = value.trim().toLowerCase();
@@ -5454,14 +5409,7 @@ class _TasksScreenState extends State<TasksScreen>
         (_canRunOutOfStageSequence(task) ||
             _isFirstPendingStage(context.read<TaskProvider>(),
                 context.read<PersonnelProvider>(), task,
-                groupResolver: _stageGroupKey) ||
-            canStartPackagingEarly(
-              task: task,
-              tasks: context.read<TaskProvider>(),
-              personnel: context.read<PersonnelProvider>(),
-              employeeId: widget.employeeId,
-              groupResolver: _stageGroupKey,
-            )) &&
+                groupResolver: _stageGroupKey)) &&
         stageModeAllowsJoin &&
         !shiftPaused &&
         !groupLocked &&
@@ -5715,18 +5663,10 @@ class _TasksScreenState extends State<TasksScreen>
                         final taskProvider = context.read<TaskProvider>();
                         final personnelProvider = personnel;
                         // Sequential stage guard
-                        final canStartEarlyPackaging = canStartPackagingEarly(
-                          task: task,
-                          tasks: taskProvider,
-                          personnel: personnelProvider,
-                          employeeId: widget.employeeId,
-                          groupResolver: _stageGroupKey,
-                        );
                         if (!_canRunOutOfStageSequence(task) &&
                             !_isFirstPendingStage(
                                 taskProvider, personnelProvider, task,
-                                groupResolver: _stageGroupKey) &&
-                            !canStartEarlyPackaging) {
+                                groupResolver: _stageGroupKey)) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                                 content: Text(
