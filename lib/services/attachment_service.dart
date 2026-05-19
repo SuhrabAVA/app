@@ -11,9 +11,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../modules/tasks/task_model.dart';
+import '../modules/orders/order_comment_attachment.dart';
 
 const String kTaskCommentAttachmentsBucket = 'task-comment-attachments';
 const String kTaskCommentAttachmentsTable = 'task_comment_attachments';
+const String kOrderCommentAttachmentsBucket = 'order-comment-attachments';
+const String kOrderCommentAttachmentsTable = 'order_comment_attachments';
 
 class AttachmentDraft {
   final Uint8List bytes;
@@ -159,11 +162,11 @@ class AttachmentService {
       ext.isEmpty ? attachmentId : '$attachmentId$ext',
     ].join('/');
 
-    final storage = _supabase.storage.from(kTaskCommentAttachmentsBucket);
-    await storage.uploadBinary(
-      storagePath,
-      draft.bytes,
-      fileOptions: FileOptions(contentType: draft.mimeType, upsert: false),
+    await _uploadBinary(
+      bucket: kTaskCommentAttachmentsBucket,
+      storagePath: storagePath,
+      bytes: draft.bytes,
+      mimeType: draft.mimeType,
     );
 
     try {
@@ -189,10 +192,60 @@ class AttachmentService {
           .single();
       return _withSignedUrl(
         TaskCommentAttachment.fromMap(Map<String, dynamic>.from(row)),
-        signedUrlTtl,
+        bucket: kTaskCommentAttachmentsBucket,
+        signedUrlTtl: signedUrlTtl,
       );
     } catch (_) {
       await removeStorageObject(storagePath);
+      rethrow;
+    }
+  }
+
+  Future<OrderCommentAttachment> uploadOrderCommentAttachment({
+    required AttachmentDraft draft,
+    required String orderId,
+    required String commentId,
+    required String userId,
+    String attachmentType = 'file',
+    Duration signedUrlTtl = const Duration(hours: 12),
+  }) async {
+    final attachmentId = _uuid.v4();
+    final safeName = _sanitizeFileName(draft.fileName);
+    final ext = p.extension(safeName);
+    final storagePath = [
+      orderId,
+      commentId,
+      ext.isEmpty ? attachmentId : '$attachmentId$ext',
+    ].join('/');
+
+    await _uploadBinary(
+      bucket: kOrderCommentAttachmentsBucket,
+      storagePath: storagePath,
+      bytes: draft.bytes,
+      mimeType: draft.mimeType,
+    );
+
+    try {
+      final now = DateTime.now().toUtc();
+      final row = await _supabase.from(kOrderCommentAttachmentsTable).insert({
+        'id': attachmentId,
+        'order_id': orderId,
+        'comment_id': commentId,
+        'file_name': safeName,
+        'storage_path': storagePath,
+        'mime_type': draft.mimeType,
+        'size_bytes': draft.sizeBytes,
+        'attachment_type': attachmentType,
+        'uploaded_by': userId,
+        'created_at': now.toIso8601String(),
+      }).select().single();
+      return _withSignedUrl(
+        OrderCommentAttachment.fromMap(Map<String, dynamic>.from(row)),
+        bucket: kOrderCommentAttachmentsBucket,
+        signedUrlTtl: signedUrlTtl,
+      );
+    } catch (_) {
+      await removeStorageObject(storagePath, bucket: kOrderCommentAttachmentsBucket);
       rethrow;
     }
   }
@@ -228,7 +281,36 @@ class AttachmentService {
         final map = Map<String, dynamic>.from(raw as Map);
         attachments.add(await _withSignedUrl(
           TaskCommentAttachment.fromMap(map),
-          signedUrlTtl,
+          bucket: kTaskCommentAttachmentsBucket,
+          signedUrlTtl: signedUrlTtl,
+        ));
+      }
+    }
+    return attachments;
+  }
+
+  Future<List<OrderCommentAttachment>> loadOrderCommentAttachments({
+    required String orderId,
+    Iterable<String>? commentIds,
+    Duration signedUrlTtl = const Duration(hours: 12),
+  }) async {
+    dynamic query = _supabase
+        .from(kOrderCommentAttachmentsTable)
+        .select()
+        .eq('order_id', orderId.trim());
+    final ids = (commentIds ?? const <String>[])
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (ids.isNotEmpty) query = query.inFilter('comment_id', ids);
+    final rows = await query.order('created_at');
+    final attachments = <OrderCommentAttachment>[];
+    if (rows is List) {
+      for (final raw in rows) {
+        attachments.add(await _withSignedUrl(
+          OrderCommentAttachment.fromMap(Map<String, dynamic>.from(raw as Map)),
+          bucket: kOrderCommentAttachmentsBucket,
+          signedUrlTtl: signedUrlTtl,
         ));
       }
     }
@@ -243,7 +325,19 @@ class AttachmentService {
       return attachment.fileUrl!.trim();
     }
     return _supabase.storage
-        .from(kTaskCommentAttachmentsBucket)
+      .from(kTaskCommentAttachmentsBucket)
+      .createSignedUrl(attachment.storagePath, signedUrlTtl.inSeconds);
+  }
+
+  Future<String> getOrderAttachmentUrl(
+    OrderCommentAttachment attachment, {
+    Duration signedUrlTtl = const Duration(hours: 12),
+  }) async {
+    if ((attachment.fileUrl ?? '').trim().isNotEmpty) {
+      return attachment.fileUrl!.trim();
+    }
+    return _supabase.storage
+        .from(kOrderCommentAttachmentsBucket)
         .createSignedUrl(attachment.storagePath, signedUrlTtl.inSeconds);
   }
 
@@ -255,23 +349,51 @@ class AttachmentService {
         .eq('id', attachment.id);
   }
 
-  Future<void> removeStorageObject(String storagePath) async {
+  Future<void> removeStorageObject(
+    String storagePath, {
+    String bucket = kTaskCommentAttachmentsBucket,
+  }) async {
     try {
       await _supabase
           .storage
-          .from(kTaskCommentAttachmentsBucket)
+          .from(bucket)
           .remove([storagePath]);
     } catch (_) {
       // Best-effort rollback cleanup. The original DB/storage error is more important.
     }
   }
 
-  Future<TaskCommentAttachment> _withSignedUrl(
-    TaskCommentAttachment attachment,
-    Duration signedUrlTtl,
-  ) async {
-    final url = await getUrl(attachment, signedUrlTtl: signedUrlTtl);
-    return attachment.copyWith(fileUrl: url);
+  Future<T> _withSignedUrl<T>(
+    T attachment, {
+    required String bucket,
+    required Duration signedUrlTtl,
+  }) async {
+    if (attachment is TaskCommentAttachment) {
+      final url = await _supabase.storage
+          .from(bucket)
+          .createSignedUrl(attachment.storagePath, signedUrlTtl.inSeconds);
+      return attachment.copyWith(fileUrl: url) as T;
+    }
+    if (attachment is OrderCommentAttachment) {
+      final url = await _supabase.storage
+          .from(bucket)
+          .createSignedUrl(attachment.storagePath, signedUrlTtl.inSeconds);
+      return attachment.copyWith(fileUrl: url) as T;
+    }
+    throw ArgumentError('Unsupported attachment type: ${attachment.runtimeType}');
+  }
+
+  Future<void> _uploadBinary({
+    required String bucket,
+    required String storagePath,
+    required Uint8List bytes,
+    required String mimeType,
+  }) {
+    return _supabase.storage.from(bucket).uploadBinary(
+          storagePath,
+          bytes,
+          fileOptions: FileOptions(contentType: mimeType, upsert: false),
+        );
   }
 
   String _sanitizeFileName(String value) {
