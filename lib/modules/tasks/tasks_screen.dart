@@ -5052,7 +5052,7 @@ class _TasksScreenState extends State<TasksScreen>
   /// For ink-confirmation stages, finalization must run in strict order:
   /// quantity input -> ink adjustment -> completion RPC. Any cancel/close
   /// on intermediate steps exits early without completing the stage.
-  Future<void> _finalizeTask(
+  Future<bool> _finalizeTask(
     TaskModel task, {
     _QuantityInput? initialQtyInput,
   }) async {
@@ -5074,7 +5074,7 @@ class _TasksScreenState extends State<TasksScreen>
           order: _orderById(task.orderId),
           task: task,
         );
-        if (result == null) return;
+        if (result == null) return false;
         if (!result.openPaperEditor) {
           qtyInput = result;
           break;
@@ -5088,7 +5088,7 @@ class _TasksScreenState extends State<TasksScreen>
               ),
             );
           }
-          return;
+          return false;
         }
         await _openPaperEditDialog(order);
       }
@@ -5221,7 +5221,7 @@ class _TasksScreenState extends State<TasksScreen>
             SnackBar(content: Text('Не удалось загрузить краски заказа: $e')),
           );
         }
-        return;
+        return false;
       }
       var mutablePaints = mergedDisplayItems;
       while (true) {
@@ -5230,7 +5230,7 @@ class _TasksScreenState extends State<TasksScreen>
           unitLabel,
           allowPaperEdit: true,
         );
-        if (dialogResult == null) return;
+        if (dialogResult == null) return false;
         if (dialogResult.openPaintEditor) {
           final order = _orderById(task.orderId);
           if (order == null) {
@@ -5242,7 +5242,7 @@ class _TasksScreenState extends State<TasksScreen>
                 ),
               );
             }
-            return;
+            return false;
           }
           await _openPaintEditDialog(order);
           try {
@@ -5268,7 +5268,7 @@ class _TasksScreenState extends State<TasksScreen>
                 ),
               );
             }
-            return;
+            return false;
           }
           await _openPaperEditDialog(order);
           continue;
@@ -5312,8 +5312,9 @@ class _TasksScreenState extends State<TasksScreen>
             SnackBar(content: Text(message)),
           );
         }
+        return false;
       }
-      return;
+      return true;
     }
 
     final note = mounted ? await _askFinishNote() : null;
@@ -5334,7 +5335,9 @@ class _TasksScreenState extends State<TasksScreen>
           SnackBar(content: Text(message)),
         );
       }
+      return false;
     }
+    return true;
   }
 
   bool _hasRealStartConflict({
@@ -6073,7 +6076,6 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                       }
 
-                      await closeTimeEventForUser(note: 'finish');
                       final latestTask = taskProvider.tasks.firstWhere(
                         (t) => t.id == task.id,
                         orElse: () => task,
@@ -6083,14 +6085,24 @@ class _TasksScreenState extends State<TasksScreen>
                       // закрывается только отдельной кнопкой "Завершить задание"
                       // после того, как все отдельные исполнители отметились.
                       final shouldCloseStage = jointGroup != null;
-                      final canApplyFinish = !_anyUserActive(latestTask);
+                      final canApplyFinish = !_anyUserActive(
+                        latestTask,
+                        exceptUserId: currentRowUserId,
+                      );
                       if (canApplyFinish) {
                         final _secs = _elapsed(latestTask).inSeconds;
                         if (shouldCloseStage) {
                           if (_isInkConfirmationStage(task)) {
-                            await _finalizeTask(task, initialQtyInput: qtyInput);
+                            final completed = await _finalizeTask(
+                              task,
+                              initialQtyInput: qtyInput,
+                            );
+                            if (completed) {
+                              await closeTimeEventForUser(note: 'finish');
+                            }
                             return;
                           }
+                          await closeTimeEventForUser(note: 'finish');
                           final note =
                               context.mounted ? await _askFinishNote() : null;
                           try {
@@ -6115,6 +6127,7 @@ class _TasksScreenState extends State<TasksScreen>
                           return;
                         }
 
+                        await closeTimeEventForUser(note: 'finish');
                         await taskProvider.updateStatus(
                             task.id, TaskStatus.paused,
                             spentSeconds: _secs,
