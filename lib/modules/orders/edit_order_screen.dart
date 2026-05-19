@@ -18,6 +18,7 @@ import 'orders_provider.dart';
 import 'order_stage_filter.dart';
 import 'stage_queue_builder.dart';
 import 'order_queue_service.dart';
+import 'order_queue_validity.dart';
 import 'orders_repository.dart';
 import 'order_model.dart';
 import 'order_form_rules.dart';
@@ -1148,30 +1149,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Map<String, dynamic> _currentQueueSignature() {
     final mainMaterial = _mainMaterialForStageQueue();
-    final paperIds = _collectSelectedPapers()
-        .map((paper) => {
-              'id': (paper.id ?? '').trim(),
-              'name': paper.name.trim(),
-              'format': (paper.format ?? '').trim(),
-              'grammage': (paper.grammage ?? '').trim(),
-              'quantity': paper.quantity,
-            })
-        .toList(growable: false);
-    return <String, dynamic>{
-      'product_type_id': _product.type.trim(),
-      'product_quantity': _product.quantity,
-      'product_width': _product.width,
-      'product_height': _product.height,
-      'product_depth': _product.depth,
-      'product_width_b': _product.widthB,
-      'material_width': parseMaterialWidth(mainMaterial),
-      'paper_materials': paperIds,
-      'has_paint': _hasAnyPaints(),
-      'has_trimming': _trimming,
-      'has_cardboard': _cardboardChecked,
-      'handle': _selectedHandleDescription.trim(),
-      'stage_template_id': _stageTemplateId,
-    };
+    return buildQueueSignature(
+      product: _product,
+      paperMaterials: _collectSelectedPapers(),
+      materialWidth: parseMaterialWidth(mainMaterial),
+      hasPaint: _hasAnyPaints(),
+      hasTrimming: _trimming,
+      hasCardboard: _cardboardChecked,
+      handle: _selectedHandleDescription,
+      templateId: _stageTemplateId,
+    );
   }
 
   bool _sameQueueSignature(
@@ -1739,7 +1726,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         QueueBuildStatus.built) {
       return false;
     }
-    return _sameQueueSignature(_queueSignature, _currentQueueSignature()) ||
+    return isQueueActual(
+          currentSignature: _currentQueueSignature(),
+          storedSignature: _queueSignature,
+          queueBuildStatus: _queueBuildStatus,
+          stages: _stagePreviewStages,
+        ) ||
         widget.order!.assignmentCreated;
   }
 
@@ -6070,13 +6062,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildProductionSection(BuildContext context,
       {bool wrapWithCard = true, bool includeMakeready = true}) {
     final children = <Widget>[];
+    final queueActual = isQueueActual(
+      currentSignature: _currentQueueSignature(),
+      storedSignature: _queueSignature,
+      queueBuildStatus: _queueBuildStatus,
+      stages: _stagePreviewStages,
+    );
     children.add(
       Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: queueActual ? Colors.green : null,
+          ),
           onPressed: _buildStageQueue,
           icon: const Icon(Icons.auto_fix_high),
-          label: const Text('Собрать очередь'),
+          label: Text(queueActual ? 'Очередь собрана' : 'Собрать очередь'),
         ),
       ),
     );
