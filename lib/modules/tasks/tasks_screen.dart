@@ -4494,6 +4494,76 @@ class _TasksScreenState extends State<TasksScreen>
     return _orderDisplayNameForWriteoff(order);
   }
 
+  String _buildReadableOrderLabel(Map<String, dynamic> row, {String? fallbackId}) {
+    String pick(List<String> keys) => _stringFromRow(row, keys);
+
+    final customer = pick(const ['customer_name', 'client_name', 'customer']);
+    final orderName = pick(const ['order_name', 'title', 'name']);
+    final orderNumber = pick(const ['order_number', 'number', 'order_no']);
+
+    if (orderNumber.isNotEmpty && customer.isNotEmpty) {
+      return '№$orderNumber — $customer';
+    }
+    if (orderNumber.isNotEmpty && orderName.isNotEmpty) {
+      return '№$orderNumber — $orderName';
+    }
+    if (customer.isNotEmpty) return customer;
+    if (orderName.isNotEmpty) return orderName;
+    if (orderNumber.isNotEmpty) return '№$orderNumber';
+
+    final fallback = (fallbackId ?? '').trim();
+    return fallback.isEmpty ? 'Предыдущий заказ' : 'Заказ';
+  }
+
+  Future<Map<String, String>> _loadReadableOrderLabelsByIds(
+    Set<String> orderIds,
+  ) async {
+    final normalizedIds = orderIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+    if (normalizedIds.isEmpty) return const <String, String>{};
+    final ids = normalizedIds.toList(growable: false);
+
+    Future<List<dynamic>> runSelect(String selectClause) async {
+      final dynamic rows = await Supabase.instance.client
+          .from('orders')
+          .select(selectClause)
+          .inFilter('id', ids);
+      if (rows is List<dynamic>) return rows;
+      return const <dynamic>[];
+    }
+
+    List<dynamic> rows;
+    try {
+      rows = await runSelect(
+        'id, customer_name, client_name, customer, order_name, title, name, order_number, number, order_no',
+      );
+    } catch (_) {
+      try {
+        rows = await runSelect('id, customer, name');
+      } catch (_) {
+        return const <String, String>{};
+      }
+    }
+
+    final result = <String, String>{};
+    for (final dynamic item in rows) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = _stringFromRow(item, const ['id']);
+      if (id.isEmpty) continue;
+      result[id] = _buildReadableOrderLabel(item, fallbackId: id);
+    }
+    return result;
+  }
+
+  String _normalizeInkUnit(String? unitCandidate) {
+    final normalized = (unitCandidate ?? '').trim().toLowerCase();
+    if (normalized == 'м' || normalized == 'm' || normalized == 'метры' || normalized == 'метр') {
+      return 'гр';
+    }
+    if (normalized.isEmpty) return 'гр';
+    if (normalized == 'г' || normalized == 'гр') return normalized;
+    return 'гр';
+  }
+
   bool _looksLikeOrderCode(String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.isEmpty) return true;
@@ -4608,9 +4678,11 @@ class _TasksScreenState extends State<TasksScreen>
           ? 'Краска'
           : _stringFromRow(row, const ['paint_name', 'name', 'paintName']),
       plannedAmount: plannedGrams,
-      unit: _stringFromRow(row, const ['unit']).isEmpty
-          ? ((defaultUnit ?? '').trim().isEmpty ? 'г' : defaultUnit!.trim())
-          : _stringFromRow(row, const ['unit']),
+      unit: _normalizeInkUnit(
+        _stringFromRow(row, const ['unit']).isEmpty
+            ? ((defaultUnit ?? '').trim().isEmpty ? 'гр' : defaultUnit!.trim())
+            : _stringFromRow(row, const ['unit']),
+      ),
       actualUsedText: actualUsedText,
       writeOffNow: row['write_off_now'] == true || row['writeOffNow'] == true,
     );
@@ -4753,7 +4825,7 @@ class _TasksScreenState extends State<TasksScreen>
                 const Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Проверьте расход по каждой краске и отметьте строки, которые нужно списать сейчас.',
+                    'Проверьте расход по каждой краске в гр и отметьте строки, которые нужно списать сейчас.',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -4979,8 +5051,15 @@ class _TasksScreenState extends State<TasksScreen>
           }
           return merged;
         }).toList(growable: false);
+        final pendingOrderIds = pendingWriteoffs
+            .map((pending) => pending.orderId.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        final pendingOrderLabels = await _loadReadableOrderLabelsByIds(pendingOrderIds);
         final pendingPaints = pendingWriteoffs.map((pending) {
           final row = pending.toMap();
+          final readableOrderLabel = pendingOrderLabels[pending.orderId.trim()] ??
+              _buildReadableOrderLabel(row, fallbackId: pending.orderId);
           return row
             ..addAll({
               'source': 'pending',
@@ -4988,8 +5067,7 @@ class _TasksScreenState extends State<TasksScreen>
               'order_id': pending.orderId,
               'source_order_id': pending.orderId,
               'source_task_id': pending.taskId,
-              'order_label':
-                  pending.orderId.isEmpty ? 'Заказ' : pending.orderId,
+              'order_label': readableOrderLabel,
               'planned_amount': pending.plannedAmount,
               'actual_used_amount': pending.actualUsedAmount,
               'actual_used_text': pending.actualUsedAmount?.toString() ?? '',
