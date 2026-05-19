@@ -5050,6 +5050,9 @@ class _TasksScreenState extends State<TasksScreen>
     return raw;
   }
 
+  /// For ink-confirmation stages, finalization must run in strict order:
+  /// quantity input -> ink adjustment -> completion RPC. Any cancel/close
+  /// on intermediate steps exits early without completing the stage.
   Future<void> _finalizeTask(
     TaskModel task, {
     _QuantityInput? initialQtyInput,
@@ -5058,6 +5061,40 @@ class _TasksScreenState extends State<TasksScreen>
         _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
     List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
     _QuantityInput? qtyInput = initialQtyInput;
+    final stageMode = _execModeForUser(task, widget.employeeId);
+    final isSeparateFinalizeWithoutPrefilledQty =
+        stageMode == ExecutionMode.separate && qtyInput == null;
+
+    if (!isSeparateFinalizeWithoutPrefilledQty) {
+      while (qtyInput == null) {
+        final result = await _askQuantity(
+          context,
+          unit: unitLabel,
+          allowPaperEdit: true,
+          initialQuantity: _initialMeterQuantityForTask(task, unitLabel),
+          order: _orderById(task.orderId),
+          task: task,
+        );
+        if (result == null) return;
+        if (!result.openPaperEditor) {
+          qtyInput = result;
+          break;
+        }
+        final order = _orderById(task.orderId);
+        if (order == null) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Не удалось найти заказ для редактирования бумаги.'),
+              ),
+            );
+          }
+          return;
+        }
+        await _openPaperEditDialog(order);
+      }
+    }
+
     if (_isInkConfirmationStage(task)) {
       final repo = OrdersRepository();
       List<Map<String, dynamic>> initialPaints = const <Map<String, dynamic>>[];
@@ -5134,11 +5171,13 @@ class _TasksScreenState extends State<TasksScreen>
             .map((pending) => pending.orderId.trim())
             .where((id) => id.isNotEmpty)
             .toSet();
-        final pendingOrderLabels = await _loadReadableOrderLabelsByIds(pendingOrderIds);
+        final pendingOrderLabels =
+            await _loadReadableOrderLabelsByIds(pendingOrderIds);
         final pendingPaints = pendingWriteoffs.map((pending) {
           final row = pending.toMap();
-          final readableOrderLabel = pendingOrderLabels[pending.orderId.trim()] ??
-              _buildReadableOrderLabel(row, fallbackId: pending.orderId);
+          final readableOrderLabel =
+              pendingOrderLabels[pending.orderId.trim()] ??
+                  _buildReadableOrderLabel(row, fallbackId: pending.orderId);
           return row
             ..addAll({
               'source': 'pending',
@@ -5178,7 +5217,8 @@ class _TasksScreenState extends State<TasksScreen>
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Не удалось найти заказ для редактирования красок.'),
+                  content:
+                      Text('Не удалось найти заказ для редактирования красок.'),
                 ),
               );
             }
@@ -5197,7 +5237,8 @@ class _TasksScreenState extends State<TasksScreen>
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Не удалось найти заказ для редактирования бумаги.'),
+                  content:
+                      Text('Не удалось найти заказ для редактирования бумаги.'),
                 ),
               );
             }
@@ -5209,40 +5250,6 @@ class _TasksScreenState extends State<TasksScreen>
         mutablePaints = dialogResult.paints;
         paints = mutablePaints;
         break;
-      }
-    }
-
-    final stageMode = _execModeForUser(task, widget.employeeId);
-    final isSeparateFinalizeWithoutPrefilledQty =
-        stageMode == ExecutionMode.separate && qtyInput == null;
-
-    if (!isSeparateFinalizeWithoutPrefilledQty) {
-      while (qtyInput == null) {
-        final result = await _askQuantity(
-          context,
-          unit: unitLabel,
-          allowPaperEdit: true,
-          initialQuantity: _initialMeterQuantityForTask(task, unitLabel),
-          order: _orderById(task.orderId),
-          task: task,
-        );
-        if (result == null) return;
-        if (!result.openPaperEditor) {
-          qtyInput = result;
-          break;
-        }
-        final order = _orderById(task.orderId);
-        if (order == null) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Не удалось найти заказ для редактирования бумаги.'),
-              ),
-            );
-          }
-          return;
-        }
-        await _openPaperEditDialog(order);
       }
     }
 
