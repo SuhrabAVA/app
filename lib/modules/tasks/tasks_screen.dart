@@ -4605,6 +4605,76 @@ class _TasksScreenState extends State<TasksScreen>
 
 
 
+  String _buildReadableOrderLabel(Map<String, dynamic> row, {String? fallbackId}) {
+    String pick(List<String> keys) => _stringFromRow(row, keys);
+
+    final customer = pick(const ['customer_name', 'client_name', 'customer']);
+    final orderName = pick(const ['order_name', 'title', 'name']);
+    final orderNumber = pick(const ['order_number', 'number', 'order_no']);
+
+    if (orderNumber.isNotEmpty && customer.isNotEmpty) {
+      return '№$orderNumber — $customer';
+    }
+    if (orderNumber.isNotEmpty && orderName.isNotEmpty) {
+      return '№$orderNumber — $orderName';
+    }
+    if (customer.isNotEmpty) return customer;
+    if (orderName.isNotEmpty) return orderName;
+    if (orderNumber.isNotEmpty) return '№$orderNumber';
+
+    final fallback = (fallbackId ?? '').trim();
+    return fallback.isEmpty ? 'Предыдущий заказ' : 'Заказ';
+  }
+
+  Future<Map<String, String>> _loadReadableOrderLabelsByIds(
+    Set<String> orderIds,
+  ) async {
+    final normalizedIds = orderIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+    if (normalizedIds.isEmpty) return const <String, String>{};
+    final ids = normalizedIds.toList(growable: false);
+
+    Future<List<dynamic>> runSelect(String selectClause) async {
+      final dynamic rows = await Supabase.instance.client
+          .from('orders')
+          .select(selectClause)
+          .inFilter('id', ids);
+      if (rows is List<dynamic>) return rows;
+      return const <dynamic>[];
+    }
+
+    List<dynamic> rows;
+    try {
+      rows = await runSelect(
+        'id, customer_name, client_name, customer, order_name, title, name, order_number, number, order_no',
+      );
+    } catch (_) {
+      try {
+        rows = await runSelect('id, customer, name');
+      } catch (_) {
+        return const <String, String>{};
+      }
+    }
+
+    final result = <String, String>{};
+    for (final dynamic item in rows) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = _stringFromRow(item, const ['id']);
+      if (id.isEmpty) continue;
+      result[id] = _buildReadableOrderLabel(item, fallbackId: id);
+    }
+    return result;
+  }
+
+  String _normalizeInkUnit(String? unitCandidate) {
+    final normalized = (unitCandidate ?? '').trim().toLowerCase();
+    if (normalized == 'м' || normalized == 'm' || normalized == 'метры' || normalized == 'метр') {
+      return 'гр';
+    }
+    if (normalized.isEmpty) return 'гр';
+    if (normalized == 'г' || normalized == 'гр') return normalized;
+    return 'гр';
+  }
+
   bool _looksLikeOrderCode(String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.isEmpty) return true;
