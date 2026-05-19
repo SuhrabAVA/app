@@ -201,3 +201,77 @@ void main() {
     expect(canStartPackaging, isFalse);
   });
 }
+
+test('canStartPackagingEarly allows packaging when previous stage started and access granted', () {
+  final result = canStartPackagingEarly(
+    orderId: 'order-1',
+    currentStageId: kPackagingStageId,
+    currentStageName: 'Упаковка',
+    stageStates: const [
+      PendingStageState(stageId: 'print', completed: false, started: true),
+      PendingStageState(stageId: kPackagingStageId, completed: false),
+    ],
+    orderedStages: const ['print', kPackagingStageId],
+    hasPackagingAccess: true,
+  );
+
+  expect(result, isTrue);
+});
+
+test('canStartPackagingEarly blocks packaging when previous stage not started', () {
+  final result = canStartPackagingEarly(
+    orderId: 'order-1',
+    currentStageId: kPackagingStageId,
+    currentStageName: 'Упаковка',
+    stageStates: const [
+      PendingStageState(stageId: 'print', completed: false),
+      PendingStageState(stageId: kPackagingStageId, completed: false),
+    ],
+    orderedStages: const ['print', kPackagingStageId],
+    hasPackagingAccess: true,
+  );
+
+  expect(result, isFalse);
+});
+
+test('canStartPackagingEarly blocks without packaging access', () {
+  final result = canStartPackagingEarly(
+    orderId: 'order-1',
+    currentStageId: kPackagingStageId,
+    currentStageName: 'Упаковка',
+    stageStates: const [
+      PendingStageState(stageId: 'print', completed: false, started: true),
+      PendingStageState(stageId: kPackagingStageId, completed: false),
+    ],
+    orderedStages: const ['print', kPackagingStageId],
+    hasPackagingAccess: false,
+  );
+
+  expect(result, isFalse);
+});
+
+test('canStartPackagingEarly blocks when packaging already started/completed', () {
+  final started = canStartPackagingEarly(
+    orderId: 'order-1',
+    currentStageId: kPackagingStageId,
+    stageStates: const [
+      PendingStageState(stageId: 'print', completed: false, started: true),
+      PendingStageState(stageId: kPackagingStageId, completed: false, started: true),
+    ],
+    orderedStages: const ['print', kPackagingStageId],
+    hasPackagingAccess: true,
+  );
+  final completed = canStartPackagingEarly(
+    orderId: 'order-1',
+    currentStageId: kPackagingStageId,
+    stageStates: const [
+      PendingStageState(stageId: 'print', completed: true),
+      PendingStageState(stageId: kPackagingStageId, completed: true),
+    ],
+    orderedStages: const ['print', kPackagingStageId],
+    hasPackagingAccess: true,
+  );
+
+  expect(started, isFalse);
+  expect(completed, isFalse);
+});
