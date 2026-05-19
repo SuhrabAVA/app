@@ -8,7 +8,6 @@ import 'edit_order_screen.dart';
 import 'id_format.dart';
 import 'order_timeline_dialog.dart';
 import 'order_comments_timeline.dart';
-import '../tasks/task_model.dart';
 
 /// Экран архива заказов. Показывает завершённые заказы с поиском и
 /// возможностью переключения вида (список/карточки). Из архива можно
@@ -88,23 +87,12 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
 
 
   Future<void> _showComments(BuildContext context, OrderModel o) async {
-    final legacy = o.comments.trim();
-    final comments = legacy.isEmpty
-        ? const <TaskComment>[]
-        : [
-            TaskComment(
-              id: 'legacy-${o.id}',
-              userId: '',
-              text: legacy,
-              timestamp: o.orderDate,
-            ),
-          ];
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (_) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.6,
-        child: OrderCommentsTimeline(comments: comments, attachmentsByComment: const {}),
+        child: OrderCommentsSection(orderId: o.id, legacyText: o.comments),
       ),
     );
   }

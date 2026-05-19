@@ -36,7 +36,6 @@ import '../common/pdf_view_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
 import 'order_comments_timeline.dart';
-import '../tasks/task_model.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -3712,10 +3711,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   isScrollControlled: true,
                   builder: (_) => SizedBox(
                     height: MediaQuery.of(context).size.height * 0.6,
-                    child: OrderCommentsTimeline(
-                      comments: comments,
-                      attachmentsByComment: const {},
-                    ),
+                    child: OrderCommentsSection(orderId: order.id, legacyText: order.comments),
                   ),
                 );
               },
@@ -3773,10 +3769,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   isScrollControlled: true,
                   builder: (_) => SizedBox(
                     height: MediaQuery.of(context).size.height * 0.6,
-                    child: OrderCommentsTimeline(
-                      comments: comments,
-                      attachmentsByComment: const {},
-                    ),
+                    child: OrderCommentsSection(orderId: order.id, legacyText: order.comments),
                   ),
                 );
               },
