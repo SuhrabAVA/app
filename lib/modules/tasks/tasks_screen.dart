@@ -5337,54 +5337,41 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
-  bool _hasBlockingActiveOrder(TaskProvider provider, TaskModel currentTask) {
-    final canStartPackagingNow = canStartPackagingOutOfQueue(
-      task: currentTask,
+  bool _hasRealStartConflict({
+    required TaskProvider provider,
+    required TaskModel task,
+    required bool shiftPaused,
+    required bool stageModeAllowsJoin,
+    required bool hasAccessToTask,
+  }) {
+    if (!hasAccessToTask || !stageModeAllowsJoin) return true;
+    if (_userRunState(task, widget.employeeId) == UserRunState.finished) {
+      return true;
+    }
+    if (_isStageGroupLocked(provider, task)) return true;
+    if (shiftPaused) return true;
+
+    final canStartEarlyPackaging = canStartPackagingOutOfQueue(
+      task: task,
       tasks: provider,
       personnel: context.read<PersonnelProvider>(),
       employeeId: widget.employeeId,
       groupResolver: _stageGroupKey,
     );
-    return provider.tasks.any((task) {
-      if (task.id == currentTask.id) return false;
-      if (task.assignees.contains(widget.employeeId) == false) return false;
-      if (_isEffectivelyCompleted(task)) return false;
-      final state = _userRunState(task, widget.employeeId);
-      if (state == UserRunState.active &&
-          canStartPackagingNow &&
-          _isAllowedParallelPackagingPair(
-            provider: provider,
-            packagingTask: currentTask,
-            activeTask: task,
-          )) {
-        return false;
-      }
-      return state == UserRunState.active;
-    });
-  }
+    if (!_canRunOutOfStageSequence(task) &&
+        !_isFirstPendingStage(
+          provider,
+          context.read<PersonnelProvider>(),
+          task,
+          groupResolver: _stageGroupKey,
+        ) &&
+        !canStartEarlyPackaging) {
+      return true;
+    }
 
-  bool _isAllowedParallelPackagingPair({
-    required TaskProvider provider,
-    required TaskModel packagingTask,
-    required TaskModel activeTask,
-  }) {
-    if (packagingTask.orderId != activeTask.orderId) return false;
-    final sequence = provider.stageSequenceForOrder(packagingTask.orderId);
-    if (sequence == null || sequence.isEmpty) return false;
-    final orderedKeys = <String>[];
-    for (final stageId in sequence) {
-      final key = _stageGroupKey(packagingTask.orderId, stageId);
-      if (!orderedKeys.contains(key)) orderedKeys.add(key);
-    }
-    final packagingKey =
-        _stageGroupKey(packagingTask.orderId, packagingTask.stageId);
-    final packagingIndex = orderedKeys.indexOf(packagingKey);
-    if (packagingIndex <= 0 || packagingIndex != orderedKeys.length - 1) {
-      return false;
-    }
-    final previousKey = orderedKeys[packagingIndex - 1];
-    final activeKey = _stageGroupKey(activeTask.orderId, activeTask.stageId);
-    return activeKey == previousKey;
+    final order = _orderById(task.orderId);
+    if (!isTaskOrderLaunchedForWorkspace(order)) return true;
+    return false;
   }
 
   List<TaskModel> _tasksForWorkplace(TaskProvider taskProvider) {
@@ -5560,34 +5547,27 @@ class _TasksScreenState extends State<TasksScreen>
         stageMode == ExecutionMode.separate;
     final bool stageModeAllowsJoin =
         stageMode != ExecutionMode.joint || alreadyAssigned || isFirstAssignee;
-    final bool canStart = (((isFirstAssignee ||
-                alreadyAssigned ||
-                canAutoAssign)) &&
-            (task.status == TaskStatus.waiting ||
-                task.status == TaskStatus.paused ||
-                task.status == TaskStatus.problem ||
-                (task.status == TaskStatus.inProgress && _slotAvailable()))) &&
+    final bool hasAccessToTask =
+        isFirstAssignee || alreadyAssigned || canAutoAssign;
+    final bool canStart = hasAccessToTask &&
+        (task.status == TaskStatus.waiting ||
+            task.status == TaskStatus.paused ||
+            task.status == TaskStatus.problem ||
+            (task.status == TaskStatus.inProgress && _slotAvailable())) &&
         _isUnlockedByWorkplaceQueue(
           task,
           provider,
           context.read<ProductionQueueProvider>(),
           stage,
         ) &&
-        (_canRunOutOfStageSequence(task) ||
-            _isFirstPendingStage(context.read<TaskProvider>(),
-                context.read<PersonnelProvider>(), task,
-                groupResolver: _stageGroupKey) ||
-            canStartPackagingOutOfQueue(
-              task: task,
-              tasks: context.read<TaskProvider>(),
-              personnel: context.read<PersonnelProvider>(),
-              employeeId: widget.employeeId,
-              groupResolver: _stageGroupKey,
-            )) &&
-        stageModeAllowsJoin &&
-        !shiftPaused &&
         !groupLocked &&
-        !_hasBlockingActiveOrder(provider, task);
+        !_hasRealStartConflict(
+          provider: provider,
+          task: task,
+          shiftPaused: shiftPaused,
+          stageModeAllowsJoin: stageModeAllowsJoin,
+          hasAccessToTask: hasAccessToTask,
+        );
 
     // Пауза/Завершить/Проблема доступны только своим исполнителям
     final bool canPause =
@@ -5764,7 +5744,16 @@ class _TasksScreenState extends State<TasksScreen>
                         canProblem &&
                         stateRowUser == UserRunState.active;
                     final bool canShiftControl = shiftPaused
-                        ? !_hasBlockingActiveOrder(tp, task)
+                        ? (isMyRow &&
+                            !_hasRealStartConflict(
+                              provider: tp,
+                              task: task,
+                                                  shiftPaused: false,
+                              stageModeAllowsJoin: stageModeAllowsJoin,
+                              hasAccessToTask: isFirstAssignee ||
+                                  alreadyAssigned ||
+                                  canAutoAssign,
+                            ))
                         : (isMyRow &&
                             (stateRowUser == UserRunState.active ||
                                 stateRowUser == UserRunState.paused ||
@@ -5867,15 +5856,6 @@ class _TasksScreenState extends State<TasksScreen>
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                                 content: Text(
                                     'Сначала начните предыдущие задания в очереди')));
-                          }
-                          return;
-                        }
-
-                        if (_hasBlockingActiveOrder(taskProvider, task)) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                                content:
-                                    Text('Сначала завершите текущий активный заказ')));
                           }
                           return;
                         }
@@ -6394,11 +6374,17 @@ class _TasksScreenState extends State<TasksScreen>
                       final analytics = context.read<AnalyticsProvider>();
 
                       if (shiftPaused &&
-                          _hasBlockingActiveOrder(taskProvider, task)) {
+                          _hasRealStartConflict(
+                            provider: taskProvider,
+                            task: task,
+                            shiftPaused: false,
+                            stageModeAllowsJoin: stageModeAllowsJoin,
+                            hasAccessToTask:
+                                isFirstAssignee || alreadyAssigned || canAutoAssign,
+                          )) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text(
-                                  'Сначала завершите текущий активный заказ')));
+                              content: Text('Невозможно продолжить этап из-за ограничений запуска')));
                         }
                         return;
                       }
