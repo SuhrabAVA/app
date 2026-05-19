@@ -8213,7 +8213,13 @@ Future<_QuantityInput?> _askQuantity(
                           unit: unitLabel,
                         )
                       : null;
-                  final status = getQuantityStatus(actual: n, expected: expected);
+                  final packSize = order != null && isQuantityPackUnit(unitLabel)
+                      ? packQuantityFromOrder(order)
+                      : null;
+                  final actualForValidation =
+                      packSize != null && packSize > 0 ? (n * packSize) : n;
+                  final status =
+                      getQuantityStatus(actual: actualForValidation, expected: expected);
                   if (status == QuantityStatus.warning ||
                       status == QuantityStatus.danger) {
                     final confirmed = await showDialog<bool>(
@@ -8243,7 +8249,7 @@ Future<_QuantityInput?> _askQuantity(
                       ? '$displayQuantity $unitLabel'
                       : displayQuantity;
                   final payload = quantityStatusToJson(
-                    actual: n,
+                    actual: actualForValidation,
                     unit: unitLabel,
                     expected: expected,
                     status: status,

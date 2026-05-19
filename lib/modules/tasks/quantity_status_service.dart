@@ -159,6 +159,11 @@ bool isTwoSheetPackageSheetCutting({
               .contains(_normalizeProductName(stageId)));
 }
 
+double? packQuantityFromOrder(OrderModel order) {
+  final packs = _number(order.product.blQuantity);
+  return (packs != null && packs > 0) ? packs : null;
+}
+
 double? getExpectedQuantity({
   required OrderModel order,
   required TaskModel task,
@@ -170,8 +175,8 @@ double? getExpectedQuantity({
   }
 
   if (isQuantityPackUnit(unit)) {
-    final packs = _number(order.product.blQuantity);
-    return packs != null && packs > 0 ? packs : null;
+    final quantity = order.product.quantity;
+    return quantity > 0 ? quantity.toDouble() : null;
   }
 
   if (isQuantityPieceUnit(unit)) {
