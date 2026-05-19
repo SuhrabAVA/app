@@ -463,7 +463,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final roll = formatDimension(product.roll);
     if (roll != null) extras.add('Рулон $roll');
     final blQty = product.blQuantity;
-    if (blQty != null && blQty.isNotEmpty) extras.add('Кол-во $blQty');
+    if (blQty != null && blQty.isNotEmpty) extras.add('');
 
     if (extras.isNotEmpty) {
       final extraText = extras.join(', ');
