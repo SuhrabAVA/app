@@ -783,30 +783,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _extraPaperMaterials
       ..clear()
       ..addAll(initialPapers.skip(1));
-    _hasForm = template?.hasForm ?? false;
-    final initialFormResult = applyOrderFormRules(
-      draft: _buildCurrentOrderDraft(),
-      hasPaints: _hasAnyPaints(),
-      userManuallySelectedFormType: _userManuallySelectedFormType,
-    );
-    _hasForm = initialFormResult.hasForm;
-    _isOldForm = initialFormResult.isOldForm;
-
-    // Инициализация каскадных полей (если есть материал в шаблоне)
-    _matNameCtl.text = (_selectedMaterial?.name ?? '').trim();
-    _matFormatCtl.text = (_selectedMaterial?.format ?? '').trim();
-    _matGramCtl.text = (_selectedMaterial?.grammage ?? '').trim();
-    _matSelectedName = _matNameCtl.text.isEmpty ? null : _matNameCtl.text;
-    _matSelectedFormat = _matFormatCtl.text.isEmpty ? null : _matFormatCtl.text;
-    _matSelectedGrammage = _matGramCtl.text.isEmpty ? null : _matGramCtl.text;
-
-    final actualQty = template?.actualQty;
-    if (actualQty != null) {
-      _actualQuantity = _formatActualQuantity(actualQty);
-    } else {
-      _actualQuantity = '';
-    }
-    _loadCategoriesForProduct(); // загрузка категорий склада
     if (template != null) {
       final p = template.product;
       _product = ProductModel(
@@ -839,6 +815,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         leftover: null,
       );
     }
+    _hasForm = template?.hasForm ?? false;
+    final initialFormResult = applyOrderFormRules(
+      draft: _buildCurrentOrderDraft(),
+      hasPaints: _hasAnyPaints(),
+      userManuallySelectedFormType: _userManuallySelectedFormType,
+    );
+    _hasForm = initialFormResult.hasForm;
+    _isOldForm = initialFormResult.isOldForm;
+
+    // Инициализация каскадных полей (если есть материал в шаблоне)
+    _matNameCtl.text = (_selectedMaterial?.name ?? '').trim();
+    _matFormatCtl.text = (_selectedMaterial?.format ?? '').trim();
+    _matGramCtl.text = (_selectedMaterial?.grammage ?? '').trim();
+    _matSelectedName = _matNameCtl.text.isEmpty ? null : _matNameCtl.text;
+    _matSelectedFormat = _matFormatCtl.text.isEmpty ? null : _matFormatCtl.text;
+    _matSelectedGrammage = _matGramCtl.text.isEmpty ? null : _matGramCtl.text;
+
+    final actualQty = template?.actualQty;
+    if (actualQty != null) {
+      _actualQuantity = _formatActualQuantity(actualQty);
+    } else {
+      _actualQuantity = '';
+    }
+    _loadCategoriesForProduct(); // загрузка категорий склада
     _lengthController = TextEditingController(
       text: _product.width > 0 ? _formatDecimal(_product.width) : '',
     );
