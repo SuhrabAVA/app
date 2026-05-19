@@ -35,6 +35,8 @@ import '../personnel/personnel_provider.dart';
 import '../common/pdf_view_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
+import 'order_comments_timeline.dart';
+import '../tasks/task_model.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -3688,6 +3690,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ? 'Редактирование заказа ${(widget.order!.assignmentId ?? widget.order!.id)}'
             : 'Новый заказ'),
         actions: [
+          if (widget.order != null)
+            IconButton(
+              icon: const Icon(Icons.comment_outlined),
+              tooltip: 'Комментарии',
+              onPressed: () async {
+                final order = widget.order!;
+                final legacy = order.comments.trim();
+                final comments = legacy.isEmpty
+                    ? const <TaskComment>[]
+                    : [
+                        TaskComment(
+                          id: 'legacy-${order.id}',
+                          userId: '',
+                          text: legacy,
+                          timestamp: order.orderDate,
+                        )
+                      ];
+                await showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.6,
+                    child: OrderCommentsTimeline(
+                      comments: comments,
+                      attachmentsByComment: const {},
+                    ),
+                  ),
+                );
+              },
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: FilledButton.tonalIcon(
@@ -3719,6 +3751,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         content: const Text(
                             'Вы действительно хотите удалить этот заказ? Это действие невозможно отменить.'),
                         actions: [
+          if (widget.order != null)
+            IconButton(
+              icon: const Icon(Icons.comment_outlined),
+              tooltip: 'Комментарии',
+              onPressed: () async {
+                final order = widget.order!;
+                final legacy = order.comments.trim();
+                final comments = legacy.isEmpty
+                    ? const <TaskComment>[]
+                    : [
+                        TaskComment(
+                          id: 'legacy-${order.id}',
+                          userId: '',
+                          text: legacy,
+                          timestamp: order.orderDate,
+                        )
+                      ];
+                await showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.6,
+                    child: OrderCommentsTimeline(
+                      comments: comments,
+                      attachmentsByComment: const {},
+                    ),
+                  ),
+                );
+              },
+            ),
                           TextButton(
                             onPressed: () => Navigator.pop(ctx, false),
                             child: const Text('Отмена'),

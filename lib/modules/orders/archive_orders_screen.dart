@@ -7,6 +7,8 @@ import 'product_model.dart';
 import 'edit_order_screen.dart';
 import 'id_format.dart';
 import 'order_timeline_dialog.dart';
+import 'order_comments_timeline.dart';
+import '../tasks/task_model.dart';
 
 /// Экран архива заказов. Показывает завершённые заказы с поиском и
 /// возможностью переключения вида (список/карточки). Из архива можно
@@ -83,6 +85,30 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
     );
   }
 
+
+
+  Future<void> _showComments(BuildContext context, OrderModel o) async {
+    final legacy = o.comments.trim();
+    final comments = legacy.isEmpty
+        ? const <TaskComment>[]
+        : [
+            TaskComment(
+              id: 'legacy-${o.id}',
+              userId: '',
+              text: legacy,
+              timestamp: o.orderDate,
+            ),
+          ];
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.6,
+        child: OrderCommentsTimeline(comments: comments, attachmentsByComment: const {}),
+      ),
+    );
+  }
+
   Widget _buildCard(BuildContext context, OrderModel o) {
     final product = o.product;
     final displayId = orderDisplayId(o);
@@ -118,6 +144,11 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
                   },
                   icon: const Icon(Icons.history),
                   label: const Text('История'),
+                ),
+                TextButton.icon(
+                  onPressed: () => _showComments(context, o),
+                  icon: const Icon(Icons.comment),
+                  label: const Text('Комментарии'),
                 ),
                 TextButton.icon(
                   onPressed: () => _resumeOrder(context, o),
@@ -204,12 +235,20 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
                                 );
                                 return;
                               }
+                              if (value == 'comments') {
+                                await _showComments(context, o);
+                                return;
+                              }
                               _resumeOrder(context, o);
                             },
                             itemBuilder: (_) => const [
                               PopupMenuItem(
                                 value: 'history',
                                 child: Text('История'),
+                              ),
+                              PopupMenuItem(
+                                value: 'comments',
+                                child: Text('Комментарии'),
                               ),
                               PopupMenuItem(
                                 value: 'resume',
