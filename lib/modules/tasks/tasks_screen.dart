@@ -1120,6 +1120,16 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
+  String _formatRestartChipLabel(OrderRestartHistoryEntry entry) {
+    final order = _orderById(entry.id);
+    final rawTitle = order?.product.type.trim() ?? '';
+    final title = rawTitle.isEmpty ? 'Заказ' : rawTitle;
+    final finishedAt = (entry.finishedAt ?? entry.updatedAt)?.toLocal();
+    if (finishedAt == null) return title;
+    final when = DateFormat('dd.MM.yyyy HH:mm').format(finishedAt);
+    return '$title · $when';
+  }
+
   String _employeeDisplayName(PersonnelProvider personnel, String userId) {
     if (userId.isEmpty) return '';
     try {
@@ -4067,9 +4077,14 @@ class _TasksScreenState extends State<TasksScreen>
                     Padding(
                       padding: EdgeInsets.only(right: scale * 6),
                       child: ChoiceChip(
-                        label: Text(_formatTimestamp(
-                          (ancestor.finishedAt ?? ancestor.updatedAt)?.millisecondsSinceEpoch ?? 0,
-                        )),
+                        label: ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: scale * 190),
+                          child: Text(
+                            _formatRestartChipLabel(ancestor),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                         selected: selectedOrderId == ancestor.id,
                         onSelected: (_) => setState(
                           () => _selectedCommentsOrderByTaskId[task.id] = ancestor.id,
@@ -4108,8 +4123,9 @@ class _TasksScreenState extends State<TasksScreen>
             _pendingAttachmentsPreview(scale, updateDialogState: setState),
             SizedBox(height: scale * 6),
           ],
-          Row(
-            children: [
+          if (!isHistoryReadOnly)
+            Row(
+              children: [
               Expanded(
                 child: TextField(
                   controller: _chatController,
@@ -4227,8 +4243,8 @@ class _TasksScreenState extends State<TasksScreen>
                   child: Icon(Icons.send, color: Colors.white, size: scale * 18),
                 ),
               ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
       scale,
