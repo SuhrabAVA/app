@@ -5362,7 +5362,7 @@ class _TasksScreenState extends State<TasksScreen>
     return true;
   }
 
-  bool _hasRealStartConflict({
+bool _hasRealStartConflict({
     required TaskProvider provider,
     required TaskModel task,
     required bool shiftPaused,
@@ -5375,6 +5375,37 @@ class _TasksScreenState extends State<TasksScreen>
     }
     if (_isStageGroupLocked(provider, task)) return true;
     if (shiftPaused) return true;
+
+    final employeeActiveTasks = provider.tasks.where((candidate) {
+      if (candidate.id == task.id) return false;
+      if (!candidate.assignees.contains(widget.employeeId)) return false;
+      if (_isEffectivelyCompleted(candidate)) return false;
+      return _userRunState(candidate, widget.employeeId) == UserRunState.active;
+    }).toList(growable: false);
+
+    if (employeeActiveTasks.isNotEmpty) {
+      final startingPackaging = stage_sequence.isPackagingStage(
+        stageId: task.stageId,
+        stageGroupKey: task.stageGroupKey,
+        stageName: _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+      );
+
+      final canPairWithPackagingInSameOrder = startingPackaging &&
+          employeeActiveTasks.length == 1 &&
+          employeeActiveTasks.first.orderId == task.orderId &&
+          !stage_sequence.isPackagingStage(
+            stageId: employeeActiveTasks.first.stageId,
+            stageGroupKey: employeeActiveTasks.first.stageGroupKey,
+            stageName: _stageDisplayName(
+              context.read<PersonnelProvider>(),
+              employeeActiveTasks.first.stageId,
+            ),
+          );
+
+      if (!canPairWithPackagingInSameOrder) {
+        return true;
+      }
+    }
 
     final canStartEarlyPackaging = canStartPackagingOutOfQueue(
       task: task,
@@ -5502,6 +5533,16 @@ class _TasksScreenState extends State<TasksScreen>
       employeeId: widget.employeeId,
       groupResolver: _stageGroupKey,
     );
+
+    final isPackagingNow = stage_sequence.isPackagingStage(
+      stageId: task.stageId,
+      stageGroupKey: task.stageGroupKey,
+      stageName: _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+    );
+
+    if (isPackagingNow) {
+      return true;
+    }
 
     // Спец-правило упаковки имеет приоритет над строгой проверкой позиции
     // в очереди рабочего места: если упаковку можно стартовать вне очереди,
