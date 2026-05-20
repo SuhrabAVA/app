@@ -723,7 +723,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         .where((e) => e.id == _selectedCommentsOrderId)
         .cast<OrderRestartHistoryEntry?>()
         .firstWhere((_) => true, orElse: () => null);
-    final selectedFinishedAt = selectedEntry?.finishedAt;
+    final selectedFinishedAt = selectedEntry?.timelineAt;
     final selectedDate = selectedFinishedAt == null
         ? _selectedCommentsOrderId
         : DateFormat('dd.MM.yyyy HH:mm').format(selectedFinishedAt.toLocal());
@@ -759,10 +759,10 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
                         label: Text(
-                          ancestor.finishedAt == null
+                          ancestor.timelineAt == null
                               ? ancestor.id
                               : DateFormat('dd.MM.yyyy').format(
-                                  ancestor.finishedAt!.toLocal(),
+                                  ancestor.timelineAt!.toLocal(),
                                 ),
                         ),
                         selected: _selectedCommentsOrderId == ancestor.id,

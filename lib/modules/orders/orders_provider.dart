@@ -1155,7 +1155,7 @@ class OrdersProvider with ChangeNotifier {
       rethrow;
     }
 
-    final DateTime now = DateTime.now();
+    final DateTime now = DateTime.now().toUtc();
     final previous = _orders[index];
     final updated = orderData.copyWith(
       status: OrderStatus.completed.name,
@@ -1168,10 +1168,9 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _supabase
-          .from('orders')
-          .update(updated.toMap()..remove('id'))
-          .eq('id', order.id);
+      final orderUpdate = updated.toMap()..remove('id');
+      orderUpdate['completed_at'] = now.toIso8601String();
+      await _supabase.from('orders').update(orderUpdate).eq('id', order.id);
       if (actualQtyForPens != null && actualQtyForPens > 0) {
         await _logPensCompletionWriteoff(
           order: orderData,
