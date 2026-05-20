@@ -59,6 +59,10 @@ class SupabaseOrderRestartHistoryRepository
 
   final SupabaseClient _client;
 
+  static final RegExp _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
+
   @override
   Future<OrderRestartHistoryEntry?> loadOrderById(String orderId) async {
     final id = orderId.trim();
@@ -89,6 +93,7 @@ class SupabaseOrderRestartHistoryRepository
   }) async {
     final id = orderId.trim();
     if (id.isEmpty || limit <= 0) return const [];
+    if (!_uuidPattern.hasMatch(id)) return const [];
 
     final rows = await _client.rpc(
       'get_order_restart_history',
