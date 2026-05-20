@@ -1,3 +1,6 @@
+
+import 'package:postgrest/postgrest.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class OrderRestartHistoryEntry {
@@ -59,11 +62,19 @@ class SupabaseOrderRestartHistoryRepository
     final id = orderId.trim();
     if (id.isEmpty) return null;
 
-    final row = await _client
-        .from('orders')
-        .select('id,restarted_from_order_id,completed_at,archived_at,updated_at')
-        .eq('id', id)
-        .maybeSingle();
+    Future<Map<String, dynamic>?> runSelect(String columns) {
+      return _client.from('orders').select(columns).eq('id', id).maybeSingle();
+    }
+
+    Map<String, dynamic>? row;
+    try {
+      row = await runSelect(
+          'id,restarted_from_order_id,completed_at,archived_at,updated_at');
+    } on PostgrestException catch (_) {
+      row = await runSelect('id,restarted_from_order_id,updated_at');
+    }
+
+
 
     if (row == null) return null;
     return OrderRestartHistoryEntry.fromMap(row);
