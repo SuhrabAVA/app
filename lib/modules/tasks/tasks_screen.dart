@@ -5893,11 +5893,17 @@ bool _hasRealStartConflict({
                         _hasOpenStartIntentForUser(task, currentRowUserId);
                     final bool startIntentBlocksRow =
                         hasOpenStartIntentForRowUser && !isSetupActiveForRow;
+                    final bool problemRequiresSetupResume =
+                        _hasMachineForStage(stage) &&
+                            stateRowUser == UserRunState.problem &&
+                            _hasPendingSetupForStage(task) &&
+                            !isSetupActiveForRow;
                     final bool canStartButtonRow = isMyRow &&
                         canStart &&
                         !_startingTaskIds.contains(task.id) &&
                         !requiresSetupBeforeStart &&
                         !blockedByShiftResumeLock &&
+                        !problemRequiresSetupResume &&
                         !startIntentBlocksRow &&
                         // Для отдельных исполнителей разрешаем возобновлять этап
                         // после личного завершения (до финальной кнопки
