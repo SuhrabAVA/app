@@ -1598,6 +1598,13 @@ class _TasksScreenState extends State<TasksScreen>
     return double.tryParse((value ?? '').toString().trim().replaceAll(',', '.'));
   }
 
+
+  String _formatPaintGramsFromKg(double? valueKg) {
+    if (valueKg == null || valueKg <= 0) return '';
+    final grams = valueKg * 1000;
+    return _formatAmountForDialog(grams);
+  }
+
   String _formatPaintKg(double? value) {
     if (value == null || value <= 0) return '';
     if (value == value.roundToDouble()) return value.toStringAsFixed(0);
@@ -1686,7 +1693,7 @@ class _TasksScreenState extends State<TasksScreen>
             }
           ];
     final qtyControllers = <TextEditingController>[
-      for (final row in selected) TextEditingController(text: _formatPaintKg(_paintQtyKgFromRow(row))),
+      for (final row in selected) TextEditingController(text: _formatPaintGramsFromKg(_paintQtyKgFromRow(row))),
     ];
     final infoControllers = <TextEditingController>[
       for (final row in selected) TextEditingController(text: (row['info'] ?? '').toString()),
@@ -1775,7 +1782,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 decimal: true,
                               ),
                               decoration:
-                                  const InputDecoration(labelText: 'Кол-во, кг'),
+                                  const InputDecoration(labelText: 'Кол-во, г'),
                               validator: (value) {
                                 final qty = double.tryParse((value ?? '')
                                     .trim()
@@ -1886,7 +1893,8 @@ class _TasksScreenState extends State<TasksScreen>
                           });
                           return;
                         }
-                        final qtyKg = double.parse(qtyControllers[i].text.trim().replaceAll(',', '.'));
+                        final qtyGrams = double.parse(qtyControllers[i].text.trim().replaceAll(',', '.'));
+                        final qtyKg = qtyGrams / 1000;
                         nextRows.add({
                           'order_id': latest.id,
                           'name': paintName,
