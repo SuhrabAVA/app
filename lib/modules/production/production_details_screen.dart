@@ -683,6 +683,15 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
   }
 
+  String _restartOrderChipLabel(OrderRestartHistoryEntry entry) {
+    final index = _restartAncestors.indexWhere((e) => e.id == entry.id);
+    final orderLabel = index == -1 ? 'Заказ' : 'Заказ ${index + 1}';
+    final finishedAt = entry.timelineAt;
+    if (finishedAt == null) return orderLabel;
+    final when = DateFormat('dd.MM HH:mm').format(finishedAt.toLocal());
+    return '$orderLabel · завершён $when';
+  }
+
   Color _stageStatusColor(TaskStatus? status) {
     switch (status) {
       case TaskStatus.completed:
@@ -758,13 +767,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
-                        label: Text(
-                          ancestor.timelineAt == null
-                              ? ancestor.id
-                              : DateFormat('dd.MM.yyyy').format(
-                                  ancestor.timelineAt!.toLocal(),
-                                ),
-                        ),
+                        label: Text(_restartOrderChipLabel(ancestor)),
                         selected: _selectedCommentsOrderId == ancestor.id,
                         onSelected: (_) => setState(
                           () => _selectedCommentsOrderId = ancestor.id,
