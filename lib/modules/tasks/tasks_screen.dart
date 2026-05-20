@@ -13,6 +13,8 @@ import '../orders/orders_repository.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
 import '../orders/material_model.dart';
+import '../orders/order_restart_history_repository.dart';
+import '../orders/restart_history_service.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
@@ -848,6 +850,12 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, List<Map<String, dynamic>>> _orderFilesCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderFilesPending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
+  final RestartHistoryService _restartHistoryService =
+      RestartHistoryService(SupabaseOrderRestartHistoryRepository());
+  final Map<String, List<OrderRestartHistoryEntry>> _restartHistoryCache = {};
+  final Set<String> _loadingRestartHistoryOrderIds = <String>{};
+  final Set<String> _restartHistoryLoadFailedOrderIds = <String>{};
+  final Map<String, String> _selectedCommentsOrderByTaskId = {};
   String? _lastCommentsTaskId;
   String _lastCommentsSignature = '';
   int _lastCommentsCount = 0;
@@ -933,6 +941,35 @@ class _TasksScreenState extends State<TasksScreen>
         curve: Curves.easeOut,
       );
     });
+  }
+
+  Future<void> _ensureRestartHistoryLoaded(String orderId) async {
+    final normalized = orderId.trim();
+    if (normalized.isEmpty) return;
+    if (_restartHistoryCache.containsKey(normalized) ||
+        _loadingRestartHistoryOrderIds.contains(normalized)) {
+      return;
+    }
+    setState(() => _loadingRestartHistoryOrderIds.add(normalized));
+    try {
+      final chain = await _restartHistoryService.loadRestartHistoryChain(
+        normalized,
+        limit: 100,
+        preferRpc: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _restartHistoryCache[normalized] = chain.reversed.toList(growable: false);
+        _restartHistoryLoadFailedOrderIds.remove(normalized);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _restartHistoryLoadFailedOrderIds.add(normalized));
+    } finally {
+      if (mounted) {
+        setState(() => _loadingRestartHistoryOrderIds.remove(normalized));
+      }
+    }
   }
 
   void _scheduleTaskRefreshForLaunchedOrders({
@@ -3821,7 +3858,21 @@ class _TasksScreenState extends State<TasksScreen>
         task.assignees.isEmpty;
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.watch<TaskProvider>();
-    final aggregated = _collectOrderComments(taskProvider, task);
+    final currentOrderId = task.orderId.trim();
+    final selectedOrderId =
+        _selectedCommentsOrderByTaskId[task.id] ?? currentOrderId;
+    Future.microtask(() => _ensureRestartHistoryLoaded(currentOrderId));
+    final restartHistory = _restartHistoryCache[currentOrderId] ?? const [];
+    final isHistoryReadOnly = selectedOrderId != currentOrderId;
+    final selectedPivotTask = selectedOrderId == currentOrderId
+        ? task
+        : taskProvider.tasks.firstWhere(
+            (candidate) => candidate.orderId == selectedOrderId,
+            orElse: () => task,
+          );
+    final aggregated = _collectOrderCommentsByOrderId(taskProvider, selectedOrderId);
+    final isSelectedHistoryUnavailable =
+        isHistoryReadOnly && aggregated.isEmpty && selectedPivotTask.orderId != selectedOrderId;
     Future.microtask(
       () => taskProvider.loadAttachmentsForComments(
         aggregated.map((entry) => entry.comment.id),
@@ -3997,6 +4048,50 @@ class _TasksScreenState extends State<TasksScreen>
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (restartHistory.isNotEmpty || _loadingRestartHistoryOrderIds.contains(currentOrderId)) ...[
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(right: scale * 6),
+                    child: ChoiceChip(
+                      label: const Text('Текущий заказ'),
+                      selected: !isHistoryReadOnly,
+                      onSelected: (_) => setState(
+                        () => _selectedCommentsOrderByTaskId[task.id] = currentOrderId,
+                      ),
+                    ),
+                  ),
+                  for (final ancestor in restartHistory)
+                    Padding(
+                      padding: EdgeInsets.only(right: scale * 6),
+                      child: ChoiceChip(
+                        label: Text(_formatTimestamp(
+                          (ancestor.finishedAt ?? ancestor.updatedAt)?.millisecondsSinceEpoch ?? 0,
+                        )),
+                        selected: selectedOrderId == ancestor.id,
+                        onSelected: (_) => setState(
+                          () => _selectedCommentsOrderByTaskId[task.id] = ancestor.id,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            SizedBox(height: scale * 6),
+          ],
+          if (_loadingRestartHistoryOrderIds.contains(currentOrderId))
+            const LinearProgressIndicator(),
+          if (isHistoryReadOnly) ...[
+            Text(
+              isSelectedHistoryUnavailable
+                  ? 'История предыдущего заказа недоступна'
+                  : 'Режим только чтение: история предыдущего заказа',
+              style: const TextStyle(color: Colors.orange),
+            ),
+            SizedBox(height: scale * 4),
+          ],
           ConstrainedBox(
             constraints: BoxConstraints(maxHeight: scale * 220),
             child: Scrollbar(
@@ -4009,7 +4104,7 @@ class _TasksScreenState extends State<TasksScreen>
             ),
           ),
           SizedBox(height: scale * 6),
-          if (_pendingCommentAttachments.isNotEmpty) ...[
+          if (!isHistoryReadOnly && _pendingCommentAttachments.isNotEmpty) ...[
             _pendingAttachmentsPreview(scale, updateDialogState: setState),
             SizedBox(height: scale * 6),
           ],
@@ -4019,7 +4114,7 @@ class _TasksScreenState extends State<TasksScreen>
                 child: TextField(
                   controller: _chatController,
                   maxLines: 1,
-                  readOnly: !isAssignee,
+                  readOnly: !isAssignee || isHistoryReadOnly,
                   style: TextStyle(fontSize: scale * 12.5),
                   decoration: InputDecoration(
                     hintText: 'Написать комментарий…',
@@ -4051,7 +4146,7 @@ class _TasksScreenState extends State<TasksScreen>
                 icon: Icons.photo_outlined,
                 tooltip: 'Фото',
                 scale: scale,
-                onPressed: isAssignee
+                onPressed: (isAssignee && !isHistoryReadOnly)
                     ? () => _pickCommentAttachment(
                           source: 'photo',
                           updateDialogState: setState,
@@ -4064,7 +4159,7 @@ class _TasksScreenState extends State<TasksScreen>
                 icon: Icons.videocam_outlined,
                 tooltip: 'Видео',
                 scale: scale,
-                onPressed: isAssignee
+                onPressed: (isAssignee && !isHistoryReadOnly)
                     ? () => _pickCommentAttachment(
                           source: 'video',
                           updateDialogState: setState,
@@ -4077,7 +4172,7 @@ class _TasksScreenState extends State<TasksScreen>
                 icon: Icons.photo_camera_outlined,
                 tooltip: _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
                 scale: scale,
-                onPressed: isAssignee
+                onPressed: (isAssignee && !isHistoryReadOnly)
                     ? () => _pickCommentAttachment(
                           source: 'camera',
                           updateDialogState: setState,
@@ -4090,7 +4185,7 @@ class _TasksScreenState extends State<TasksScreen>
                 icon: Icons.attach_file,
                 tooltip: 'Файл',
                 scale: scale,
-                onPressed: isAssignee
+                onPressed: (isAssignee && !isHistoryReadOnly)
                     ? () => _pickCommentAttachment(
                           source: 'file',
                           updateDialogState: setState,
@@ -4101,7 +4196,7 @@ class _TasksScreenState extends State<TasksScreen>
               ),
               SizedBox(width: scale * 4),
               InkResponse(
-                onTap: isAssignee
+                onTap: (isAssignee && !isHistoryReadOnly)
                     ? () async {
                         final txt = _chatController.text.trim();
                         final attachments = List<AttachmentDraft>.from(
@@ -7648,10 +7743,15 @@ bool _hasRealStartConflict({
 
   List<_StageComment> _collectOrderComments(
       TaskProvider provider, TaskModel pivot) {
+    return _collectOrderCommentsByOrderId(provider, pivot.orderId);
+  }
+
+  List<_StageComment> _collectOrderCommentsByOrderId(
+      TaskProvider provider, String orderId) {
     final cache =
-        _orderCommentsCache.putIfAbsent(pivot.orderId, () => <String, _StageComment>{});
+        _orderCommentsCache.putIfAbsent(orderId, () => <String, _StageComment>{});
     final related =
-        provider.tasks.where((t) => t.orderId == pivot.orderId).toList();
+        provider.tasks.where((t) => t.orderId == orderId).toList();
     for (final task in related) {
       for (final comment in task.comments) {
         if (comment.type == 'time_event') continue;
