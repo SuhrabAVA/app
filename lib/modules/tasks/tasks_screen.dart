@@ -4115,6 +4115,7 @@ class _TasksScreenState extends State<TasksScreen>
                               userId: widget.employeeId,
                               attachments: attachments,
                             );
+                        if (!mounted) return;
                         _chatController.clear();
                         setState(() => _pendingCommentAttachments.clear());
                       }
@@ -7194,7 +7195,7 @@ bool _hasRealStartConflict({
     final previousPending = List<AttachmentDraft>.from(_pendingCommentAttachments);
     _pendingCommentAttachments.clear();
     try {
-      return showDialog<_CommentDraft?>(
+      return await showDialog<_CommentDraft?>(
         context: context,
         builder: (ctx) => StatefulBuilder(
           builder: (ctx, setDialogState) => AlertDialog(
