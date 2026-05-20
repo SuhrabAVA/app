@@ -7154,7 +7154,7 @@ bool _hasRealStartConflict({
     int totalMs = 0;
 
     for (final c in list) {
-      if (c.type == 'setup_start') {
+      if (c.type == 'setup_start' || c.type == 'setup_resume') {
         if (active == 0) activeStart = _normTs(c.timestamp);
         active++;
       } else if (c.type == 'setup_done') {
@@ -7243,7 +7243,7 @@ bool _hasRealStartConflict({
     final Set<String> seenDone = {};
     for (final t in related) {
       for (final c in t.comments) {
-        if (c.type == 'setup_start') {
+        if (c.type == 'setup_start' || c.type == 'setup_resume') {
           final key = '${c.timestamp}-${c.type}';
           if (seenStart.add(key)) {
             final ts = _normTs(c.timestamp);
@@ -7469,7 +7469,7 @@ bool _hasRealStartConflict({
     for (final c in task.comments) {
       final uid = c.userId;
       if (uid.isEmpty) continue;
-      if (c.type == 'setup_start') {
+      if (c.type == 'setup_start' || c.type == 'setup_resume') {
         final prev = lastStartByUser[uid] ?? 0;
         if (c.timestamp > prev) lastStartByUser[uid] = c.timestamp;
       } else if (c.type == 'setup_done') {
