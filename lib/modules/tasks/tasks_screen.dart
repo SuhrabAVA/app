@@ -4553,21 +4553,16 @@ class _TasksScreenState extends State<TasksScreen>
         label.contains('flexo');
   }
 
-  String _fallbackOrderLabelById(String orderId) {
-    final normalizedId = orderId.trim();
-    if (normalizedId.isEmpty) return 'Заказ';
-    final shortId = normalizedId.length > 8
-        ? normalizedId.substring(0, 8).toUpperCase()
-        : normalizedId.toUpperCase();
-    return 'Заказ №$shortId';
-  }
-
   String _orderDisplayNameForWriteoff(OrderModel order) {
     final customer = order.customer.trim();
     if (customer.isNotEmpty && !_looksLikeOrderCode(customer)) {
       return customer;
     }
-    return _fallbackOrderLabelById(order.id);
+    final productName = order.product.type.trim();
+    if (productName.isNotEmpty && !_looksLikeOrderCode(productName)) {
+      return productName;
+    }
+    return 'Без названия';
   }
 
   String _orderReferenceForWriteoff(OrderModel order) {
@@ -4587,18 +4582,10 @@ class _TasksScreenState extends State<TasksScreen>
       return '№$orderNumber — $orderName';
     }
     if (customer.isNotEmpty) return customer;
+    if (orderName.isNotEmpty) return orderName;
     if (orderNumber.isNotEmpty) return '№$orderNumber';
 
-    final fallback = (fallbackId ?? '').trim();
-    if (fallback.isNotEmpty) {
-      final localOrder = _orderById(fallback);
-      if (localOrder != null) {
-        return _orderReferenceForWriteoff(localOrder);
-      }
-      return _fallbackOrderLabelById(fallback);
-    }
-
-    return 'Заказ';
+    return 'Заказ без указанного клиента';
   }
 
   Future<Map<String, String>> _loadReadableOrderLabelsByIds(
@@ -4759,11 +4746,7 @@ class _TasksScreenState extends State<TasksScreen>
               row,
               const ['order_label', 'orderLabel', 'order_name'],
             )
-          : (() {
-              final localOrder = _orderById(orderId);
-              if (localOrder != null) return _orderReferenceForWriteoff(localOrder);
-              return _fallbackOrderLabelById(orderId);
-            })(),
+          : 'Заказ без указанного клиента',
       paintId: _stringFromRow(row, const ['paint_id', 'material_id', 'paintId']),
       paintName:
           _stringFromRow(row, const ['paint_name', 'name', 'paintName']).isEmpty
