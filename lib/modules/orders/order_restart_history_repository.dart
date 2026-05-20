@@ -18,7 +18,9 @@ class OrderRestartHistoryEntry {
     this.updatedAt,
   });
 
-  DateTime? get finishedAt => completedAt ?? archivedAt ?? updatedAt;
+  DateTime? get timelineAt => completedAt ?? archivedAt ?? updatedAt;
+
+  DateTime? get finishedAt => timelineAt;
 
   factory OrderRestartHistoryEntry.fromMap(Map<String, dynamic> row) {
     DateTime? parseTs(dynamic v) {

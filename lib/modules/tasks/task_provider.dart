@@ -1201,7 +1201,10 @@ class TaskProvider with ChangeNotifier {
         if (isOrderFinallyCompleted(list)) {
           await _supabase
               .from('orders')
-              .update({'status': OrderStatus.completed.name}).eq('id', orderId);
+              .update({
+                  'status': OrderStatus.completed.name,
+                  'completed_at': DateTime.now().toUtc().toIso8601String(),
+                }).eq('id', orderId);
         }
       } catch (_) {}
     }
