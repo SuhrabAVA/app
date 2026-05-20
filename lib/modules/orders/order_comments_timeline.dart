@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../tasks/task_model.dart';
 import 'order_comment_attachment.dart';
 import 'order_comments_repository.dart';
+import '../../utils/media_viewer.dart';
 
 class OrderCommentsSection extends StatefulWidget {
   const OrderCommentsSection({
@@ -146,32 +147,37 @@ class OrderCommentItem extends StatelessWidget {
 class AttachmentPreview extends StatelessWidget {
   const AttachmentPreview({super.key, required this.attachment});
   final OrderCommentAttachment attachment;
+
+  IconData _iconForAttachment() {
+    final mime = attachment.mimeType.toLowerCase();
+    if (mime.startsWith('image/')) return Icons.image_outlined;
+    if (mime.startsWith('video/')) return Icons.videocam_outlined;
+    if (mime == 'application/pdf') return Icons.picture_as_pdf_outlined;
+    return Icons.attach_file;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ActionChip(
-      avatar: const Icon(Icons.attach_file, size: 16),
+      avatar: Icon(_iconForAttachment(), size: 16),
       label: Text(attachment.fileName),
-      onPressed: () {
-        Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => AttachmentViewerScreen(attachment: attachment),
-        ));
-      },
-    );
-  }
-}
+      onPressed: () async {
+        final url = (attachment.fileUrl ?? '').trim();
+        if (url.isEmpty) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Файл недоступен для просмотра')),
+          );
+          return;
+        }
 
-class AttachmentViewerScreen extends StatelessWidget {
-  const AttachmentViewerScreen({super.key, required this.attachment});
-  final OrderCommentAttachment attachment;
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(attachment.fileName)),
-      body: Center(
-        child: Text((attachment.fileUrl ?? '').isEmpty
-            ? 'Нет URL для просмотра'
-            : attachment.fileUrl!),
-      ),
+        await showMediaPreview(
+          context,
+          url: url,
+          mime: attachment.mimeType,
+          title: attachment.fileName,
+        );
+      },
     );
   }
 }
