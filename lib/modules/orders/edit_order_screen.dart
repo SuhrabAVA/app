@@ -46,7 +46,10 @@ class EditOrderScreen extends StatefulWidget {
   /// Если [initialOrder] передан, экран заполняется данными, но создаётся
   /// новый заказ, а не редактируется существующий.
   final OrderModel? initialOrder;
-  const EditOrderScreen({super.key, this.order, this.initialOrder});
+  final String? restartedFromOrderId;
+  final String? restartRootOrderId;
+  final int? restartGeneration;
+  const EditOrderScreen({super.key, this.order, this.initialOrder, this.restartedFromOrderId, this.restartRootOrderId, this.restartGeneration});
   @override
   State<EditOrderScreen> createState() => _EditOrderScreenState();
 }
@@ -2919,6 +2922,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
             ? null
             : currentQueueSignature,
+        restartedFromOrderId: widget.restartedFromOrderId,
+        restartRootOrderId: widget.restartRootOrderId,
+        restartGeneration: widget.restartGeneration ?? 0,
       );
       if (_created == null) {
         if (mounted) {
@@ -3001,6 +3007,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
             ? null
             : currentQueueSignature,
+        restartedFromOrderId: widget.restartedFromOrderId,
+        restartRootOrderId: widget.restartRootOrderId,
+        restartGeneration: widget.restartGeneration ?? 0,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;

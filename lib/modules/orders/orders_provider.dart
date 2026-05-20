@@ -576,6 +576,9 @@ class OrdersProvider with ChangeNotifier {
     Map<String, dynamic>? queueSignature,
     String? assignmentId,
     bool assignmentCreated = false,
+    String? restartedFromOrderId,
+    String? restartRootOrderId,
+    int restartGeneration = 0,
   }) async {
     await _ensureAuthed();
 
@@ -609,6 +612,9 @@ class OrdersProvider with ChangeNotifier {
       queueSignature: queueSignature,
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
+      restartedFromOrderId: restartedFromOrderId,
+      restartRootOrderId: restartRootOrderId,
+      restartGeneration: restartGeneration,
     ),
       hasPaints: product.parameters.toLowerCase().contains('краска:'),
     );

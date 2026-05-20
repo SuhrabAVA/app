@@ -79,7 +79,12 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => EditOrderScreen(initialOrder: template),
+        builder: (_) => EditOrderScreen(
+          initialOrder: template,
+          restartedFromOrderId: order.id,
+          restartRootOrderId: (order.restartRootOrderId ?? order.id),
+          restartGeneration: order.restartGeneration + 1,
+        ),
       ),
     );
   }

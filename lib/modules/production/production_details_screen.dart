@@ -33,6 +33,7 @@ import '../personnel/personnel_provider.dart';
 import '../orders/order_comments_timeline.dart';
 import '../../services/app_auth.dart';
 import '../orders/order_details_card.dart';
+import '../orders/order_restart_history_repository.dart';
 
 @visibleForTesting
 List<pcompat.PlannedStage>
@@ -121,6 +122,11 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   String? _stageTemplateName;
   String? _formImageUrl;
   Map<String, dynamic>? _formDetails;
+  final OrderRestartHistoryRepository _restartHistoryRepository = OrderRestartHistoryRepository();
+  List<RestartHistoryOrder> _restartHistory = const [];
+  String _selectedCommentsOrderId = '';
+  bool _loadingRestartHistory = false;
+  final Map<String, List<TaskComment>> _historyCommentsCache = {};
 
   List<String> _decodeStringList(dynamic raw) {
     if (raw == null) return const [];
@@ -312,360 +318,44 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadPlan();
-    _loadOrderDetails();
+    _selectedCommentsOrderId = widget.order.id;
+    _loadPlannedStages();
+    _loadOrderFiles();
+    _loadOrderPaints();
+    _loadStageTemplateName();
+    _loadFormDetails();
+    _loadRestartHistory();
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-
-  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
-    final trimmed = rawUrl?.trim();
-    if (trimmed == null || trimmed.isEmpty) return null;
-
-    String resolvedUrl = trimmed;
-    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
-      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
-    }
-
-    final dt = DateTime.tryParse(updatedAt ?? '');
-    if (dt == null) return resolvedUrl;
-
-    final uri = Uri.tryParse(resolvedUrl);
-    if (uri == null) return resolvedUrl;
-
-    final query = Map<String, String>.from(uri.queryParameters);
-    query['v'] = dt.millisecondsSinceEpoch.toString();
-    return uri.replace(queryParameters: query).toString();
-  }
-
-  Future<Map<String, dynamic>?> _loadFormDetails() async {
-    final formCode = widget.order.formCode?.trim();
-    final formSeries = widget.order.formSeries?.trim();
-    final formNo = widget.order.newFormNo;
-    if (formCode != null && formCode.isNotEmpty) {
-      final res = await Supabase.instance.client
-          .from('forms')
-          .select()
-          .eq('code', formCode)
-          .maybeSingle();
-      if (res != null && res is Map) return Map<String, dynamic>.from(res);
-    }
-    if (formSeries != null && formSeries.isNotEmpty && formNo != null) {
-      final res = await Supabase.instance.client
-          .from('forms')
-          .select()
-          .eq('series', formSeries)
-          .eq('number', formNo)
-          .maybeSingle();
-      if (res != null && res is Map) return Map<String, dynamic>.from(res);
-    }
-    return null;
-  }
-
-  Future<void> _loadOrderDetails() async {
-    setState(() => _loadingFiles = true);
+  Future<void> _loadRestartHistory() async {
+    if ((widget.order.restartedFromOrderId ?? '').trim().isEmpty) return;
+    setState(() => _loadingRestartHistory = true);
     try {
-      final repo = OrdersRepository();
-      final paints = await repo.getPaints(widget.order.id);
-      final files = await storage.listOrderFiles(widget.order.id);
-      final formDetails = await _loadFormDetails();
-      final formImageUrl = _buildFormImageUrl(
-        formDetails?['image_url']?.toString(),
-        updatedAt: formDetails?['updated_at']?.toString(),
-      );
-      String? stageTemplateName;
-      final tplId = widget.order.stageTemplateId;
-      if (tplId != null && tplId.isNotEmpty) {
-        final tpl = await Supabase.instance.client
-            .from('plan_templates')
-            .select('name')
-            .eq('id', tplId)
-            .maybeSingle();
-        final name = tpl?['name']?.toString();
-        if (name != null && name.isNotEmpty) stageTemplateName = name;
-      }
+      final chain =
+          await _restartHistoryRepository.loadRestartHistoryChain(widget.order.id);
       if (!mounted) return;
-      setState(() {
-        _paints = paints;
-        _files = files;
-        _stageTemplateName = stageTemplateName;
-        _formImageUrl = formImageUrl;
-        _formDetails = formDetails;
-      });
+      setState(() => _restartHistory = chain);
     } catch (_) {
-      // ignore errors in read-only view
+      if (!mounted) return;
+      setState(() => _restartHistory = const []);
     } finally {
-      if (mounted) setState(() => _loadingFiles = false);
+      if (mounted) setState(() => _loadingRestartHistory = false);
     }
   }
 
-  Future<void> _reloadAll() async {
-    await Future.wait([
-      _loadPlan(),
-      _loadOrderDetails(),
-    ]);
-  }
-
-  Future<void> _loadPlan() async {
-    try {
-      if (mounted) {
-        setState(() => _loadingPlan = true);
-      }
-      final sb = Supabase.instance.client;
-      await AppAuth.ensureSignedIn(); // важно для RLS
-
-      final orderId = widget.order.id;
-      final orderCode = widget.order.assignmentId ?? orderId;
-      final workplaceNames = <String, String>{
-        for (final workplace in context.read<PersonnelProvider>().workplaces)
-          workplace.id: workplace.name,
-      };
-
-      List<pcompat.PlannedStage> stages = [];
-      final savedQueue = await OrderQueueService(sb).loadSavedQueue(orderId);
-      if (savedQueue.isNotEmpty) {
-        stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
-          rows: savedQueue.rows,
-          workplaceNames: workplaceNames,
-        );
-      }
-
-      // Derived/public view is kept only as the same low-priority fallback as in
-      // TaskProvider._loadStageSequence; saved queue / normalized rows from
-      // OrderQueueService remain the source of truth for persisted plans.
-      if (stages.isEmpty) {
-        try {
-          final rows = await sb
-              .from('v_order_plan_stages')
-              .select(
-                'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
-              )
-              .or('order_id.eq.$orderId,order_code.eq.$orderCode')
-              .order('step_no', ascending: true);
-
-          if (rows is List && rows.isNotEmpty) {
-            stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
-              rows: rows
-                  .whereType<Map>()
-                  .map(Map<String, dynamic>.from)
-                  .toList(),
-              workplaceNames: workplaceNames,
-            );
-          }
-        } catch (_) {
-          // нет представления — показываем пустой план
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _plannedStages = stages;
-          _loadingPlan = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _plannedStages = [];
-          _loadingPlan = false;
-        });
-      }
-    }
-  }
-
-  Duration _elapsed(TaskModel task) {
-    var seconds = task.spentSeconds;
-    if (task.status == TaskStatus.inProgress && task.startedAt != null) {
-      seconds +=
-          (DateTime.now().millisecondsSinceEpoch - task.startedAt!) ~/ 1000;
-    }
-    return Duration(seconds: seconds);
-  }
-
-  String _formatTime(DateTime? dt) {
-    if (dt == null) return '';
-    final formatter = DateFormat('yyyy-MM-dd HH:mm');
-    return formatter.format(dt);
-  }
-
-  String _formatCommentTimestamp(int timestamp) {
-    if (timestamp <= 0) return '';
-    try {
-      final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
-      return DateFormat('dd.MM.yyyy HH:mm').format(dt);
-    } catch (_) {
-      return '';
-    }
-  }
-
-  String _commentAuthorName(String userId, List<EmployeeModel> employees) {
-    if (userId.isEmpty) return 'Неизвестный сотрудник';
-    EmployeeModel? found;
-    for (final emp in employees) {
-      if (emp.id == userId ||
-          (emp.login.isNotEmpty && emp.login == userId) ||
-          (emp.iin.isNotEmpty && emp.iin == userId)) {
-        found = emp;
-        break;
-      }
-    }
-    if (found == null) return userId;
-    final parts = [found.lastName, found.firstName, found.patronymic]
-        .where((s) => s.trim().isNotEmpty)
-        .toList();
-    if (parts.isEmpty) return userId;
-    return parts.join(' ');
-  }
-
-  Widget _buildCommentMeta(TaskComment comment, List<EmployeeModel> employees) {
-    final timestampText = _formatCommentTimestamp(comment.timestamp);
-    final authorText = _commentAuthorName(comment.userId, employees);
-    final meta = [timestampText, authorText]
-        .where((s) => s.trim().isNotEmpty)
-        .join(' • ');
-    if (meta.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Text(
-        meta,
-        style: const TextStyle(
-          fontSize: 12,
-          color: Colors.black54,
-        ),
-      ),
+  Future<List<TaskComment>> _commentsForSelectedOrder(
+    Set<String> stageIds,
+    List<TaskComment> currentComments,
+  ) async {
+    if (_selectedCommentsOrderId == widget.order.id) return currentComments;
+    final cached = _historyCommentsCache[_selectedCommentsOrderId];
+    if (cached != null) return cached;
+    final loaded = await _restartHistoryRepository.loadCommentsForHistoryOrder(
+      orderId: _selectedCommentsOrderId,
+      stageIds: stageIds,
     );
-  }
-
-  String _timeTypeLabel(TaskTimeType type) {
-    switch (type) {
-      case TaskTimeType.production:
-        return 'Производство';
-      case TaskTimeType.pause:
-        return 'Пауза';
-      case TaskTimeType.problem:
-        return 'Проблема';
-      case TaskTimeType.shiftChange:
-        return 'Пересмена';
-      case TaskTimeType.setup:
-        return 'Наладка';
-    }
-  }
-
-  String _formatQuantityDisplay(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return '0';
-    final value = double.tryParse(trimmed.replaceAll(',', '.'));
-    if (value == null) return trimmed;
-    if ((value - value.round()).abs() < 0.0001) {
-      return value.round().toString();
-    }
-    return value.toStringAsFixed(2);
-  }
-
-  String _renderCommentText(TaskComment comment, List<EmployeeModel> employees) {
-    final rawText = comment.text.trim();
-    if (rawText.isEmpty) {
-      switch (comment.type) {
-        case 'shift_pause':
-          return 'Пересмена: этап приостановлен';
-        case 'shift_resume':
-          return 'Пересмена: работа возобновлена';
-        case 'ink_writeoff':
-          return 'Зафиксировано списание краски';
-        default:
-          return 'Без комментария';
-      }
-    }
-
-    final parsed = TaskTimeEvent.fromPayload(
-      rawText,
-      comment.id,
-      comment.timestamp,
-      comment.userId,
-    );
-    if (parsed != null) {
-      final periodStart = DateFormat('dd.MM.yyyy HH:mm')
-          .format(parsed.startTime.toLocal());
-      final periodEnd = parsed.endTime == null
-          ? 'в процессе'
-          : DateFormat('dd.MM.yyyy HH:mm').format(parsed.endTime!.toLocal());
-      final subject = _commentAuthorName(parsed.subjectUserId, employees);
-      final note = parsed.note?.trim();
-      final notePart = (note != null && note.isNotEmpty) ? ' · $note' : '';
-      return '${_timeTypeLabel(parsed.type)}: $periodStart — $periodEnd · $subject$notePart';
-    }
-
-    switch (comment.type) {
-      case 'start':
-        return 'Начал(а) этап';
-      case 'pause':
-        return 'Пауза: $rawText';
-      case 'problem':
-        return 'Проблема: $rawText';
-      case 'setup_start':
-        return 'Начал(а) наладку';
-      case 'setup_resume':
-        return 'Продолжил(а) наладку';
-      case 'setup_done':
-        return 'Завершил(а) наладку';
-      case 'quantity_done':
-        return 'Выполнил(а): ${_formatQuantityDisplay(rawText)} шт.';
-      case 'quantity_team_total':
-        return 'Команда выполнила: ${_formatQuantityDisplay(rawText)} шт.';
-      case 'quantity_share':
-        return 'Личный вклад: ${_formatQuantityDisplay(rawText)} шт.';
-      case 'shift_pause':
-      case 'shift_resume':
-      case 'finish_note':
-      case 'ink_writeoff':
-        return rawText;
-      case 'shift_pause_state':
-      case 'exec_mode':
-      case 'exec_mode_stage':
-        return 'Служебная отметка этапа';
-    }
-
-    if (rawText.startsWith('{') && rawText.endsWith('}')) {
-      return 'Служебный комментарий';
-    }
-    return rawText;
-  }
-
-  String _stageStatusLabel(TaskStatus? status) {
-    switch (status) {
-      case TaskStatus.completed:
-        return 'Завершено';
-      case TaskStatus.inProgress:
-        return 'В процессе';
-      case TaskStatus.paused:
-        return 'На паузе';
-      case TaskStatus.problem:
-        return 'Проблема';
-      case TaskStatus.waiting:
-      default:
-        return 'Ожидание запуска';
-    }
-  }
-
-  Color _stageStatusColor(TaskStatus? status) {
-    switch (status) {
-      case TaskStatus.completed:
-        return Colors.green;
-      case TaskStatus.inProgress:
-        return Colors.blue;
-      case TaskStatus.paused:
-        return Colors.orange;
-      case TaskStatus.problem:
-        return Colors.redAccent;
-      case TaskStatus.waiting:
-      default:
-        return Colors.yellow.shade700;
-    }
+    _historyCommentsCache[_selectedCommentsOrderId] = loaded;
+    return loaded;
   }
 
   Widget _buildProductionCard({
@@ -700,11 +390,53 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
+            if (_loadingRestartHistory) const LinearProgressIndicator(),
+            if (_restartHistory.isNotEmpty)
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: const Text('Текущий заказ'),
+                        selected: _selectedCommentsOrderId == widget.order.id,
+                        onSelected: (_) => setState(() => _selectedCommentsOrderId = widget.order.id),
+                      ),
+                    ),
+                    ..._restartHistory.map((h) => Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(h.completedAt == null
+                            ? h.orderName
+                            : '${DateFormat('dd.MM HH:mm').format(h.completedAt!.toLocal())}'),
+                        selected: _selectedCommentsOrderId == h.orderId,
+                        onSelected: (_) => setState(() => _selectedCommentsOrderId = h.orderId),
+                      ),
+                    )),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 6),
+            if (_selectedCommentsOrderId != widget.order.id)
+              const Text('Режим: только просмотр', style: TextStyle(color: Colors.orange)),
             SizedBox(
               height: 220,
-              child: OrderCommentsTimeline(
-                comments: comments,
-                attachmentsByComment: const {},
+              child: FutureBuilder<List<TaskComment>>(
+                future: _commentsForSelectedOrder(tasksByStage.keys.toSet(), comments),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return const Center(child: Text('История недоступна'));
+                  }
+                  final rendered = snapshot.data ?? const <TaskComment>[];
+                  return OrderCommentsTimeline(
+                    comments: rendered,
+                    attachmentsByComment: const {},
+                  );
+                },
               ),
             ),
             const Divider(height: 24),

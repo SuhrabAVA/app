@@ -147,6 +147,9 @@ class OrderModel {
   String? selectedVStage;
   String? selectedPStage;
   Map<String, dynamic>? queueSignature;
+  String? restartedFromOrderId;
+  String? restartRootOrderId;
+  int restartGeneration;
 
   OrderModel({
     required this.id,
@@ -186,6 +189,9 @@ class OrderModel {
     this.selectedVStage,
     this.selectedPStage,
     Map<String, dynamic>? queueSignature,
+    this.restartedFromOrderId,
+    this.restartRootOrderId,
+    int? restartGeneration,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -206,7 +212,8 @@ class OrderModel {
         queueBuildStatus = QueueBuildStatus.normalize(queueBuildStatus),
         queueSignature = queueSignature == null
             ? null
-            : Map<String, dynamic>.from(queueSignature);
+            : Map<String, dynamic>.from(queueSignature),
+        restartGeneration = restartGeneration ?? 0;
 
   static String normalizeStatus(String? raw) {
     final value = (raw ?? '').trim();
@@ -286,6 +293,11 @@ class OrderModel {
           'selected_p_stage': selectedPStage,
         if (includeNulls || queueSignature != null)
           'queue_signature': queueSignature,
+        if (includeNulls || restartedFromOrderId != null)
+          'restarted_from_order_id': restartedFromOrderId,
+        if (includeNulls || restartRootOrderId != null)
+          'restart_root_order_id': restartRootOrderId,
+        'restart_generation': restartGeneration,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -422,6 +434,9 @@ class OrderModel {
       selectedPStage:
           (_pickAny(map, const ['selected_p_stage', 'selectedPStage'])
               as String?),
+      restartedFromOrderId: (_pickAny(map, const ['restarted_from_order_id', 'restartedFromOrderId']) as String?),
+      restartRootOrderId: (_pickAny(map, const ['restart_root_order_id', 'restartRootOrderId']) as String?),
+      restartGeneration: ((_pickAny(map, const ['restart_generation', 'restartGeneration']) as num?)?.toInt()) ?? 0,
       queueSignature: (() {
         final raw = _pickAny(map, const ['queue_signature', 'queueSignature']);
         final decoded = _asMap(raw);
@@ -468,6 +483,9 @@ class OrderModel {
     String? selectedVStage,
     String? selectedPStage,
     Map<String, dynamic>? queueSignature,
+    this.restartedFromOrderId,
+    this.restartRootOrderId,
+    int? restartGeneration,
   }) {
     return OrderModel(
       id: id,
@@ -512,6 +530,9 @@ class OrderModel {
           (this.queueSignature == null
               ? null
               : Map<String, dynamic>.from(this.queueSignature!)),
+      restartedFromOrderId: restartedFromOrderId ?? this.restartedFromOrderId,
+      restartRootOrderId: restartRootOrderId ?? this.restartRootOrderId,
+      restartGeneration: restartGeneration ?? this.restartGeneration,
     );
   }
 }
