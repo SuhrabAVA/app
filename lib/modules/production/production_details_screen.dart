@@ -686,7 +686,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   String _restartOrderChipLabel(OrderRestartHistoryEntry entry) {
     final index = _restartAncestors.indexWhere((e) => e.id == entry.id);
     final orderLabel = index == -1 ? 'Заказ' : 'Заказ ${index + 1}';
-    final finishedAt = entry.finishedAt;
+    final finishedAt = entry.completedAt ?? entry.archivedAt ?? entry.updatedAt;
     if (finishedAt == null) return orderLabel;
     final when = DateFormat('dd.MM HH:mm').format(finishedAt.toLocal());
     return '$orderLabel · завершён $when';
@@ -732,7 +732,11 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
         .where((e) => e.id == _selectedCommentsOrderId)
         .cast<OrderRestartHistoryEntry?>()
         .firstWhere((_) => true, orElse: () => null);
-    final selectedFinishedAt = selectedEntry?.finishedAt;
+    final selectedFinishedAt = selectedEntry == null
+        ? null
+        : (selectedEntry.completedAt ??
+            selectedEntry.archivedAt ??
+            selectedEntry.updatedAt);
     final selectedDate = selectedFinishedAt == null
         ? _selectedCommentsOrderId
         : DateFormat('dd.MM.yyyy HH:mm').format(selectedFinishedAt.toLocal());
