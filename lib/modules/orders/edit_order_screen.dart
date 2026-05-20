@@ -2919,6 +2919,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
             ? null
             : currentQueueSignature,
+        restartedFromOrderId: widget.initialOrder?.restartedFromOrderId,
+        restartRootOrderId: widget.initialOrder?.restartRootOrderId,
+        restartGeneration: widget.initialOrder?.restartGeneration ?? 0,
       );
       if (_created == null) {
         if (mounted) {

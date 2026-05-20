@@ -39,6 +39,9 @@ class OrderFormData {
   final String? selectedVStage;
   final String? selectedPStage;
   final Map<String, dynamic>? queueSignature;
+  final String? restartedFromOrderId;
+  final String? restartRootOrderId;
+  final int restartGeneration;
 
   const OrderFormData({
     required this.manager,
@@ -74,6 +77,9 @@ class OrderFormData {
     this.selectedVStage,
     this.selectedPStage,
     this.queueSignature,
+    this.restartedFromOrderId,
+    this.restartRootOrderId,
+    this.restartGeneration = 0,
   });
 
   Map<String, dynamic> toInsertMap() {
@@ -111,6 +117,9 @@ class OrderFormData {
       'selected_v_stage': selectedVStage,
       'selected_p_stage': selectedPStage,
       'queue_signature': queueSignature,
+      'restarted_from_order_id': restartedFromOrderId,
+      'restart_root_order_id': restartRootOrderId,
+      'restart_generation': restartGeneration,
     };
     return _cleanForInsert(m);
   }

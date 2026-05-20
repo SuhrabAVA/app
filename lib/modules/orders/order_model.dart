@@ -147,6 +147,9 @@ class OrderModel {
   String? selectedVStage;
   String? selectedPStage;
   Map<String, dynamic>? queueSignature;
+  String? restartedFromOrderId;
+  String? restartRootOrderId;
+  int restartGeneration;
 
   OrderModel({
     required this.id,
@@ -186,6 +189,9 @@ class OrderModel {
     this.selectedVStage,
     this.selectedPStage,
     Map<String, dynamic>? queueSignature,
+    this.restartedFromOrderId,
+    this.restartRootOrderId,
+    this.restartGeneration = 0,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -286,6 +292,11 @@ class OrderModel {
           'selected_p_stage': selectedPStage,
         if (includeNulls || queueSignature != null)
           'queue_signature': queueSignature,
+        if (includeNulls || restartedFromOrderId != null)
+          'restarted_from_order_id': restartedFromOrderId,
+        if (includeNulls || restartRootOrderId != null)
+          'restart_root_order_id': restartRootOrderId,
+        'restart_generation': restartGeneration,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -427,6 +438,15 @@ class OrderModel {
         final decoded = _asMap(raw);
         return decoded.isEmpty ? null : decoded;
       })(),
+      restartedFromOrderId: (_pickAny(
+          map, const ['restarted_from_order_id', 'restartedFromOrderId']) as String?),
+      restartRootOrderId: (_pickAny(
+          map, const ['restart_root_order_id', 'restartRootOrderId']) as String?),
+      restartGeneration:
+          ((_pickAny(map, const ['restart_generation', 'restartGeneration'])
+                      as num?)
+                  ?.toInt()) ??
+              0,
     );
   }
 
@@ -468,6 +488,9 @@ class OrderModel {
     String? selectedVStage,
     String? selectedPStage,
     Map<String, dynamic>? queueSignature,
+    String? restartedFromOrderId,
+    String? restartRootOrderId,
+    int? restartGeneration,
   }) {
     return OrderModel(
       id: id,
@@ -512,6 +535,9 @@ class OrderModel {
           (this.queueSignature == null
               ? null
               : Map<String, dynamic>.from(this.queueSignature!)),
+      restartedFromOrderId: restartedFromOrderId ?? this.restartedFromOrderId,
+      restartRootOrderId: restartRootOrderId ?? this.restartRootOrderId,
+      restartGeneration: restartGeneration ?? this.restartGeneration,
     );
   }
 }
