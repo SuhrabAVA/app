@@ -75,6 +75,9 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
       contractSigned: order.contractSigned,
       paymentDone: order.paymentDone,
       comments: '',
+      restartedFromOrderId: order.id,
+      restartRootOrderId: order.restartRootOrderId ?? order.id,
+      restartGeneration: order.restartGeneration + 1,
     );
 
     Navigator.of(context).push(
