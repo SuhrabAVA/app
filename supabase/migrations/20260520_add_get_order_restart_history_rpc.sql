@@ -10,6 +10,7 @@ returns table (
   updated_at timestamptz,
   depth integer
 )
+
 language plpgsql
 stable
 as $$
@@ -101,4 +102,5 @@ begin
 
   return query execute sql using p_order_id, v_limit;
 end;
+
 $$;

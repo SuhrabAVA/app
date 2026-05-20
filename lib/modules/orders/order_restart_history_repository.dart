@@ -1,4 +1,6 @@
+
 import 'package:postgrest/postgrest.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class OrderRestartHistoryEntry {
@@ -71,6 +73,8 @@ class SupabaseOrderRestartHistoryRepository
     } on PostgrestException catch (_) {
       row = await runSelect('id,restarted_from_order_id,updated_at');
     }
+
+
 
     if (row == null) return null;
     return OrderRestartHistoryEntry.fromMap(row);
