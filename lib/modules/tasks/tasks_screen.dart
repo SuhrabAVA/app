@@ -5407,6 +5407,12 @@ bool _hasRealStartConflict({
       }
     }
 
+    final isPackagingNow = stage_sequence.isPackagingStage(
+      stageId: task.stageId,
+      stageGroupKey: task.stageGroupKey,
+      stageName: _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+    );
+
     final canStartEarlyPackaging = canStartPackagingOutOfQueue(
       task: task,
       tasks: provider,
@@ -5414,7 +5420,8 @@ bool _hasRealStartConflict({
       employeeId: widget.employeeId,
       groupResolver: _stageGroupKey,
     );
-    if (!_canRunOutOfStageSequence(task) &&
+    if (!isPackagingNow &&
+        !_canRunOutOfStageSequence(task) &&
         !_isFirstPendingStage(
           provider,
           context.read<PersonnelProvider>(),
