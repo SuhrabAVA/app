@@ -4558,11 +4558,7 @@ class _TasksScreenState extends State<TasksScreen>
     if (customer.isNotEmpty && !_looksLikeOrderCode(customer)) {
       return customer;
     }
-    final productName = order.product.type.trim();
-    if (productName.isNotEmpty && !_looksLikeOrderCode(productName)) {
-      return productName;
-    }
-    return 'Без названия';
+    return 'Заказ без указанного клиента';
   }
 
   String _orderReferenceForWriteoff(OrderModel order) {
@@ -4572,19 +4568,7 @@ class _TasksScreenState extends State<TasksScreen>
     String pick(List<String> keys) => _stringFromRow(row, keys);
 
     final customer = pick(const ['customer_name', 'client_name', 'customer']);
-    final orderName = pick(const ['order_name', 'title', 'name']);
-    final orderNumber = pick(const ['order_number', 'number', 'order_no']);
-
-    if (orderNumber.isNotEmpty && customer.isNotEmpty) {
-      return '№$orderNumber — $customer';
-    }
-    if (orderNumber.isNotEmpty && orderName.isNotEmpty) {
-      return '№$orderNumber — $orderName';
-    }
     if (customer.isNotEmpty) return customer;
-    if (orderName.isNotEmpty) return orderName;
-    if (orderNumber.isNotEmpty) return '№$orderNumber';
-
     return 'Заказ без указанного клиента';
   }
 
@@ -5190,7 +5174,14 @@ class _TasksScreenState extends State<TasksScreen>
               .toSet();
           final pendingOrderLabels =
               await _loadReadableOrderLabelsByIds(pendingOrderIds);
-          return pendingWriteoffs.map((pending) {
+          return pendingWriteoffs.where((pending) {
+            final label = pendingOrderLabels[pending.orderId.trim()] ??
+                _buildReadableOrderLabel(
+                  pending.toMap(),
+                  fallbackId: pending.orderId,
+                );
+            return label != 'Заказ без указанного клиента';
+          }).map((pending) {
             final row = pending.toMap();
             final readableOrderLabel =
                 pendingOrderLabels[pending.orderId.trim()] ??
