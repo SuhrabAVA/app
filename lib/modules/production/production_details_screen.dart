@@ -33,6 +33,8 @@ import '../personnel/personnel_provider.dart';
 import '../orders/order_comments_timeline.dart';
 import '../../services/app_auth.dart';
 import '../orders/order_details_card.dart';
+import '../orders/restart_history_service.dart';
+import '../orders/order_restart_history_repository.dart';
 
 @visibleForTesting
 List<pcompat.PlannedStage>
@@ -121,6 +123,9 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   String? _stageTemplateName;
   String? _formImageUrl;
   Map<String, dynamic>? _formDetails;
+  String _selectedCommentsOrderId = '';
+  List<OrderRestartHistoryEntry> _restartAncestors = const [];
+  bool _loadingRestartHistory = false;
 
   List<String> _decodeStringList(dynamic raw) {
     if (raw == null) return const [];
@@ -312,14 +317,40 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedCommentsOrderId = widget.order.id;
     _loadPlan();
     _loadOrderDetails();
+    _loadRestartHistory();
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
+  }
+
+  String get _currentOrderId => widget.order.id;
+  bool get _isHistoryReadOnly =>
+      _selectedCommentsOrderId.trim() != _currentOrderId.trim();
+
+  Future<void> _loadRestartHistory() async {
+    setState(() => _loadingRestartHistory = true);
+    try {
+      final service = RestartHistoryService(
+        SupabaseOrderRestartHistoryRepository(),
+      );
+      final history = await service.loadRestartHistoryChain(
+        _currentOrderId,
+        preferRpc: true,
+      );
+      if (!mounted) return;
+      setState(() => _restartAncestors = history);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _restartAncestors = const []);
+    } finally {
+      if (mounted) setState(() => _loadingRestartHistory = false);
+    }
   }
 
 
@@ -669,6 +700,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   }
 
   Widget _buildProductionCard({
+    required List<TaskModel> commentsTasks,
     required List<TaskModel> tasks,
     required Map<String, List<TaskModel>> tasksByStage,
     required PersonnelProvider personnel,
@@ -679,7 +711,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       'exec_mode',
       'exec_mode_stage',
     };
-    for (final t in tasks) {
+    for (final t in commentsTasks) {
       comments.addAll(
         t.comments.where(
           (comment) => !hiddenTypes.contains(comment.type.trim().toLowerCase()),
@@ -687,6 +719,14 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       );
     }
     comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final selectedEntry = _restartAncestors
+        .where((e) => e.id == _selectedCommentsOrderId)
+        .cast<OrderRestartHistoryEntry?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final selectedFinishedAt = selectedEntry?.finishedAt;
+    final selectedDate = selectedFinishedAt == null
+        ? _selectedCommentsOrderId
+        : DateFormat('dd.MM.yyyy HH:mm').format(selectedFinishedAt.toLocal());
 
     return Card(
       margin: EdgeInsets.zero,
@@ -700,11 +740,61 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text('Текущий заказ'),
+                      selected: !_isHistoryReadOnly,
+                      onSelected: (_) => setState(
+                        () => _selectedCommentsOrderId = _currentOrderId,
+                      ),
+                    ),
+                  ),
+                  for (final ancestor in _restartAncestors)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(
+                          ancestor.finishedAt == null
+                              ? ancestor.id
+                              : DateFormat('dd.MM.yyyy').format(
+                                  ancestor.finishedAt!.toLocal(),
+                                ),
+                        ),
+                        selected: _selectedCommentsOrderId == ancestor.id,
+                        onSelected: (_) => setState(
+                          () => _selectedCommentsOrderId = ancestor.id,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (_loadingRestartHistory) const LinearProgressIndicator(),
+            const SizedBox(height: 6),
+            if (_isHistoryReadOnly) ...[
+              Text(
+                'Вы смотрите архивный заказ: $selectedDate',
+                style: const TextStyle(color: Colors.orange),
+              ),
+              const Text(
+                'Комментарии доступны только для чтения',
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 6),
+            ],
             SizedBox(
               height: 220,
               child: OrderCommentsTimeline(
                 comments: comments,
                 attachmentsByComment: const {},
+                emptyLabel: _isHistoryReadOnly
+                    ? 'Комментариев по этому заказу нет'
+                    : 'Комментариев пока нет',
               ),
             ),
             const Divider(height: 24),
@@ -886,8 +976,12 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   Widget build(BuildContext context) {
     final taskProvider = context.watch<TaskProvider>();
     final personnel = context.watch<PersonnelProvider>();
-    final tasks =
-        taskProvider.tasks.where((t) => t.orderId == widget.order.id).toList();
+    final tasks = taskProvider.tasks
+        .where((t) => t.orderId == _currentOrderId)
+        .toList();
+    final commentsTasks = taskProvider.tasks
+        .where((t) => t.orderId == _selectedCommentsOrderId)
+        .toList();
 
     final Map<String, List<TaskModel>> tasksByStage = {};
     for (final t in tasks) {
@@ -964,6 +1058,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                       ),
                       const SizedBox(height: 12),
                       _buildProductionCard(
+                        commentsTasks: commentsTasks,
                         tasks: tasks,
                         tasksByStage: tasksByStage,
                         personnel: personnel,

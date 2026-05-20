@@ -95,14 +95,20 @@ class _OrderCommentsBundle {
 }
 
 class OrderCommentsTimeline extends StatelessWidget {
-  const OrderCommentsTimeline({super.key, required this.comments, required this.attachmentsByComment});
+  const OrderCommentsTimeline({
+    super.key,
+    required this.comments,
+    required this.attachmentsByComment,
+    this.emptyLabel = 'Комментариев пока нет',
+  });
 
   final List<TaskComment> comments;
   final Map<String, List<OrderCommentAttachment>> attachmentsByComment;
+  final String emptyLabel;
 
   @override
   Widget build(BuildContext context) {
-    if (comments.isEmpty) return const Center(child: Text('Комментариев пока нет'));
+    if (comments.isEmpty) return Center(child: Text(emptyLabel));
     return ListView.builder(
       shrinkWrap: true,
       itemCount: comments.length,
