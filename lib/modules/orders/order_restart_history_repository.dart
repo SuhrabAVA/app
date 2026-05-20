@@ -66,7 +66,7 @@ class SupabaseOrderRestartHistoryRepository
   @override
   Future<OrderRestartHistoryEntry?> loadOrderById(String orderId) async {
     final id = orderId.trim();
-    if (id.isEmpty) return null;
+    if (id.isEmpty || !_uuidPattern.hasMatch(id)) return null;
 
     Future<Map<String, dynamic>?> runSelect(String columns) {
       return _client.from('orders').select(columns).eq('id', id).maybeSingle();
