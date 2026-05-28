@@ -5,7 +5,7 @@ import '../orders/orders_screen.dart';
 import '../chat/chat_tab.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/employee_model.dart';
-import '../analytics/analytics_provider.dart';
+import '../../services/audit_log_service.dart';
 import '../../utils/auth_helper.dart';
 import '../../login_screen.dart';
 
@@ -48,10 +48,8 @@ class ManagerWorkspaceScreen extends StatelessWidget {
               icon: const Icon(Icons.logout),
               tooltip: 'Выйти',
               onPressed: () async {
-                final analytics = context.read<AnalyticsProvider>();
+                final analytics = AuditLogService();
                 await analytics.logEvent(
-                  orderId: '',
-                  stageId: '',
                   userId: emp.id,
                   action: 'logout',
                   category: 'manager',
