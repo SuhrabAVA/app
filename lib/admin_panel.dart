@@ -7,11 +7,10 @@ import 'modules/personnel/personnel_screen.dart';
 import 'modules/production/production_screen.dart';
 import 'modules/warehouse/warehouse_screen.dart';
 import 'modules/orders/archive_orders_screen.dart';
-import 'modules/analytics/analytics_screen.dart';
+import 'modules/analytics/analytics_module.dart';
 import 'services/auth_service.dart';
+import 'services/audit_log_service.dart';
 import 'modules/chat/chat_tab.dart';
-import 'modules/analytics/analytics_provider.dart';
-import 'package:provider/provider.dart';
 // Для выхода и возврата на экран входа
 import 'utils/auth_helper.dart';
 import 'login_screen.dart';
@@ -121,7 +120,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           isLead: isLead,
         ),
       },
-      {'label': '📊\nАналитика', 'page': const AnalyticsScreen()},
+      {
+        'label': '📊\nАналитика',
+        'page': AnalyticsEntry(
+          isTechLeader: AuthHelper.isTechLeader,
+          currentEmployeeId:
+              AuthHelper.isTechLeader ? null : AuthHelper.currentUserId,
+        ),
+      },
     ];
 
     return Scaffold(
@@ -132,10 +138,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             icon: const Icon(Icons.logout),
             tooltip: 'Выйти',
             onPressed: () async {
-              final analytics = context.read<AnalyticsProvider>();
+              final analytics = AuditLogService();
               await analytics.logEvent(
-                orderId: '',
-                stageId: '',
                 userId: meId,
                 action: 'logout',
                 category: 'manager',
