@@ -13,7 +13,7 @@ import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'utils/auth_helper.dart';
 import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
-import 'modules/analytics/analytics_provider.dart';
+import 'services/audit_log_service.dart';
 import 'services/user_service.dart';
 import 'services/auth_extras.dart';
 
@@ -368,7 +368,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     // Логируем вход.
-    final analytics = context.read<AnalyticsProvider>();
+    final analytics = AuditLogService();
     final emp = user.isTechLeader
         ? null
         : personnel.employees.firstWhere(
@@ -396,8 +396,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 : 'production';
 
     await analytics.logEvent(
-      orderId: '',
-      stageId: '',
       userId: user.id,
       action: 'login',
       category: category,
