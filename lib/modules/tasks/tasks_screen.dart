@@ -19,7 +19,7 @@ import '../orders/restart_history_service.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
-import '../analytics/analytics_provider.dart';
+import '../../services/audit_log_service.dart';
 import '../production/production_queue_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
@@ -6579,7 +6579,7 @@ bool _hasRealStartConflict({
                       if (!confirmed) return;
 
                       final taskProvider = context.read<TaskProvider>();
-                      final analytics = context.read<AnalyticsProvider>();
+                      final analytics = AuditLogService();
 
                       if (shiftPaused &&
                           _hasRealStartConflict(
@@ -7715,7 +7715,7 @@ bool _hasRealStartConflict({
       note: comment,
     );
 
-    final analytics = context.read<AnalyticsProvider>();
+    final analytics = AuditLogService();
     await analytics.logEvent(
       orderId: task.orderId,
       stageId: task.stageId,
@@ -7752,7 +7752,7 @@ bool _hasRealStartConflict({
       return;
     }
 
-    final analytics = context.read<AnalyticsProvider>();
+    final analytics = AuditLogService();
     await analytics.logEvent(
       orderId: task.orderId,
       stageId: task.stageId,
