@@ -10,7 +10,6 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_ui_stability.dart';
-import 'modules/analytics/analytics_provider.dart';
 import 'modules/orders/orders_provider.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'modules/production/production_queue_provider.dart';
@@ -186,7 +185,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
         ChangeNotifierProvider(create: (_) => StageProvider()),
         ChangeNotifierProvider(create: (_) => ProductionQueueProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),
-        ChangeNotifierProvider(create: (_) => AnalyticsProvider()),
         ChangeNotifierProvider(create: (_) => ProductsProvider()),
         ChangeNotifierProvider(create: (_) => TemplateProvider()),
       ],
