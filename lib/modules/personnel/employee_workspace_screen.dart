@@ -11,7 +11,7 @@ import '../personnel/personnel_provider.dart';
 // Для выхода и возврата на экран входа
 import '../../utils/auth_helper.dart';
 import '../../login_screen.dart';
-import '../analytics/analytics_provider.dart';
+import '../../services/audit_log_service.dart';
 /// Рабочее пространство сотрудника.
 ///
 /// Экран поддерживает одновременную работу нескольких сотрудников в рамках
@@ -321,11 +321,9 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
                 tooltip: 'Выйти',
                 onPressed: () async {
                   final tabIndex = _employeeTabController.index;
-                  final analytics = context.read<AnalyticsProvider>();
+                  final analytics = AuditLogService();
                   final userId = _employeeIds[tabIndex];
                   await analytics.logEvent(
-                    orderId: '',
-                    stageId: '',
                     userId: userId,
                     action: 'logout',
                     category: 'production',
