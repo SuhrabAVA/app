@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../utils/auth_helper.dart';
+import '../../utils/kostanay_time.dart';
+import 'deleted_records_repository.dart';
+import 'deleted_records_screen.dart';
 
 class CategoriesHubScreen extends StatefulWidget {
   const CategoriesHubScreen({super.key});
@@ -57,7 +61,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
 
   Future<void> _addCategoryDialog() async {
     final name = TextEditingController();
-    bool hasSub = false;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -70,14 +73,6 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
                 controller: name,
                 decoration:
                     const InputDecoration(labelText: 'Название категории'),
-              ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                value: hasSub,
-                onChanged: (v) => setS(() => hasSub = v ?? false),
-                title: const Text('Использовать под-таблицы (table_key)'),
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
               ),
             ],
           ),
@@ -99,7 +94,7 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     await _sb.from('warehouse_categories').insert({
       'code': _slug(title),
       'title': title,
-      'has_subtables': hasSub,
+      'has_subtables': false,
     });
     await _load();
   }
@@ -135,12 +130,26 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
   }
 
   Future<void> _deleteCategory(Map<String, dynamic> it) async {
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить категорию?'),
-        content:
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             const Text('Все позиции внутри будут удалены (ON DELETE CASCADE).'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -153,10 +162,34 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     );
     if (ok != true) return;
 
+    await DeletedRecordsRepository.archive(
+      entityType: 'category',
+      entityId: it['id']?.toString(),
+      payload: {
+        'id': it['id'],
+        'code': it['code'],
+        'title': it['title'],
+        'has_subtables': it['has_subtables'],
+      },
+      reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
+    );
+
     await _sb.from('warehouse_categories').delete().match({
       'id': it['id'],
     });
     await _load();
+  }
+
+  void _openDeletedCategories() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DeletedRecordsScreen(
+          entityType: 'category',
+          title: 'Удалённые категории',
+        ),
+      ),
+    );
   }
 
   void _open(Map<String, dynamic> it) {
@@ -178,6 +211,10 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
       appBar: AppBar(
         title: const Text('Категории'),
         actions: [
+          IconButton(
+              tooltip: 'Удалённые записи',
+              onPressed: _openDeletedCategories,
+              icon: const Icon(Icons.delete_sweep_outlined)),
           IconButton(
               onPressed: _addCategoryDialog, icon: const Icon(Icons.add)),
         ],
@@ -246,7 +283,7 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
 
   // items
   List<Map<String, dynamic>> _items =
-      []; // id, description, quantity, table_key
+      []; // id, description, quantity, table_key, size, comment
   // logs
   List<Map<String, dynamic>> _writeoffs =
       []; // id, item_id, qty, reason, created_at
@@ -305,6 +342,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'description': r['description'],
                 'quantity': r['quantity'],
                 'table_key': r['table_key'],
+                'size': r['size'],
+                'comment': r['comment'],
               })
           .toList()
         ..sort((a, b) => (a['description'] ?? '')
@@ -316,6 +355,10 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
       final invRes = await _sb.from('warehouse_category_inventories').select();
       final itemIds = _items.map((e) => e['id'].toString()).toSet();
 
+      final itemMeta = {
+        for (final it in _items) it['id'].toString(): it,
+      };
+
       _writeoffs = ((wrRes as List?) ?? [])
           .cast<Map<String, dynamic>>()
           .where((r) => itemIds.contains(r['item_id']?.toString()))
@@ -324,7 +367,12 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'item_id': r['item_id'],
                 'qty': r['qty'],
                 'reason': r['reason'],
+                'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
+                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                'comment': r['comment'] ??
+                    r['reason'] ??
+                    itemMeta[r['item_id']?.toString()]?['comment'],
               })
           .toList()
         ..sort((a, b) => (b['created_at'] ?? '')
@@ -339,7 +387,12 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'item_id': r['item_id'],
                 'counted_qty': r['counted_qty'],
                 'note': r['note'],
+                'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
+                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                'comment': r['comment'] ??
+                    r['note'] ??
+                    itemMeta[r['item_id']?.toString()]?['comment'],
               })
           .toList()
         ..sort((a, b) => (b['created_at'] ?? '')
@@ -359,12 +412,22 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     return m;
   }
 
+  String _resolveOperatorName() {
+    final raw = (AuthHelper.currentUserName ?? '').trim();
+    if (raw.isNotEmpty) return raw;
+    return AuthHelper.isTechLeader ? 'Технический лидер' : '—';
+  }
+
   // ======== CRUD: items ========
   Future<void> _addOrEditItem({Map<String, dynamic>? existing}) async {
     final name =
         TextEditingController(text: existing?['description']?.toString() ?? '');
     final qty =
         TextEditingController(text: (existing?['quantity'] ?? 0).toString());
+    final size =
+        TextEditingController(text: existing?['size']?.toString() ?? '');
+    final comment =
+        TextEditingController(text: existing?['comment']?.toString() ?? '');
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -380,6 +443,15 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 controller: qty,
                 decoration: const InputDecoration(labelText: 'Количество'),
                 keyboardType: TextInputType.number),
+            TextField(
+              controller: size,
+              decoration: const InputDecoration(labelText: 'Размер'),
+            ),
+            TextField(
+              controller: comment,
+              decoration: const InputDecoration(labelText: 'Комментарий'),
+              maxLines: 2,
+            ),
           ],
         ),
         actions: [
@@ -394,11 +466,16 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     );
     if (ok != true) return;
 
+    final sizeText = size.text.trim();
+    final commentText = comment.text.trim();
+
     final payload = {
       'category_id': widget.categoryId,
       'table_key': widget.hasSubtables ? _tableKey : null,
       'description': name.text.trim(),
       'quantity': double.tryParse(qty.text.trim()) ?? 0,
+      'size': sizeText.isEmpty ? null : sizeText,
+      'comment': commentText.isEmpty ? null : commentText,
     };
 
     if (existing == null) {
@@ -412,12 +489,29 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     await _loadAll();
   }
 
-  Future<void> _deleteItem(String id) async {
+  Future<void> _deleteItem(Map<String, dynamic> row) async {
+    final id = row['id']?.toString();
+    if (id == null) return;
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить позицию?'),
-        content: const Text('Действие нельзя отменить.'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Действие нельзя отменить.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -428,10 +522,47 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
         ],
       ),
     );
-    if (ok == true) {
-      await _sb.from('warehouse_category_items').delete().match({'id': id});
-      await _loadAll();
+    if (ok != true) return;
+
+    final extra = <String, String>{'category_id': widget.categoryId};
+    final tableKey = row['table_key']?.toString();
+    if (widget.hasSubtables && tableKey != null && tableKey.isNotEmpty) {
+      extra['table_key'] = tableKey;
     }
+
+    await DeletedRecordsRepository.archive(
+      entityType: 'category_item',
+      entityId: id,
+      payload: {
+        'id': row['id'],
+        'description': row['description'],
+        'quantity': row['quantity'],
+        'table_key': row['table_key'],
+        'category_id': widget.categoryId,
+      },
+      reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
+      extra: extra,
+    );
+
+    await _sb.from('warehouse_category_items').delete().match({'id': id});
+    await _loadAll();
+  }
+
+  void _openDeletedItems() {
+    final filters = <String, String>{'category_id': widget.categoryId};
+    if (widget.hasSubtables && (_tableKey ?? '').isNotEmpty) {
+      filters['table_key'] = _tableKey ?? '';
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DeletedRecordsScreen(
+          entityType: 'category_item',
+          title: 'Удалённые записи — ${widget.categoryTitle}',
+          extraFilters: filters,
+        ),
+      ),
+    );
   }
 
   // ======== writeoffs (по конкретной позиции) ========
@@ -473,11 +604,17 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
 
     final q = (double.tryParse(qty.text.trim()) ?? 0).abs();
 
+    final byName = _resolveOperatorName();
+
     await _sb.from('warehouse_category_writeoffs').insert({
       'item_id': itemId,
       'qty': q,
       'reason': reason.text.trim(),
-      'by_name': AuthHelper.currentUserName ?? '',
+      'by_name': byName,
+      'size': (item['size'] ?? '').toString().trim().isEmpty
+          ? null
+          : (item['size'] ?? '').toString().trim(),
+      'comment': reason.text.trim().isEmpty ? null : reason.text.trim(),
     });
 
     final newQty = (((item['quantity'] as num?) ?? 0).toDouble() - q);
@@ -530,11 +667,17 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
 
     final q = (double.tryParse(counted.text.trim()) ?? 0);
 
+    final byName = _resolveOperatorName();
+
     await _sb.from('warehouse_category_inventories').insert({
       'item_id': itemId,
       'counted_qty': q,
       'note': note.text.trim(),
-      'by_name': AuthHelper.currentUserName ?? '',
+      'by_name': byName,
+      'size': (item['size'] ?? '').toString().trim().isEmpty
+          ? null
+          : (item['size'] ?? '').toString().trim(),
+      'comment': note.text.trim().isEmpty ? null : note.text.trim(),
     });
 
     await _sb
@@ -549,10 +692,16 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
     final id = r['id'].toString();
     final name = (r['description'] ?? '').toString();
     final qty = (r['quantity'] ?? 0).toString();
+    final size = (r['size'] ?? '').toString();
+    final comment = (r['comment'] ?? '').toString();
+
+    final subtitleParts = <String>['Количество: $qty'];
+    if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+    if (comment.isNotEmpty) subtitleParts.add(comment);
 
     return ListTile(
       title: Text(name),
-      subtitle: Text('Количество: $qty'),
+      subtitle: Text(subtitleParts.join('\n')),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -574,7 +723,7 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
           IconButton(
             tooltip: 'Удалить',
             icon: const Icon(Icons.delete_outline),
-            onPressed: () => _deleteItem(id),
+            onPressed: () => _deleteItem(r),
           ),
         ],
       ),
@@ -615,6 +764,11 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
               ),
             ),
           ],
+          IconButton(
+            tooltip: 'Удалённые записи',
+            onPressed: _openDeletedItems,
+            icon: const Icon(Icons.delete_sweep_outlined),
+          ),
           IconButton(
             tooltip: _tabs.index == 0
                 ? 'Добавить позицию'
@@ -665,11 +819,19 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final r = _writeoffs[i];
                     final title = nameById[r['item_id'].toString()] ?? '—';
                     final qty = (r['qty'] ?? 0).toString();
-                    final dt = (r['created_at'] ?? '').toString();
-                    final reason = (r['reason'] ?? '').toString();
+                    final dtIso = (r['created_at'] ?? '').toString();
+                    final dt = formatKostanayTimestamp(dtIso);
+                    final size = (r['size'] ?? '').toString();
+                    final comment = (r['comment'] ?? '').toString();
+                    final by = (r['by_name'] ?? '').toString();
+                    final subtitleParts = <String>[];
+                    if (dt.trim().isNotEmpty) subtitleParts.add(dt);
+                    if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
+                    if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • −$qty'),
-                      subtitle: Text(reason.isEmpty ? dt : '$dt  •  $reason'),
+                      subtitle: Text(subtitleParts.join('  •  ')),
                     );
                   },
                 ),
@@ -682,11 +844,19 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final r = _inventories[i];
                     final title = nameById[r['item_id'].toString()] ?? '—';
                     final qty = (r['counted_qty'] ?? 0).toString();
-                    final dt = (r['created_at'] ?? '').toString();
-                    final note = (r['note'] ?? '').toString();
+                    final dtIso = (r['created_at'] ?? '').toString();
+                    final dt = formatKostanayTimestamp(dtIso);
+                    final size = (r['size'] ?? '').toString();
+                    final comment = (r['comment'] ?? '').toString();
+                    final by = (r['by_name'] ?? '').toString();
+                    final subtitleParts = <String>[];
+                    if (dt.trim().isNotEmpty) subtitleParts.add(dt);
+                    if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
+                    if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • $qty'),
-                      subtitle: Text(note.isEmpty ? dt : '$dt  •  $note'),
+                      subtitle: Text(subtitleParts.join('  •  ')),
                     );
                   },
                 ),

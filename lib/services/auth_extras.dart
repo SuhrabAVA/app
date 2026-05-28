@@ -1,9 +1,8 @@
-import 'package:flutter/foundation.dart';
+import 'package:sheet_clone/services/app_auth.dart';
 
-/// NO-AUTH режим: ничего не делаем, чтобы не было ошибки
-/// `AuthApiException(invalid_credentials)`.
 class AuthExtras {
+  /// Пытается войти в Supabase (создаст пользователя, если его нет).
   static Future<void> tryBackendSignInIfConfigured() async {
-    debugPrint('AuthExtras: NO-AUTH mode – skipping signInWithPassword');
+    await AppAuth.ensureSignedIn();
   }
 }

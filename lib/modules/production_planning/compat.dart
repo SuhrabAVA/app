@@ -53,21 +53,44 @@ class PlannedStage {
       );
 
   factory PlannedStage.fromMap(Map<String, dynamic> m) {
-    final id =
-        (m['stage_id'] ?? m['stageId'] ?? m['id'] ?? m['code'])?.toString();
+    final workplaceIds =
+        _readStringList(m['workplaceIds'] ?? m['workplace_ids']);
+    final legacyAlternatives = _readStringList(
+      m['alternativeStageIds'] ?? m['alternative_stage_ids'],
+    );
+    final rawId = workplaceIds.isNotEmpty
+        ? workplaceIds.first
+        : (m['stage_id'] ??
+                m['stageId'] ??
+                m['workplaceId'] ??
+                m['workplace_id'] ??
+                m['id'] ??
+                m['code'])
+            ?.toString();
+    final allWorkplaces = _dedupeOrdered(
+      workplaceIds.isNotEmpty
+          ? workplaceIds
+          : [rawId ?? '', ...legacyAlternatives],
+    );
     final name = (m['stage_name'] ?? m['stageName'] ?? m['name'] ?? m['title'])
             ?.toString() ??
         '';
     final o = m['order'] ?? m['position'] ?? m['idx'] ?? 0;
 
     final result = PlannedStage(
-      stageId: id,
+      stageId: allWorkplaces.isNotEmpty ? allWorkplaces.first : rawId,
       stageName: name,
       order: (o is int) ? o : int.tryParse(o.toString()) ?? 0,
     );
     // сохраняем исходные поля как extra + канонические ключи
     final mm = Map<String, dynamic>.from(m);
     mm['stage_id'] = result.stageId.isEmpty ? name : result.stageId;
+    mm['stageId'] = result.stageId.isEmpty ? name : result.stageId;
+    mm['workplaceId'] = result.stageId.isEmpty ? name : result.stageId;
+    if (allWorkplaces.isNotEmpty) {
+      mm['workplaceIds'] = allWorkplaces;
+      mm['alternativeStageIds'] = allWorkplaces.skip(1).toList();
+    }
     mm['stage_name'] = name;
     mm['order'] = result.order;
     result.extra = mm;
@@ -97,6 +120,26 @@ class PlannedStage {
       extra: extra ?? Map<String, dynamic>.from(this.extra),
     );
   }
+}
+
+List<String> _readStringList(dynamic raw) {
+  if (raw is List) return raw.map((e) => e.toString()).toList();
+  if (raw is String && raw.trim().isNotEmpty) {
+    return raw.split(',').map((e) => e.trim()).toList();
+  }
+  return const [];
+}
+
+List<String> _dedupeOrdered(List<String> values) {
+  final seen = <String>{};
+  final result = <String>[];
+  for (final value in values) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) continue;
+    if (!seen.add(trimmed.toLowerCase())) continue;
+    result.add(trimmed);
+  }
+  return result;
 }
 
 // Универсальный парсер в список PlannedStage

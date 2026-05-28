@@ -1,17 +1,21 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../../utils/media_viewer.dart';
 
 import '../chat_message.dart';
 
 class MessageBubble extends StatefulWidget {
   final ChatMessage m;
   final bool isMine;
+  final String? meId;
 
   const MessageBubble({
     super.key,
     required this.m,
     required this.isMine,
+    this.meId,
   });
 
   @override
@@ -20,6 +24,46 @@ class MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<MessageBubble> {
   final _player = AudioPlayer();
+  static final RegExp _mentionRegExp = RegExp(r'@\{([^|{}]+)\|([^{}]+)\}');
+
+  _ParsedSegments _parseSegments(String? source) {
+    final raw = source ?? '';
+    if (raw.isEmpty) {
+      return const _ParsedSegments(segments: [], mentions: [], plainText: '');
+    }
+    final matches = _mentionRegExp.allMatches(raw).toList(growable: false);
+    if (matches.isEmpty) {
+      return _ParsedSegments(
+        segments: [
+          _Segment(raw, false),
+        ],
+        mentions: const [],
+        plainText: raw,
+      );
+    }
+    final segments = <_Segment>[];
+    final mentions = <_MentionTarget>[];
+    var cursor = 0;
+    for (final match in matches) {
+      if (match.start > cursor) {
+        segments.add(_Segment(raw.substring(cursor, match.start), false));
+      }
+      final name = (match.group(1) ?? '').trim();
+      final id = (match.group(2) ?? '').trim();
+      final display = '@${name.isNotEmpty ? name : ''}';
+      segments.add(_Segment(display, true));
+      if (id.isNotEmpty) {
+        mentions.add(_MentionTarget(id: id, display: display));
+      }
+      cursor = match.end;
+    }
+    if (cursor < raw.length) {
+      segments.add(_Segment(raw.substring(cursor), false));
+    }
+    final plain = segments.map((s) => s.text).join();
+    return _ParsedSegments(
+        segments: segments, mentions: mentions, plainText: plain);
+  }
 
   @override
   void dispose() {
@@ -41,33 +85,45 @@ class _MessageBubbleState extends State<MessageBubble> {
         ? Theme.of(context).colorScheme.primaryContainer.withOpacity(.6)
         : Theme.of(context).colorScheme.surfaceVariant.withOpacity(.9);
 
+    final parsedBody = _parseSegments(m.body);
+    final bool highlightsMention = !widget.isMine &&
+        (widget.meId ?? '').isNotEmpty &&
+        parsedBody.mentions.any((mention) => mention.id == widget.meId);
+
+    final media = MediaQuery.of(context);
+    final bool isTablet =
+        media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final double scale = isTablet ? 0.9 : 1.0;
+    double scaled(double value) => value * scale;
+
     final radius = BorderRadius.only(
-      topLeft: const Radius.circular(16),
-      topRight: const Radius.circular(16),
-      bottomLeft: widget.isMine ? const Radius.circular(16) : const Radius.circular(6),
-      bottomRight: widget.isMine ? const Radius.circular(6) : const Radius.circular(16),
+      topLeft: Radius.circular(scaled(16)),
+      topRight: Radius.circular(scaled(16)),
+      bottomLeft: widget.isMine
+          ? Radius.circular(scaled(16))
+          : Radius.circular(scaled(6)),
+      bottomRight: widget.isMine
+          ? Radius.circular(scaled(6))
+          : Radius.circular(scaled(16)),
     );
 
-    final maxW = MediaQuery.of(context).size.width * 0.75;
+    final maxW = media.size.width * 0.75;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      padding: EdgeInsets.symmetric(vertical: scaled(6), horizontal: scaled(8)),
       child: Column(
         crossAxisAlignment:
             widget.isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          // Имя автора
           Text(
             displayName,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: scaled(12),
               fontWeight: FontWeight.w600,
               color: Colors.black.withOpacity(.55),
             ),
           ),
-          const SizedBox(height: 4),
-
-          // Пузырь
+          SizedBox(height: scaled(4)),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxW),
             child: DecoratedBox(
@@ -76,7 +132,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                 borderRadius: radius,
                 boxShadow: [
                   BoxShadow(
-                    blurRadius: 6,
+                    blurRadius: scaled(6),
                     spreadRadius: 0,
                     offset: const Offset(0, 1),
                     color: Colors.black.withOpacity(.06),
@@ -84,17 +140,33 @@ class _MessageBubbleState extends State<MessageBubble> {
                 ],
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-                child: _buildContent(context, m),
+                padding: EdgeInsets.symmetric(
+                    vertical: scaled(10), horizontal: scaled(14)),
+                child: _buildContent(context, m, scale, parsedBody),
               ),
             ),
           ),
-
-          // Время
-          const SizedBox(height: 4),
-          Text(
-            _formatTime(m.createdAt),
-            style: TextStyle(fontSize: 11, color: Colors.black.withOpacity(.45)),
+          SizedBox(height: scaled(4)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment:
+                widget.isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+            children: [
+              if (highlightsMention)
+                Padding(
+                  padding: EdgeInsets.only(right: scaled(4)),
+                  child: Icon(
+                    Icons.priority_high_rounded,
+                    size: scaled(14),
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              Text(
+                _formatTime(m.createdAt),
+                style: TextStyle(
+                    fontSize: scaled(11), color: Colors.black.withOpacity(.45)),
+              ),
+            ],
           ),
         ],
       ),
@@ -107,60 +179,126 @@ class _MessageBubbleState extends State<MessageBubble> {
     return '$h:$m';
   }
 
-  Widget _buildContent(BuildContext context, ChatMessage m) {
+  Widget _buildContent(BuildContext context, ChatMessage m, double scale,
+      _ParsedSegments parsed) {
     switch (m.kind) {
       case 'text':
-        return SelectableText(
-          m.body ?? '',
-          style: const TextStyle(fontSize: 15, height: 1.25),
+        final baseStyle = TextStyle(fontSize: 15 * scale, height: 1.25);
+        final mentionStyle = baseStyle.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        );
+        final spans = parsed.segments
+            .map((segment) => TextSpan(
+                  text: segment.text,
+                  style: segment.isMention ? mentionStyle : null,
+                ))
+            .toList(growable: false);
+        return SelectableText.rich(
+          TextSpan(children: spans),
+          style: baseStyle,
         );
 
       case 'image':
+        final caption = parsed.plainText.trim();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _ImageWidget(url: m.fileUrl ?? ''),
-            if ((m.body ?? '').isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(m.body!),
+            _ImageWidget(
+              url: m.fileUrl ?? '',
+              mime: m.fileMime,
+              title: caption.isNotEmpty ? caption : 'Фото',
+              scale: scale,
+            ),
+            if (caption.isNotEmpty) ...[
+              SizedBox(height: 6 * scale),
+              Text(caption, style: TextStyle(fontSize: 14 * scale)),
             ]
           ],
         );
 
       case 'video':
+        final title = parsed.plainText.trim();
         return _FileTile(
           icon: Icons.videocam,
-          title: m.body?.isNotEmpty == true ? m.body! : 'Видео',
+          title: title.isNotEmpty ? title : 'Видео',
           url: m.fileUrl,
+          mime: m.fileMime,
+          scale: scale,
         );
 
       case 'audio':
-        return _AudioTile(url: m.fileUrl, durationMs: m.durationMs);
+        return _AudioTile(
+            url: m.fileUrl, durationMs: m.durationMs, scale: scale);
 
       default:
+        final title = parsed.plainText.trim();
         return _FileTile(
           icon: Icons.insert_drive_file,
-          title: m.body?.isNotEmpty == true ? m.body! : 'Файл',
+          title: title.isNotEmpty ? title : 'Файл',
           url: m.fileUrl,
+          mime: m.fileMime,
+          scale: scale,
         );
     }
   }
 }
 
+class _Segment {
+  final String text;
+  final bool isMention;
+  const _Segment(this.text, this.isMention);
+}
+
+class _MentionTarget {
+  final String id;
+  final String display;
+  const _MentionTarget({required this.id, required this.display});
+}
+
+class _ParsedSegments {
+  final List<_Segment> segments;
+  final List<_MentionTarget> mentions;
+  final String plainText;
+  const _ParsedSegments({
+    required this.segments,
+    required this.mentions,
+    required this.plainText,
+  });
+}
+
 class _ImageWidget extends StatelessWidget {
   final String url;
-  const _ImageWidget({required this.url});
+  final String? mime;
+  final String? title;
+  final double scale;
+  const _ImageWidget({
+    required this.url,
+    this.mime,
+    this.title,
+    this.scale = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.of(context).size.width * 0.70;
-    final h = w * 0.66;
+    final mediaWidth = MediaQuery.of(context).size.width;
+    final baseWidth = mediaWidth * 0.55;
+    final minWidth = 140.0 * scale;
+    final maxWidth = mediaWidth * 0.65;
+    final double w = baseWidth.clamp(minWidth, maxWidth).toDouble();
+    final double h = w * 0.66;
+    double scaled(double value) => value * scale;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(scaled(12)),
       child: GestureDetector(
         onTap: () {
           if (url.isEmpty) return;
-          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          showMediaPreview(
+            context,
+            url: url,
+            mime: mime,
+            title: title,
+          );
         },
         child: Image.network(
           url,
@@ -172,14 +310,15 @@ class _ImageWidget extends StatelessWidget {
             height: h,
             color: Colors.black12,
             alignment: Alignment.center,
-            child: const Icon(Icons.broken_image),
+            child: Icon(Icons.broken_image, size: scaled(24)),
           ),
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
             return SizedBox(
               width: w,
               height: h,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              child: Center(
+                  child: CircularProgressIndicator(strokeWidth: scaled(2))),
             );
           },
         ),
@@ -192,19 +331,38 @@ class _FileTile extends StatelessWidget {
   final String? url;
   final String title;
   final IconData icon;
+  final String? mime;
+  final double scale;
 
-  const _FileTile({required this.icon, required this.title, required this.url});
+  const _FileTile({
+    required this.icon,
+    required this.title,
+    required this.url,
+    this.mime,
+    this.scale = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
+    double scaled(double value) => value * scale;
     return InkWell(
-      onTap: url == null ? null : () => launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
+      onTap: url == null
+          ? null
+          : () => showMediaPreview(
+                context,
+                url: url!,
+                mime: mime,
+                title: title,
+              ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: 8),
-          Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
+          Icon(icon, size: scaled(18)),
+          SizedBox(width: scaled(8)),
+          Flexible(
+              child: Text(title,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: scaled(13)))),
         ],
       ),
     );
@@ -214,47 +372,204 @@ class _FileTile extends StatelessWidget {
 class _AudioTile extends StatefulWidget {
   final String? url;
   final int? durationMs;
-  const _AudioTile({this.url, this.durationMs});
+  final double scale;
+  const _AudioTile({this.url, this.durationMs, this.scale = 1.0});
 
   @override
   State<_AudioTile> createState() => _AudioTileState();
 }
 
 class _AudioTileState extends State<_AudioTile> {
-  final _player = AudioPlayer();
-  bool _playing = false;
+  final AudioPlayer _player = AudioPlayer();
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  PlayerState _playerState = PlayerState.stopped;
+  bool _sourcePrepared = false;
+
+  StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<void>? _completeSub;
+  StreamSubscription<PlayerState>? _stateSub;
+
+  bool get _isPlaying => _playerState == PlayerState.playing;
 
   @override
-  void dispose() {
-    _player.dispose();
-    super.dispose();
-  }
+  void initState() {
+    super.initState();
+    final presetMs = widget.durationMs;
+    if (presetMs != null && presetMs > 0) {
+      _duration = Duration(milliseconds: presetMs);
+    }
+    _durationSub = _player.onDurationChanged.listen((event) {
+      if (!mounted) return;
+      if (event.inMilliseconds <= 0) return;
+      setState(() => _duration = event);
+    });
+    _positionSub = _player.onPositionChanged.listen((event) {
+      if (!mounted) return;
+      setState(() => _position = event);
+    });
+    _stateSub = _player.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      setState(() => _playerState = state);
+    });
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _playerState = PlayerState.stopped;
+        _position = Duration.zero;
+      });
+    });
 
-  Future<void> _toggle() async {
-    if (widget.url == null || widget.url!.isEmpty) return;
-    if (_playing) {
-      await _player.stop();
-      setState(() => _playing = false);
-    } else {
-      await _player.play(UrlSource(widget.url!));
-      setState(() => _playing = true);
+    if ((widget.url ?? '').isNotEmpty) {
+      unawaited(_prepareSource());
     }
   }
 
   @override
+  void dispose() {
+    _durationSub?.cancel();
+    _positionSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _prepareSource() async {
+    if (_sourcePrepared) return;
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    try {
+      await _player.setSourceUrl(url);
+      _sourcePrepared = true;
+    } catch (_) {}
+  }
+
+  Future<void> _toggle() async {
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    if (_isPlaying) {
+      await _player.pause();
+      return;
+    }
+    await _prepareSource();
+    if (_playerState == PlayerState.paused &&
+        _position > Duration.zero &&
+        (_duration == Duration.zero || _position < _duration)) {
+      await _player.resume();
+    } else {
+      await _player.play(UrlSource(url));
+      _sourcePrepared = true;
+    }
+  }
+
+  Future<void> _seekTo(double value) async {
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    final target = Duration(milliseconds: value.round());
+    await _prepareSource();
+    setState(() => _position = target);
+    try {
+      await _player.seek(target);
+    } catch (_) {}
+  }
+
+  String _format(Duration d) {
+    if (d.inMilliseconds <= 0) return '00:00';
+    final minutes = d.inMinutes;
+    final seconds = d.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final dur = widget.durationMs;
-    final durText = (dur != null && dur > 0)
-        ? ' ${Duration(milliseconds: dur).inSeconds}s'
-        : '';
+    final theme = Theme.of(context);
+    final totalMs = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds
+        : (widget.durationMs ?? 0);
+    final sliderEnabled = totalMs > 0;
+    final sliderMax = sliderEnabled ? totalMs.toDouble() : 1.0;
+    final currentMs = sliderEnabled
+        ? _position.inMilliseconds.clamp(0, totalMs).toDouble()
+        : 0.0;
+    final totalDuration =
+        sliderEnabled ? Duration(milliseconds: totalMs) : Duration.zero;
+    final currentDuration = Duration(milliseconds: currentMs.round());
+    final textStyle = TextStyle(
+      fontSize: 12 * widget.scale,
+      color: theme.colorScheme.onSurface.withOpacity(.6),
+    );
+
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: MainAxisSize.max,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        IconButton(
-          icon: Icon(_playing ? Icons.stop_circle : Icons.play_arrow),
-          onPressed: _toggle,
+        Container(
+          width: 42 * widget.scale,
+          height: 42 * widget.scale,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primary.withOpacity(.15),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+            color: theme.colorScheme.primary,
+            onPressed: _toggle,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            splashRadius: 24 * widget.scale,
+          ),
         ),
-        Text('Голосовое$durText'),
+        SizedBox(width: 12 * widget.scale),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Голосовое сообщение',
+                style: TextStyle(
+                  fontSize: 13 * widget.scale,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withOpacity(.75),
+                ),
+              ),
+              SizedBox(height: 6 * widget.scale),
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3 * widget.scale,
+                  thumbShape: RoundSliderThumbShape(
+                      enabledThumbRadius: 6 * widget.scale),
+                  overlayShape:
+                      RoundSliderOverlayShape(overlayRadius: 10 * widget.scale),
+                  activeTrackColor: theme.colorScheme.primary,
+                  thumbColor: theme.colorScheme.primary,
+                  inactiveTrackColor: theme.colorScheme.primary.withOpacity(.2),
+                ),
+                child: Slider(
+                  min: 0,
+                  max: sliderMax,
+                  value: sliderEnabled ? currentMs : 0.0,
+                  onChanged: sliderEnabled
+                      ? (value) => setState(
+                            () => _position =
+                                Duration(milliseconds: value.round()),
+                          )
+                      : null,
+                  onChangeEnd: sliderEnabled ? _seekTo : null,
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_format(currentDuration), style: textStyle),
+                  Text(_format(totalDuration), style: textStyle),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

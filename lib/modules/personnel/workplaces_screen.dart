@@ -7,6 +7,13 @@ import 'workplace_model.dart';
 import 'position_model.dart'; // <-- ВАЖНО: нужен для типов PositionModel
 import 'dialog_utils.dart'; // showDialogWithFreshPositions
 
+const Set<String> _protectedWorkplaceIds = {
+  'w_bobiner',
+  'w_flexoprint',
+  '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+  'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+};
+
 class WorkplacesScreen extends StatelessWidget {
   const WorkplacesScreen({super.key});
 
@@ -15,6 +22,14 @@ class WorkplacesScreen extends StatelessWidget {
     return Consumer<PersonnelProvider>(
       builder: (context, pr, _) {
         final items = pr.workplaces;
+        String modeLabel(WorkplaceExecutionMode mode) {
+          switch (mode) {
+            case WorkplaceExecutionMode.separate:
+              return 'Отдельный исполнитель';
+            case WorkplaceExecutionMode.joint:
+              return 'Одиночная или совместная работа';
+          }
+        }
         return Scaffold(
           appBar: AppBar(
             title: const Text('Рабочие места'),
@@ -44,7 +59,8 @@ class WorkplacesScreen extends StatelessWidget {
                         .join(', ');
                     final roles =
                         names.isEmpty ? w.positionIds.join(', ') : names;
-                    return "Должности: $roles\nСтанок: ${w.hasMachine ? 'да' : 'нет'}, макс.: ${w.maxConcurrentWorkers}";
+                    final unit = (w.unit ?? '').isNotEmpty ? w.unit : '—';
+                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}\nРежим: ${modeLabel(w.executionMode)}";
                   }(),
                 ),
                 trailing: Row(
@@ -56,9 +72,18 @@ class WorkplacesScreen extends StatelessWidget {
                       onPressed: () => _openEditDialog(context, w),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_forever),
-                      tooltip: 'Удалить',
-                      onPressed: () => _confirmDelete(context, w.id),
+                      icon: Icon(
+                        Icons.delete_forever,
+                        color: _protectedWorkplaceIds.contains(w.id)
+                            ? Colors.grey
+                            : null,
+                      ),
+                      tooltip: _protectedWorkplaceIds.contains(w.id)
+                          ? 'Системное рабочее место нельзя удалить'
+                          : 'Удалить',
+                      onPressed: _protectedWorkplaceIds.contains(w.id)
+                          ? null
+                          : () => _confirmDelete(context, w.id),
                     ),
                   ],
                 ),
@@ -75,8 +100,9 @@ class WorkplacesScreen extends StatelessWidget {
     await context.read<PersonnelProvider>().fetchPositions();
 
     final nameC = TextEditingController();
-    final maxWorkersC = TextEditingController(text: '1');
+    final unitC = TextEditingController();
     bool hasMachine = false;
+    WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint;
 
     // Локально храним выбранные id должностей
     final Set<String> selectedPositions = <String>{};
@@ -97,24 +123,46 @@ class WorkplacesScreen extends StatelessWidget {
                       decoration: const InputDecoration(labelText: 'Название'),
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: maxWorkersC,
-                            decoration: const InputDecoration(
-                              labelText: 'Макс. сотрудников',
-                            ),
-                            keyboardType: TextInputType.number,
-                          ),
-                        ),
-                      ],
+                    TextField(
+                      controller: unitC,
+                      decoration: const InputDecoration(
+                        labelText: 'Единица измерения',
+                        hintText: 'шт., кг, м² и т.д.',
+                      ),
                     ),
                     CheckboxListTile(
                       title: const Text('Настройка станка есть'),
                       value: hasMachine,
                       onChanged: (val) =>
                           setState(() => hasMachine = val ?? false),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Режим исполнения',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    RadioListTile<WorkplaceExecutionMode>(
+                      title: const Text('Одиночная или совместная работа'),
+                      value: WorkplaceExecutionMode.joint,
+                      groupValue: executionMode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => executionMode = value);
+                      },
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    RadioListTile<WorkplaceExecutionMode>(
+                      title: const Text('Отдельный исполнитель'),
+                      value: WorkplaceExecutionMode.separate,
+                      groupValue: executionMode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => executionMode = value);
+                      },
                       contentPadding: EdgeInsets.zero,
                     ),
                     const SizedBox(height: 8),
@@ -186,14 +234,15 @@ class WorkplacesScreen extends StatelessWidget {
     );
 
     if (ok == true && nameC.text.trim().isNotEmpty) {
-      final int? maxWorkers = int.tryParse(maxWorkersC.text.trim());
       try {
         await context.read<PersonnelProvider>().addWorkplace(
-              name: nameC.text.trim(),
-              positionIds: selectedPositions.toList(),
-              hasMachine: hasMachine,
-              maxConcurrentWorkers: maxWorkers ?? 1,
-            );
+          name: nameC.text.trim(),
+          positionIds: selectedPositions.toList(),
+          hasMachine: hasMachine,
+          maxConcurrentWorkers: 0,
+          unit: unitC.text.trim(),
+          executionMode: executionMode,
+        );
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -234,6 +283,13 @@ class WorkplacesScreen extends StatelessWidget {
       ),
     );
     if (ok == true) {
+      if (_protectedWorkplaceIds.contains(id)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Системные рабочие места удалять нельзя')));
+        }
+        return;
+      }
       await context.read<PersonnelProvider>().deleteWorkplace(id);
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -255,29 +311,32 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   late final TextEditingController _name =
       TextEditingController(text: widget.workplace.name);
   final TextEditingController _desc = TextEditingController();
-  late final TextEditingController _maxWorkers = TextEditingController(
-      text: widget.workplace.maxConcurrentWorkers.toString());
+  late final TextEditingController _unit =
+      TextEditingController(text: widget.workplace.unit ?? '');
   bool _hasMachine = false;
   late Set<String> _selectedPositions;
+  late WorkplaceExecutionMode _executionMode;
 
   @override
   void initState() {
     super.initState();
     _hasMachine = widget.workplace.hasMachine;
     _selectedPositions = {...widget.workplace.positionIds};
+    _executionMode = widget.workplace.executionMode;
     // Если есть описание в модели — можно раскомментировать:
     // _desc.text = widget.workplace.description;
   }
 
   Future<void> _submit() async {
-    final int? mw = int.tryParse(_maxWorkers.text.trim());
     await context.read<PersonnelProvider>().updateWorkplace(
           id: widget.workplace.id,
           name: _name.text.trim(),
           description: _desc.text.trim(),
           hasMachine: _hasMachine,
-          maxConcurrentWorkers: mw,
+          maxConcurrentWorkers: 0,
           positionIds: _selectedPositions.toList(),
+          unit: _unit.text.trim(),
+          executionMode: _executionMode,
         );
     if (mounted) Navigator.pop(context);
   }
@@ -307,14 +366,44 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
             ),
             const SizedBox(height: 8),
             TextField(
-              controller: _maxWorkers,
-              decoration: const InputDecoration(labelText: 'Макс. сотрудников'),
-              keyboardType: TextInputType.number,
+              controller: _unit,
+              decoration: const InputDecoration(
+                labelText: 'Единица измерения',
+                hintText: 'шт., кг, м² и т.д.',
+              ),
             ),
             CheckboxListTile(
               title: const Text('Настройка станка есть'),
               value: _hasMachine,
               onChanged: (val) => setState(() => _hasMachine = val ?? false),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Режим исполнения',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            RadioListTile<WorkplaceExecutionMode>(
+              title: const Text('Одиночная или совместная работа'),
+              value: WorkplaceExecutionMode.joint,
+              groupValue: _executionMode,
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _executionMode = value);
+              },
+              contentPadding: EdgeInsets.zero,
+            ),
+            RadioListTile<WorkplaceExecutionMode>(
+              title: const Text('Отдельный исполнитель'),
+              value: WorkplaceExecutionMode.separate,
+              groupValue: _executionMode,
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _executionMode = value);
+              },
+              contentPadding: EdgeInsets.zero,
             ),
             const SizedBox(height: 8),
             Align(

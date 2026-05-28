@@ -1,11 +1,17 @@
 // lib/modules/orders/orders_provider.dart
 import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'material_model.dart';
 import 'order_model.dart';
+import 'order_form_rules.dart';
+import 'order_queue_service.dart';
+import 'orders_repository.dart';
 import 'product_model.dart';
+import '../../utils/auth_helper.dart';
 
 class OrdersProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -15,9 +21,13 @@ class OrdersProvider with ChangeNotifier {
 
   // Realtime channel for listening to order changes.
   RealtimeChannel? _ordersChannel;
+  final List<RealtimeChannel> _stockChannels = <RealtimeChannel>[];
+  Timer? _stockRecheckDebounce;
+  bool _stockRecheckInProgress = false;
 
   OrdersProvider() {
     _listenToOrders();
+    _listenToStockChanges();
   }
 
   // ===== AUTH =====
@@ -47,10 +57,343 @@ class OrdersProvider with ChangeNotifier {
       _orders
         ..clear()
         ..addAll(rows.map((row) => OrderModel.fromMap(row)));
+      _dedupeOrdersById();
       notifyListeners();
     } catch (e, st) {
       debugPrint('❌ refresh orders error: $e\n$st');
     }
+  }
+
+  void _listenToStockChanges() {
+    void scheduleStockRecheck() {
+      _stockRecheckDebounce?.cancel();
+      _stockRecheckDebounce = Timer(const Duration(milliseconds: 400), () async {
+        await recheckMaterialAvailability(forceRefresh: true);
+      });
+    }
+
+    void addStockChannel({
+      required String channelName,
+      required String table,
+    }) {
+      final channel = _supabase
+          .channel(channelName)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: table,
+            callback: (_) => scheduleStockRecheck(),
+          )
+          .subscribe();
+      _stockChannels.add(channel);
+    }
+
+    // В разных проектах остатки могут меняться как напрямую в таблицах
+    // номенклатуры, так и через журналы приходов/списаний/инвентаризаций.
+    // Подписываемся на все связанные таблицы, чтобы не пропускать автозапуск.
+    addStockChannel(
+      channelName: 'orders:stock-recheck:materials',
+      table: 'materials',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:papers',
+      table: 'papers',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:materials-arrivals',
+      table: 'materials_arrivals',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:materials-writeoffs',
+      table: 'materials_writeoffs',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:materials-inventories',
+      table: 'materials_inventories',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:papers-arrivals',
+      table: 'papers_arrivals',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:papers-writeoffs',
+      table: 'papers_writeoffs',
+    );
+    addStockChannel(
+      channelName: 'orders:stock-recheck:papers-inventories',
+      table: 'papers_inventories',
+    );
+  }
+
+  Future<void> recheckMaterialAvailability({bool forceRefresh = false}) async {
+    if (_stockRecheckInProgress) return;
+    _stockRecheckInProgress = true;
+    try {
+      await _ensureAuthed();
+
+      if (forceRefresh) {
+        final res = await _supabase
+            .from('orders')
+            .select()
+            .order('created_at', ascending: false);
+        final rows = (res as List).cast<Map<String, dynamic>>();
+        _orders
+          ..clear()
+          ..addAll(rows.map((row) => OrderModel.fromMap(row)));
+        _dedupeOrdersById();
+        notifyListeners();
+      }
+
+      final pending = _orders.where((order) {
+        if (order.assignmentCreated) return false;
+        return order.statusEnum == OrderStatus.waiting_materials ||
+            order.statusEnum == OrderStatus.ready_to_start;
+      }).toList(growable: false);
+
+      for (final order in pending) {
+        final queueBuilt = QueueBuildStatus.normalize(order.queueBuildStatus) ==
+            QueueBuildStatus.built;
+        if (!queueBuilt) {
+          if (order.statusEnum == OrderStatus.draft &&
+              !order.hasMaterialShortage &&
+              order.materialShortageMessage.isEmpty) {
+            continue;
+          }
+          await _supabase.from('orders').update({
+            'status': OrderStatus.draft.name,
+            'has_material_shortage': false,
+            'material_shortage_message': '',
+          }).eq('id', order.id);
+          continue;
+        }
+
+        final hasEnough = await _hasEnoughMaterialForLaunch(order);
+        final nextStatus = hasEnough
+            ? OrderStatus.ready_to_start
+            : OrderStatus.waiting_materials;
+        if (order.statusEnum == nextStatus &&
+            order.hasMaterialShortage == !hasEnough) {
+          continue;
+        }
+        final shortageMessage =
+            hasEnough ? '' : await _materialShortageMessage(order);
+        await _supabase.from('orders').update({
+          'status': nextStatus.name,
+          'has_material_shortage': !hasEnough,
+          'material_shortage_message': shortageMessage,
+        }).eq('id', order.id);
+      }
+      await refresh();
+    } catch (e, st) {
+      debugPrint('⚠️ material recheck failed: $e\n$st');
+    } finally {
+      _stockRecheckInProgress = false;
+    }
+  }
+
+  Future<String> _materialShortageMessage(OrderModel order) async {
+    final papers = _resolveOrderPapers(order);
+    final paintShortage = await _paintShortageMessage(order);
+    if (paintShortage.isNotEmpty) return paintShortage;
+    if (papers.isEmpty) return 'Материал не выбран в заказе.';
+    for (final paper in papers) {
+      final requiredLength = _requiredPaperReserveQty(order, paper);
+      if (requiredLength <= 0) continue;
+      final available = await _fetchMaterialQty(paper.id);
+      if (available == null) return 'Материал "${paper.name}" не найден на складе.';
+      final shortage = requiredLength - available;
+      if (shortage > 0) {
+        return 'Недостаточно материала "${paper.name}": требуется ${requiredLength.toStringAsFixed(2)}, '
+            'доступно ${available.toStringAsFixed(2)} (не хватает ${shortage.toStringAsFixed(2)}).';
+      }
+    }
+    return '';
+  }
+
+  Future<double?> _fetchMaterialQty(String? materialId) async {
+    final id = (materialId ?? '').trim();
+    if (id.isEmpty) return null;
+    Future<double?> fetchQty(String table) async {
+      try {
+        final row =
+            await _supabase.from(table).select('quantity').eq('id', id).maybeSingle();
+        if (row == null) return null;
+        final value = row['quantity'];
+        if (value is num) return value.toDouble();
+        return double.tryParse('$value');
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final materialQty = await fetchQty('materials');
+    final paperQty = await fetchQty('papers');
+    final baseQty = materialQty ?? paperQty;
+    if (baseQty == null) return null;
+
+    // Бизнес-правило: доступный остаток бумаги = складской остаток - активный резерв.
+    try {
+      final reserveRows = await _activePaperReservationsByPaper(id);
+      if (reserveRows.isNotEmpty) {
+        double reserved = 0;
+        for (final raw in reserveRows) {
+          final value = raw['qty'];
+          if (value is num) {
+            reserved += value.toDouble();
+          } else {
+            reserved += double.tryParse('$value') ?? 0;
+          }
+        }
+        return baseQty - reserved;
+      }
+    } catch (_) {
+      // Если таблица резервов ещё не развёрнута, используем старый расчёт.
+    }
+    return baseQty;
+  }
+
+  Future<List<Map<String, dynamic>>> _activePaperReservationsByPaper(
+    String paperId,
+  ) async {
+    final normalizedId = paperId.trim();
+    if (normalizedId.isEmpty) return const [];
+    final reserveRows = await _supabase
+        .from('order_paper_reservations')
+        .select('order_id, qty')
+        .eq('paper_id', normalizedId);
+    if (reserveRows is! List || reserveRows.isEmpty) return const [];
+
+    final rows = reserveRows
+        .whereType<Map>()
+        .map((raw) => Map<String, dynamic>.from(raw as Map))
+        .toList(growable: false);
+    final orderIds = rows
+        .map((row) => (row['order_id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (orderIds.isEmpty) return rows;
+
+    final activeOrderIds = <String>{};
+    final orderRows = await _supabase
+        .from('orders')
+        .select('id, status, shipped_at')
+        .inFilter('id', orderIds);
+    if (orderRows is List) {
+      for (final raw in orderRows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final orderId = (row['id'] ?? '').toString().trim();
+        if (orderId.isEmpty) continue;
+        final status = (row['status'] ?? '').toString().toLowerCase().trim();
+        final shippedAt = row['shipped_at'];
+        final isClosed =
+            status == 'completed' || status == 'shipped' || shippedAt != null;
+        if (!isClosed) activeOrderIds.add(orderId);
+      }
+    }
+
+    final staleOrderIds = orderIds
+        .where((orderId) => !activeOrderIds.contains(orderId))
+        .toList(growable: false);
+    if (staleOrderIds.isNotEmpty) {
+      // Жёсткая проверка: чистим "зависший" резерв для закрытых заказов.
+      await _supabase
+          .from('order_paper_reservations')
+          .delete()
+          .inFilter('order_id', staleOrderIds);
+    }
+
+    return rows
+        .where((row) => activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _paintReservationsForOrder(
+    String orderId,
+  ) async {
+    final normalizedId = orderId.trim();
+    if (normalizedId.isEmpty) return const [];
+    try {
+      final rows = await _supabase
+          .from('order_paint_reservations')
+          .select('paint_id, paint_name, reserved_qty')
+          .eq('order_id', normalizedId);
+      if (rows is! List) return const [];
+      return rows
+          .whereType<Map>()
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<double?> _fetchPaintAvailableQty(String paintId) async {
+    final id = paintId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final row = await _supabase
+          .from('paints')
+          .select('quantity')
+          .eq('id', id)
+          .maybeSingle();
+      if (row == null) return null;
+      final baseQty = _toDouble(row['quantity']);
+      final rows = await _supabase
+          .from('order_paint_reservations')
+          .select('reserved_qty')
+          .eq('paint_id', id);
+      double reservedQty = 0;
+      if (rows is List) {
+        for (final raw in rows.whereType<Map>()) {
+          reservedQty += _toDouble((raw as Map)['reserved_qty']);
+        }
+      }
+      return baseQty - reservedQty;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> _hasEnoughPaintForLaunch(OrderModel order) async {
+    final reservations = await _paintReservationsForOrder(order.id);
+    for (final row in reservations) {
+      final paintId = (row['paint_id'] ?? '').toString().trim();
+      final requiredQty = _toDouble(row['reserved_qty']);
+      if (paintId.isEmpty || requiredQty <= 0) continue;
+      final availableQty = await _fetchPaintAvailableQty(paintId);
+      if (availableQty == null || availableQty < 0) return false;
+    }
+    return true;
+  }
+
+  Future<String> _paintShortageMessage(OrderModel order) async {
+    final reservations = await _paintReservationsForOrder(order.id);
+    for (final row in reservations) {
+      final paintId = (row['paint_id'] ?? '').toString().trim();
+      if (paintId.isEmpty) continue;
+      final availableQty = await _fetchPaintAvailableQty(paintId);
+      if (availableQty != null && availableQty >= 0) continue;
+      final requiredQty = _toDouble(row['reserved_qty']);
+      final name = (row['paint_name'] ?? paintId).toString();
+      return 'Недостаточно краски "$name": требуется ${requiredQty.toStringAsFixed(2)}, '
+          'доступно ${(availableQty ?? 0).toStringAsFixed(2)}.';
+    }
+    return '';
+  }
+
+  Future<bool> _hasEnoughMaterialForLaunch(OrderModel order) async {
+    final papers = _resolveOrderPapers(order);
+    if (!await _hasEnoughPaintForLaunch(order)) return false;
+    if (papers.isEmpty) return true;
+    for (final paper in papers) {
+      final String materialId = (paper.id ?? '').trim();
+      final double requiredLength = _requiredPaperReserveQty(order, paper);
+      if (materialId.isEmpty || requiredLength <= 0) continue;
+      final qty = await _fetchMaterialQty(materialId);
+      if (qty == null || qty < requiredLength) return false;
+    }
+    return true;
   }
 
   // ===== REALTIME =====
@@ -77,7 +420,9 @@ class OrdersProvider with ChangeNotifier {
           event: PostgresChangeEvent.update,
           schema: 'public',
           table: 'orders',
-          callback: (payload) async => refresh(),
+          callback: (payload) async {
+            await _handleOrderUpdatePayload(payload);
+          },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.delete,
@@ -88,12 +433,57 @@ class OrdersProvider with ChangeNotifier {
         .subscribe();
   }
 
+  Future<void> _handleOrderUpdatePayload(PostgresChangePayload payload) async {
+    Map<String, dynamic>? _castRecord(dynamic record) {
+      if (record == null) return null;
+      if (record is Map<String, dynamic>) {
+        return Map<String, dynamic>.from(record);
+      }
+      if (record is Map) {
+        return Map<String, dynamic>.from(record as Map);
+      }
+      return null;
+    }
+
+    try {
+      final Map<String, dynamic>? newRecord = _castRecord(payload.newRecord);
+      final Map<String, dynamic>? oldRecord = _castRecord(payload.oldRecord);
+      if (newRecord != null) {
+        final updated = OrderModel.fromMap(newRecord);
+        if (oldRecord != null) {
+          final previous = OrderModel.fromMap(oldRecord);
+          await _handleActualQtyChange(previous: previous, updated: updated);
+          await _handleOrderStatusChange(previous: previous, updated: updated);
+        }
+
+        final index = _orders.indexWhere((o) => o.id == updated.id);
+        if (index != -1) {
+          _orders[index] = updated;
+        } else {
+          _orders.add(updated);
+        }
+        _dedupeOrdersById();
+        notifyListeners();
+        return;
+      }
+    } catch (e, st) {
+      debugPrint('❌ orders update payload error: $e\n$st');
+    }
+
+    await refresh();
+  }
+
   @override
   void dispose() {
     if (_ordersChannel != null) {
       _supabase.removeChannel(_ordersChannel!);
       _ordersChannel = null;
     }
+    for (final channel in _stockChannels) {
+      _supabase.removeChannel(channel);
+    }
+    _stockChannels.clear();
+    _stockRecheckDebounce?.cancel();
     super.dispose();
   }
 
@@ -108,9 +498,13 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final normalizedOrder = _applyOrderFormRulesForPersist(
+        order,
+        hasPaints: _orderHasPaints(order),
+      );
       final inserted = await _supabase
           .from('orders')
-          .insert(order.toMap())
+          .insert(normalizedOrder.toMap())
           .select()
           .single() as Map<String, dynamic>;
 
@@ -121,6 +515,7 @@ class OrdersProvider with ChangeNotifier {
       } else {
         _orders.add(newOrder);
       }
+      _dedupeOrdersById();
       notifyListeners();
 
       // Log creation (best effort)
@@ -131,6 +526,27 @@ class OrdersProvider with ChangeNotifier {
       notifyListeners();
       debugPrint('❌ addOrder error: $e\n$st');
     }
+  }
+
+  bool _orderHasPaints(OrderModel order) {
+    final params = order.product.parameters.toLowerCase();
+    return params.contains('краска:');
+  }
+
+  OrderModel _applyOrderFormRulesForPersist(OrderModel order,
+      {required bool hasPaints}) {
+    final result = applyOrderFormRules(
+      draft: order,
+      hasPaints: hasPaints,
+      userManuallySelectedFormType: order.isOldForm || order.newFormNo != null,
+    );
+    return order.copyWith(
+      hasForm: result.hasForm,
+      isOldForm: result.isOldForm,
+      newFormNo: result.newFormNo,
+      formSeries: result.formSeries,
+      formCode: result.formCode,
+    );
   }
 
   /// Создаёт заказ — id возвращает БД. Возвращает созданную модель или null при ошибке.
@@ -144,14 +560,23 @@ class OrdersProvider with ChangeNotifier {
     String handle = '-',
     String cardboard = 'нет',
     MaterialModel? material,
+    List<MaterialModel> paperMaterials = const [],
     double makeready = 0,
     double val = 0,
     String? pdfUrl,
     String? stageTemplateId,
+    bool hasForm = false,
     bool contractSigned = false,
     bool paymentDone = false,
     String comments = '',
-    String status = 'newOrder',
+    String status = 'draft',
+    String queueBuildStatus = QueueBuildStatus.notBuilt,
+    String? selectedVStage,
+    String? selectedPStage,
+    Map<String, dynamic>? queueSignature,
+    String? restartedFromOrderId,
+    String? restartRootOrderId,
+    int restartGeneration = 0,
     String? assignmentId,
     bool assignmentCreated = false,
   }) async {
@@ -159,7 +584,8 @@ class OrdersProvider with ChangeNotifier {
 
     // Local temp id for optimistic UI
     final tempLocalId = 'local-${DateTime.now().microsecondsSinceEpoch}';
-    final localOrder = OrderModel(
+    final localOrder = _applyOrderFormRulesForPersist(
+      OrderModel(
       id: tempLocalId,
       manager: manager,
       customer: customer,
@@ -170,16 +596,27 @@ class OrdersProvider with ChangeNotifier {
       handle: handle,
       cardboard: cardboard,
       material: material,
+      paperMaterials: paperMaterials,
       makeready: makeready,
       val: val,
       pdfUrl: pdfUrl,
       stageTemplateId: stageTemplateId,
+      hasForm: hasForm,
       contractSigned: contractSigned,
       paymentDone: paymentDone,
       comments: comments,
       status: status,
+      queueBuildStatus: queueBuildStatus,
+      selectedVStage: selectedVStage,
+      selectedPStage: selectedPStage,
+      queueSignature: queueSignature,
+      restartedFromOrderId: restartedFromOrderId,
+      restartRootOrderId: restartRootOrderId,
+      restartGeneration: restartGeneration,
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
+    ),
+      hasPaints: product.parameters.toLowerCase().contains('краска:'),
     );
 
     // Optimistic add
@@ -198,6 +635,7 @@ class OrdersProvider with ChangeNotifier {
       // Replace optimistic row
       final idx = _orders.indexWhere((o) => o.id == tempLocalId);
       if (idx != -1) _orders[idx] = created;
+      _dedupeOrdersById();
       notifyListeners();
 
       // Log creation (best effort)
@@ -208,10 +646,21 @@ class OrdersProvider with ChangeNotifier {
       _orders.removeWhere((o) => o.id == tempLocalId);
       notifyListeners();
       debugPrint('❌ createOrder error: $e\n$st');
-
-      await _applyPaperWriteoffFromOrder(localOrder);
       return null;
     }
+  }
+
+  void _dedupeOrdersById() {
+    final seen = <String>{};
+    _orders.removeWhere((order) {
+      final id = order.id.trim();
+      if (id.isEmpty) return false;
+      if (seen.contains(id)) {
+        return true;
+      }
+      seen.add(id);
+      return false;
+    });
   }
 
   /// Обновляет существующий заказ по ID (оптимистично).
@@ -226,16 +675,268 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final bool paperChanged = _hasPaperCompositionChanged(
+        previous: prev,
+        updated: updated,
+      );
+      // Причина изменения бумаги валидируется только в рабочем пространстве.
+      // В модулях оформления/редактирования заказа не блокируем сохранение.
+      final normalizedUpdated = _applyOrderFormRulesForPersist(
+        updated,
+        hasPaints: _orderHasPaints(updated),
+      );
       await _supabase
           .from('orders')
-          .update(updated.toMap()..remove('id'))
+          .update(normalizedUpdated.toMap(includeNulls: true)..remove('id'))
           .eq('id', updated.id);
+      if (updated.assignmentCreated ||
+          updated.statusEnum == OrderStatus.in_production) {
+        // Бизнес-правило: при изменении заказа в производстве пересчитываем резерв бумаги.
+        final reserveError = await _syncPaperReservationsForOrder(updated);
+        if (reserveError != null) {
+          throw Exception(reserveError);
+        }
+      }
+      await _applyImmediateMaterialAvailabilityState(updated);
+      final paperHistory = _describePaperChanges(
+        previous: prev,
+        updated: updated,
+        reason: updated.comments,
+      );
+      if (paperHistory != null) {
+        await _logOrderEvent(updated.id, 'Изменение бумаги', paperHistory);
+      }
 
       await _logOrderEvent(updated.id, 'Обновление', 'Изменён заказ');
     } catch (e, st) {
       _orders[index] = prev; // rollback
       notifyListeners();
       debugPrint('❌ updateOrder error: $e\n$st');
+    }
+  }
+
+  /// Обновляет состав бумаги из рабочего пространства производства.
+  ///
+  /// Бизнес-правила:
+  /// - причина изменения обязательна;
+  /// - количество типов бумаги не ограничено искусственным лимитом;
+  /// - при запущенном заказе пересчитываем только резерв (без списания).
+  Future<String?> updateOrderPapersFromWorkspace({
+    required String orderId,
+    required List<MaterialModel> paperMaterials,
+    required String reason,
+    double? lengthL,
+    double? width,
+    int? quantity,
+    double? widthB,
+    String? blQuantity,
+  }) async {
+    await _ensureAuthed();
+
+    final trimmedReason = reason.trim();
+    if (trimmedReason.isEmpty) {
+      return 'Укажите причину изменения бумаги.';
+    }
+
+    final prepared = <MaterialModel>[];
+    for (final paper in paperMaterials) {
+      final normalizedPaper = await _normalizePaperForReservation(paper);
+      if ((normalizedPaper.id ?? '').trim().isEmpty) {
+        continue;
+      }
+      prepared.add(normalizedPaper);
+    }
+    if (prepared.isEmpty) {
+      return 'Добавьте хотя бы один тип бумаги.';
+    }
+    final index = _orders.indexWhere((o) => o.id == orderId);
+    if (index == -1) {
+      return 'Заказ не найден в локальном кеше.';
+    }
+    final prev = _orders[index];
+    final normalizedLength = lengthL != null && lengthL > 0 ? lengthL : null;
+    final normalizedWidth = width != null && width > 0 ? width : null;
+    final normalizedQuantity =
+        quantity != null && quantity > 0 ? quantity : null;
+    final normalizedWidthB = widthB != null && widthB > 0 ? widthB : null;
+    final normalizedBlQuantity = (blQuantity ?? '').trim();
+    final nextProduct = ProductModel.fromMap(prev.product.toMap());
+    if (normalizedLength != null) {
+      nextProduct.length = normalizedLength;
+    }
+    if (normalizedWidth != null) {
+      nextProduct.width = normalizedWidth;
+    }
+    if (normalizedQuantity != null) {
+      nextProduct.quantity = normalizedQuantity;
+    }
+    nextProduct.widthB = normalizedWidthB;
+    nextProduct.blQuantity =
+        normalizedBlQuantity.isEmpty ? null : normalizedBlQuantity;
+    final updated = prev.copyWith(
+      product: nextProduct,
+      paperMaterials: prepared,
+      material: prepared.first,
+      comments: prev.comments,
+    );
+
+    if (!_hasPaperCompositionChanged(previous: prev, updated: updated)) {
+      return null;
+    }
+
+    _orders[index] = updated; // optimistic
+    notifyListeners();
+
+    try {
+      await _supabase
+          .from('orders')
+          .update(updated.toMap()..remove('id'))
+          .eq('id', updated.id);
+      // Ключевое бизнес-правило рабочего пространства: при правке бумаги
+      // резерв должен пересчитываться всегда, чтобы детали ПЗ и склад
+      // оставались синхронизированы даже если статус/флаг запуска устарели.
+      final reserveError = await _syncPaperReservationsForOrder(updated);
+      if (reserveError != null) {
+        throw Exception(reserveError);
+      }
+      await _applyImmediateMaterialAvailabilityState(updated);
+      final paperHistory = _describePaperChanges(
+        previous: prev,
+        updated: updated,
+        reason: trimmedReason,
+      );
+      if (paperHistory != null) {
+        await _logOrderEvent(updated.id, 'Изменение бумаги', paperHistory);
+      }
+      await _logOrderEvent(
+        updated.id,
+        'Обновление',
+        'Состав бумаги обновлен из рабочего пространства',
+      );
+      return null;
+    } catch (e, st) {
+      _orders[index] = prev; // rollback
+      notifyListeners();
+      debugPrint('❌ updateOrderPapersFromWorkspace error: $e\n$st');
+      return 'Не удалось сохранить изменения бумаги: $e';
+    }
+  }
+
+  /// Запускает заказ в производство:
+  /// - создаёт задачи по сохранённой очереди этапов;
+  /// - переводит заказ в статус inWork.
+  /// Возвращает `null` при успехе или текст ошибки.
+  Future<String?> launchOrder(OrderModel order) async {
+    await _ensureAuthed();
+    if (order.assignmentCreated) {
+      return null;
+    }
+    OrderModel launchOrder = order;
+    try {
+      final persisted = await _supabase
+          .from('orders')
+          .select()
+          .eq('id', order.id)
+          .maybeSingle();
+      if (persisted != null) {
+        launchOrder = OrderModel.fromMap(
+          Map<String, dynamic>.from(persisted),
+        );
+      }
+    } catch (_) {
+      // If the row cannot be reloaded, keep checking the provided model below.
+    }
+    if (QueueBuildStatus.normalize(launchOrder.queueBuildStatus) !=
+        QueueBuildStatus.built) {
+      return QueueBuildStatus.normalize(launchOrder.queueBuildStatus) ==
+              QueueBuildStatus.outdated
+          ? 'Заказ нельзя запустить: очередь изменилась, нажмите «Собрать очередь» и сохраните заказ.'
+          : 'Заказ нельзя запустить: сначала соберите очередь этапов и сохраните заказ.';
+    }
+    if (launchOrder.assignmentCreated) {
+      return null;
+    }
+    if (launchOrder.statusEnum != OrderStatus.ready_to_start) {
+      return 'Заказ нельзя запустить: статус должен быть ready_to_start.';
+    }
+    if (!await _hasEnoughMaterialForLaunch(launchOrder)) {
+      final message = await _materialShortageMessage(launchOrder);
+      await _supabase.from('orders').update({
+        'status': OrderStatus.waiting_materials.name,
+        'has_material_shortage': true,
+        'material_shortage_message': message,
+      }).eq('id', launchOrder.id);
+      await refresh();
+      return message.isEmpty
+          ? 'Недостаточно материала для запуска заказа.'
+          : message;
+    }
+
+    try {
+      try {
+        await OrderQueueService(_supabase)
+            .createTasksFromSavedQueue(launchOrder.id);
+      } on OrderQueueSyncSchemaOutdatedException catch (e) {
+        return e.message;
+      } on StateError catch (e) {
+        return 'Не удалось запустить заказ: ${e.message}';
+      }
+
+      // Бизнес-правило резерва: до перевода в in_production
+      // пытаемся атомарно зафиксировать резерв бумаги.
+      final reserveError = await _syncPaperReservationsForOrder(
+        launchOrder.copyWith(
+          status: OrderStatus.in_production.name,
+          assignmentCreated: true,
+        ),
+      );
+      if (reserveError != null) {
+        // Если резерв не зафиксирован, убираем только будущие задачи, не трогая
+        // уже начатые/завершённые записи повторного запуска.
+        await _supabase
+            .from('tasks')
+            .delete()
+            .eq('order_id', launchOrder.id)
+            .inFilter('status', ['waiting', 'pending', 'planned']);
+        return reserveError;
+      }
+
+      final String nextAssignmentId =
+          (launchOrder.assignmentId ?? '').trim().isNotEmpty
+              ? launchOrder.assignmentId!.trim()
+              : generateAssignmentId();
+
+      await _supabase.from('orders').update({
+        'status': OrderStatus.in_production.name,
+        'has_material_shortage': false,
+        'material_shortage_message': '',
+        'assignment_created': true,
+        'assignment_id': nextAssignmentId,
+      }).eq('id', launchOrder.id);
+
+      final index = _orders.indexWhere((o) => o.id == launchOrder.id);
+      if (index != -1) {
+        _orders[index] = _orders[index].copyWith(
+          status: OrderStatus.in_production.name,
+          hasMaterialShortage: false,
+          materialShortageMessage: '',
+          assignmentCreated: true,
+          assignmentId: nextAssignmentId,
+        );
+        notifyListeners();
+      }
+
+      await _logOrderEvent(
+        launchOrder.id,
+        'Запуск',
+        'Заказ запущен в производство. Бумага переведена в резерв',
+      );
+      return null;
+    } on OrderQueueSyncSchemaOutdatedException catch (e) {
+      return e.message;
+    } catch (e, st) {
+      debugPrint('❌ launchOrder error: $e\n$st');
+      return 'Не удалось запустить заказ: $e';
     }
   }
 
@@ -250,15 +951,1405 @@ class OrdersProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _supabase.from('orders').delete().eq('id', id);
-      // Историю удалять не обязательно — это след.
+      final assignmentId = (removed.assignmentId ?? '').trim();
+      final relatedOrderIds = <String>{
+        id.trim(),
+        if (assignmentId.isNotEmpty) assignmentId,
+      }..removeWhere((value) => value.isEmpty);
+      final dbOrderRefs = relatedOrderIds
+          .where(_looksLikeUuid)
+          .toList(growable: false);
+
+      // Фикс: логируем удаление до фактического удаления заказа, иначе
+      // вставка в order_events ломается по FK order_events_order_id_fkey.
       await _logOrderEvent(id, 'Удаление', 'Удалён заказ');
+
+      // Важно: удаляем связанные сущности синхронно, чтобы заказ не "висел"
+      // в модуле производственных заданий и рабочем пространстве.
+      // Если этап уже запущен, сначала принудительно завершаем его, затем удаляем,
+      // чтобы в очереди не оставались "висящие" назначения.
+      for (final orderRef in dbOrderRefs) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update({
+                'status': 'done',
+                'completed_at': DateTime.now().toUtc().toIso8601String(),
+              })
+              .eq('order_id', orderRef)
+              .neq('status', 'done');
+        } catch (_) {
+          // На старых схемах может отсутствовать completed_at.
+          await _supabase
+              .from('tasks')
+              .update({'status': 'done'})
+              .eq('order_id', orderRef)
+              .neq('status', 'done');
+        }
+        await _supabase.from('tasks').delete().eq('order_id', orderRef);
+      }
+      await _cleanupProductionQueueState(relatedOrderIds);
+      // Бизнес-правило: удаление заказа освобождает весь резерв бумаги.
+      await _releasePaperReservations(orderId: id);
+      await _releasePaintReservations(orderId: id);
+      await _supabase.from('order_paints').delete().eq('order_id', id);
+      try {
+        final plan = await _supabase
+            .from('prod_plans')
+            .select('id')
+            .eq('order_id', id)
+            .maybeSingle();
+        if (plan != null && plan['id'] != null) {
+          await _supabase
+              .from('prod_plan_stages')
+              .delete()
+              .eq('plan_id', plan['id'].toString());
+        }
+      } catch (_) {
+        // Таблицы могут отсутствовать в некоторых окружениях.
+      }
+      await _supabase.from('prod_plans').delete().eq('order_id', id);
+      await _supabase.from('production_plans').delete().eq('order_id', id);
+      await _supabase.from('orders').delete().eq('id', id);
     } catch (e, st) {
       // rollback
       _orders.insert(index, removed);
       notifyListeners();
       debugPrint('❌ deleteOrder error: $e\n$st');
     }
+  }
+
+  bool _looksLikeUuid(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return false;
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+    );
+    return uuidPattern.hasMatch(normalized);
+  }
+
+  Future<void> _cleanupProductionQueueState(Set<String> removedOrderIds) async {
+    if (removedOrderIds.isEmpty) return;
+
+    try {
+      try {
+        await _supabase
+            .from('workplace_queue_positions')
+            .delete()
+            .inFilter('order_id', removedOrderIds.toList(growable: false));
+      } catch (_) {
+        // Таблица появляется только после миграции очередей рабочих мест.
+      }
+
+      final rows = await _supabase
+          .from('production_queue_state')
+          .select('group_id, order_sequence, hidden_order_ids');
+      if (rows is! List) return;
+
+      for (final row in rows.whereType<Map>()) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final groupId = (map['group_id'] ?? '').toString();
+        final originalSequence = (map['order_sequence'] as List? ?? const [])
+            .map((e) => e?.toString() ?? '')
+            .toList(growable: false);
+        final originalHidden = (map['hidden_order_ids'] as List? ?? const [])
+            .map((e) => e?.toString() ?? '')
+            .toList(growable: false);
+
+        final nextSequence = originalSequence
+            .where((value) => !removedOrderIds.contains(value.trim()))
+            .toList(growable: false);
+        final nextHidden = originalHidden
+            .where((value) => !removedOrderIds.contains(value.trim()))
+            .toList(growable: false);
+
+        final changed =
+            nextSequence.length != originalSequence.length || nextHidden.length != originalHidden.length;
+        if (!changed) continue;
+
+        await _supabase.from('production_queue_state').upsert({
+          'group_id': groupId,
+          'order_sequence': nextSequence,
+          'hidden_order_ids': nextHidden,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        });
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ cleanup production_queue_state failed: $e\n$st');
+    }
+  }
+
+  Future<void> shipOrder(OrderModel order, {double? writeoffOverride}) async {
+    await _ensureAuthed();
+
+    final index = _orders.indexWhere((o) => o.id == order.id);
+    if (index == -1) return;
+
+    Map<String, dynamic>? latestRow;
+    try {
+      latestRow = await _supabase
+          .from('orders')
+          .select('actual_qty, handle')
+          .eq('id', order.id)
+          .maybeSingle();
+    } catch (e, st) {
+      debugPrint('⚠️ shipOrder: unable to fetch latest actual_qty: $e\n$st');
+    }
+
+    final double? savedActualQty =
+        _toDoubleNullable(latestRow == null ? null : latestRow['actual_qty']);
+    final double? productionActualQty =
+        await _loadLatestProductionActualQty(order.id);
+    final double? actualQtyOverride = productionActualQty ?? savedActualQty;
+    final String handleOverride =
+        (latestRow?['handle'] ?? order.handle).toString();
+
+    final OrderModel orderData = order.copyWith(
+      handle: handleOverride,
+      actualQty: actualQtyOverride ?? order.actualQty,
+    );
+
+    final double plannedQty = orderData.product.quantity.toDouble();
+    final double actualQty =
+        orderData.actualQty ?? orderData.product.quantity.toDouble();
+    final double safeActual = actualQty < 0 ? 0 : actualQty;
+    double writeoffQty = writeoffOverride ?? math.min(plannedQty, safeActual);
+    if (writeoffQty.isNaN || writeoffQty.isInfinite) {
+      writeoffQty = 0;
+    }
+    if (writeoffQty < 0) {
+      writeoffQty = 0;
+    }
+    if (writeoffQty <= 0) {
+      throw Exception('Количество для списания должно быть больше нуля.');
+    }
+    if (writeoffQty > safeActual) {
+      throw Exception(
+        'Нельзя отгрузить больше фактического количества: '
+        'к отгрузке ${_formatQty(writeoffQty)}, '
+        'факт ${_formatQty(safeActual)}.',
+      );
+    }
+
+    final double leftoverQty =
+        safeActual > writeoffQty ? (safeActual - writeoffQty) : 0;
+
+    final double? actualQtyForPens = orderData.actualQty;
+    final String? sizeLabel = _formatProductSize(orderData.product);
+
+    try {
+      await _processCategoryShipment(
+        order: orderData,
+        actualQty: safeActual,
+        writeoffQty: writeoffQty,
+        leftoverQty: leftoverQty,
+        sizeLabel: sizeLabel,
+      );
+      await _applyPensConsumption(
+        order: orderData,
+        targetQty: safeActual,
+        silentOnError: true,
+      );
+    } catch (e, st) {
+      debugPrint('❌ shipOrder stock error: $e\n$st');
+      rethrow;
+    }
+
+    final DateTime now = DateTime.now().toUtc();
+    final previous = _orders[index];
+    final updated = orderData.copyWith(
+      status: OrderStatus.completed.name,
+      shippedAt: now,
+      shippedBy: AuthHelper.currentUserName ?? '',
+      shippedQty: writeoffQty,
+    );
+
+    _orders[index] = updated;
+    notifyListeners();
+
+    try {
+      final orderUpdate = updated.toMap()..remove('id');
+      orderUpdate['completed_at'] = now.toIso8601String();
+      await _supabase.from('orders').update(orderUpdate).eq('id', order.id);
+      if (actualQtyForPens != null && actualQtyForPens > 0) {
+        await _logPensCompletionWriteoff(
+          order: orderData,
+          quantity: actualQtyForPens,
+        );
+      }
+      await _logOrderEvent(order.id, 'Отгрузка', 'Заказ отгружен');
+    } catch (e, st) {
+      debugPrint('❌ shipOrder update error: $e\n$st');
+      _orders[index] = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> resetLaunchedOrderForRelaunch(String orderId) async {
+    await _ensureAuthed();
+    try {
+      // Бизнес-правило: после правок запущенного, но не начатого заказа
+      // убираем его из производственных списков и возвращаем в ручной запуск.
+      await _supabase
+          .from('tasks')
+          .delete()
+          .eq('order_id', orderId)
+          .inFilter('status', ['waiting', 'pending', 'planned']);
+      await _supabase.from('orders').update({
+        'assignment_created': false,
+        'status': OrderStatus.ready_to_start.name,
+      }).eq('id', orderId);
+      await _logOrderEvent(
+        orderId,
+        'Сброс запуска',
+        'После редактирования заказ снят с производства и требует повторного запуска',
+      );
+      await refresh();
+    } catch (e, st) {
+      debugPrint('❌ resetLaunchedOrderForRelaunch error: $e\n$st');
+      rethrow;
+    }
+  }
+
+  Future<void> _processCategoryShipment({
+    required OrderModel order,
+    required double actualQty,
+    required double writeoffQty,
+    required double leftoverQty,
+    String? sizeLabel,
+  }) async {
+    final productName = order.product.type.trim();
+    final customerName = order.customer.trim();
+    if (productName.isEmpty || customerName.isEmpty) {
+      return;
+    }
+
+    if (writeoffQty <= 0 && leftoverQty <= 0) {
+      return;
+    }
+
+    final category = await _findWarehouseCategoryByProductName(
+      productName,
+      columns: 'id, has_subtables',
+    );
+
+    if (category == null || category['id'] == null) {
+      throw Exception('Категория для "$productName" не найдена');
+    }
+
+    final bool hasSubtables = (category['has_subtables'] ?? false) == true;
+    final String categoryId = category['id'].toString();
+
+    Map<String, dynamic>? item;
+    try {
+      var rowsQuery = _supabase
+          .from('warehouse_category_items')
+          .select('id, quantity, table_key')
+          .eq('category_id', categoryId)
+          .eq('description', customerName);
+      if (hasSubtables) {
+        rowsQuery = rowsQuery.eq('table_key', productName);
+      }
+      final rows = await rowsQuery;
+      if (rows is List && rows.isNotEmpty) {
+        final raw = rows.first;
+        if (raw is Map) {
+          item = Map<String, dynamic>.from(raw);
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ load category items error: $e');
+    }
+
+    final double initialQty = actualQty > 0 ? actualQty : writeoffQty;
+    if (item == null) {
+      final inserted = await _supabase
+          .from('warehouse_category_items')
+          .insert({
+            'category_id': categoryId,
+            'description': customerName,
+            'quantity': initialQty,
+            if (sizeLabel != null && sizeLabel.isNotEmpty) 'size': sizeLabel,
+            if (hasSubtables) 'table_key': productName,
+          })
+          .select('id, quantity, table_key')
+          .single();
+      item = Map<String, dynamic>.from(inserted);
+    } else {
+      final double currentQty =
+          (item['quantity'] is num) ? (item['quantity'] as num).toDouble() : 0.0;
+      if (initialQty > currentQty) {
+        final Map<String, dynamic> updatePayload = {
+          'quantity': initialQty,
+        };
+        if (sizeLabel != null && sizeLabel.isNotEmpty) {
+          updatePayload['size'] = sizeLabel;
+        }
+        await _supabase
+            .from('warehouse_category_items')
+            .update(updatePayload)
+            .match({'id': item['id']});
+        item['quantity'] = initialQty;
+        if (sizeLabel != null && sizeLabel.isNotEmpty) {
+          item['size'] = sizeLabel;
+        }
+      }
+    }
+
+    final String itemId = item['id'].toString();
+
+    if (writeoffQty > 0) {
+      final Map<String, dynamic> writeoffPayload = {
+        'item_id': itemId,
+        'qty': writeoffQty,
+        'reason': customerName,
+        'by_name': AuthHelper.currentUserName ?? '',
+      };
+      if (sizeLabel != null && sizeLabel.isNotEmpty) {
+        writeoffPayload['size'] = sizeLabel;
+      }
+      await _supabase
+          .from('warehouse_category_writeoffs')
+          .insert(writeoffPayload);
+    }
+
+    final double nextQty = leftoverQty > 0 ? leftoverQty : 0;
+    final Map<String, dynamic> nextPayload = {
+      'quantity': nextQty,
+    };
+    if (sizeLabel != null && sizeLabel.isNotEmpty) {
+      nextPayload['size'] = sizeLabel;
+    }
+    await _supabase
+        .from('warehouse_category_items')
+        .update(nextPayload)
+        .match({'id': itemId});
+    if (sizeLabel != null && sizeLabel.isNotEmpty) {
+      item['size'] = sizeLabel;
+    }
+  }
+
+  String? _formatProductSize(ProductModel product) {
+    final List<String> parts = <String>[];
+
+    String formatDouble(double value) {
+      final String fixed = value.toStringAsFixed(2);
+      if (!fixed.contains('.')) return fixed;
+      final String trimmed = fixed
+          .replaceAll(RegExp(r'0+$'), '')
+          .replaceAll(RegExp(r'[.]$'), '');
+      return trimmed.isEmpty ? '0' : trimmed;
+    }
+
+    void tryAdd(double value) {
+      if (value > 0) {
+        parts.add(formatDouble(value));
+      }
+    }
+
+    tryAdd(product.width);
+    tryAdd(product.height);
+    tryAdd(product.depth);
+
+    if (parts.isEmpty) {
+      return null;
+    }
+
+    return parts.join('*');
+  }
+
+  Future<Map<String, dynamic>?> loadCategoryItemSnapshot(
+      OrderModel order) async {
+    await _ensureAuthed();
+
+    final String productName = order.product.type.trim();
+    final String customerName = order.customer.trim();
+
+    if (productName.isEmpty || customerName.isEmpty) {
+      return null;
+    }
+
+    final dynamic category = await _findWarehouseCategoryByProductName(
+      productName,
+      columns: 'id, title, code, has_subtables',
+    );
+
+    if (category == null || category['id'] == null) {
+      return null;
+    }
+
+    final bool hasSubtables = (category['has_subtables'] ?? false) == true;
+    var rowsQuery = _supabase
+        .from('warehouse_category_items')
+        .select('id, description, quantity, size, comment')
+        .eq('category_id', category['id'])
+        .eq('description', customerName);
+    if (hasSubtables) {
+      rowsQuery = rowsQuery.eq('table_key', productName);
+    }
+    final rows = await rowsQuery;
+
+    if (rows is List && rows.isNotEmpty) {
+      final raw = rows.first;
+      if (raw is Map) {
+        return Map<String, dynamic>.from(raw as Map);
+      }
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _findWarehouseCategoryByProductName(
+    String productName, {
+    required String columns,
+  }) async {
+    final String normalized = productName.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    final dynamic byTitle = await _supabase
+        .from('warehouse_categories')
+        .select(columns)
+        .eq('title', normalized)
+        .maybeSingle();
+    if (byTitle is Map && byTitle['id'] != null) {
+      return Map<String, dynamic>.from(byTitle);
+    }
+
+    final dynamic byCode = await _supabase
+        .from('warehouse_categories')
+        .select(columns)
+        .eq('code', normalized)
+        .maybeSingle();
+    if (byCode is Map && byCode['id'] != null) {
+      return Map<String, dynamic>.from(byCode);
+    }
+
+    return null;
+  }
+
+  Future<void> _handleActualQtyChange({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) async {
+    final double? prevQty = previous.actualQty;
+    final double? newQty = updated.actualQty;
+
+    if (newQty == null) {
+      return;
+    }
+
+    if (prevQty != null && newQty <= prevQty) {
+      return;
+    }
+
+    await _applyPensConsumption(
+      order: updated,
+      targetQty: newQty,
+      silentOnError: true,
+    );
+  }
+
+  Future<void> _handleOrderStatusChange({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) async {
+    final bool wasCompleted = previous.statusEnum == OrderStatus.completed;
+    final bool isCompleted = updated.statusEnum == OrderStatus.completed;
+    if (wasCompleted || !isCompleted) {
+      return;
+    }
+
+    final double? actual = updated.actualQty;
+    final double? fallback = updated.shippedQty;
+    final double quantity = actual ?? fallback ?? 0;
+    if (quantity <= 0) {
+      return;
+    }
+
+    await _logPensCompletionWriteoff(order: updated, quantity: quantity);
+    // Бизнес-правило: финальное списание бумаги выполняем только после завершения заказа.
+    await _finalizePaperReservations(
+      orderId: updated.id,
+      orderLabel: _buildOrderLabelForWriteoff(updated),
+    );
+  }
+
+  Future<void> _applyImmediateMaterialAvailabilityState(OrderModel order) async {
+    final queueBuilt = QueueBuildStatus.normalize(order.queueBuildStatus) ==
+        QueueBuildStatus.built;
+    final hasEnough = queueBuilt && await _hasEnoughMaterialForLaunch(order);
+    final shortageMessage =
+        queueBuilt && !hasEnough ? await _materialShortageMessage(order) : '';
+    final nextStatus = !queueBuilt
+        ? (order.assignmentCreated ? order.statusEnum : OrderStatus.draft)
+        : (hasEnough
+            ? (order.statusEnum == OrderStatus.waiting_materials
+                ? OrderStatus.ready_to_start
+                : order.statusEnum)
+            : OrderStatus.waiting_materials);
+    final hasMaterialShortage = queueBuilt && !hasEnough;
+
+    if (order.statusEnum == nextStatus &&
+        order.hasMaterialShortage == hasMaterialShortage &&
+        order.materialShortageMessage == shortageMessage) {
+      return;
+    }
+
+    final updatePayload = <String, dynamic>{
+      'status': nextStatus.name,
+      'has_material_shortage': hasMaterialShortage,
+      'material_shortage_message': shortageMessage,
+    };
+
+    await _supabase.from('orders').update(updatePayload).eq('id', order.id);
+
+    final index = _orders.indexWhere((o) => o.id == order.id);
+    if (index != -1) {
+      _orders[index] = _orders[index].copyWith(
+        status: nextStatus.name,
+        hasMaterialShortage: hasMaterialShortage,
+        materialShortageMessage: shortageMessage,
+      );
+      notifyListeners();
+    }
+  }
+
+  String _buildOrderLabelForWriteoff(OrderModel order) {
+    final customer = order.customer.trim();
+    if (customer.isNotEmpty) return customer;
+
+    final productName = order.product.type.trim();
+    if (productName.isNotEmpty) return productName;
+
+    final assignment = (order.assignmentId ?? '').trim();
+    if (assignment.isNotEmpty) return assignment;
+
+    return order.id;
+  }
+
+  List<MaterialModel> _resolveOrderPapers(OrderModel order) {
+    if (order.paperMaterials.isNotEmpty) return order.paperMaterials;
+    if (order.material != null) return <MaterialModel>[order.material!];
+    return const <MaterialModel>[];
+  }
+
+  double _requiredPaperReserveQty(OrderModel order, MaterialModel paper) {
+    final double? perPaperLength = _paperExtraLength(paper);
+    if (perPaperLength != null && perPaperLength > 0) {
+      return perPaperLength;
+    }
+
+    // Приоритет: если в материале уже есть длина (например, из поля "Длина L"),
+    // используем её до общих размеров продукта.
+    if (paper.quantity > 0) return paper.quantity;
+
+    final double length = (order.product.length ?? 0).toDouble();
+    if (length > 0) return length;
+
+    if (paper.weight != null && paper.weight! > 0) return paper.weight!;
+    return 0;
+  }
+
+  Future<MaterialModel> _normalizePaperForReservation(MaterialModel paper) async {
+    final double? perPaperLength = _paperExtraLength(paper);
+    final double qty = paper.quantity > 0
+        ? paper.quantity
+        : (perPaperLength != null && perPaperLength > 0
+            ? perPaperLength
+            : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0));
+    final normalized = paper.copyWith(quantity: qty);
+    final currentId = (normalized.id ?? '').trim();
+    if (currentId.isNotEmpty) {
+      return normalized;
+    }
+    final resolvedId = await _resolvePaperIdByAttributes(normalized);
+    if (resolvedId == null) {
+      return normalized;
+    }
+    return normalized.copyWith(id: resolvedId);
+  }
+
+  Future<String?> _resolvePaperIdByAttributes(MaterialModel paper) async {
+    final name = paper.name.trim();
+    final format = (paper.format ?? '').trim();
+    final grammage = (paper.grammage ?? '').trim();
+    if (name.isEmpty || format.isEmpty || grammage.isEmpty) {
+      return null;
+    }
+    try {
+      final Map<String, dynamic>? row = await _supabase
+          .from('papers')
+          .select('id')
+          .eq('description', name)
+          .eq('format', format)
+          .eq('grammage', grammage)
+          .maybeSingle();
+      if (row == null) {
+        return null;
+      }
+      final id = (row['id'] ?? '').toString().trim();
+      return id.isEmpty ? null : id;
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  double? _paperExtraLength(MaterialModel paper) {
+    final dynamic value = paper.extra?['lengthL'];
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final normalized = value.trim().replaceAll(',', '.');
+      if (normalized.isEmpty) return null;
+      return double.tryParse(normalized);
+    }
+    return null;
+  }
+
+  Future<String?> _syncPaperReservationsForOrder(OrderModel order) async {
+    final papers = _resolveOrderPapers(order)
+        .where((paper) => (paper.id ?? '').trim().isNotEmpty)
+        .toList(growable: false);
+
+    // Бизнес-правило: в production всегда держим актуальный резерв по составу бумаги заказа.
+    // Если один и тот же paper_id был выбран в нескольких слотах, агрегируем метраж,
+    // чтобы корректно проходить уникальный индекс (order_id, paper_id).
+    final Map<String, double> aggregated = <String, double>{};
+    for (final paper in papers) {
+      final paperId = (paper.id ?? '').trim();
+      if (paperId.isEmpty) continue;
+      final qty = _requiredPaperReserveQty(order, paper);
+      if (qty <= 0) continue;
+      aggregated.update(
+        paperId,
+        (value) => value + qty,
+        ifAbsent: () => qty,
+      );
+    }
+
+    final before = await _loadOrderReservationMap(order.id);
+    final requestedRows = aggregated.entries
+        .map((entry) => <String, dynamic>{
+              'paper_id': entry.key,
+              'qty': entry.value,
+            })
+        .toList(growable: false);
+
+    try {
+      // Атомарно синхронизируем резерв на стороне БД:
+      // upsert + удаление неактуальных строк + проверка доступного остатка.
+      await _supabase.rpc(
+        'sync_order_paper_reservations',
+        params: {
+          'p_order_id': order.id,
+          'p_reservations': requestedRows,
+          'p_actor': AuthHelper.currentUserName ?? '',
+        },
+      );
+    } on PostgrestException catch (error) {
+      final details = error.message.trim();
+      if (details.isNotEmpty) return details;
+      return 'Не удалось обновить резерв бумаги для заказа ${order.id}.';
+    }
+
+    final after = await _loadOrderReservationMap(order.id);
+    await _logReservationDiff(orderId: order.id, before: before, after: after);
+    return null;
+  }
+
+  Future<void> _releasePaintReservations({required String orderId}) async {
+    try {
+      await OrdersRepository(supabaseClient: _supabase).releasePaintReservations(
+        orderId: orderId,
+        reason: 'order_deleted',
+        actor: AuthHelper.currentUserName ?? '',
+      );
+    } catch (_) {
+      try {
+        await _supabase
+            .from('order_paint_reservations')
+            .delete()
+            .eq('order_id', orderId);
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _releasePaperReservations({required String orderId}) async {
+    final before = await _loadOrderReservationMap(orderId);
+    if (before.isEmpty) return;
+    try {
+      // Атомарный возврат резерва при удалении/откате заказа.
+      await _supabase.rpc(
+        'release_order_paper_reservations',
+        params: {
+          'p_order_id': orderId,
+          'p_reason': 'order_deleted',
+          'p_actor': AuthHelper.currentUserName ?? '',
+        },
+      );
+    } catch (_) {
+      // Fallback для окружений без RPC-функции.
+      await _supabase
+          .from('order_paper_reservations')
+          .delete()
+          .eq('order_id', orderId);
+    }
+    await _logOrderEvent(
+      orderId,
+      'Резерв бумаги',
+      'Резерв возвращен из-за удаления заказа',
+    );
+  }
+
+  Future<void> _finalizePaperReservations({
+    required String orderId,
+    required String orderLabel,
+  }) async {
+    final before = await _loadOrderReservationMap(orderId);
+    if (before.isEmpty) return;
+    final normalizedOrderLabel = orderLabel.trim().isEmpty ? orderId : orderLabel.trim();
+    final defaultReason = 'Списание после завершения заказа $orderId';
+    final humanReadableReason =
+        'Списание после завершения заказа $normalizedOrderLabel';
+    try {
+      // Финализируем резерв атомарно: списание + очистка резерва в одной транзакции.
+      await _supabase.rpc(
+        'finalize_order_paper_reservations',
+        params: {
+          'p_order_id': orderId,
+          'p_actor': AuthHelper.currentUserName ?? '',
+        },
+      );
+    } catch (_) {
+      // Fallback для обратной совместимости.
+      final rows = await _supabase
+          .from('order_paper_reservations')
+          .select('paper_id, qty')
+          .eq('order_id', orderId);
+      if (rows is! List || rows.isEmpty) return;
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final paperId = (row['paper_id'] ?? '').toString().trim();
+        final qty = _toDouble(row['qty']);
+        if (paperId.isEmpty || qty <= 0) continue;
+        await _supabase.from('papers_writeoffs').insert({
+          'paper_id': paperId,
+          'qty': qty,
+          'reason': humanReadableReason,
+          'by_name': AuthHelper.currentUserName ?? '',
+        });
+      }
+      await _supabase
+          .from('order_paper_reservations')
+          .delete()
+          .eq('order_id', orderId);
+    }
+
+    if (humanReadableReason != defaultReason) {
+      // Для RPC-вставок, где причина могла быть записана с UUID заказа,
+      // приводим комментарий к человекочитаемому виду.
+      await _supabase
+          .from('papers_writeoffs')
+          .update({'reason': humanReadableReason})
+          .eq('reason', defaultReason);
+    }
+
+    await _logOrderEvent(
+      orderId,
+      'Резерв бумаги',
+      'Резерв списан после завершения заказа',
+    );
+  }
+
+  Future<Map<String, double>> _loadOrderReservationMap(String orderId) async {
+    final rows = await _supabase
+        .from('order_paper_reservations')
+        .select('paper_id, qty')
+        .eq('order_id', orderId);
+    if (rows is! List) return const <String, double>{};
+    final map = <String, double>{};
+    for (final raw in rows.whereType<Map>()) {
+      final row = Map<String, dynamic>.from(raw as Map);
+      final paperId = (row['paper_id'] ?? '').toString().trim();
+      final qty = _toDouble(row['qty']);
+      if (paperId.isEmpty || qty <= 0) continue;
+      map.update(paperId, (value) => value + qty, ifAbsent: () => qty);
+    }
+    return map;
+  }
+
+  Future<void> _logReservationDiff({
+    required String orderId,
+    required Map<String, double> before,
+    required Map<String, double> after,
+  }) async {
+    final paperIds = <String>{...before.keys, ...after.keys};
+    if (paperIds.isEmpty) return;
+    for (final paperId in paperIds) {
+      final oldQty = before[paperId] ?? 0;
+      final newQty = after[paperId] ?? 0;
+      if ((oldQty - newQty).abs() < 0.000001) continue;
+      if (oldQty <= 0 && newQty > 0) {
+        await _logOrderEvent(
+          orderId,
+          'Резерв бумаги',
+          'Создан резерв ${newQty.toStringAsFixed(2)} м бумаги $paperId для заказа $orderId',
+        );
+      } else if (oldQty > 0 && newQty <= 0) {
+        await _logOrderEvent(
+          orderId,
+          'Резерв бумаги',
+          'Удален резерв ${oldQty.toStringAsFixed(2)} м бумаги $paperId для заказа $orderId',
+        );
+      } else {
+        await _logOrderEvent(
+          orderId,
+          'Резерв бумаги',
+          'Изменен резерв бумаги $paperId: было ${oldQty.toStringAsFixed(2)} м, стало ${newQty.toStringAsFixed(2)} м',
+        );
+      }
+    }
+  }
+
+  String? _describePaperChanges({
+    required OrderModel previous,
+    required OrderModel updated,
+    String? reason,
+  }) {
+    if (!_hasPaperCompositionChanged(previous: previous, updated: updated)) {
+      return null;
+    }
+    final before = _resolveOrderPapers(previous);
+    final after = _resolveOrderPapers(updated);
+    String fmtDate(DateTime dt) {
+      final local = dt.toLocal();
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '${two(local.day)}.${two(local.month)}.${local.year} '
+          '${two(local.hour)}:${two(local.minute)}';
+    }
+
+    String materialName(MaterialModel m) {
+      final format = (m.format ?? '').trim();
+      final grammage = (m.grammage ?? '').trim();
+      final suffix = [
+        if (format.isNotEmpty) 'Ф $format',
+        if (grammage.isNotEmpty) 'Гр $grammage',
+      ].join(' / ');
+      return suffix.isEmpty ? m.name : '${m.name} ($suffix)';
+    }
+
+    double _paperWidthB(MaterialModel m) {
+      final raw = m.extra?['widthB'];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString().replaceAll(',', '.')) ?? 0;
+    }
+
+    String _paperBlQuantity(MaterialModel m, {String fallback = ''}) =>
+        (m.extra?['blQuantity'] ?? fallback).toString().trim();
+
+    String _paperMetrics(
+      MaterialModel m, {
+      double? fallbackWidthB,
+      String? fallbackBlQuantity,
+    }) {
+      final parsedWidthB = _paperWidthB(m);
+      final widthB = parsedWidthB > 0 ? parsedWidthB : (fallbackWidthB ?? 0);
+      final blQuantity = _paperBlQuantity(
+        m,
+        fallback: (fallbackBlQuantity ?? '').trim(),
+      );
+      final lengthL = m.quantity;
+      final widthText =
+          widthB > 0 ? widthB.toStringAsFixed(widthB % 1 == 0 ? 0 : 2) : '—';
+      final quantityText = blQuantity.isNotEmpty ? blQuantity : '—';
+      return 'Ш $widthText, К $quantityText, Длина L ${lengthL.toStringAsFixed(2)} м';
+    }
+
+    final user = (AuthHelper.currentUserName ?? 'Сотрудник').trim();
+    final timestamp = fmtDate(DateTime.now());
+    final maxCount = before.length > after.length ? before.length : after.length;
+    final buffer = StringBuffer()
+      ..writeln('$user изменил бумагу $timestamp');
+    for (var i = 0; i < maxCount; i++) {
+      final old = i < before.length ? before[i] : null;
+      final next = i < after.length ? after[i] : null;
+      final slot = i + 1;
+      if (old != null && next != null) {
+        final delta = next.quantity - old.quantity;
+        final deltaPrefix = delta >= 0 ? '+' : '';
+        buffer.writeln(
+          'Бумага №$slot: было ${materialName(old)} — ${_paperMetrics(old, fallbackWidthB: i == 0 ? previous.product.widthB : null, fallbackBlQuantity: i == 0 ? previous.product.blQuantity : null)}, '
+          'стало ${materialName(next)} — ${_paperMetrics(next, fallbackWidthB: i == 0 ? updated.product.widthB : null, fallbackBlQuantity: i == 0 ? updated.product.blQuantity : null)} '
+          '($deltaPrefix${delta.toStringAsFixed(2)} м)',
+        );
+      } else if (old == null && next != null) {
+        buffer.writeln(
+          'Добавлена бумага №$slot: ${materialName(next)} — ${_paperMetrics(next, fallbackWidthB: i == 0 ? updated.product.widthB : null, fallbackBlQuantity: i == 0 ? updated.product.blQuantity : null)}',
+        );
+      } else if (old != null && next == null) {
+        buffer.writeln(
+          'Удалена бумага №$slot: ${materialName(old)} — ${_paperMetrics(old, fallbackWidthB: i == 0 ? previous.product.widthB : null, fallbackBlQuantity: i == 0 ? previous.product.blQuantity : null)}',
+        );
+      }
+    }
+    final reasonText = (reason ?? '').trim();
+    if (reasonText.isNotEmpty) {
+      // Бизнес-правило: причина изменения бумаги обязательна для производства.
+      buffer.writeln('Причина: $reasonText');
+    }
+    return buffer.toString().trim();
+  }
+
+  bool _hasPaperCompositionChanged({
+    required OrderModel previous,
+    required OrderModel updated,
+  }) {
+    bool textChanged(String? a, String? b) {
+      return (a ?? '').trim().toLowerCase() != (b ?? '').trim().toLowerCase();
+    }
+
+    final before = _resolveOrderPapers(previous);
+    final after = _resolveOrderPapers(updated);
+    if ((previous.product.widthB ?? 0) != (updated.product.widthB ?? 0)) {
+      return true;
+    }
+    final prevBlQuantity = previous.product.blQuantity?.trim() ?? '';
+    final nextBlQuantity = updated.product.blQuantity?.trim() ?? '';
+    if (prevBlQuantity != nextBlQuantity) {
+      return true;
+    }
+    if (before.length != after.length) return true;
+    for (var i = 0; i < before.length; i++) {
+      final beforeWidthB = _toDouble(before[i].extra?['widthB']);
+      final afterWidthB = _toDouble(after[i].extra?['widthB']);
+      final beforeBlQuantity = (before[i].extra?['blQuantity'] ?? '').toString().trim();
+      final afterBlQuantity = (after[i].extra?['blQuantity'] ?? '').toString().trim();
+      if (before[i].id != after[i].id ||
+          textChanged(before[i].name, after[i].name) ||
+          textChanged(before[i].format, after[i].format) ||
+          textChanged(before[i].grammage, after[i].grammage) ||
+          (before[i].quantity - after[i].quantity).abs() > 0.0001 ||
+          (beforeWidthB - afterWidthB).abs() > 0.0001 ||
+          beforeBlQuantity != afterBlQuantity) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _applyPensConsumption({
+    required OrderModel order,
+    required double targetQty,
+    bool silentOnError = false,
+  }) async {
+    final handle = order.handle.trim();
+    if (handle.isEmpty || handle == '-') {
+      return;
+    }
+    if (targetQty <= 0) {
+      return;
+    }
+
+    try {
+      final handleRow = await _findHandleRow(handle);
+      if (handleRow == null) {
+        if (!silentOnError) {
+          throw Exception('Ручки "$handle" не найдены на складе');
+        }
+        return;
+      }
+      final String itemId = (handleRow['id'] ?? '').toString().trim();
+      if (itemId.isEmpty) {
+        if (!silentOnError) {
+          throw Exception('Ручки "$handle" не найдены на складе');
+        }
+        return;
+      }
+
+      final String itemKey = 'pens:$itemId';
+      final Map<String, dynamic> snapshot =
+          await _ensureConsumptionSnapshot(order.id, itemKey);
+      final double already = _toDouble(snapshot['quantity']);
+      if (targetQty <= already) {
+        return;
+      }
+
+      final String nowIso = DateTime.now().toIso8601String();
+      final Map<String, dynamic> payload = {
+        'quantity': targetQty,
+        'updated_at': nowIso,
+      };
+      await _supabase
+          .from('order_consumption_snapshots')
+          .update(payload)
+          .eq('order_id', order.id)
+          .eq('item_key', itemKey);
+    } catch (e, st) {
+      if (silentOnError) {
+        debugPrint('⚠️ pens consumption error: $e\n$st');
+      } else {
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> _logPensCompletionWriteoff({
+    required OrderModel order,
+    required double quantity,
+  }) async {
+    final double safeQty = quantity;
+    if (safeQty <= 0) {
+      return;
+    }
+    final handle = order.handle.trim();
+    if (handle.isEmpty || handle == '-') {
+      return;
+    }
+    try {
+      final handleRow = await _findHandleRow(handle);
+      if (handleRow == null) {
+        return;
+      }
+      final String itemId = (handleRow['id'] ?? '').toString().trim();
+      if (itemId.isEmpty) {
+        return;
+      }
+      final String customer = order.customer.trim();
+      final String author = (AuthHelper.currentUserName ?? '').trim();
+      final String orderId = order.id.trim();
+
+      if (orderId.isEmpty) {
+        return;
+      }
+
+      try {
+        final existing = await _supabase
+            .from('warehouse_pens_writeoffs')
+            .select('id')
+            .eq('order_id', orderId)
+            .maybeSingle();
+        if (existing != null) {
+          return;
+        }
+      } catch (_) {
+        // Если RLS запрещает просмотр — продолжаем и пытаемся вставить.
+      }
+
+      final payload = <String, dynamic>{
+        'item_id': itemId,
+        'qty': safeQty,
+        'order_id': orderId,
+      };
+      if (customer.isNotEmpty) {
+        payload['reason'] = customer;
+      }
+      if (author.isNotEmpty) {
+        payload['by_name'] = author;
+      }
+
+      await _supabase.from('warehouse_pens_writeoffs').insert(payload);
+    } catch (e, st) {
+      debugPrint('⚠️ pens completion writeoff log error: $e\n$st');
+    }
+  }
+
+  Future<Map<String, dynamic>> _ensureConsumptionSnapshot(
+      String orderId, String itemKey) async {
+    try {
+      final existing = await _supabase
+          .from('order_consumption_snapshots')
+          .select()
+          .eq('order_id', orderId)
+          .eq('item_key', itemKey)
+          .maybeSingle();
+      if (existing != null) {
+        return Map<String, dynamic>.from(existing as Map);
+      }
+    } catch (_) {}
+
+    final String nowIso = DateTime.now().toIso8601String();
+    final Map<String, dynamic> payload = {
+      'order_id': orderId,
+      'item_key': itemKey,
+      'quantity': 0,
+      'created_at': nowIso,
+      'updated_at': nowIso,
+    };
+    await _supabase.from('order_consumption_snapshots').insert(payload);
+    return payload;
+  }
+
+  Future<Map<String, dynamic>?> _findHandleRow(String description) async {
+    final trimmed = description.trim();
+    if (trimmed.isEmpty || trimmed == '-') {
+      return null;
+    }
+    try {
+      final response = await _supabase
+          .from('warehouse_pens')
+          .select('id, name, color, quantity')
+          .order('created_at');
+      if (response is! List) {
+        return null;
+      }
+      Map<String, dynamic>? fallback;
+      for (final raw in response) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw as Map);
+        final name = (row['name'] ?? '').toString().trim();
+        final color = (row['color'] ?? '').toString().trim();
+        final desc = [name, color]
+            .where((part) => part.isNotEmpty)
+            .join(' • ')
+            .trim();
+        if (desc.toLowerCase() == trimmed.toLowerCase()) {
+          return row;
+        }
+        if (fallback == null &&
+            name.isNotEmpty &&
+            name.toLowerCase() == trimmed.toLowerCase()) {
+          fallback = row;
+        }
+      }
+      return fallback;
+    } catch (e, st) {
+      debugPrint('❌ _findHandleRow error: $e\n$st');
+      return null;
+    }
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value == null) {
+      return 0;
+    }
+    return double.tryParse(value.toString().replaceAll(',', '.')) ?? 0;
+  }
+
+  double? _toDoubleNullable(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    final String text = value.toString().trim();
+    if (text.isEmpty) return null;
+    return double.tryParse(text.replaceAll(',', '.'));
+  }
+
+  Future<double?> _loadLatestProductionActualQty(String orderId) async {
+    try {
+      final rows = await _loadProductionTaskQuantityRows(orderId);
+      if (rows.isEmpty) {
+        return null;
+      }
+
+      final stageTotals = <String, double>{};
+      final stageLastTouched = <String, int>{};
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw);
+        final stageId = (row['stage_id'] ?? '').toString();
+        if (stageId.isEmpty) continue;
+
+        final comments = _normalizeTaskComments(row['comments']);
+        final quantity = _taskProductionQuantity(comments);
+        if (quantity == null || quantity <= 0) continue;
+
+        stageTotals.update(stageId, (current) => current + quantity,
+            ifAbsent: () => quantity);
+        final touchedAt = _latestTaskQuantityTimestamp(comments, row);
+        final previousTouchedAt = stageLastTouched[stageId] ?? 0;
+        if (touchedAt > previousTouchedAt) {
+          stageLastTouched[stageId] = touchedAt;
+        }
+      }
+
+      if (stageTotals.isEmpty) {
+        return null;
+      }
+
+      var latestStageId = stageTotals.keys.first;
+      var latestTouchedAt = stageLastTouched[latestStageId] ?? 0;
+      for (final stageId in stageTotals.keys.skip(1)) {
+        final touchedAt = stageLastTouched[stageId] ?? 0;
+        if (touchedAt > latestTouchedAt) {
+          latestStageId = stageId;
+          latestTouchedAt = touchedAt;
+        }
+      }
+      return stageTotals[latestStageId];
+    } catch (e, st) {
+      debugPrint('⚠️ shipOrder: unable to load production actual_qty: $e\n$st');
+      return null;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadProductionTaskQuantityRows(
+    String orderId,
+  ) async {
+    const columnSets = <String>[
+      'stage_id, comments, completed_at, finished_at',
+      'stage_id, comments, finished_at',
+      'stage_id, comments',
+    ];
+
+    Object? lastMissingColumnError;
+    for (final columns in columnSets) {
+      try {
+        final rows = await _supabase
+            .from('tasks')
+            .select(columns)
+            .eq('order_id', orderId);
+        if (rows is! List) {
+          return const <Map<String, dynamic>>[];
+        }
+        return rows
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+      } catch (error) {
+        final canRetry = _isMissingColumnError(error, 'completed_at') ||
+            _isMissingColumnError(error, 'finished_at');
+        if (!canRetry) rethrow;
+        lastMissingColumnError = error;
+      }
+    }
+
+    if (lastMissingColumnError != null) throw lastMissingColumnError;
+    return const <Map<String, dynamic>>[];
+  }
+
+  bool _isMissingColumnError(Object error, String columnName) {
+    if (error is! PostgrestException) return false;
+
+    final code = (error.code ?? '').trim();
+    final message = error.message.toLowerCase();
+    final details = (error.details ?? '').toString().toLowerCase();
+    final hint = (error.hint ?? '').toString().toLowerCase();
+    final normalizedColumn = columnName.toLowerCase();
+    final mentionsColumn = message.contains(normalizedColumn) ||
+        details.contains(normalizedColumn) ||
+        hint.contains(normalizedColumn);
+
+    return mentionsColumn &&
+        (code == '42703' ||
+            code == 'PGRST204' ||
+            message.contains('column') ||
+            message.contains('schema cache'));
+  }
+
+  List<Map<String, dynamic>> _normalizeTaskComments(dynamic value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+    if (value is Map) {
+      return value.values
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+    return const <Map<String, dynamic>>[];
+  }
+
+  double? _taskProductionQuantity(List<Map<String, dynamic>> comments) {
+    final teamTotals = comments
+        .where((comment) => comment['type'] == 'quantity_team_total')
+        .toList(growable: false);
+    if (teamTotals.isNotEmpty) {
+      final latest = teamTotals.reduce((a, b) =>
+          _commentTimestamp(a) >= _commentTimestamp(b) ? a : b);
+      return _parseProductionQuantity(latest['text']);
+    }
+
+    double total = 0;
+    var hasQuantity = false;
+    for (final comment in comments) {
+      if (comment['type'] != 'quantity_done') continue;
+      total += _parseProductionQuantity(comment['text']);
+      hasQuantity = true;
+    }
+    return hasQuantity ? total : null;
+  }
+
+  int _latestTaskQuantityTimestamp(
+    List<Map<String, dynamic>> comments,
+    Map<String, dynamic> row,
+  ) {
+    var timestamp = _parseTimestamp(row['completed_at']);
+    final finishedAt = _parseTimestamp(row['finished_at']);
+    if (finishedAt > timestamp) timestamp = finishedAt;
+
+    for (final comment in comments) {
+      final type = comment['type'];
+      if (type != 'quantity_done' && type != 'quantity_team_total') continue;
+      final commentTimestamp = _commentTimestamp(comment);
+      if (commentTimestamp > timestamp) timestamp = commentTimestamp;
+    }
+    return timestamp;
+  }
+
+  int _commentTimestamp(Map<String, dynamic> comment) {
+    return _parseTimestamp(comment['timestamp']);
+  }
+
+  int _parseTimestamp(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toInt();
+    final text = value.toString().trim();
+    if (text.isEmpty) return 0;
+    final asInt = int.tryParse(text);
+    if (asInt != null) return asInt;
+    return DateTime.tryParse(text)?.millisecondsSinceEpoch ?? 0;
+  }
+
+  double _parseProductionQuantity(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    final normalized = value.toString().replaceAll(',', '.').trim();
+    if (normalized.isEmpty) return 0;
+
+    final totalFromFormula =
+        RegExp(r'=\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+    if (totalFromFormula != null) {
+      return double.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
+    }
+
+    final packsMatch = RegExp(r'(-?\d+(?:\.\d+)?)\s*пач',
+            caseSensitive: false)
+        .firstMatch(normalized);
+    final inPackMatch =
+        RegExp(r'[x×*]\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+    if (packsMatch != null && inPackMatch != null) {
+      final packs = double.tryParse(packsMatch.group(1) ?? '') ?? 0;
+      final inPack = double.tryParse(inPackMatch.group(1) ?? '') ?? 0;
+      return packs * inPack;
+    }
+
+    final parsed = double.tryParse(normalized);
+    if (parsed != null) return parsed;
+
+    final firstNumber = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(normalized);
+    if (firstNumber != null) {
+      return double.tryParse(firstNumber.group(0) ?? '') ?? 0;
+    }
+    return 0;
+  }
+
+  String _formatQtyValue(double value) {
+    if (value % 1 == 0) {
+      return value.toInt().toString();
+    }
+    String text = value.toStringAsFixed(2);
+    text = text.replaceAll(RegExp(r'0+$'), '');
+    if (text.endsWith('.') || text.endsWith(',')) {
+      text = text.substring(0, text.length - 1);
+    }
+    return text;
   }
 
   // ===== HISTORY =====
@@ -269,6 +2360,9 @@ class OrdersProvider with ChangeNotifier {
     String description, {
     String? userId,
   }) async {
+    if (orderId.trim().isEmpty || orderId.startsWith('local-')) {
+      return;
+    }
     try {
       await _supabase.from('order_events').insert({
         'order_id': orderId,
@@ -277,6 +2371,11 @@ class OrdersProvider with ChangeNotifier {
         if (userId != null) 'user_id': userId,
       });
     } catch (e, st) {
+      if (e is PostgrestException && e.code == '23503') {
+        // Заказ уже удалён/не записан — не считаем это фатальной ошибкой.
+        debugPrint('⚠️ logOrderEvent skipped (missing order_id=$orderId)');
+        return;
+      }
       // Non-fatal
       debugPrint('❌ logOrderEvent error: $e\n$st');
     }
@@ -284,48 +2383,271 @@ class OrdersProvider with ChangeNotifier {
 
   /// Возвращает список событий истории по идентификатору заказа.
   Future<List<Map<String, dynamic>>> fetchOrderHistory(String orderId) async {
+    DateTime? _parseTimestamp(dynamic value) {
+      if (value == null) return null;
+      if (value is int) {
+        if (value > 2000000000) {
+          return DateTime.fromMillisecondsSinceEpoch(value);
+        }
+        return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+      }
+      if (value is num) {
+        final int intValue = value.toInt();
+        return _parseTimestamp(intValue);
+      }
+      if (value is String) {
+        if (value.isEmpty) return null;
+        final parsedInt = int.tryParse(value);
+        if (parsedInt != null) return _parseTimestamp(parsedInt);
+        return DateTime.tryParse(value);
+      }
+      if (value is DateTime) return value;
+      return null;
+    }
+
+    double? _extractQuantity(String type, String text) {
+      const trackedTypes = {'quantity_done', 'quantity_team_total', 'quantity_share'};
+      if (!trackedTypes.contains(type)) return null;
+      final normalized = text.replaceAll(',', '.');
+      final match = RegExp(r'-?[0-9]+(?:\.[0-9]+)?').firstMatch(normalized);
+      if (match != null) {
+        return double.tryParse(match.group(0)!);
+      }
+      return double.tryParse(normalized.trim());
+    }
+
+    String? _stringOrNull(dynamic value) {
+      if (value == null) return null;
+      final String stringValue = value.toString();
+      return stringValue.trim().isEmpty ? null : stringValue;
+    }
+
     try {
-      final rows = await _supabase
+      final List<Map<String, dynamic>> combined = [];
+
+      final eventRows = await _supabase
           .from('order_events')
           .select()
           .eq('order_id', orderId)
           .order('created_at');
 
-      return (rows as List).cast<Map<String, dynamic>>();
+      if (eventRows is List) {
+        for (final raw in eventRows) {
+          if (raw is! Map) continue;
+          final map = Map<String, dynamic>.from(raw as Map);
+          final DateTime? ts =
+              _parseTimestamp(map['created_at'] ?? map['timestamp'] ?? map['inserted_at']);
+          combined.add({
+            'source': 'order_event',
+            'timestamp': ts?.millisecondsSinceEpoch,
+            'event_type': _stringOrNull(map['event_type']) ?? '',
+            'description':
+                _stringOrNull(map['description']) ?? _stringOrNull(map['message']) ?? '',
+            'user_id': _stringOrNull(map['user_id']),
+            'payload': map['payload'],
+          });
+        }
+      }
+
+      // Чат заказа (если room_id совпадает с id заказа).
+      try {
+        final chatRows = await _supabase
+            .from('chat_messages')
+            .select('created_at, sender_id, sender_name, body, text, kind')
+            .eq('room_id', orderId)
+            .order('created_at');
+        if (chatRows is List) {
+          for (final raw in chatRows) {
+            if (raw is! Map) continue;
+            final map = Map<String, dynamic>.from(raw as Map);
+            final DateTime? ts =
+                _parseTimestamp(map['created_at'] ?? map['timestamp']);
+            final String text = _stringOrNull(map['body']) ??
+                _stringOrNull(map['text']) ??
+                '[вложение]';
+            combined.add({
+              'source': 'chat_message',
+              'timestamp': ts?.millisecondsSinceEpoch,
+              'event_type': 'chat_message',
+              'description': text,
+              'user_id': _stringOrNull(map['sender_id']),
+              'user_name': _stringOrNull(map['sender_name']),
+              'kind': _stringOrNull(map['kind']) ?? 'text',
+            });
+          }
+        }
+      } catch (_) {
+        // Таблица/колонки чата могут отличаться между инсталляциями.
+      }
+
+      final taskRows = await _supabase
+          .from('tasks')
+          .select('id, stage_id, comments')
+          .eq('order_id', orderId);
+
+      if (taskRows is List) {
+        for (final raw in taskRows) {
+          if (raw is! Map) continue;
+          final map = Map<String, dynamic>.from(raw as Map);
+          final String? stageId = _stringOrNull(map['stage_id'] ?? map['stageId']);
+          final commentsData = map['comments'];
+          final List<Map<String, dynamic>> commentsList = [];
+
+          if (commentsData is List) {
+            for (final item in commentsData) {
+              if (item is Map) {
+                commentsList.add(Map<String, dynamic>.from(item));
+              }
+            }
+          } else if (commentsData is Map) {
+            commentsData.forEach((_, value) {
+              if (value is Map) {
+                commentsList.add(Map<String, dynamic>.from(value));
+              }
+            });
+          }
+
+          for (final comment in commentsList) {
+            final String type = _stringOrNull(comment['type']) ?? '';
+            final String text = _stringOrNull(comment['text']) ?? '';
+            final DateTime? ts = _parseTimestamp(comment['timestamp']);
+            combined.add({
+              'source': 'task_comment',
+              'timestamp': ts?.millisecondsSinceEpoch,
+              'event_type': type,
+              'description': text,
+              'user_id': _stringOrNull(comment['userId']),
+              'stage_id': stageId,
+              'quantity': _extractQuantity(type, text),
+            });
+          }
+        }
+      }
+
+      try {
+        final orderRow = await _supabase
+            .from('orders')
+            .select('shipped_at, shipped_qty, shipped_by, actual_qty')
+            .eq('id', orderId)
+            .maybeSingle();
+        if (orderRow case final Map<dynamic, dynamic> orderRowMap) {
+          final Map<String, dynamic> orderData =
+              Map<String, dynamic>.from(orderRowMap);
+          final DateTime? shippedAt = _parseTimestamp(orderData['shipped_at']);
+          final double? shippedQty = _toDoubleNullable(orderData['shipped_qty']);
+          final double? producedQty = _toDoubleNullable(orderData['actual_qty']);
+          if (producedQty != null) {
+            combined.add({
+              'source': 'order_event',
+              'timestamp': shippedAt?.millisecondsSinceEpoch,
+              'event_type': 'produced_qty',
+              'description': 'Произведено: ${_formatQty(producedQty)}',
+              'quantity': producedQty,
+            });
+          }
+          if (shippedAt != null || shippedQty != null) {
+            combined.add({
+              'source': 'shipment',
+              'timestamp': shippedAt?.millisecondsSinceEpoch,
+              'event_type': 'shipment',
+              'description':
+                  'Отгрузка: ${_formatQty(shippedQty ?? 0)}; исполнитель: ${_stringOrNull(orderData['shipped_by']) ?? '—'}',
+              'user_name': _stringOrNull(orderData['shipped_by']),
+              'quantity': shippedQty,
+            });
+          }
+        }
+      } catch (_) {}
+
+      combined.sort((a, b) {
+        final int tsA = (a['timestamp'] as int?) ?? 0;
+        final int tsB = (b['timestamp'] as int?) ?? 0;
+        return tsA.compareTo(tsB);
+      });
+
+      return combined;
     } catch (e, st) {
       debugPrint('❌ fetchOrderHistory error: $e\n$st');
       return [];
     }
   }
 
+  String _formatQty(double value) {
+    if ((value - value.roundToDouble()).abs() < 0.0001) {
+      return value.round().toString();
+    }
+    return value.toStringAsFixed(2);
+  }
+
   // ===== STOCK (WAREHOUSE) INTEGRATION =====
 
-  /// Списание бумаги по данным заказа (если материал = бумага и указан tmcId).
+  /// Списание бумаги по данным заказа (если выбран материал со склада бумаги).
   Future<void> _applyPaperWriteoffFromOrder(OrderModel order) async {
-    try {
-      final pm = order.product.toMap();
-      final String? tmcId = (pm['tmcId'] ??
-          pm['tmc_id'] ??
-          pm['materialId'] ??
-          pm['material_id']) as String?;
-      final dynamic qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
-      final double qty =
-          (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
+    final Map<String, dynamic> pm = order.product.toMap();
+    final String? materialIdFromOrder = order.material?.id;
+    final String? tmcId = materialIdFromOrder ??
+        (pm['tmcId'] ?? pm['tmc_id'] ?? pm['materialId'] ?? pm['material_id'])
+            as String?;
 
-      if (tmcId == null || qty <= 0) return;
+    final double lengthValue = () {
+      final dynamic rawLength =
+          pm['length'] ?? order.product.length ?? pm['length_l'];
+      if (rawLength is num) {
+        return rawLength.toDouble();
+      }
+      return double.tryParse('$rawLength') ?? 0.0;
+    }();
 
-      // вызываем writeoff для типа paper по ID
-      await _supabase.rpc('writeoff', params: {
+    final dynamic qRaw = (pm['quantity'] ?? pm['qty'] ?? pm['count']);
+    final double fallbackQty =
+        (qRaw is num) ? qRaw.toDouble() : double.tryParse('$qRaw') ?? 0.0;
+    final double targetQty = lengthValue > 0 ? lengthValue : fallbackQty;
+
+    if (tmcId == null || targetQty <= 0) {
+      return;
+    }
+
+    final String itemKey = 'paper:$tmcId';
+    final Map<String, dynamic> snapshot =
+        await _ensureConsumptionSnapshot(order.id, itemKey);
+    final double alreadyWritten = _toDouble(snapshot['quantity']);
+
+    final double delta = targetQty - alreadyWritten;
+    final String nowIso = DateTime.now().toIso8601String();
+
+    if (delta > 0) {
+      final String reason = order.customer.trim().isEmpty
+          ? 'Списание бумаги для заказа ${order.id}'
+          : order.customer.trim();
+      final String author = (AuthHelper.currentUserName ?? '').trim();
+
+      final Map<String, dynamic> params = {
         'type': 'paper',
         'item': tmcId,
-        'qty': qty,
-        'reason': 'Списание при создании заказа',
-        'by_name': 'OrdersProvider'
-      });
-    } catch (e) {
-      // если недостаточно остатков — пробрасываем, чтобы показать ошибку пользователю
-      rethrow;
+        'qty': delta,
+        'reason': reason,
+      };
+      if (author.isNotEmpty) {
+        params['by_name'] = author;
+      }
+
+      try {
+        await _supabase.rpc('writeoff', params: params);
+      } catch (error) {
+        // не обновляем snapshot при ошибке — пусть вызывающий обработает исключение
+        rethrow;
+      }
     }
+
+    await _supabase
+        .from('order_consumption_snapshots')
+        .update({'quantity': targetQty, 'updated_at': nowIso})
+        .eq('order_id', order.id)
+        .eq('item_key', itemKey);
+  }
+
+  Future<void> applyPaperWriteoff(OrderModel order) async {
+    await _applyPaperWriteoffFromOrder(order);
   }
 
   Future<void> applyStockOnFulfillment(OrderModel order) async {

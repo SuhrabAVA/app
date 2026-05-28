@@ -1,4 +1,5 @@
 // lib/modules/warehouse/type_table_tabs_screen.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -12,6 +13,11 @@ import '../../services/doc_db.dart';
 import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
+import '../../utils/kostanay_time.dart';
+import 'deleted_records_repository.dart';
+import 'deleted_records_screen.dart';
+import 'warehouse_logs_repository.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран с вкладками для просмотра записей склада заданного типа.
 ///
@@ -168,8 +174,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   List<_LogRow> _inventories = [];
   List<_LogRow> _arrivals = [];
 
-  String _sortField = 'date';
-  bool _sortDesc = true;
+  String _sortField = 'name';
+  bool _sortDesc = false;
   String _query = '';
 
   final TextEditingController _searchController = TextEditingController();
@@ -210,19 +216,19 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   static const Map<String, Map<String, String>> _invMap = {
     'paint': {
-      'table': 'paint_inventories',
+      'table': 'paints_inventories',
       'fk': 'paint_id',
       'qty': 'counted_qty',
       'note': 'note'
     },
     'material': {
-      'table': 'material_inventories',
+      'table': 'materials_inventories',
       'fk': 'material_id',
       'qty': 'counted_qty',
       'note': 'note'
     },
     'paper': {
-      'table': 'paper_inventories',
+      'table': 'papers_inventories',
       'fk': 'paper_id',
       'qty': 'counted_qty',
       'note': 'note'
@@ -230,7 +236,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     'stationery': {
       'table': 'warehouse_stationery_inventories',
       'fk': 'item_id',
-      'qty': 'counted_qty',
+      'qty': 'factual',
       'note': 'note'
     },
     'pens': {
@@ -275,6 +281,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     },
   };
 
+  static const Map<String, String> _deletedEntityTypes = {
+    'paper': 'tmc_paper',
+    'stationery': 'tmc_stationery',
+    'paint': 'tmc_paint',
+    'pens': 'tmc_pens',
+  };
+
   String _normalizeType(String raw) {
     final t = raw.trim().toLowerCase();
     if (t.startsWith('краск')) return 'paint';
@@ -302,7 +315,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           'warehouse_stationeries'
         ];
       case 'pens':
-        return const ['warehouse_pens', 'pens'];
+        return const [
+          'warehouse_pens',
+          'pens',
+        ];
       default:
         return const ['papers'];
     }
@@ -316,8 +332,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
       if (typeKey == 'paper') 'paper_writeoffs',
-      if (typeKey == 'paint') 'paint_writeoffs',
-      if (typeKey == 'material') 'material_writeoffs',
+      if (typeKey == 'paint') 'paints_writeoffs',
+      if (typeKey == 'material') 'materials_writeoffs',
     ];
     final seen = <String>{};
     return base.where((e) => seen.add(e)).toList();
@@ -330,9 +346,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_inventories',
       if (typeKey == 'pens') 'warehouse_pens_inventories',
-      if (typeKey == 'paper') 'paper_inventories',
-      if (typeKey == 'paint') 'paint_inventories',
-      if (typeKey == 'material') 'material_inventories',
+      if (typeKey == 'paper') 'papers_inventories',
+      if (typeKey == 'paint') 'paints_inventories',
+      if (typeKey == 'material') 'materials_inventories',
     ];
     final seen = <String>{};
     return base.where((e) => seen.add(e)).toList();
@@ -346,7 +362,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
       if (typeKey == 'pens') 'warehouse_pens_arrivals',
       if (typeKey == 'stationery') 'stationery_arrivals',
-      'arrivals',
       if (typeKey == 'paper') 'papers_arrivals',
       if (typeKey == 'paint') 'paints_arrivals',
       if (typeKey == 'material') 'materials_arrivals',
@@ -360,6 +375,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (typeKey == 'paper') {
       return 'id, description, unit, format, grammage';
     }
+    if (typeKey == 'pens') {
+      return 'id, description, unit, name, color';
+    }
     return 'id, description, unit';
   }
 
@@ -368,6 +386,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     super.initState();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final t = widget.type.toLowerCase();
       context.read<WarehouseProvider>().setStationeryKey(
             (t.startsWith('руч') || t.startsWith('pens'))
@@ -384,27 +403,97 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   Future<void> _loadAll() async {
+    if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
+    final typeKey = _normalizeType(widget.type);
+
+    void applySnapshot({
+      required List<TmcModel> items,
+      WarehouseLogsBundle? bundle,
+    }) {
+      if (!mounted) return;
+      final writeoffs =
+          bundle == null ? _writeoffs : _mapBundleLogs(bundle.writeoffs);
+      final inventories =
+          bundle == null ? _inventories : _mapBundleLogs(bundle.inventories);
+      final arrivals = bundle == null ? _arrivals : _mapBundleLogs(bundle.arrivals);
+
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _writeoffs = writeoffs;
+        _inventories = inventories;
+        _arrivals = arrivals;
+      });
+      _notifyThresholds();
+      _resort();
+    }
+
+    // 1) Мгновенно показываем то, что уже есть в памяти.
+    final cachedItems = provider.getTmcByType(widget.type);
+    final cachedBundle = provider.logsBundle(typeKey);
+    applySnapshot(items: cachedItems, bundle: cachedBundle);
+
+    // 2) Затем обновляем данные из БД и перерисовываем экран.
     try {
       await provider.fetchTmc();
     } catch (_) {}
 
-    final items = provider.getTmcByType(widget.type);
-    final typeKey = _normalizeType(widget.type);
+    final freshItems = provider.getTmcByType(widget.type);
+    WarehouseLogsBundle? freshBundle;
+    try {
+      freshBundle = await provider.fetchLogsBundle(typeKey, forceRefresh: true);
+    } catch (_) {
+      freshBundle = provider.logsBundle(typeKey);
+    }
+    applySnapshot(items: freshItems, bundle: freshBundle);
+  }
 
-    final writeoffs = await _fetchWriteoffs(typeKey);
-    final inventories = await _fetchInventories(typeKey);
-    final arrivals = await _fetchArrivals(typeKey);
+  List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
+    final provider = context.read<WarehouseProvider>();
+    final String currentTypeKey = _normalizeType(widget.type);
 
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _writeoffs = writeoffs;
-      _inventories = inventories;
-      _arrivals = arrivals;
-    });
-    _notifyThresholds();
-    _resort();
+    String resolveDescription(WarehouseLogEntry entry) {
+      final String original = entry.description.trim();
+      final bool hasMeaningfulDescription =
+          original.isNotEmpty && original != '-' && original != '—';
+      if (hasMeaningfulDescription) return original;
+
+      final String itemId = (entry.itemId ?? '').trim();
+      if (itemId.isEmpty) return entry.description;
+
+      try {
+        final tmc = provider.allTmc.firstWhere(
+          (item) => item.id == itemId && _normalizeType(item.type) == currentTypeKey,
+        );
+        final String fallback = (tmc.description ?? '').trim();
+        if (fallback.isNotEmpty) return fallback;
+      } catch (_) {}
+
+      return entry.description;
+    }
+
+    return entries
+        .map((entry) {
+          final isCanceled = _logIsCanceled(const {}, entry.note);
+          return _LogRow(
+            id: entry.id,
+            description: resolveDescription(entry),
+            quantity: entry.quantity.toDouble(),
+            unit: entry.unit,
+            dateIso: entry.timestampIso,
+            note: entry.note,
+            format: entry.format,
+            grammage: entry.grammage,
+            byName: _displayEmployeeName(entry.byName),
+            itemId: entry.itemId,
+            sourceTable: entry.sourceTable,
+            action: entry.action,
+            canUndo: (entry.itemId ?? '').isNotEmpty && !isCanceled,
+            isCanceled: isCanceled,
+          );
+        })
+        .toList();
   }
 
   void _setupRealtime() {
@@ -416,9 +505,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final bases = _baseTables(typeKey);
       final woTables = _writeoffTables(typeKey);
       final invTables = _inventoryTables(typeKey);
+      final arrTables = _arrivalTables(typeKey);
 
       final ch = s.channel('wh_${DateTime.now().millisecondsSinceEpoch}');
-      for (final t in [...bases, ...woTables, ...invTables]) {
+      final watchedTables = <String>[
+        ...bases,
+        ...woTables,
+        ...invTables,
+        ...arrTables,
+        // Бизнес-логика резерва: для бумаги и краски обновляем таблицу
+        // при любом изменении активных резервов.
+        if (typeKey == 'paper') 'order_paper_reservations',
+        if (typeKey == 'paint') 'order_paint_reservations',
+      ];
+      for (final t in watchedTables) {
         ch.onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -441,6 +541,104 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ch.subscribe();
       _rt = ch;
     } catch (_) {}
+  }
+
+  bool _isReserveAwareType(String typeKey) => typeKey == 'paper' || typeKey == 'paint';
+
+  Future<double> _reservedQtyForItem(TmcModel item, String typeKey) {
+    if (typeKey == 'paper') {
+      return context.read<WarehouseProvider>().paperReservedQty(item.id);
+    }
+    if (typeKey == 'paint') {
+      return Future<double>.value(item.reservedQty);
+    }
+    return Future<double>.value(0);
+  }
+
+  String _reserveUnitLabel(TmcModel item, String typeKey) {
+    if (typeKey == 'paper') return 'м';
+    return item.unit.trim().isEmpty ? 'ед.' : item.unit.trim();
+  }
+
+  String _orderLabelFromReservation(Map<String, dynamic> row) {
+    final order = row['orders'];
+    if (order is Map) {
+      final customer = (order['customer'] ?? '').toString().trim();
+      if (customer.isNotEmpty) return customer;
+    }
+
+    final orderName = (row['order_name'] ?? '').toString().trim();
+    final hasOrderName = orderName.isNotEmpty &&
+        orderName.toLowerCase() != 'null' &&
+        orderName.toLowerCase() != 'undefined' &&
+        orderName.toLowerCase() != 'nan' &&
+        orderName != '-';
+    if (hasOrderName) return orderName;
+
+    if (order is Map) {
+      final code = (order['form_code'] ?? '').toString().trim();
+      if (code.isNotEmpty) return code;
+      final no = (order['new_form_no'] ?? '').toString().trim();
+      if (no.isNotEmpty) return 'Форма №$no';
+    }
+
+    final orderId = (row['order_id'] ?? '').toString().trim();
+    return orderId.isEmpty ? 'Заказ без названия' : 'Заказ $orderId';
+  }
+
+  Future<void> _showReserveDetails(TmcModel item) async {
+    final typeKey = _normalizeType(widget.type);
+    final provider = context.read<WarehouseProvider>();
+    final details = typeKey == 'paint'
+        ? await provider.getPaintReservationsByPaint(item.id)
+        : await provider.paperReserveDetails(item.id);
+    if (!mounted) return;
+    final unit = _reserveUnitLabel(item, typeKey);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Резерв: ${item.description}'),
+        content: SizedBox(
+          width: 420,
+          child: details.isEmpty
+              ? Text(typeKey == 'paint'
+                  ? 'По этой краске нет активного резерва.'
+                  : 'По этой бумаге нет активного резерва.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: details.map((row) {
+                    final rawQty = row['qty'] ?? row['active_reserved_qty'];
+                    final qty = (row['qty'] as num?)?.toDouble() ??
+                        (row['active_reserved_qty'] as num?)?.toDouble() ??
+                        double.tryParse('$rawQty') ??
+                        0;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(10),
+                        color: Colors.grey.shade50,
+                      ),
+                      child: Text(
+                        '${_orderLabelFromReservation(row)} • ${qty.toStringAsFixed(2)} $unit',
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                    );
+                  }).toList(),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -495,6 +693,58 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     return null;
   }
 
+  String _composeDescription(
+      {required Map<String, dynamic> baseRow,
+      required Map<String, dynamic> logRow,
+      required String typeKey,
+      String? itemId}) {
+    bool isPlaceholder(String value) {
+      final normalized = value.trim();
+      return normalized.isEmpty || normalized == '-' || normalized == '—';
+    }
+
+    final baseDescr = (baseRow['description'] ?? '').toString().trim();
+    if (baseDescr.isNotEmpty && !isPlaceholder(baseDescr)) return baseDescr;
+
+    if (typeKey == 'pens') {
+      final parts = <String>[];
+      void addPart(dynamic value) {
+        final s = (value ?? '').toString().trim();
+        if (s.isEmpty || isPlaceholder(s)) return;
+        parts.add(s);
+      }
+
+      addPart(baseRow['name']);
+      addPart(baseRow['color']);
+      if (parts.isEmpty) {
+        addPart(logRow['name']);
+        addPart(logRow['color']);
+      }
+      if (parts.isNotEmpty) {
+        return parts.join(' • ');
+      }
+    }
+
+    final fallback =
+        _pickStr(logRow, ['description', 'name', 'item_name', 'title']);
+    if (fallback != null && fallback.trim().isNotEmpty) {
+      return fallback.trim();
+    }
+
+    if (itemId != null && itemId.isNotEmpty) {
+      try {
+        final provider = context.read<WarehouseProvider>();
+        final tmc = provider.allTmc.firstWhere((e) => e.id == itemId);
+        final desc = (tmc.description ?? '').trim();
+        if (desc.isNotEmpty) {
+          return desc;
+        }
+      } catch (_) {}
+    }
+
+    return '—';
+  }
+
   Future<List<Map<String, dynamic>>> _selectAnyTable({
     required List<String> tables,
     required String selectFields,
@@ -503,20 +753,160 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }) async {
     final s = Supabase.instance.client;
     for (final t in tables) {
-      try {
-        final q = s.from(t).select(selectFields);
-        final data = orderBy == null
-            ? await q
-            : await q.order(orderBy, ascending: ascending);
-        return (data as List).cast<Map<String, dynamic>>();
-      } catch (_) {
-        // попробуем следующий
+      final attemptedOrders = <String?>[
+        orderBy,
+        if (orderBy != null) ...{
+          'created_at',
+          'createdAt',
+          'createdat',
+          'date',
+          'timestamp',
+        },
+        null
+      ];
+
+      final seen = <String?>{};
+      for (final order in attemptedOrders.where((c) => seen.add(c))) {
+        try {
+          final query = s.from(t).select(selectFields);
+          final data = order == null
+              ? await query
+              : await query.order(order, ascending: ascending);
+          return (data as List).cast<Map<String, dynamic>>();
+        } on PostgrestException catch (e) {
+          final code = (e.code?.toString() ?? '').toLowerCase();
+          final message = (e.message?.toString() ?? '').toLowerCase();
+          final details = (e.details?.toString() ?? '').toLowerCase();
+          final orderLower = order?.toLowerCase();
+          final columnMissing = orderLower != null &&
+              (code == '42703' ||
+                  message.contains(orderLower) && message.contains('column') ||
+                  details.contains(orderLower) && details.contains('column'));
+          if (columnMissing) {
+            continue; // попробуем следующую колонку сортировки
+          }
+        } catch (_) {
+          // попробуем следующий order/table
+        }
+        break;
       }
     }
     return [];
   }
 
   /// Универсальный выбор по списку id (пытается по списку таблиц)
+
+  static final RegExp _uuidLikePattern = RegExp(
+    r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b',
+  );
+
+  bool _isMeaningfulOrderLabel(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return false;
+    final lower = normalized.toLowerCase();
+    if (lower == 'null' || lower == 'undefined' || lower == 'nan' || lower == '-') {
+      return false;
+    }
+    if (_uuidLikePattern.hasMatch(normalized)) return false;
+    return true;
+  }
+
+  String _firstOrderLabel(Iterable<dynamic> values) {
+    for (final value in values) {
+      final text = (value ?? '').toString().trim();
+      if (_isMeaningfulOrderLabel(text)) return text;
+    }
+    return '';
+  }
+
+  String? _extractOrderIdFromWriteoffNote(String? note) {
+    final source = (note ?? '').trim();
+    if (source.isEmpty) return null;
+    final match = _uuidLikePattern.firstMatch(source);
+    if (match == null) return null;
+    return match.group(0);
+  }
+
+  Future<Map<String, String>> _loadOrderLabelsByIds(Set<String> orderIds) async {
+    if (orderIds.isEmpty) return const <String, String>{};
+    final labels = <String, String>{};
+    try {
+      final rows = await Supabase.instance.client
+          .from('orders')
+          .select(
+              'id, assignment_id, title, name, order_name, product_name, new_form_no, data, product')
+          .inFilter('id', orderIds.toList(growable: false));
+      if (rows is! List) return labels;
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final orderId = (row['id'] ?? '').toString().trim();
+        if (orderId.isEmpty) continue;
+
+        final dataRaw = row['data'];
+        final data = dataRaw is Map
+            ? Map<String, dynamic>.from(dataRaw as Map)
+            : <String, dynamic>{};
+        final topProductRaw = row['product'];
+        final topProduct = topProductRaw is Map
+            ? Map<String, dynamic>.from(topProductRaw as Map)
+            : <String, dynamic>{};
+        final dataProductRaw = data['product'];
+        final dataProduct = dataProductRaw is Map
+            ? Map<String, dynamic>.from(dataProductRaw as Map)
+            : <String, dynamic>{};
+
+        final label = _firstOrderLabel([
+          row['assignment_id'],
+          row['title'],
+          row['order_name'],
+          row['product_name'],
+          data['title'],
+          data['assignment_id'],
+          data['order_name'],
+          data['product_name'],
+          topProduct['name'],
+          topProduct['title'],
+          dataProduct['name'],
+          dataProduct['title'],
+          row['name'],
+          data['name'],
+        ]);
+
+        final formNo = _firstOrderLabel([row['new_form_no'], data['new_form_no']]);
+        if (label.isNotEmpty) {
+          labels[orderId] = label;
+        } else if (formNo.isNotEmpty) {
+          labels[orderId] = 'Форма №$formNo';
+        }
+      }
+    } catch (_) {
+      return labels;
+    }
+    return labels;
+  }
+
+  String _humanizeWriteoffNote(String? rawNote, Map<String, String> orderLabels) {
+    final note = (rawNote ?? '').trim();
+    if (note.isEmpty) return '';
+    final match = _uuidLikePattern.firstMatch(note);
+    if (match == null) return note;
+    final orderId = match.group(0) ?? '';
+    if (orderId.isEmpty) return note;
+    final label = orderLabels[orderId];
+    if (label == null || label.trim().isEmpty) return note;
+    return note.replaceFirst(orderId, label.trim());
+  }
+
+  String _displayEmployeeName(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return '';
+    final match = _uuidLikePattern.firstMatch(text);
+    if (match != null && match.group(0) == text && text.length > 8) {
+      return text.substring(0, 8);
+    }
+    return text;
+  }
+
   Future<List<Map<String, dynamic>>> _selectByIdsAny({
     required List<String> tables,
     required String fk,
@@ -583,12 +973,27 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
     final baseMap = {for (final r in baseRows) r['id']: r};
 
+    final orderIdsInNotes = logs
+        .map((e) => _extractOrderIdFromWriteoffNote(
+            _pickStr(e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment'])))
+        .whereType<String>()
+        .toSet();
+    final orderLabels = await _loadOrderLabelsByIds(orderIdsInNotes);
+
     return logs.map((e) {
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr = (baseRow['description'] ?? '').toString();
-      final unit = (baseRow['unit'] ?? '').toString();
+      final descr = _composeDescription(
+        baseRow: baseRow,
+        logRow: e,
+        typeKey: typeKey,
+        itemId: baseId,
+      );
+      String unit = (baseRow['unit'] ?? '').toString();
+      if (unit.trim().isEmpty) {
+        unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
+      }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
       final qty = _pickNumDynamic(e, [
@@ -601,17 +1006,20 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           0;
       final dateIso =
           (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
-      final note =
+      final rawNote =
           _pickStr(e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment']);
+      final note = _humanizeWriteoffNote(rawNote, orderLabels);
       final by = _pickStr(e, [
         'by_name',
         'byName',
         'by',
         'user_name',
         'employee_name',
+        'employee',
         'operator',
         'who'
       ]);
+      final isCanceled = _logIsCanceled(e, note);
       return _LogRow(
         id: id,
         description: descr,
@@ -621,7 +1029,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         note: note,
         format: fmt,
         grammage: gram,
-        byName: by,
+        byName: _displayEmployeeName(by),
+        itemId: baseId,
+        action: WarehouseLogAction.writeoff,
+        canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
+        isCanceled: isCanceled,
       );
     }).toList();
   }
@@ -671,12 +1083,25 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr = (baseRow['description'] ?? '').toString();
-      final unit = (baseRow['unit'] ?? '').toString();
+      final descr = _composeDescription(
+        baseRow: baseRow,
+        logRow: e,
+        typeKey: typeKey,
+        itemId: baseId,
+      );
+      String unit = (baseRow['unit'] ?? '').toString();
+      if (unit.trim().isEmpty) {
+        unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
+      }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
-      final qty = _pickNumDynamic(e,
-              [_invMap[typeKey]?['qty'], 'counted_qty', 'quantity', 'qty']) ??
+      final qty = _pickNumDynamic(e, [
+            _invMap[typeKey]?['qty'],
+            'counted_qty',
+            'factual',
+            'quantity',
+            'qty'
+          ]) ??
           0;
       final dateIso =
           (e['created_at'] ?? e['date'] ?? e['timestamp'] ?? '').toString();
@@ -688,9 +1113,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'by',
         'user_name',
         'employee_name',
+        'employee',
         'operator',
         'who'
       ]);
+      final isCanceled = _logIsCanceled(e, note);
       return _LogRow(
         id: id,
         description: descr,
@@ -700,7 +1127,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         note: note,
         format: fmt,
         grammage: gram,
-        byName: by,
+        byName: _displayEmployeeName(by),
+        itemId: baseId,
+        action: WarehouseLogAction.inventory,
+        canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
+        isCanceled: isCanceled,
       );
     }).toList();
   }
@@ -747,8 +1178,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       final id = (e['id'] ?? '').toString();
       final baseId = _pickId(e, fkCandidates);
       final baseRow = baseMap[baseId] ?? {};
-      final descr = (baseRow['description'] ?? '').toString();
-      final unit = (baseRow['unit'] ?? '').toString();
+      final descr = _composeDescription(
+        baseRow: baseRow,
+        logRow: e,
+        typeKey: typeKey,
+        itemId: baseId,
+      );
+      String unit = (baseRow['unit'] ?? '').toString();
+      if (unit.trim().isEmpty) {
+        unit = _pickStr(e, ['unit', 'units', 'unit_name']) ?? '';
+      }
       final fmt = baseRow['format']?.toString();
       final gram = baseRow['grammage']?.toString();
       final qty = _pickNumDynamic(e, [
@@ -769,9 +1208,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         'by',
         'user_name',
         'employee_name',
+        'employee',
         'operator',
         'who'
       ]);
+      final isCanceled = _logIsCanceled(e, note);
       return _LogRow(
         id: id,
         description: descr,
@@ -781,7 +1222,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         note: note,
         format: fmt,
         grammage: gram,
-        byName: by,
+        byName: _displayEmployeeName(by),
+        itemId: baseId,
+        action: WarehouseLogAction.arrival,
+        canUndo: (baseId ?? '').isNotEmpty && !isCanceled,
+        isCanceled: isCanceled,
       );
     }).toList();
   }
@@ -809,6 +1254,23 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       case 'quantity':
         itemComparator = (a, b) => cmpNum(a.quantity, b.quantity);
         break;
+      case 'name':
+        itemComparator = (a, b) {
+          final byDescription = a.description
+              .toLowerCase()
+              .compareTo(b.description.toLowerCase());
+          if (byDescription != 0) return byDescription;
+          final byFormat = (a.format ?? '')
+              .toLowerCase()
+              .compareTo((b.format ?? '').toLowerCase());
+          if (byFormat != 0) return byFormat;
+          final byGrammage = (a.grammage ?? '')
+              .toLowerCase()
+              .compareTo((b.grammage ?? '').toLowerCase());
+          if (byGrammage != 0) return byGrammage;
+          return a.id.compareTo(b.id);
+        };
+        break;
       case 'date':
       default:
         itemComparator = (a, b) => cmpDate(a.date, b.date);
@@ -820,19 +1282,27 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       case 'quantity':
         logComparator = (a, b) => cmpNum(a.quantity, b.quantity);
         break;
+      case 'name':
+        logComparator = (a, b) => cmpDate(a.dateIso, b.dateIso);
+        break;
       case 'date':
       default:
         logComparator = (a, b) => cmpDate(a.dateIso, b.dateIso);
         break;
     }
 
+    final bool itemsDesc = _sortDesc && _sortField != 'name';
+    final bool logsDesc = _sortField == 'name' ? true : _sortDesc;
+
     setState(() {
       _items.sort(itemComparator);
+      if (itemsDesc) {
+        _items = _items.reversed.toList();
+      }
       _writeoffs.sort(logComparator);
       _inventories.sort(logComparator);
       _arrivals.sort(logComparator);
-      if (_sortDesc) {
-        _items = _items.reversed.toList();
+      if (logsDesc) {
         _writeoffs = _writeoffs.reversed.toList();
         _inventories = _inventories.reversed.toList();
         _arrivals = _arrivals.reversed.toList();
@@ -840,10 +1310,71 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     });
   }
 
+  void _openDeletedRecords() {
+    final typeKey = _normalizeType(widget.type);
+    final entityType = _deletedEntityTypes[typeKey];
+    if (entityType == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DeletedRecordsScreen(
+          entityType: entityType,
+          title: 'Удалённые записи — ${widget.title}',
+        ),
+      ),
+    );
+  }
+
   /// Фильтр по тексту для позиций
   List<TmcModel> _applyFilterItems(List<TmcModel> src) {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return src;
+    bool matchesPaper(TmcModel e) {
+      final format = (e.format ?? '').toLowerCase().trim();
+      final grammage = (e.grammage ?? '').toLowerCase().trim();
+      final searchableParts = [
+        e.description,
+        if (format.isNotEmpty) format,
+        if (grammage.isNotEmpty) grammage,
+      ]
+          .join(' ')
+          .toLowerCase();
+
+      // Все слова из запроса должны присутствовать в одной строке
+      final tokens = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+      return tokens.every((token) => searchableParts.contains(token));
+    }
+
+    return src.where((e) {
+      final baseMatch =
+          e.description.toLowerCase().contains(q) || (e.note ?? '').toLowerCase().contains(q);
+      if (baseMatch) return true;
+
+      // Расширенный поиск только для бумаги: по комбинациям «наименование + формат + граммаж»
+      if (_normalizeType(widget.type) == 'paper') {
+        return matchesPaper(e);
+      }
+      return false;
+    }).toList();
+  }
+
+  /// Фильтр по тексту для логов
+  List<_LogRow> _applyFilterLogs(List<_LogRow> src) {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return src;
+    if (_normalizeType(widget.type) == 'paper') {
+      final tokens = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+      return src.where((e) {
+        final parts = [
+          e.description,
+          e.format ?? '',
+          e.grammage ?? '',
+          e.note ?? '',
+          e.unit,
+          e.byName ?? '',
+        ].join(' ').toLowerCase();
+        return tokens.every(parts.contains);
+      }).toList();
+    }
     return src
         .where((e) =>
             e.description.toLowerCase().contains(q) ||
@@ -851,15 +1382,42 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         .toList();
   }
 
-  /// Фильтр по тексту для логов
-  List<_LogRow> _applyFilterLogs(List<_LogRow> src) {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return src;
-    return src
-        .where((e) =>
-            e.description.toLowerCase().contains(q) ||
-            (e.note ?? '').toLowerCase().contains(q))
-        .toList();
+  bool _toBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final v = value.toLowerCase().trim();
+      return v == 'true' || v == '1' || v == 'yes';
+    }
+    return false;
+  }
+
+  bool _logIsCanceled(Map<String, dynamic> row, String? note) {
+    final marker = WarehouseProvider.canceledMarker.toLowerCase();
+    final noteLower = (note ?? '').toLowerCase();
+    return _toBool(row['is_canceled']) ||
+        _toBool(row['is_cancelled']) ||
+        _toBool(row['canceled']) ||
+        _toBool(row['cancelled']) ||
+        noteLower.contains(marker);
+  }
+
+  MaterialStateProperty<Color?> _logRowColor(bool isCanceled) {
+    return MaterialStateProperty.resolveWith((states) {
+      if (isCanceled) {
+        return states.contains(MaterialState.hovered)
+            ? Colors.grey.shade300
+            : Colors.grey.shade200;
+      }
+      return warehouseRowHoverColor.resolve(states);
+    });
+  }
+
+  Text _logCellText(String value, bool isCanceled) {
+    return Text(
+      value,
+      style: isCanceled ? const TextStyle(color: Colors.grey) : null,
+    );
   }
 
   Future<void> _deleteTable() async {
@@ -919,6 +1477,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final typeKey = _normalizeType(widget.type);
+    const protectedTypes = {'paper', 'stationery', 'paint', 'pens'};
+    final canDeleteTable = !protectedTypes.contains(typeKey);
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
@@ -932,13 +1493,22 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep_outlined),
+            tooltip: 'Удалённые записи',
+            onPressed: _openDeletedRecords,
+          ),
           PopupMenuButton<String>(
             tooltip: 'Поле сортировки',
             onSelected: (v) {
-              setState(() => _sortField = v);
+              setState(() {
+                _sortField = v;
+                _sortDesc = v == 'name' ? false : true;
+              });
               _resort();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'name', child: Text('По алфавиту (список)')),
               PopupMenuItem(value: 'date', child: Text('По дате/времени')),
               PopupMenuItem(value: 'quantity', child: Text('По количеству')),
             ],
@@ -958,10 +1528,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               icon: const Icon(Icons.refresh),
               tooltip: 'Обновить данные',
               onPressed: _loadAll),
-          IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: 'Удалить таблицу',
-              onPressed: _deleteTable),
+          if (canDeleteTable)
+            IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Удалить таблицу',
+                onPressed: _deleteTable),
         ],
       ),
       body: Column(
@@ -973,7 +1544,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               decoration: InputDecoration(
                 hintText: 'Поиск…',
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: (_normalizeType(widget.type) == 'paper')
+                suffixIcon: (typeKey == 'paper')
                     ? IconButton(
                         icon: const Icon(Icons.filter_list),
                         onPressed: _openPaperFilters)
@@ -1008,10 +1579,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// --- Вкладка «Список» ---
   Widget _listTab() {
-    final base = _normalizeType(widget.type) == 'paper'
+    final typeKey = _normalizeType(widget.type);
+    final base = typeKey == 'paper'
         ? _applyPaperMultiFilters(List<TmcModel>.from(_items))
         : List<TmcModel>.from(_items);
     final items = _applyFilterItems(base);
+    final showReserveColumns = _isReserveAwareType(typeKey);
+    final showAvailableColumn = typeKey == 'paint';
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Card(
@@ -1034,7 +1608,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       if (items.any((i) =>
                           i.grammage != null && i.grammage!.trim().isNotEmpty))
                         const DataColumn(label: Text('Граммаж')),
-                      if (_normalizeType(widget.type) != 'paper' &&
+                      if (typeKey != 'paper' &&
                           items.any((i) => i.weight != null))
                         const DataColumn(label: Text('Вес (кг)')),
                       if (items.any(
@@ -1043,6 +1617,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       if (widget.enablePhoto)
                         const DataColumn(label: Text('Фото')),
                       const DataColumn(label: Text('Действия')),
+                      if (showAvailableColumn)
+                        const DataColumn(label: Text('Доступно')),
+                      if (showReserveColumns)
+                        const DataColumn(label: Text('В резерве')),
                     ],
                     rows: List<DataRow>.generate(items.length, (i) {
                       final item = items[i];
@@ -1051,10 +1629,23 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                           : (v is int
                               ? '$v'
                               : (v as double).toStringAsFixed(frac));
-                      return DataRow(cells: [
+                      return DataRow(color: warehouseRowHoverColor, cells: [
                         DataCell(Text('${i + 1}')),
                         DataCell(Text(item.description)),
-                        DataCell(Text(fmtNum(item.quantity, frac: 2))),
+                        DataCell(
+                          typeKey == 'paper'
+                              ? FutureBuilder<double>(
+                                  future: _reservedQtyForItem(item, typeKey),
+                                  builder: (context, snapshot) {
+                                    final reserved = snapshot.data ?? 0;
+                                    final available = item.quantity - reserved;
+                                    final safeAvailable =
+                                        available < 0 ? 0 : available;
+                                    return Text(fmtNum(safeAvailable, frac: 2));
+                                  },
+                                )
+                              : Text(fmtNum(item.quantity, frac: 2)),
+                        ),
                         DataCell(Text(item.unit)),
                         if (items.any((i) =>
                             i.format != null && i.format!.trim().isNotEmpty))
@@ -1063,7 +1654,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                             i.grammage != null &&
                             i.grammage!.trim().isNotEmpty))
                           DataCell(Text(item.grammage ?? '')),
-                        if (_normalizeType(widget.type) != 'paper' &&
+                        if (typeKey != 'paper' &&
                             items.any((i) => i.weight != null))
                           DataCell(Text(fmtNum(item.weight, frac: 2))),
                         if (items.any(
@@ -1127,6 +1718,41 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                               tooltip: 'Удалить',
                               onPressed: () => _deleteItem(item)),
                         ])),
+                        if (showAvailableColumn)
+                          DataCell(Text(
+                            fmtNum(item.availableQty < 0 ? 0 : item.availableQty,
+                                frac: 2),
+                          )),
+                        if (showReserveColumns)
+                          DataCell(
+                            FutureBuilder<double>(
+                              future: _reservedQtyForItem(item, typeKey),
+                              builder: (context, snapshot) {
+                                final reserved = snapshot.data ?? item.reservedQty;
+                                final unit = _reserveUnitLabel(item, typeKey);
+                                final reserveLabel =
+                                    '${reserved.toStringAsFixed(2)} $unit';
+                                return TextButton(
+                                  style: ButtonStyle(
+                                    foregroundColor:
+                                        WidgetStateProperty.resolveWith(
+                                      (states) => states
+                                              .contains(WidgetState.disabled)
+                                          ? Colors.red.shade200
+                                          : Colors.red.shade700,
+                                    ),
+                                    overlayColor: WidgetStateProperty.all(
+                                      Colors.red.withValues(alpha: 0.12),
+                                    ),
+                                  ),
+                                  onPressed: reserved > 0
+                                      ? () => _showReserveDetails(item)
+                                      : null,
+                                  child: Text(reserveLabel),
+                                );
+                              },
+                            ),
+                          ),
                       ]);
                     }),
                   ),
@@ -1152,6 +1778,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действие')),
     ];
 
     return Padding(
@@ -1166,18 +1793,41 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   columns: columns,
                   rows: List<DataRow>.generate(rows.length, (i) {
                     final r = rows[i];
+                    final isCanceled = r.isCanceled;
                     final cells = <DataCell>[
-                      DataCell(Text('${i + 1}')),
-                      DataCell(Text(r.description)),
-                      DataCell(Text(r.quantity.toStringAsFixed(2))),
-                      DataCell(Text(r.unit)),
-                      if (showFmt) DataCell(Text(r.format ?? '')),
-                      if (showGram) DataCell(Text(r.grammage ?? '')),
-                      DataCell(Text(_fmtDate(r.dateIso))),
-                      DataCell(Text(r.note ?? '')),
-                      DataCell(Text(r.byName ?? '')),
+                      DataCell(_logCellText('${i + 1}', isCanceled)),
+                      DataCell(_logCellText(r.description, isCanceled)),
+                      DataCell(_logCellText(
+                          r.quantity.toStringAsFixed(2), isCanceled)),
+                      DataCell(_logCellText(r.unit, isCanceled)),
+                      if (showFmt)
+                        DataCell(_logCellText(r.format ?? '', isCanceled)),
+                      if (showGram)
+                        DataCell(_logCellText(r.grammage ?? '', isCanceled)),
+                      DataCell(_logCellText(_fmtDate(r.dateIso), isCanceled)),
+                      DataCell(_logCellText(r.note ?? '', isCanceled)),
+                      DataCell(_logCellText(r.byName ?? '', isCanceled)),
+                      DataCell(r.canUndo
+                          ? TextButton.icon(
+                              onPressed: () => _undoLog(r),
+                              icon: const Icon(Icons.undo),
+                              label: const Text('Отмена'),
+                            )
+                          : const SizedBox.shrink()),
                     ];
-                    return DataRow(cells: cells);
+
+                    while (cells.length < columns.length) {
+                      cells.add(const DataCell(Text('')));
+                    }
+
+                    if (cells.length > columns.length) {
+                      cells.removeRange(columns.length, cells.length);
+                    }
+
+                    return DataRow(
+                      color: _logRowColor(isCanceled),
+                      cells: cells,
+                    );
                   }),
                 ),
               ),
@@ -1201,6 +1851,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       const DataColumn(label: Text('Дата')),
       const DataColumn(label: Text('Комментарий')),
       const DataColumn(label: Text('Сотрудник')),
+      const DataColumn(label: Text('Действие')),
     ];
 
     return Padding(
@@ -1215,18 +1866,41 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   columns: columns,
                   rows: List<DataRow>.generate(rows.length, (i) {
                     final r = rows[i];
+                    final isCanceled = r.isCanceled;
                     final cells = <DataCell>[
-                      DataCell(Text('${i + 1}')),
-                      DataCell(Text(r.description)),
-                      DataCell(Text(r.quantity.toStringAsFixed(2))),
-                      DataCell(Text(r.unit)),
-                      if (showFmt) DataCell(Text(r.format ?? '')),
-                      if (showGram) DataCell(Text(r.grammage ?? '')),
-                      DataCell(Text(_fmtDate(r.dateIso))),
-                      DataCell(Text(r.note ?? '')),
-                      DataCell(Text(r.byName ?? '')),
+                      DataCell(_logCellText('${i + 1}', isCanceled)),
+                      DataCell(_logCellText(r.description, isCanceled)),
+                      DataCell(_logCellText(
+                          r.quantity.toStringAsFixed(2), isCanceled)),
+                      DataCell(_logCellText(r.unit, isCanceled)),
+                      if (showFmt)
+                        DataCell(_logCellText(r.format ?? '', isCanceled)),
+                      if (showGram)
+                        DataCell(_logCellText(r.grammage ?? '', isCanceled)),
+                      DataCell(_logCellText(_fmtDate(r.dateIso), isCanceled)),
+                      DataCell(_logCellText(r.note ?? '', isCanceled)),
+                      DataCell(_logCellText(r.byName ?? '', isCanceled)),
+                      DataCell(r.canUndo
+                          ? TextButton.icon(
+                              onPressed: () => _undoLog(r),
+                              icon: const Icon(Icons.undo),
+                              label: const Text('Отмена'),
+                            )
+                          : const SizedBox.shrink()),
                     ];
-                    return DataRow(cells: cells);
+
+                    while (cells.length < columns.length) {
+                      cells.add(const DataCell(Text('')));
+                    }
+
+                    if (cells.length > columns.length) {
+                      cells.removeRange(columns.length, cells.length);
+                    }
+
+                    return DataRow(
+                      color: _logRowColor(isCanceled),
+                      cells: cells,
+                    );
                   }),
                 ),
               ),
@@ -1264,18 +1938,34 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                   columns: columns,
                   rows: List<DataRow>.generate(rows.length, (i) {
                     final r = rows[i];
+                    final isCanceled = r.isCanceled;
                     final cells = <DataCell>[
-                      DataCell(Text('${i + 1}')),
-                      DataCell(Text(r.description)),
-                      DataCell(Text(r.quantity.toStringAsFixed(2))),
-                      DataCell(Text(r.unit)),
-                      if (showFmt) DataCell(Text(r.format ?? '')),
-                      if (showGram) DataCell(Text(r.grammage ?? '')),
-                      DataCell(Text(_fmtDate(r.dateIso))),
-                      DataCell(Text(r.note ?? '')),
-                      DataCell(Text(r.byName ?? '')),
+                      DataCell(_logCellText('${i + 1}', isCanceled)),
+                      DataCell(_logCellText(r.description, isCanceled)),
+                      DataCell(_logCellText(
+                          r.quantity.toStringAsFixed(2), isCanceled)),
+                      DataCell(_logCellText(r.unit, isCanceled)),
+                      if (showFmt)
+                        DataCell(_logCellText(r.format ?? '', isCanceled)),
+                      if (showGram)
+                        DataCell(_logCellText(r.grammage ?? '', isCanceled)),
+                      DataCell(_logCellText(_fmtDate(r.dateIso), isCanceled)),
+                      DataCell(_logCellText(r.note ?? '', isCanceled)),
+                      DataCell(_logCellText(r.byName ?? '', isCanceled)),
                     ];
-                    return DataRow(cells: cells);
+
+                    while (cells.length < columns.length) {
+                      cells.add(const DataCell(Text('')));
+                    }
+
+                    if (cells.length > columns.length) {
+                      cells.removeRange(columns.length, cells.length);
+                    }
+
+                    return DataRow(
+                      color: _logRowColor(isCanceled),
+                      cells: cells,
+                    );
                   }),
                 ),
               ),
@@ -1285,13 +1975,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// Форматирование даты для логов.
   String _fmtDate(String iso) {
-    try {
-      final dt = DateTime.tryParse(iso) ?? DateTime.now();
-      return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')} '
-          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return iso;
-    }
+    final formatted = formatKostanayTimestamp(iso, fallback: '—');
+    if (formatted == '—') return formatted;
+    final parts = formatted.split(' ');
+    if (parts.length < 2) return formatted;
+    final dateParts = parts.first.split('-');
+    if (dateParts.length != 3) return formatted;
+    return '${dateParts[2]}.${dateParts[1]} ${parts[1]}';
   }
 
   /// Диалог добавления новой записи.
@@ -1317,6 +2007,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       return;
     }
     final c = TextEditingController();
+    final unitSuffix = item.unit.trim().isEmpty ? '' : ' (${item.unit})';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1324,7 +2015,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         content: TextField(
           controller: c,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Сколько добавить'),
+          decoration: InputDecoration(labelText: 'Сколько добавить$unitSuffix'),
         ),
         actions: [
           TextButton(
@@ -1424,6 +2115,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
+  String _paperDetails(TmcModel item) {
+    final parts = <String>[];
+    final format = (item.format ?? '').trim();
+    if (format.isNotEmpty) parts.add(format);
+    final grammage = (item.grammage ?? '').trim();
+    if (grammage.isNotEmpty) parts.add('$grammage ');
+    return parts.join(' • ');
+  }
+
   Future<void> _increasePaper(TmcModel item) async {
     String method = 'meters';
     final metersC = TextEditingController();
@@ -1433,6 +2133,13 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     double? grammage =
         double.tryParse((item.grammage ?? '').replaceAll(',', '.'));
     final formKey = GlobalKey<FormState>();
+    String? diameterColor;
+    final nameLow = item.description.toLowerCase();
+    if (nameLow.contains('бел')) {
+      diameterColor = 'white';
+    } else if (nameLow.contains('коричнев')) {
+      diameterColor = 'brown';
+    }
 
     double? _computeFromWeight(double wKg, double fmt, double g) {
       return ((wKg * 1000) / g) / (fmt / 100.0);
@@ -1450,7 +2157,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: Text('Пополнить бумагу: ${item.description}'),
+          title: Text(
+              'Пополнить бумагу: ${item.description}${_paperDetails(item).isNotEmpty ? ' (${_paperDetails(item)})' : ''}'),
           content: Form(
             key: formKey,
             child: SingleChildScrollView(
@@ -1512,8 +2220,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                           grammage = double.tryParse(v.replaceAll(',', '.')),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: 'Грамаж (г/м²)'),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
                     ),
                   ],
                   if (method == 'diameter') ...[
@@ -1546,8 +2253,26 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                           grammage = double.tryParse(v.replaceAll(',', '.')),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: diameterColor,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'white', child: Text('Белая бумага')),
+                        DropdownMenuItem(
+                            value: 'brown', child: Text('Коричневая бумага')),
+                      ],
+                      onChanged: (v) => setS(() => diameterColor = v),
                       decoration:
-                          const InputDecoration(labelText: 'Грамаж (г/м²)'),
+                          const InputDecoration(labelText: 'Тип бумаги'),
+                      validator: (v) {
+                        if (method == 'diameter' && (v == null || v.isEmpty)) {
+                          return 'Выберите тип бумаги';
+                        }
+                        return null;
+                      },
                     ),
                   ],
                 ],
@@ -1571,9 +2296,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (ok != true) return;
 
     double addMeters = 0;
-    final nameLow = item.description.toLowerCase();
-    final isWhite = nameLow.contains('белый') || nameLow.contains(' бел');
-    final isBrown = nameLow.contains('коричнев');
 
     if (method == 'meters') {
       addMeters = double.tryParse(metersC.text.replaceAll(',', '.')) ?? 0;
@@ -1596,7 +2318,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         return;
       }
       final d = double.tryParse(diameterC.text.replaceAll(',', '.')) ?? 0;
-      final white = isWhite && !isBrown;
+      if (diameterColor == null || diameterColor!.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Выберите тип бумаги')));
+        }
+        return;
+      }
+      final white = diameterColor == 'white';
       addMeters = _computeFromDiameter(d, format!, grammage!, white) ?? 0;
     }
     if (addMeters <= 0) return;
@@ -1608,10 +2337,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   Future<void> _writeOff(TmcModel item) async {
     final qtyC = TextEditingController();
     final commentC = TextEditingController();
+    final unitSuffix = item.unit.trim().isEmpty ? '' : ' (${item.unit})';
+    final isPaper = _normalizeType(widget.type) == 'paper';
+    final paperDetails = isPaper ? _paperDetails(item) : '';
+    final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
     final result = await showDialog<double?>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Списать: ${item.description}'),
+        title: Text('Списать: ${item.description}$titleSuffix'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1619,7 +2352,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               controller: qtyC,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Количество'),
+              decoration: InputDecoration(labelText: 'Количество$unitSuffix'),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -1657,6 +2390,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
 
     final typeKey = _normalizeType(widget.type);
+    final unitLabel = isPaper ? 'м' : item.unit;
     try {
       if (typeKey == 'stationery' || typeKey == 'pens') {
         final provider = Provider.of<WarehouseProvider>(context, listen: false);
@@ -1694,45 +2428,226 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   /// Инвентаризация
   Future<void> _inventory(TmcModel item) async {
     final qtyC = TextEditingController(text: item.quantity.toStringAsFixed(2));
+    final weightC = TextEditingController();
+    final diameterC = TextEditingController();
     final noteC = TextEditingController();
+    final isPaper = _normalizeType(widget.type) == 'paper';
+    final paperDetails = isPaper ? _paperDetails(item) : '';
+    final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
+    String method = 'meters';
+    double? format = double.tryParse((item.format ?? '').replaceAll(',', '.'));
+    double? grammage =
+        double.tryParse((item.grammage ?? '').replaceAll(',', '.'));
+    String? diameterColor;
+    final nameLow = item.description.toLowerCase();
+    if (nameLow.contains('бел')) {
+      diameterColor = 'white';
+    } else if (nameLow.contains('коричнев')) {
+      diameterColor = 'brown';
+    }
+    final formKey = GlobalKey<FormState>();
+
+    double? _computeFromWeight(double wKg, double fmt, double g) {
+      return ((wKg * 1000) / g) / (fmt / 100.0);
+    }
+
+    double? _computeFromDiameter(double d, double fmt, double g, bool isWhite) {
+      final r_m = (d / 2.0) / 100.0;
+      final area_m2 = r_m * r_m * 3.14;
+      final k = (isWhite ? 8.8 : 7.75) * fmt;
+      final res = ((area_m2 * k) * 1000.0) / g / (fmt / 100.0);
+      return res;
+    }
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Инвентаризация: ${item.description}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyC,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration:
-                  const InputDecoration(labelText: 'Фактическое количество'),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Text('Инвентаризация: ${item.description}$titleSuffix'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isPaper) ...[
+                    DropdownButtonFormField<String>(
+                      value: method,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'meters', child: Text('Ввести метры')),
+                        DropdownMenuItem(
+                            value: 'weight', child: Text('По весу (кг)')),
+                        DropdownMenuItem(
+                            value: 'diameter', child: Text('По диаметру (см)')),
+                      ],
+                      onChanged: (v) => setS(() => method = v ?? 'meters'),
+                      decoration: const InputDecoration(labelText: 'Способ'),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (!isPaper || method == 'meters')
+                    TextFormField(
+                      controller: qtyC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                          labelText: 'Фактическое количество'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d < 0)
+                            ? 'Укажите количество'
+                            : null;
+                      },
+                    ),
+                  if (isPaper && method == 'weight') ...[
+                    TextFormField(
+                      controller: weightC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Вес (кг)'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите вес' : null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.format ?? ''),
+                      onChanged: (v) =>
+                          format = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Формат (см)'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.grammage ?? ''),
+                      onChanged: (v) =>
+                          grammage = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
+                    ),
+                  ],
+                  if (isPaper && method == 'diameter') ...[
+                    TextFormField(
+                      controller: diameterC,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Диаметр (см)'),
+                      validator: (v) {
+                        final d =
+                            double.tryParse((v ?? '').replaceAll(',', '.'));
+                        return (d == null || d <= 0) ? 'Укажите диаметр' : null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.format ?? ''),
+                      onChanged: (v) =>
+                          format = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: 'Формат (см)'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: (item.grammage ?? ''),
+                      onChanged: (v) =>
+                          grammage = double.tryParse(v.replaceAll(',', '.')),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Грамаж ()'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: diameterColor,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'white', child: Text('Белая бумага')),
+                        DropdownMenuItem(
+                            value: 'brown', child: Text('Коричневая бумага')),
+                      ],
+                      onChanged: (v) => setS(() => diameterColor = v),
+                      decoration:
+                          const InputDecoration(labelText: 'Тип бумаги'),
+                      validator: (v) {
+                        if (method == 'diameter' && (v == null || v.isEmpty)) {
+                          return 'Выберите тип бумаги';
+                        }
+                        return null;
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: noteC,
+                    decoration: const InputDecoration(
+                        labelText: 'Заметка (необязательно)'),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: noteC,
-              decoration:
-                  const InputDecoration(labelText: 'Заметка (необязательно)'),
-            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () {
+                  if (!isPaper || formKey.currentState!.validate()) {
+                    Navigator.pop(context, true);
+                  }
+                },
+                child: const Text('Сохранить')),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Сохранить')),
-        ],
       ),
     );
 
     if (ok != true) return;
-    final factual = double.tryParse(qtyC.text.replaceAll(',', '.'));
+    double? factual = double.tryParse(qtyC.text.replaceAll(',', '.'));
+    if (isPaper) {
+      if (method == 'weight') {
+        if (format == null || format == 0 || grammage == null || grammage == 0) {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Укажите формат и грамаж')));
+          }
+          return;
+        }
+        final w = double.tryParse(weightC.text.replaceAll(',', '.')) ?? 0;
+        factual = _computeFromWeight(w, format!, grammage!);
+      } else if (method == 'diameter') {
+        if (format == null || format == 0 || grammage == null || grammage == 0) {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Укажите формат и грамаж')));
+          }
+          return;
+        }
+        final d = double.tryParse(diameterC.text.replaceAll(',', '.')) ?? 0;
+        if (diameterColor == null || diameterColor!.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Выберите тип бумаги')));
+          }
+          return;
+        }
+        final white = diameterColor == 'white';
+        factual = _computeFromDiameter(d, format!, grammage!, white);
+      }
+    }
+
     if (factual == null || factual < 0) return;
 
     final typeKey = _normalizeType(widget.type);
+    final unitLabel = isPaper ? 'м' : item.unit;
     try {
       if (typeKey == 'stationery' || typeKey == 'pens') {
         final provider = Provider.of<WarehouseProvider>(context, listen: false);
@@ -1759,6 +2674,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         ];
         final qtyCandidates = <String>[
           'counted_qty',
+          'factual',
           'quantity',
           'qty',
           if (_invMap[typeKey]?['qty'] != null) _invMap[typeKey]!['qty']!
@@ -1818,7 +2734,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text(
-                  'Инвентаризация сохранена (${factual.toStringAsFixed(2)} ${item.unit})')),
+                  'Инвентаризация сохранена (${factual.toStringAsFixed(2)} $unitLabel)')),
         );
       }
     } catch (e) {
@@ -1870,11 +2786,26 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   Future<void> _deleteItem(TmcModel item) async {
+    final reasonC = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Удалить запись?'),
-        content: Text('Будет удалена «${item.description}».'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Будет удалена «${item.description}».'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonC,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Причина удаления (необязательно)',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -1886,8 +2817,17 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       ),
     );
     if (ok == true) {
+      final typeKey = _normalizeType(widget.type);
+      final entityType = _deletedEntityTypes[typeKey] ?? 'tmc_generic';
+      await DeletedRecordsRepository.archive(
+        entityType: entityType,
+        entityId: item.id,
+        payload: item.toMap(),
+        reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
+        extra: {'type_key': typeKey},
+      );
       await Provider.of<WarehouseProvider>(context, listen: false)
-          .deleteTmc(item.id);
+          .deleteTmc(item.id, type: widget.type);
       await _loadAll();
     }
   }
@@ -1897,6 +2837,82 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     // TODO: сюда можно добавить проверку порогов и показ SnackBar/диалога.
     // Метод оставлен пустым намеренно, чтобы убрать ошибку "не определён".
   }
+
+  void _showSnack(String message, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Colors.red.shade700 : null,
+      ),
+    );
+  }
+
+  void _setUndoEnabled(String logId, bool enabled) {
+    if (!mounted) return;
+    setState(() {
+      _writeoffs = _writeoffs
+          .map((e) => e.id == logId ? e.copyWith(canUndo: enabled) : e)
+          .toList();
+      _arrivals = _arrivals
+          .map((e) => e.id == logId ? e.copyWith(canUndo: enabled) : e)
+          .toList();
+      _inventories = _inventories
+          .map((e) => e.id == logId ? e.copyWith(canUndo: enabled) : e)
+          .toList();
+    });
+  }
+
+  Future<void> _undoLog(_LogRow row) async {
+    if ((row.itemId ?? '').isEmpty) {
+      _showSnack('Невозможно определить позицию для отмены', error: true);
+      return;
+    }
+
+    _setUndoEnabled(row.id, false);
+    final provider = context.read<WarehouseProvider>();
+
+    try {
+      switch (row.action) {
+        case WarehouseLogAction.writeoff:
+          await provider.cancelWriteoff(
+            logId: row.id,
+            itemId: row.itemId!,
+            qty: row.quantity,
+            typeHint: widget.type,
+            sourceTable: row.sourceTable,
+          );
+          _showSnack('Списание отменено');
+          break;
+        case WarehouseLogAction.arrival:
+          await provider.cancelArrival(
+            logId: row.id,
+            itemId: row.itemId!,
+            qty: row.quantity,
+            typeHint: widget.type,
+            sourceTable: row.sourceTable,
+          );
+          _showSnack('Приход отменён');
+          break;
+        case WarehouseLogAction.inventory:
+          await provider.cancelInventory(
+            logId: row.id,
+            itemId: row.itemId!,
+            qty: row.quantity,
+            typeHint: widget.type,
+            sourceTable: row.sourceTable,
+          );
+          _showSnack('Инвентаризация отменена');
+          break;
+        default:
+          _showSnack('Тип действия не поддерживается', error: true);
+      }
+      await _loadAll();
+    } catch (e) {
+      _setUndoEnabled(row.id, true);
+      _showSnack(e.toString().replaceFirst('Exception: ', ''), error: true);
+    }
+  }
 }
 
 class _LogRow {
@@ -1905,6 +2921,13 @@ class _LogRow {
   final double quantity;
   final String unit;
   final String dateIso;
+
+  final String? itemId;
+  final String? sourceTable;
+  final WarehouseLogAction? action;
+  final bool canUndo;
+  final bool isCanceled;
+
   final String? note;
   final String? format;
   final String? grammage;
@@ -1916,9 +2939,33 @@ class _LogRow {
     required this.quantity,
     required this.unit,
     required this.dateIso,
+    this.itemId,
+    this.sourceTable,
+    this.action,
+    this.canUndo = false,
+    this.isCanceled = false,
     this.note,
     this.format,
     this.grammage,
     this.byName,
   });
+
+  _LogRow copyWith({bool? canUndo, bool? isCanceled}) {
+    return _LogRow(
+      id: id,
+      description: description,
+      quantity: quantity,
+      unit: unit,
+      dateIso: dateIso,
+      itemId: itemId,
+      sourceTable: sourceTable,
+      action: action,
+      canUndo: canUndo ?? this.canUndo,
+      isCanceled: isCanceled ?? this.isCanceled,
+      note: note,
+      format: format,
+      grammage: grammage,
+      byName: byName,
+    );
+  }
 }

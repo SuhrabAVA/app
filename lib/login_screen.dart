@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -11,7 +13,7 @@ import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
 import 'utils/auth_helper.dart';
 import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
-import 'modules/analytics/analytics_provider.dart';
+import 'services/audit_log_service.dart';
 import 'services/user_service.dart';
 import 'services/auth_extras.dart';
 
@@ -58,8 +60,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _bootstrapping = true;
-  String?
-      _bootstrapError; // для отображения подсказки, если RLS блокирует записи
 
   @override
   void initState() {
@@ -94,14 +94,23 @@ class _LoginScreenState extends State<LoginScreen> {
           try {
             await pr.ensureManagerPosition();
           } catch (e) {
-            _bootstrapError ??=
-                'Нет прав на запись в positions (ensureManagerPosition).';
+            debugPrint(
+              'Нет прав на запись в positions (ensureManagerPosition): $e',
+            );
           }
           try {
             await pr.ensureWarehouseHeadPosition();
           } catch (e) {
-            _bootstrapError ??=
-                'Нет прав на запись в positions (ensureWarehouseHeadPosition).';
+            debugPrint(
+              'Нет прав на запись в positions (ensureWarehouseHeadPosition): $e',
+            );
+          }
+          try {
+            await pr.ensureCmmSpecialistPosition();
+          } catch (e) {
+            debugPrint(
+              'Нет прав на запись в positions (ensureCmmSpecialistPosition): $e',
+            );
           }
         }
 
@@ -109,7 +118,7 @@ class _LoginScreenState extends State<LoginScreen> {
         try {
           await pr.fetchEmployees();
         } catch (e) {
-          _bootstrapError ??= 'Нет прав на чтение сотрудников. Проверьте RLS.';
+          debugPrint('Нет прав на чтение сотрудников. Проверьте RLS: $e');
         }
 
         if (mounted) {
@@ -134,17 +143,20 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[100],
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -161,33 +173,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(fontSize: 14, color: Colors.grey),
                   ),
                   const SizedBox(height: 16),
-                  if (_bootstrapError != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: Colors.orange.withOpacity(0.1),
-                        border: Border.all(color: Colors.orange.shade300),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.info_outline, color: Colors.orange),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              // Подсказка: это подсвечивает RLS-проблему, но не ломает UI
-                              'Подсказка: $_bootstrapError\n'
-                              'Если это dev-сервер — разрешите запись через RLS-политику (SQL ниже), '
-                              'или авторизуйтесь в Supabase перед вставкой.',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
                   TextField(
                     controller: _searchController,
                     decoration: const InputDecoration(
@@ -209,7 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         final List<_UserItem> users = [];
 
                         for (final e in personnel.employees) {
-                          // можно отфильтровать уволенных: if (e.isFired) continue;
+                          if (e.isFired) continue;
 
                           String positionName = '';
                           if (e.positionIds.isNotEmpty) {
@@ -229,6 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             name: fullName.isEmpty ? 'Без имени' : fullName,
                             position: positionName,
                             password: e.password,
+                            photoUrl: e.photoUrl,
                             isTechLeader: e.positionIds.contains(kTechLeaderId),
                           ));
                         }
@@ -296,10 +282,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                       CircleAvatar(
                                         radius: 20,
                                         backgroundColor: Colors.grey.shade200,
-                                        child: const Icon(
-                                          Icons.person_outline,
-                                          color: Colors.grey,
-                                        ),
+                                        foregroundImage:
+                                            (user.photoUrl != null && user.photoUrl!.isNotEmpty)
+                                                ? NetworkImage(user.photoUrl!)
+                                                : null,
+                                        child: (user.photoUrl == null ||
+                                                user.photoUrl!.isEmpty)
+                                            ? const Icon(
+                                                Icons.person_outline,
+                                                color: Colors.grey,
+                                              )
+                                            : null,
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
@@ -341,6 +334,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       },
                     ),
                 ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -352,144 +347,195 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Показывает диалог ввода пароля и при успешном вводе
   /// выполняет навигацию в нужный модуль.
   Future<void> _promptPassword(BuildContext context, _UserItem user) async {
-    final TextEditingController controller = TextEditingController();
-    String? error;
-
-    await showDialog(
+    final passwordAccepted = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: Text('Введите пароль для ${user.name}'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Пароль'),
-                  ),
-                  if (error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      error!,
-                      style: const TextStyle(color: Colors.red, fontSize: 12),
-                    ),
-                  ],
-                ],
+      builder: (_) => _PasswordDialog(user: user),
+    );
+
+    if (passwordAccepted != true || !mounted) {
+      return;
+    }
+
+    final rootNavigator = Navigator.of(context);
+    final personnel = context.read<PersonnelProvider>();
+
+    // Запоминаем пользователя.
+    if (user.isTechLeader) {
+      AuthHelper.setTechLeader(name: user.name);
+    } else {
+      AuthHelper.setEmployee(id: user.id, name: user.name);
+    }
+
+    // Логируем вход.
+    final analytics = AuditLogService();
+    final emp = user.isTechLeader
+        ? null
+        : personnel.employees.firstWhere(
+            (e) => e.id == user.id,
+            orElse: () => EmployeeModel(
+              id: user.id,
+              lastName: '',
+              firstName: '',
+              patronymic: '',
+              iin: '',
+              photoUrl: null,
+              positionIds: const [],
+              isFired: false,
+              comments: '',
+              login: '',
+              password: '',
+            ),
+          );
+    final category = user.isTechLeader
+        ? 'manager'
+        : isManagerUser(emp!, personnel)
+            ? 'manager'
+            : isWarehouseHeadUser(emp, personnel)
+                ? 'warehouse'
+                : 'production';
+
+    await analytics.logEvent(
+      userId: user.id,
+      action: 'login',
+      category: category,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (user.isTechLeader) {
+      rootNavigator.pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const AdminPanelScreen(),
+        ),
+      );
+    } else {
+      final screen = isManagerUser(emp!, personnel)
+          ? ManagerWorkspaceScreen(employeeId: user.id)
+          : isWarehouseHeadUser(emp, personnel)
+              ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
+              : EmployeeWorkspaceScreen(employeeId: user.id);
+
+      rootNavigator.pushReplacement(
+        MaterialPageRoute(builder: (_) => screen),
+      );
+    }
+  }
+}
+
+
+class _PasswordDialog extends StatefulWidget {
+  final _UserItem user;
+
+  const _PasswordDialog({required this.user});
+
+  @override
+  State<_PasswordDialog> createState() => _PasswordDialogState();
+}
+
+class _PasswordDialogState extends State<_PasswordDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _error;
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_isSubmitting) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _error = null;
+    });
+
+    if (_controller.text.trim() == widget.user.password) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+
+    setState(() {
+      _error = 'Неверный пароль';
+      _isSubmitting = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shortcuts(
+      shortcuts: <ShortcutActivator, Intent>{
+        const SingleActivator(LogicalKeyboardKey.escape): const DismissIntent(),
+        const SingleActivator(LogicalKeyboardKey.enter): const ActivateIntent(),
+        const SingleActivator(LogicalKeyboardKey.numpadEnter):
+            const ActivateIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (_) {
+              if (!_isSubmitting) {
+                Navigator.of(context).pop(false);
+              }
+              return null;
+            },
+          ),
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              _submit();
+              return null;
+            },
+          ),
+        },
+        child: AlertDialog(
+          title: Text('Введите пароль для ${widget.user.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                obscureText: true,
+                enabled: !_isSubmitting,
+                decoration: const InputDecoration(labelText: 'Пароль'),
+                onSubmitted: _isSubmitting ? null : (_) => _submit(),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Отмена'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final password = controller.text.trim();
-                    if (password == user.password) {
-                      // Запоминаем пользователя
-                      if (user.isTechLeader) {
-                        AuthHelper.setTechLeader(name: user.name);
-                      } else {
-                        AuthHelper.setEmployee(id: user.id, name: user.name);
-                      }
-
-                      // Логируем вход
-                      final analytics = context.read<AnalyticsProvider>();
-                      String category;
-                      if (user.isTechLeader) {
-                        category = 'manager';
-                      } else {
-                        final pr = context.read<PersonnelProvider>();
-                        final emp = pr.employees.firstWhere(
-                          (e) => e.id == user.id,
-                          orElse: () => EmployeeModel(
-                            id: user.id,
-                            lastName: '',
-                            firstName: '',
-                            patronymic: '',
-                            iin: '',
-                            photoUrl: null,
-                            positionIds: const [],
-                            isFired: false,
-                            comments: '',
-                            login: '',
-                            password: '',
-                          ),
-                        );
-                        if (isManagerUser(emp, pr)) {
-                          category = 'manager';
-                        } else if (isWarehouseHeadUser(emp, pr)) {
-                          category = 'warehouse';
-                        } else {
-                          category = 'production';
-                        }
-                      }
-
-                      await analytics.logEvent(
-                        orderId: '',
-                        stageId: '',
-                        userId: user.id,
-                        action: 'login',
-                        category: category,
-                      );
-
-                      Navigator.pop(ctx);
-
-                      // Навигация
-                      if (user.isTechLeader) {
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AdminPanelScreen(),
-                          ),
-                        );
-                      } else {
-                        final pr = context.read<PersonnelProvider>();
-                        final emp = pr.employees.firstWhere(
-                          (e) => e.id == user.id,
-                          orElse: () => EmployeeModel(
-                            id: user.id,
-                            lastName: '',
-                            firstName: '',
-                            patronymic: '',
-                            iin: '',
-                            photoUrl: null,
-                            positionIds: const [],
-                            isFired: false,
-                            comments: '',
-                            login: '',
-                            password: '',
-                          ),
-                        );
-
-                        final screen = isManagerUser(emp, pr)
-                            ? ManagerWorkspaceScreen(employeeId: user.id)
-                            : isWarehouseHeadUser(emp, pr)
-                                ? WarehouseManagerWorkspaceScreen(
-                                    employeeId: user.id)
-                                : EmployeeWorkspaceScreen(employeeId: user.id);
-
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(builder: (_) => screen),
-                        );
-                      }
-                    } else {
-                      setState(() {
-                        error = 'Неверный пароль';
-                      });
-                    }
-                  },
-                  child: const Text('Войти'),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
                 ),
               ],
-            );
-          },
-        );
-      },
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed:
+                  _isSubmitting ? null : () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: _isSubmitting ? null : _submit,
+              child: _isSubmitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Войти'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -499,6 +545,7 @@ class _UserItem {
   final String name;
   final String position;
   final String password;
+  final String? photoUrl;
   final bool isTechLeader;
 
   _UserItem({
@@ -506,6 +553,7 @@ class _UserItem {
     required this.name,
     required this.position,
     required this.password,
+    this.photoUrl,
     this.isTechLeader = false,
   });
 }

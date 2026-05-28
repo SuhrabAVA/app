@@ -1,9 +1,11 @@
 // lib/modules/personnel/personnel_provider.dart
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' show ClientException;
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../services/doc_db.dart';
 import '../../services/personnel_db.dart';
 import 'personnel_constants.dart';
 import 'position_model.dart';
@@ -11,14 +13,23 @@ import 'employee_model.dart';
 import 'workplace_model.dart';
 import 'terminal_model.dart';
 
+const Set<String> _protectedWorkplaceIds = {
+  'w_bobiner',
+  'w_flexoprint',
+  '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+  'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+};
+
 class PersonnelProvider extends ChangeNotifier {
-  PersonnelProvider({PersonnelDB? db, bool bootstrap = true})
-      : _db = db ?? PersonnelDB() {
+  PersonnelProvider({PersonnelDB? db, DocDB? docDb, bool bootstrap = true})
+      : _db = db ?? PersonnelDB(),
+        _docDb = docDb {
     if (bootstrap) _bootstrap();
   }
 
   final _uuid = const Uuid();
   final PersonnelDB _db;
+  final DocDB? _docDb;
 
   final List<EmployeeModel> _employees = <EmployeeModel>[];
   final List<PositionModel> _positions = <PositionModel>[];
@@ -44,7 +55,11 @@ class PersonnelProvider extends ChangeNotifier {
 
   // Позиции для выбора на экранах (при желании исключаем фиксированные)
   List<PositionModel> get regularPositions => _positions
-      .where((p) => p.id != kManagerId && p.id != kWarehouseHeadId)
+      .where((p) =>
+          p.id != kManagerId &&
+          p.id != kWarehouseHeadId &&
+          p.id != kTechLeaderId &&
+          p.id != kCmmSpecialistId)
       .toList(growable: false);
 
   String _genId() => _uuid.v4();
@@ -88,55 +103,92 @@ class PersonnelProvider extends ChangeNotifier {
 
   // ---------- loaders -----------
   Future<void> _loadPositionsFromSql() async {
-    final rows = await _db.listPositions();
-    _positions
-      ..clear()
-      ..addAll(rows.map((r) => PositionModel.fromMap(r, r['id'].toString())));
-    _safeNotify();
+    try {
+      final rows = await _db.listPositions();
+      _positions
+        ..clear()
+        ..addAll(rows.map((r) => PositionModel.fromMap(r, r['id'].toString())));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Positions load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected positions load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   Future<void> _loadEmployeesFromSql() async {
-    final rows = await _db.listEmployeesView();
-    _employees
-      ..clear()
-      ..addAll(rows.map((r) => EmployeeModel(
-            id: r['id'],
-            lastName: r['last_name'] ?? '',
-            firstName: r['first_name'] ?? '',
-            patronymic: r['patronymic'] ?? '',
-            iin: r['iin'] ?? '',
-            photoUrl: r['photo_url'],
-            positionIds: List<String>.from(r['position_ids'] ?? const []),
-            isFired: (r['is_fired'] as bool?) ?? false,
-            comments: r['comments'] ?? '',
-            login: r['login'] ?? '',
-            password: r['password'] ?? '',
-          )));
-    _safeNotify();
+    try {
+      final rows = await _db.listEmployeesView();
+      _employees
+        ..clear()
+        ..addAll(rows.map((r) => EmployeeModel(
+              id: r['id'],
+              lastName: r['last_name'] ?? '',
+              firstName: r['first_name'] ?? '',
+              patronymic: r['patronymic'] ?? '',
+              iin: r['iin'] ?? '',
+              photoUrl: r['photo_url'],
+              positionIds: List<String>.from(r['position_ids'] ?? const []),
+              isFired: (r['is_fired'] as bool?) ?? false,
+              comments: r['comments'] ?? '',
+              login: r['login'] ?? '',
+              password: r['password'] ?? '',
+            )));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Employees load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected employees load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   Future<void> _loadWorkplacesFromSql() async {
-    final rows = await _db.listWorkplacesView();
-    _workplaces
-      ..clear()
-      ..addAll(rows.map((r) => WorkplaceModel.fromMap({
-            'name': r['name'],
-            'positionIds': r['position_ids'] ?? const [],
-            'has_machine': r['has_machine'],
-            'max_concurrent_workers': r['max_concurrent_workers'],
-          }, r['id'])));
-    _safeNotify();
+    try {
+      final rows = await _db.listWorkplacesView();
+      _workplaces
+        ..clear()
+        ..addAll(rows.map((r) => WorkplaceModel.fromMap({
+              'name': r['name'],
+              'title': r['title'],
+              'short_name': r['short_name'],
+              'code': r['code'],
+              'positionIds': r['position_ids'] ?? const [],
+              'has_machine': r['has_machine'],
+              'max_concurrent_workers': r['max_concurrent_workers'],
+              'unit': r['unit'],
+              'execution_mode': r['execution_mode'],
+            }, r['id'])));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Workplaces load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected workplaces load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   Future<void> _loadTerminalsFromSql() async {
-    final rows = await _db.listTerminalsView();
-    _terminals
-      ..clear()
-      ..addAll(rows.map((r) => TerminalModel.fromMap({
-            'name': r['name'],
-            'workplaceIds': r['workplace_ids'] ?? const [],
-          }, r['id'])));
-    _safeNotify();
+    try {
+      final rows = await _db.listTerminalsView();
+      _terminals
+        ..clear()
+        ..addAll(rows.map((r) => TerminalModel.fromMap({
+              'name': r['name'],
+              'workplaceIds': r['workplace_ids'] ?? const [],
+            }, r['id'])));
+      _safeNotify();
+    } on ClientException catch (e, st) {
+      debugPrint('Terminals load failed: $e');
+      debugPrintStack(stackTrace: st);
+    } catch (e, st) {
+      debugPrint('Unexpected terminals load error: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   // ---------- positions CRUD -----------
@@ -224,19 +276,41 @@ class PersonnelProvider extends ChangeNotifier {
     required String name,
     String? description,
     bool hasMachine = false,
-    int maxConcurrentWorkers = 1,
+    int maxConcurrentWorkers = 0,
     List<String> positionIds = const [],
+    String? unit,
+    WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
   }) async {
     final id = _genId();
-    await _db.insertWorkplace(
-      id: id,
-      name: name.trim(),
-      description: description,
-      hasMachine: hasMachine,
-      maxConcurrentWorkers: maxConcurrentWorkers,
-      positionIds: positionIds,
-    );
-    await _loadWorkplacesFromSql();
+    // В тестах можем использовать DocDB как заглушку, чтобы не дергать Supabase.
+    if (_docDb != null) {
+      final workplace = WorkplaceModel(
+        id: id,
+        name: name.trim(),
+        description: description,
+        hasMachine: hasMachine,
+        maxConcurrentWorkers: maxConcurrentWorkers,
+        positionIds: positionIds,
+        unit: unit,
+        executionMode: executionMode,
+      );
+
+      await _docDb!.insert('workplaces', workplace.toMap(), explicitId: id);
+      _workplaces.add(workplace);
+      _safeNotify();
+    } else {
+      await _db.insertWorkplace(
+        id: id,
+        name: name.trim(),
+        description: description,
+        hasMachine: hasMachine,
+        maxConcurrentWorkers: maxConcurrentWorkers,
+        positionIds: positionIds,
+        unit: unit,
+        executionMode: executionMode,
+      );
+      await _loadWorkplacesFromSql();
+    }
   }
 
   Future<void> updateWorkplace({
@@ -246,6 +320,8 @@ class PersonnelProvider extends ChangeNotifier {
     bool? hasMachine,
     int? maxConcurrentWorkers,
     List<String>? positionIds,
+    String? unit,
+    WorkplaceExecutionMode? executionMode,
   }) async {
     await _db.updateWorkplace(
       id: id,
@@ -254,11 +330,16 @@ class PersonnelProvider extends ChangeNotifier {
       hasMachine: hasMachine,
       maxConcurrentWorkers: maxConcurrentWorkers,
       positionIds: positionIds,
+      unit: unit,
+      executionMode: executionMode,
     );
     await _loadWorkplacesFromSql();
   }
 
   Future<void> deleteWorkplace(String id) async {
+    if (_protectedWorkplaceIds.contains(id)) {
+      throw StateError('Это рабочее место защищено от удаления');
+    }
     await _db.deleteWorkplace(id);
     await _loadWorkplacesFromSql();
   }
@@ -308,6 +389,14 @@ class PersonnelProvider extends ChangeNotifier {
     }
   }
 
+  WorkplaceModel? workplaceById(String id) {
+    try {
+      return _workplaces.firstWhere((w) => w.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   PositionModel? findManagerPosition() {
     try {
       return _positions.firstWhere((p) =>
@@ -328,20 +417,43 @@ class PersonnelProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> ensureManagerPosition() async {
-    final exists = _positions.any((p) => p.id == kManagerId);
-    if (!exists) {
-      await _db.insertPosition(id: kManagerId, name: 'Manager');
-      await _loadPositionsFromSql();
+  PositionModel? findTechLeaderPosition() {
+    try {
+      return _positions.firstWhere((p) => p.id == kTechLeaderId);
+    } catch (_) {
+      return null;
     }
   }
 
-  Future<void> ensureWarehouseHeadPosition() async {
-    final exists = _positions.any((p) => p.id == kWarehouseHeadId);
-    if (!exists) {
-      await _db.insertPosition(id: kWarehouseHeadId, name: 'Warehouse Head');
-      await _loadPositionsFromSql();
+  PositionModel? findCmmSpecialistPosition() {
+    try {
+      return _positions.firstWhere((p) => p.id == kCmmSpecialistId);
+    } catch (_) {
+      return null;
     }
+  }
+
+  Future<void> ensureManagerPosition() async {
+    await _ensurePosition(id: kManagerId, name: 'Manager');
+  }
+
+  Future<void> ensureWarehouseHeadPosition() async {
+    await _ensurePosition(id: kWarehouseHeadId, name: 'Warehouse Head');
+  }
+
+  Future<void> ensureCmmSpecialistPosition() async {
+    await _ensurePosition(id: kCmmSpecialistId, name: 'CMM специалист');
+  }
+
+  Future<void> _ensurePosition({required String id, required String name}) async {
+    if (_positions.any((p) => p.id == id)) return;
+    try {
+      await _db.insertPosition(id: id, name: name);
+    } on PostgrestException catch (e) {
+      if (e.code != '23505') rethrow;
+      // Another client/session has already inserted this fixed position.
+    }
+    await _loadPositionsFromSql();
   }
 
   // ---------- realtime ----------

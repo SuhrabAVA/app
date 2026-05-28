@@ -25,48 +25,81 @@ class _TemplateEditorScreenState extends State<TemplateEditorScreen> {
     if (tpl != null) {
       _nameCtrl.text = tpl.name;
       _stages.addAll(tpl.stages.map(
-        (s) => PlannedStage(stageId: s.stageId, stageName: s.stageName, comment: s.comment),
+        (s) => PlannedStage(
+          stageId: s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
+          stageName: s.stageName,
+          workplaceIds: s.workplaceIds,
+          alternativeStageIds: s.alternativeStageIds,
+          alternativeStageNames: s.alternativeStageNames,
+          comment: s.comment,
+        ),
       ));
     }
   }
 
   Future<void> _addStage() async {
     final personnel = context.read<PersonnelProvider>();
-    String? selectedId;
+    final Set<String> selectedIds = {};
 
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Выберите этап'),
-        content: SizedBox(
-          width: 480,
-          child: ListView(
-            shrinkWrap: true,
-            children: personnel.workplaces.map((WorkplaceModel w) {
-              return RadioListTile<String>(
-                value: w.id,
-                groupValue: selectedId,
-                title: Text(w.name),
-                onChanged: (v) => setState(() => selectedId = v),
-              );
-            }).toList(),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          FilledButton(
-            onPressed: () {
-              if (selectedId == null) return;
-              final w = personnel.workplaces.firstWhere((e) => e.id == selectedId);
-              setState(() {
-                _stages.add(PlannedStage(stageId: w.id, stageName: w.name));
-              });
-              Navigator.pop(ctx);
-            },
-            child: const Text('Добавить'),
-          ),
-        ],
-      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Выберите этапы'),
+              content: SizedBox(
+                width: 480,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: personnel.workplaces.map((WorkplaceModel w) {
+                    final checked = selectedIds.contains(w.id);
+                    return CheckboxListTile(
+                      value: checked,
+                      title: Text(w.name),
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          if (v == true) {
+                            selectedIds.add(w.id);
+                          } else {
+                            selectedIds.remove(w.id);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+                FilledButton(
+                  onPressed: () {
+                    if (selectedIds.isEmpty) return;
+                    final selected = personnel.workplaces
+                        .where((e) => selectedIds.contains(e.id))
+                        .toList();
+                    final primary = selected.first;
+                    final alternatives = selected.skip(1).toList();
+                    setState(() {
+                      _stages.add(
+                        PlannedStage(
+                          stageId: primary.id,
+                          stageName: primary.name,
+                          workplaceIds: selected.map((e) => e.id).toList(),
+                          alternativeStageIds: alternatives.map((e) => e.id).toList(),
+                          alternativeStageNames: alternatives.map((e) => e.name).toList(),
+                        ),
+                      );
+                    });
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Добавить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -121,12 +154,13 @@ class _TemplateEditorScreenState extends State<TemplateEditorScreen> {
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {
                 final s = _stages[i];
+                final stageNames = s.allStageNames;
                 return ListTile(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                     side: BorderSide(color: Theme.of(context).dividerColor),
                   ),
-                  title: Text(s.stageName),
+                  title: Text(stageNames.join(' / ')),
                   subtitle: s.comment?.isNotEmpty == true ? Text(s.comment!) : null,
                   trailing: IconButton(
                     tooltip: 'Удалить',

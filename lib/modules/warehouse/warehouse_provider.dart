@@ -8,14 +8,35 @@ import 'package:uuid/uuid.dart';
 import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import '../../services/app_auth.dart';
+import '../../utils/kostanay_time.dart';
+import 'warehouse_logs_repository.dart';
 
 class WarehouseProvider with ChangeNotifier {
+  static const String canceledMarker = '[ОТМЕНЕНО]';
   // ====== PENS DEDICATED TABLE RESOLUTION ======
-  String? _resolvedPensTable; // e.g. 'handles', 'pens', 'warehouse_pens', etc.
+  String? _resolvedPensTable; // cached pens table name (expected 'warehouse_pens')
 
-  Future<String?> _resolvePensTable() async {
-    _resolvedPensTable = 'warehouse_pens';
-    return _resolvedPensTable;
+  Future<String> _resolvePensTable() async {
+    if (_resolvedPensTable != null) {
+      return _resolvedPensTable!;
+    }
+
+    const candidates = <String>['warehouse_pens'];
+    for (final table in candidates) {
+      try {
+        await _sb.from(table).select('id').limit(1);
+        _resolvedPensTable = table;
+        return _resolvedPensTable!;
+      } on PostgrestException catch (error) {
+        if (_isMissingRelationError(error, table)) {
+          continue;
+        }
+        _resolvedPensTable = table;
+        return _resolvedPensTable!;
+      }
+    }
+
+    throw Exception('Таблица склада ручек недоступна');
   }
 
   final SupabaseClient _sb = Supabase.instance.client;
@@ -36,10 +57,36 @@ class WarehouseProvider with ChangeNotifier {
   RealtimeChannel? _chanPaints;
   RealtimeChannel? _chanMaterials;
   RealtimeChannel? _chanPapers;
+  RealtimeChannel? _chanPaperReservations;
+  RealtimeChannel? _chanPaintReservations;
   RealtimeChannel? _chanStationery;
 
   final List<TmcModel> _allTmc = [];
   List<TmcModel> get allTmc => List.unmodifiable(_allTmc);
+
+  final Map<String, WarehouseLogsBundle> _logBundles = {};
+  WarehouseLogsBundle? logsBundle(String type) {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    return _logBundles[normalized];
+  }
+
+  Future<WarehouseLogsBundle> fetchLogsBundle(String type,
+      {bool forceRefresh = false}) async {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    if (!forceRefresh && _logBundles.containsKey(normalized)) {
+      return _logBundles[normalized]!;
+    }
+
+    final fresh = await WarehouseLogsRepository.fetchBundle(normalized);
+    _logBundles[normalized] = fresh;
+    notifyListeners();
+    return fresh;
+  }
+
+  void _invalidateLogsForType(String type) {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    _logBundles.remove(normalized);
+  }
 
   final Map<String, List<Map<String, dynamic>>> _writeoffsByItem = {};
   final Map<String, List<Map<String, dynamic>>> _inventoriesByItem = {};
@@ -47,6 +94,248 @@ class WarehouseProvider with ChangeNotifier {
       List.unmodifiable(_writeoffsByItem[itemId] ?? const []);
   List<Map<String, dynamic>> inventories(String itemId) =>
       List.unmodifiable(_inventoriesByItem[itemId] ?? const []);
+
+  Future<double> paperReservedQty(String paperId) async {
+    final id = paperId.trim();
+    if (id.isEmpty) return 0;
+    final rows = await _activePaperReservationRows(paperId: id);
+    if (rows.isEmpty) return 0;
+    double total = 0;
+    for (final raw in rows) {
+      final value = raw['qty'];
+      if (value is num) {
+        total += value.toDouble();
+      } else {
+        total += double.tryParse('$value') ?? 0;
+      }
+    }
+    return total;
+  }
+
+  Future<List<Map<String, dynamic>>> paperReserveDetails(String paperId) async {
+    final id = paperId.trim();
+    if (id.isEmpty) return const [];
+    final parsedRows = await _activePaperReservationRows(paperId: id);
+    final orderIds = parsedRows
+        .map((row) => (row['order_id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (orderIds.isEmpty) return parsedRows;
+
+    final uuidLikePattern = RegExp(
+      r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b',
+    );
+
+    bool _isMeaningfulText(String value) {
+      final normalized = value.trim();
+      if (normalized.isEmpty) return false;
+      final lowered = normalized.toLowerCase();
+      if (lowered == 'null' ||
+          lowered == 'undefined' ||
+          lowered == 'nan' ||
+          lowered == '-') {
+        return false;
+      }
+      return !uuidLikePattern.hasMatch(normalized);
+    }
+
+    String _firstNotEmpty(Iterable<dynamic> values) {
+      for (final value in values) {
+        final text = (value ?? '').toString().trim();
+        if (_isMeaningfulText(text)) return text;
+      }
+      return '';
+    }
+
+    final labelsByOrderId = <String, String>{};
+    try {
+      final orderRows = await _sb.from('orders').select().inFilter('id', orderIds);
+      if (orderRows is List) {
+        for (final raw in orderRows.whereType<Map>()) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          final orderId = (row['id'] ?? '').toString().trim();
+          if (orderId.isEmpty) continue;
+          final dataRaw = row['data'];
+          final data = dataRaw is Map
+              ? Map<String, dynamic>.from(dataRaw as Map)
+              : <String, dynamic>{};
+          final productTopRaw = row['product'];
+          final productTop = productTopRaw is Map
+              ? Map<String, dynamic>.from(productTopRaw as Map)
+              : <String, dynamic>{};
+          final productRaw = data['product'];
+          final product = productRaw is Map
+              ? Map<String, dynamic>.from(productRaw as Map)
+              : <String, dynamic>{};
+
+          final primaryLabel = _firstNotEmpty([
+            row['customer'],
+            row['title'],
+            row['name'],
+            row['order_name'],
+            row['product_name'],
+            row['assignment_id'],
+            data['customer'],
+            data['title'],
+            data['assignment_id'],
+            data['name'],
+            data['order_name'],
+            data['product_name'],
+            productTop['name'],
+            productTop['title'],
+            product['name'],
+            product['title'],
+          ]);
+          final formNo =
+              _firstNotEmpty([row['new_form_no'], data['new_form_no']]);
+          final label = primaryLabel.isNotEmpty
+              ? primaryLabel
+              : (formNo.isNotEmpty ? 'Форма №$formNo' : 'Заказ без названия');
+          if (label.isNotEmpty) labelsByOrderId[orderId] = label;
+        }
+      }
+    } catch (_) {}
+
+    return parsedRows.map((row) {
+      final next = Map<String, dynamic>.from(row);
+      final orderId = (row['order_id'] ?? '').toString().trim();
+      final label = labelsByOrderId[orderId];
+      if (label != null && label.isNotEmpty) {
+        next['order_name'] = label;
+      }
+      return next;
+    }).toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _activePaperReservationRows({
+    String? paperId,
+  }) async {
+    var query = _sb
+        .from('order_paper_reservations')
+        .select('order_id, paper_id, qty, created_at');
+    final normalizedPaperId = (paperId ?? '').trim();
+    if (normalizedPaperId.isNotEmpty) {
+      query = query.eq('paper_id', normalizedPaperId);
+    }
+    final rows = await query.order('created_at', ascending: false);
+    if (rows is! List || rows.isEmpty) return const [];
+    final parsedRows = rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList(growable: false);
+
+    final orderIds = parsedRows
+        .map((row) => (row['order_id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (orderIds.isEmpty) return parsedRows;
+
+    final activeOrderIds = <String>{};
+    try {
+      final orderRows = await _sb
+          .from('orders')
+          .select('id, status, shipped_at')
+          .inFilter('id', orderIds);
+      if (orderRows is List) {
+        for (final raw in orderRows.whereType<Map>()) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          final orderId = (row['id'] ?? '').toString().trim();
+          if (orderId.isEmpty) continue;
+          final status = (row['status'] ?? '').toString().toLowerCase().trim();
+          final shippedAt = row['shipped_at'];
+          final isClosed =
+              status == 'completed' || status == 'shipped' || shippedAt != null;
+          if (!isClosed) activeOrderIds.add(orderId);
+        }
+      }
+    } catch (_) {
+      return parsedRows;
+    }
+
+    final staleOrderIds = orderIds
+        .where((orderId) => !activeOrderIds.contains(orderId))
+        .toList(growable: false);
+    if (staleOrderIds.isNotEmpty) {
+      try {
+        await _sb
+            .from('order_paper_reservations')
+            .delete()
+            .inFilter('order_id', staleOrderIds);
+      } catch (_) {}
+    }
+
+    return parsedRows
+        .where(
+            (row) => activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
+        .toList(growable: false);
+  }
+
+  static const Map<String, Map<String, String>> _arrMap = {
+    'paint': {'table': 'paints_arrivals', 'fk': 'paint_id', 'qty': 'qty'},
+    'material': {
+      'table': 'materials_arrivals',
+      'fk': 'material_id',
+      'qty': 'qty'
+    },
+    'paper': {'table': 'papers_arrivals', 'fk': 'paper_id', 'qty': 'qty'},
+    'stationery': {
+      'table': 'warehouse_stationery_arrivals',
+      'fk': 'item_id',
+      'qty': 'qty'
+    },
+    'pens': {'table': 'warehouse_pens_arrivals', 'fk': 'item_id', 'qty': 'qty'},
+  };
+
+  static const Map<String, Map<String, String>> _woMap = {
+    'paint': {'table': 'paints_writeoffs', 'fk': 'paint_id', 'qty': 'qty'},
+    'material': {
+      'table': 'materials_writeoffs',
+      'fk': 'material_id',
+      'qty': 'qty'
+    },
+    'paper': {'table': 'papers_writeoffs', 'fk': 'paper_id', 'qty': 'qty'},
+    'stationery': {
+      'table': 'warehouse_stationery_writeoffs',
+      'fk': 'item_id',
+      'qty': 'qty'
+    },
+    'pens': {'table': 'warehouse_pens_writeoffs', 'fk': 'item_id', 'qty': 'qty'},
+  };
+
+  static const Map<String, Map<String, String>> _invMap = {
+    'paint': {
+      'table': 'paints_inventories',
+      'fk': 'paint_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'material': {
+      'table': 'materials_inventories',
+      'fk': 'material_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'paper': {
+      'table': 'papers_inventories',
+      'fk': 'paper_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+    'stationery': {
+      'table': 'warehouse_stationery_inventories',
+      'fk': 'item_id',
+      'qty': 'factual',
+      'note': 'note'
+    },
+    'pens': {
+      'table': 'warehouse_pens_inventories',
+      'fk': 'item_id',
+      'qty': 'counted_qty',
+      'note': 'note'
+    },
+  };
 
   WarehouseProvider() {
     _init();
@@ -56,9 +345,25 @@ class WarehouseProvider with ChangeNotifier {
     try {
       await _ensureAuthed();
       _listen();
-      await fetchTmc();
+      await Future.wait([
+        fetchTmc(),
+        _preloadLogs(),
+      ]);
     } catch (e) {
       debugPrint('❌ init warehouse: $e');
+    }
+  }
+
+  Future<void> _preloadLogs() async {
+    try {
+      final bundles = await WarehouseLogsRepository.fetchAllBundles();
+      _logBundles
+        ..clear()
+        ..addAll(bundles);
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('⚠️ preload warehouse logs failed: $e');
+      debugPrintStack(stackTrace: st);
     }
   }
 
@@ -71,6 +376,12 @@ class WarehouseProvider with ChangeNotifier {
     if (_chanPaints != null) _sb.removeChannel(_chanPaints!);
     if (_chanMaterials != null) _sb.removeChannel(_chanMaterials!);
     if (_chanPapers != null) _sb.removeChannel(_chanPapers!);
+    if (_chanPaperReservations != null) {
+      _sb.removeChannel(_chanPaperReservations!);
+    }
+    if (_chanPaintReservations != null) {
+      _sb.removeChannel(_chanPaintReservations!);
+    }
     if (_chanStationery != null) _sb.removeChannel(_chanStationery!);
     super.dispose();
   }
@@ -107,6 +418,31 @@ class WarehouseProvider with ChangeNotifier {
         )
         .subscribe();
 
+    _chanPaperReservations = _sb
+        .channel('wh:paper_reservations')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'order_paper_reservations',
+          callback: (_) {
+            // Бизнес-логика резерва бумаги:
+            // при любом изменении резервов обновляем UI склада,
+            // чтобы колонка "Резерв" показывала актуальные значения.
+            notifyListeners();
+          },
+        )
+        .subscribe();
+
+    _chanPaintReservations = _sb
+        .channel('wh:paint_reservations')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'order_paint_reservations',
+          callback: (_) => fetchTmc(),
+        )
+        .subscribe();
+
     _resubscribeStationery();
   }
 
@@ -130,62 +466,42 @@ class WarehouseProvider with ChangeNotifier {
   Future<void> fetchTmc({bool factual = false}) async {
     try {
       await _ensureAuthed();
-
-      final p = await _sb.from('paints').select().order('description');
-      final m = await _sb.from('materials').select().order('description');
-      final pr = await _sb.from('papers').select().order('description');
-
-      // --- Stationery (with optional dedicated pens table) ---
-      List s = [];
-      try {
-        final keyLc = (_stationeryKey).toLowerCase().trim();
-        final isPens =
-            keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
-        String? pensTable;
-        if (isPens) {
-          pensTable = await _resolvePensTable();
-        }
-        if (isPens && pensTable != null) {
-          // warehouse_pens обычно не имеет 'description' -> сортируем по created_at
-          final pensRaw =
-              await _sb.from(pensTable).select().order('created_at');
-          s = (pensRaw as List)
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-          // Mark as pens
-          s = s.map((row) {
-            row['__force_type__'] = 'pens';
-            return row;
-          }).toList();
-        } else {
-          final sRaw = await _sb
-              .from('warehouse_stationery')
-              .select()
-              .order('description');
-          final filtered = (sRaw as List)
-              .where((row) =>
-                  ((row['table_key'] ?? '').toString().toLowerCase().trim() ==
-                      (_stationeryKey).toLowerCase().trim()))
-              .toList();
-          s = filtered.map((e) => Map<String, dynamic>.from(e)).toList();
-        }
-      } catch (e) {
-        debugPrint('⚠️ load stationery/pens failed: $e');
-        s = const [];
-      }
+      final results = await Future.wait<dynamic>([
+        _sb.from('paints').select().order('description'),
+        _sb.from('materials').select().order('description'),
+        _sb.from('papers').select().order('description'),
+        _loadPensRows(),
+        _loadStationeryRows(),
+      ]);
+      final p = results[0] as List;
+      final paintReservedQty = await _loadPaintReservedQty();
+      final m = results[1] as List;
+      final pr = results[2] as List;
+      final pensRows = results[3] as List<Map<String, dynamic>>;
+      final stationeryRows = results[4] as List<Map<String, dynamic>>;
       final List<TmcModel> merged = [];
       for (final e in p) {
-        merged.add(_fromRow(type: 'paint', row: Map<String, dynamic>.from(e)));
+        final row = Map<String, dynamic>.from(e);
+        final quantity = _toDouble(row['quantity']);
+        final reservedQty = paintReservedQty[(row['id'] ?? '').toString()] ??
+            _toDouble(row['reserved_qty']);
+        row['reserved_qty'] = reservedQty;
+        row['available_qty'] = quantity - reservedQty;
+        merged.add(_fromRow(type: 'paint', row: row));
       }
       for (final e in m) {
         merged
             .add(_fromRow(type: 'material', row: Map<String, dynamic>.from(e)));
       }
-      for (final e in s) {
+      for (final e in stationeryRows) {
         final row = Map<String, dynamic>.from(e);
         final force = row['__force_type__'];
         merged.add(
             _fromRow(type: force == 'pens' ? 'pens' : 'stationery', row: row));
+      }
+      for (final e in pensRows) {
+        final row = Map<String, dynamic>.from(e);
+        merged.add(_fromRow(type: 'pens', row: row));
       }
       for (final e in pr) {
         merged.add(_fromRow(type: 'paper', row: Map<String, dynamic>.from(e)));
@@ -202,6 +518,42 @@ class WarehouseProvider with ChangeNotifier {
     } catch (e) {
       debugPrint('❌ fetchTmc: $e');
       rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadPensRows() async {
+    try {
+      final pensTable = await _resolvePensTable();
+      final pensRaw = await _sb.from(pensTable).select().order('created_at');
+      return (pensRaw as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .map((row) {
+        row['__force_type__'] = 'pens';
+        return row;
+      }).toList(growable: false);
+    } catch (e) {
+      debugPrint('⚠️ load pens failed: $e');
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadStationeryRows() async {
+    try {
+      final keyLc = _stationeryKey.toLowerCase().trim();
+      final isPens = keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
+      if (isPens) return const <Map<String, dynamic>>[];
+      final sRaw =
+          await _sb.from('warehouse_stationery').select().order('description');
+      final filtered = (sRaw as List)
+          .where((row) =>
+              ((row['table_key'] ?? '').toString().toLowerCase().trim() ==
+                  keyLc))
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList(growable: false);
+      return filtered;
+    } catch (e) {
+      debugPrint('⚠️ load stationery failed: $e');
+      return const <Map<String, dynamic>>[];
     }
   }
 
@@ -240,25 +592,115 @@ class WarehouseProvider with ChangeNotifier {
           description: description,
         );
 
-    String? finalImageUrl = imageUrl;
-    String? finalBase64 = imageBase64;
+    final String? safeNote =
+        note != null && note.trim().isNotEmpty ? note.trim() : null;
+    String? resolvedImageUrl = imageUrl;
+    String? resolvedBase64 = imageBase64;
 
-    if (imageBytes != null && imageBytes.isNotEmpty) {
-      finalImageUrl = await _uploadImage(newId, imageBytes, imageContentType);
-      finalBase64 ??= base64Encode(imageBytes);
+    Future<void> prepareImage(String targetId) async {
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        resolvedImageUrl =
+            await _uploadImage(targetId, imageBytes, imageContentType);
+        resolvedBase64 ??= base64Encode(imageBytes);
+        return;
+      }
+      if (resolvedImageUrl == null && resolvedBase64 != null) {
+        try {
+          final bytes = base64Decode(resolvedBase64!);
+          if (bytes.isNotEmpty) {
+            resolvedImageUrl =
+                await _uploadImage(targetId, bytes, imageContentType);
+          }
+        } catch (_) {}
+      }
     }
-    if (finalImageUrl == null && finalBase64 != null) {
-      try {
-        final _bytes = base64Decode(finalBase64);
-        if (_bytes.isNotEmpty) {
-          finalImageUrl = await _uploadImage(newId, _bytes, imageContentType);
+
+    if (normalizedType == 'paint') {
+      final existing = await _findExistingPaint(description);
+      if (existing != null) {
+        final existingId = existing['id'] as String;
+        await prepareImage(existingId);
+        final updatePayload = <String, dynamic>{};
+        if (safeNote != null) updatePayload['note'] = safeNote;
+        if (lowThreshold != null) {
+          updatePayload['low_threshold'] = lowThreshold;
         }
-      } catch (_) {}
+        if (criticalThreshold != null) {
+          updatePayload['critical_threshold'] = criticalThreshold;
+        }
+        if (resolvedImageUrl != null) {
+          updatePayload['image_url'] = resolvedImageUrl;
+        }
+        if (resolvedBase64 != null) {
+          updatePayload['image_base64'] = resolvedBase64;
+        }
+        if (updatePayload.isNotEmpty) {
+          await _sb.from('paints').update(updatePayload).eq('id', existingId);
+        }
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'paint',
+            itemId: existingId,
+            qty: quantity,
+            note: safeNote,
+          );
+        }
+        await fetchTmc();
+        return;
+      }
     }
+
+    if (normalizedType == 'stationery') {
+      final existing = await _findExistingStationery(description);
+      if (existing != null) {
+        final existingId = existing['id'] as String;
+        await prepareImage(existingId);
+        final updatePayload = <String, dynamic>{
+          'table_key': _stationeryKey,
+        };
+        final trimmedUnit = unit.trim();
+        final currentUnit = (existing['unit'] ?? '').toString().trim();
+        if (trimmedUnit.isNotEmpty && trimmedUnit != currentUnit) {
+          updatePayload['unit'] = trimmedUnit;
+        }
+        if (safeNote != null) updatePayload['note'] = safeNote;
+        if (lowThreshold != null) {
+          updatePayload['low_threshold'] = lowThreshold;
+        }
+        if (criticalThreshold != null) {
+          updatePayload['critical_threshold'] = criticalThreshold;
+        }
+        if (resolvedImageUrl != null) {
+          updatePayload['image_url'] = resolvedImageUrl;
+        }
+        if (resolvedBase64 != null) {
+          updatePayload['image_base64'] = resolvedBase64;
+        }
+        updatePayload.removeWhere((key, value) => value == null);
+        if (updatePayload.isNotEmpty) {
+          await _sb
+              .from('warehouse_stationery')
+              .update(updatePayload)
+              .eq('id', existingId);
+        }
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'stationery',
+            itemId: existingId,
+            qty: quantity,
+            note: safeNote,
+          );
+        }
+        await fetchTmc();
+        return;
+      }
+    }
+
+    await prepareImage(newId);
 
     // ----------- РУЧКИ (dedicated table) -----------
     if (normalizedType == 'pens') {
-      final table = _tableByType('pens'); // usually 'warehouse_pens'
+      final pensTable = await _resolvePensTable();
       // Expect description like "Вид • Цвет" or just name; try to split
       String raw = description;
       String name = raw;
@@ -272,25 +714,48 @@ class WarehouseProvider with ChangeNotifier {
         name = parts[0].trim();
         color = parts.sublist(1).join('|').trim();
       }
-      final body = <String, dynamic>{
-        'id': newId,
-        'date': DateTime.now().toIso8601String(),
-        'supplier': supplier,
-        'name': name,
-        'color': color,
-        'unit': unit.isNotEmpty ? unit : 'пар',
-        'quantity': quantity,
-        'note': note,
-        'low_threshold': lowThreshold ?? 0,
-        'critical_threshold': criticalThreshold ?? 0,
-      };
-      await _sb.from(table).insert(body);
+
+      final unitValue = unit.isNotEmpty ? unit : 'пар';
+      final String pensDescription =
+          [name, color].where((e) => e.trim().isNotEmpty).join(' • ');
+
+      Future<void> insertIntoPensTable(String tableName) async {
+        final payload = <String, dynamic>{
+          'id': newId,
+          'date': nowInKostanayIsoString(),
+          'supplier': supplier,
+          'name': name,
+          'color': color,
+          'unit': unitValue,
+          'quantity': 0,
+          'note': safeNote,
+          'low_threshold': lowThreshold ?? 0,
+          'critical_threshold': criticalThreshold ?? 0,
+          if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
+          if (resolvedBase64 != null) 'image_base64': resolvedBase64,
+        };
+        await _sb.from(tableName).insert(payload);
+      }
+
+      await insertIntoPensTable(pensTable);
+
+      await _logArrivalGeneric(
+        typeKey: 'pens',
+        itemId: newId,
+        qty: quantity,
+        note: safeNote,
+        extraPayload: await _resolvePenLogExtras(
+          itemId: newId,
+          name: name,
+          color: color,
+        ),
+      );
       await fetchTmc();
       await _logTmcEvent(
         tmcId: newId,
         eventType: 'Приход (ручки)',
         quantityChange: quantity,
-        note: note ?? 'Добавление в склад ручек',
+        note: safeNote ?? 'Добавление в склад ручек',
       );
       return;
     }
@@ -317,19 +782,19 @@ class WarehouseProvider with ChangeNotifier {
         // создаём карточку бумаги с quantity = 0
         final body = <String, dynamic>{
           'id': paperId,
-          'date': DateTime.now().toIso8601String(),
+          'date': nowInKostanayIsoString(),
           'supplier': supplier,
           'description': description,
           'unit': unit.isNotEmpty ? unit : 'м',
           'quantity': 0,
-          'note': note,
+          'note': safeNote,
           'low_threshold': lowThreshold ?? 0,
           'critical_threshold': criticalThreshold ?? 0,
           'format': format,
           'grammage': grammage,
           if (weight != null) 'weight': weight,
-          if (finalImageUrl != null) 'image_url': finalImageUrl,
-          if (finalBase64 != null) 'image_base64': finalBase64,
+          if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
+          if (resolvedBase64 != null) 'image_base64': resolvedBase64,
         };
         await _sb.from('papers').insert(body);
       }
@@ -339,7 +804,7 @@ class WarehouseProvider with ChangeNotifier {
           '_type': 'paper',
           '_item': paperId,
           '_qty': quantity,
-          '_note': note,
+          '_note': safeNote,
           '_by_name': (AuthHelper.currentUserName ?? '')
         });
       }
@@ -349,23 +814,35 @@ class WarehouseProvider with ChangeNotifier {
     }
 
     // ----------- Остальные типы -----------
+    final bool adjustViaArrival =
+        normalizedType == 'paint' || normalizedType == 'stationery';
+    final double initialQuantity = adjustViaArrival ? 0 : quantity;
+
     final common = <String, dynamic>{
       'id': newId,
-      'date': DateTime.now().toIso8601String(),
+      'date': nowInKostanayIsoString(),
       'supplier': supplier,
       'description': description,
       'unit': unit,
-      'quantity': quantity,
-      'note': note,
+      'quantity': initialQuantity,
+      'note': safeNote,
       'low_threshold': lowThreshold ?? 0,
       'critical_threshold': criticalThreshold ?? 0,
-      if (finalImageUrl != null) 'image_url': finalImageUrl,
-      if (finalBase64 != null) 'image_base64': finalBase64,
+      if (resolvedImageUrl != null) 'image_url': resolvedImageUrl,
+      if (resolvedBase64 != null) 'image_base64': resolvedBase64,
     };
 
     try {
       if (normalizedType == 'paint') {
         await _sb.from('paints').insert(common);
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'paint',
+            itemId: newId,
+            qty: quantity,
+            note: safeNote,
+          );
+        }
       } else if (normalizedType == 'material') {
         await _sb.from('materials').insert(common);
       } else if (normalizedType == 'stationery') {
@@ -375,6 +852,14 @@ class WarehouseProvider with ChangeNotifier {
           'type': 'stationery',
         };
         await _sb.from('warehouse_stationery').insert(body);
+        if (quantity > 0) {
+          await _logArrivalGeneric(
+            typeKey: 'stationery',
+            itemId: newId,
+            qty: quantity,
+            note: safeNote,
+          );
+        }
       } else {
         throw Exception('Неизвестный type: $normalizedType');
       }
@@ -401,6 +886,7 @@ class WarehouseProvider with ChangeNotifier {
       '_note': note,
       '_by_name': (AuthHelper.currentUserName ?? '')
     });
+    _invalidateLogsForType('paper');
     await fetchTmc();
   }
 
@@ -519,13 +1005,17 @@ class WarehouseProvider with ChangeNotifier {
       if (qty > currentQty) {
         throw Exception('Недостаточно материала на складе');
       }
+      final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+          ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+          : AuthHelper.currentUserName!;
       await _sb.rpc('writeoff', params: {
         'type': resolvedType,
         'item': id,
         'qty': qty,
         'reason': reason,
-        'by_name': (AuthHelper.currentUserName ?? '')
+        'by_name': byName,
       });
+      _invalidateLogsForType(resolvedType);
       await fetchTmc();
     } catch (e) {
       debugPrint('❌ registerShipment (fallback writeOff): $e');
@@ -549,6 +1039,7 @@ class WarehouseProvider with ChangeNotifier {
           await _sb.from(table).select('quantity').eq('id', id).single();
       final current = (row['quantity'] as num).toDouble();
       await _sb.from(table).update({'quantity': current + qty}).eq('id', id);
+      _invalidateLogsForType(resolvedType);
       await fetchTmc();
     } catch (e) {
       debugPrint('❌ registerReturn: $e');
@@ -608,22 +1099,65 @@ class WarehouseProvider with ChangeNotifier {
     await _ensureAuthed();
     String itemType = _normalizeType(typeHint) ??
         (await _detectTypeById(itemId) ?? 'stationery');
-    final table = (itemType == 'pens')
-        ? 'warehouse_pens_writeoffs'
-        : 'warehouse_stationery_writeoffs';
-    await _sb.from(table).insert({
+    if (itemType == 'pens') {
+      await _resolvePensTable();
+    }
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+
+    Map<String, String> penExtras = const {};
+
+    final payload = <String, dynamic>{
       'item_id': itemId,
       'qty': qty,
       if (reason != null && reason.isNotEmpty) 'reason': reason,
-    });
+      'by_name': byName,
+      'employee': byName,
+    };
+    if (itemType == 'pens') {
+      penExtras = await _resolvePenLogExtras(itemId: itemId);
+      payload.addAll(penExtras);
+    }
+
+    Future<bool> insertInto(String table, Map<String, dynamic> data) async {
+      return _tryInsertWarehouseLog(table, data);
+    }
+
+    bool inserted = false;
+    PostgrestException? initialError;
+    final table = itemType == 'pens'
+        ? 'warehouse_pens_writeoffs'
+        : 'warehouse_stationery_writeoffs';
+    try {
+      inserted = await insertInto(table, payload);
+    } on PostgrestException catch (e) {
+      initialError = e;
+    }
+
+    if (!inserted) {
+      if (initialError != null &&
+          !_isMissingRelationError(initialError, table)) {
+        throw initialError!;
+      }
+      throw Exception('Не удалось сохранить списание для $itemType');
+    }
 
     final list = _writeoffsByItem.putIfAbsent(itemId, () => []);
-    list.insert(0, {
+    final writeoffEntry = {
       'item_id': itemId,
       'qty': qty,
       'reason': reason,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'by_name': byName,
+    };
+    if (itemType == 'pens') {
+      writeoffEntry.addAll(penExtras);
+    }
+    list.insert(0, writeoffEntry);
+
+    _invalidateLogsForType(itemType);
+    notifyListeners();
 
     await fetchTmc();
   }
@@ -636,30 +1170,965 @@ class WarehouseProvider with ChangeNotifier {
     String? typeHint,
   }) async {
     final double invValue = newQty ?? factual ?? 0;
+    final rawNote = note?.trim() ?? '';
+    final String? trimmedNote = rawNote.isEmpty ? null : rawNote;
     await _ensureAuthed();
-    String itemType = _normalizeType(typeHint) ??
+    final itemType = _normalizeType(typeHint) ??
         (await _detectTypeById(itemId) ?? 'stationery');
-    final table = (itemType == 'pens')
-        ? 'warehouse_pens_inventories'
-        : 'warehouse_stationery_inventories';
-    await _sb.from(table).insert({
-      'item_id': itemId,
-      'factual': invValue,
-      if (note != null && note.isNotEmpty) 'note': note,
-    });
+    if (itemType == 'pens') {
+      await _resolvePensTable();
+    }
+    final tables = _inventoryTables(itemType);
+    final String? createdBy =
+        _sb.auth.currentUser?.id ?? AuthHelper.currentUserId;
+    List<String> prioritize(String? preferred, List<String> fallbacks) {
+      final seen = <String>{};
+      final ordered = <String>[];
+
+      void addCandidate(String? value) {
+        final candidate = value?.trim();
+        if (candidate == null || candidate.isEmpty) return;
+        if (seen.add(candidate)) ordered.add(candidate);
+      }
+
+      addCandidate(preferred);
+      for (final value in fallbacks) {
+        addCandidate(value);
+      }
+
+      return ordered;
+    }
+
+    final fkCandidates = prioritize(
+      _invMap[itemType]?['fk'],
+      const [
+        'item_id',
+        'stationery_id',
+        'paper_id',
+        'paint_id',
+        'material_id',
+        'tmc_id',
+        'fk_id',
+      ],
+    );
+    final qtyColumns = prioritize(
+      _invMap[itemType]?['qty'],
+      const [
+        'counted_qty',
+        'quantity',
+        'qty',
+        'factual',
+      ],
+    );
+    final noteColumns = prioritize(
+      _invMap[itemType]?['note'],
+      const [
+        'note',
+        'comment',
+        'reason',
+      ],
+    );
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+    final Map<String, String> penExtras = itemType == 'pens'
+        ? await _resolvePenLogExtras(itemId: itemId)
+        : const {};
+
+    bool inserted = false;
+    String _formatSupabaseError(PostgrestException error) {
+      String? _normalize(Object? value) {
+        if (value == null) return null;
+        final text = value.toString().trim();
+        return text.isEmpty ? null : text;
+      }
+
+      final parts = <String>[];
+      final message = _normalize(error.message);
+      if (message != null) parts.add(message);
+      final details = _normalize(error.details);
+      if (details != null) parts.add(details);
+      final hint = _normalize(error.hint);
+      if (hint != null) parts.add(hint);
+      return parts.isEmpty ? 'Неизвестная ошибка Supabase' : parts.join(' ');
+    }
+
+    bool _isMissingColumn(PostgrestException error, String column) {
+      final needle = column.toLowerCase();
+      bool containsNeedle(Object? value) {
+        if (value == null) return false;
+        final lower = value.toString().toLowerCase();
+        return lower.contains(needle) &&
+            (lower.contains('column') ||
+                lower.contains('does not exist') ||
+                lower.contains('undefined'));
+      }
+
+      final code = (error.code ?? '').toLowerCase();
+      if (code == '42703') return true;
+      return containsNeedle(error.message) ||
+          containsNeedle(error.details) ||
+          containsNeedle(error.hint);
+    }
+
+    if (itemType == 'stationery' && !inserted) {
+      const tableName = 'warehouse_stationery_inventories';
+      const requiredColumns = <String>{
+        'item_id',
+        'factual',
+        'note',
+        'created_by',
+        'by_name',
+        'created_at',
+      };
+      const optionalColumns = <String>{'table_key'};
+      bool supportsTableKey = false;
+
+      Future<void> _ensureColumns(Iterable<String> columns) async {
+        await _sb.from(tableName).select(columns.join(',')).limit(0);
+      }
+
+      try {
+        await _ensureColumns([...requiredColumns, ...optionalColumns]);
+        supportsTableKey = true;
+      } on PostgrestException catch (error) {
+        if (_isMissingColumn(error, 'table_key')) {
+          try {
+            await _ensureColumns(requiredColumns);
+          } on PostgrestException catch (inner) {
+            final message = _formatSupabaseError(inner);
+            throw Exception(
+              'Ошибка структуры таблицы $tableName: $message',
+            );
+          }
+        } else {
+          final message = _formatSupabaseError(error);
+          throw Exception(
+            'Ошибка структуры таблицы $tableName: $message',
+          );
+        }
+      }
+
+      final payload = <String, dynamic>{
+        'item_id': itemId,
+        'factual': invValue,
+        if (trimmedNote != null) 'note': trimmedNote,
+        'by_name': byName,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      if (createdBy != null) {
+        payload['created_by'] = createdBy;
+      }
+      if (supportsTableKey) {
+        payload['table_key'] = _stationeryKey;
+      }
+
+      try {
+        await _sb.from(tableName).insert(payload);
+        debugPrint('✅ Инвентаризация сохранена в $tableName');
+        inserted = true;
+      } on PostgrestException catch (error) {
+        debugPrint(
+            '❌ Ошибка Supabase при сохранении инвентаризации в $tableName: ${error.message}');
+        debugPrint('📋 Детали: ${error.details}');
+        debugPrint('🧩 Код: ${error.code}');
+        final Map<String, dynamic> postgrestPayload = error.toJson();
+        final dynamic postgrestMessage = postgrestPayload['message'];
+        if (postgrestMessage != null) {
+          debugPrint('🪲 PostgREST сообщение: $postgrestMessage');
+        } else {
+          debugPrint('🪲 PostgREST ответ: $postgrestPayload');
+        }
+        if (supportsTableKey && _isMissingColumn(error, 'table_key')) {
+          final fallbackPayload = Map<String, dynamic>.from(payload)
+            ..remove('table_key');
+          try {
+            await _sb.from(tableName).insert(fallbackPayload);
+            inserted = true;
+          } on PostgrestException catch (fallbackError) {
+            final message = _formatSupabaseError(fallbackError);
+            throw Exception(
+              'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
+            );
+          }
+        } else {
+          final message = _formatSupabaseError(error);
+          throw Exception(
+            'Ошибка Supabase при сохранении инвентаризации (stationery): $message',
+          );
+        }
+      } catch (error) {
+        debugPrint(
+            '⚠️ Общая ошибка при сохранении инвентаризации в $tableName: $error');
+        rethrow;
+      }
+    }
+
+    if (!inserted && itemType != 'stationery') {
+      final rpcType = _inventoryRpcType(itemType);
+      if (rpcType != null) {
+        final params = <String, dynamic>{
+          'type': rpcType,
+          'item': itemId,
+          'counted': invValue,
+          'by_name': byName,
+        };
+        if (itemType == 'stationery') {
+          params['table_key'] = _stationeryKey;
+        }
+        if (trimmedNote != null) {
+          params['note'] = trimmedNote;
+        }
+        if (itemType != 'pens') {
+          try {
+            await _sb.rpc('inventory_set', params: params);
+            inserted = true;
+          } on PostgrestException catch (e) {
+            String _lowercaseMessage(Object? value) =>
+                (value is String ? value : value?.toString() ?? '').toLowerCase();
+            final msg = _lowercaseMessage(e.message);
+            final details = _lowercaseMessage(e.details);
+            final hint = _lowercaseMessage(e.hint);
+            if (msg.contains('by_name')) {
+              final p2 = Map<String, dynamic>.from(params)..remove('by_name');
+              try {
+                await _sb.rpc('inventory_set', params: p2);
+                inserted = true;
+              } catch (_) {
+                inserted = false;
+              }
+            } else if (msg.contains('function inventory_set') ||
+                details.contains('function inventory_set') ||
+                hint.contains('function inventory_set')) {
+              inserted = false;
+            }
+          } catch (_) {
+            inserted = false;
+          }
+        }
+      }
+    }
+    if (!inserted) {
+      for (final table in tables) {
+        for (final fk in fkCandidates) {
+          for (final qtyCol in qtyColumns) {
+            final List<String?> keyCandidates =
+                (itemType == 'stationery' || itemType == 'pens')
+                    ? <String?>[
+                        ..._tableKeyCandidatesFor(itemType),
+                        null,
+                      ]
+                    : const <String?>[null];
+            for (final String? noteCol in [...noteColumns, null]) {
+              for (final String? tableKey in keyCandidates) {
+                final payload = <String, dynamic>{
+                  fk: itemId,
+                  qtyCol: invValue,
+                  'by_name': byName,
+                  'employee': byName,
+                  'type': itemType,
+                  if (createdBy != null) 'created_by': createdBy,
+                  'created_name': byName,
+                };
+                if (penExtras.isNotEmpty) {
+                  payload.addAll(penExtras);
+                }
+                if (tableKey != null) {
+                  payload['table_key'] = tableKey;
+                }
+                if (noteCol != null && trimmedNote != null) {
+                  payload[noteCol] = trimmedNote;
+                }
+
+                final success = await _tryInsertWarehouseLog(table, payload);
+                if (success) {
+                  inserted = true;
+                  break;
+                } else {
+                  final updatePayload = Map<String, dynamic>.from(payload)
+                    ..remove(fk);
+                  final dynamic tableKeyValue =
+                      updatePayload.remove('table_key');
+                  if (updatePayload.isNotEmpty) {
+                    try {
+                      var updateQuery =
+                          _sb.from(table).update(updatePayload).eq(fk, itemId);
+                      if (tableKeyValue != null) {
+                        updateQuery = updateQuery.eq(
+                            'table_key', tableKeyValue as Object);
+                      }
+                      final response = await updateQuery.select();
+                      if (_hasAffectedRows(response)) {
+                        inserted = true;
+                        break;
+                      }
+                    } catch (_) {}
+                  }
+                }
+              }
+              if (inserted) break;
+            }
+            if (inserted) break;
+          }
+          if (inserted) break;
+        }
+        if (inserted) break;
+      }
+    }
+
+    if (!inserted) {
+      throw Exception('Не удалось сохранить инвентаризацию для $itemType');
+    }
+
+    final baseTable = _tableByType(itemType);
+    try {
+      var updateQuery = _sb
+          .from(baseTable)
+          .update({'quantity': invValue < 0 ? 0 : invValue}).eq('id', itemId);
+      if (itemType == 'stationery') {
+        updateQuery = updateQuery.eq('table_key', _stationeryKey);
+      }
+      await updateQuery;
+    } catch (e) {
+      debugPrint('⚠️ failed to update quantity after inventory: $e');
+    }
 
     final list = _inventoriesByItem.putIfAbsent(itemId, () => []);
-    list.insert(0, {
+    final invEntry = {
       'item_id': itemId,
       'factual': invValue,
-      'note': note,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+      'note': trimmedNote,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'by_name': byName,
+      if (createdBy != null) 'created_by': createdBy,
+      'created_name': byName,
+    };
+    if (penExtras.isNotEmpty) invEntry.addAll(penExtras);
+    list.insert(0, invEntry);
+
+    _invalidateLogsForType(itemType);
+    notifyListeners();
 
     await fetchTmc();
   }
 
+  List<String> _arrivalTables(String typeKey) {
+    final hint = _arrMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_arrivals',
+      if (typeKey == 'stationery') 'stationery_arrivals',
+      if (typeKey == 'pens') 'warehouse_pens_arrivals',
+      if (typeKey == 'pens' &&
+          _resolvedPensTable != null &&
+          _resolvedPensTable != 'warehouse_pens')
+        '${_resolvedPensTable}_arrivals',
+      if (typeKey == 'paper') 'papers_arrivals',
+      if (typeKey == 'paint') 'paints_arrivals',
+      if (typeKey == 'material') 'materials_arrivals',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  List<String> _writeoffTables(String typeKey) {
+    final hint = _woMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
+      if (typeKey == 'pens') 'warehouse_pens_writeoffs',
+      if (typeKey == 'pens' &&
+          _resolvedPensTable != null &&
+          _resolvedPensTable != 'warehouse_pens')
+        '${_resolvedPensTable}_writeoffs',
+      if (typeKey == 'paper') 'papers_writeoffs',
+      if (typeKey == 'paint') 'paints_writeoffs',
+      if (typeKey == 'material') 'materials_writeoffs',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  List<String> _inventoryTables(String typeKey) {
+    final hint = _invMap[typeKey]?['table'];
+    final base = <String>[
+      if (hint != null) hint,
+      if (typeKey == 'stationery') 'warehouse_stationery_inventories',
+      if (typeKey == 'pens') 'warehouse_pens_inventories',
+      if (typeKey == 'pens' &&
+          _resolvedPensTable != null &&
+          _resolvedPensTable != 'warehouse_pens')
+        '${_resolvedPensTable}_inventories',
+      if (typeKey == 'paper') 'papers_inventories',
+      if (typeKey == 'paint') 'paints_inventories',
+      if (typeKey == 'material') 'materials_inventories',
+    ];
+    final seen = <String>{};
+    return base.where((e) => seen.add(e)).toList();
+  }
+
+  String? _inventoryRpcType(String type) {
+    switch (type) {
+      case 'paint':
+        return 'paint';
+      case 'material':
+        return 'materials';
+      case 'paper':
+        return 'paper';
+      case 'stationery':
+        return 'stationery';
+      case 'pens':
+        return 'pens';
+      default:
+        return null;
+    }
+  }
+
+  Future<Map<String, String>> _resolvePenLogExtras({
+    String? itemId,
+    String? name,
+    String? color,
+  }) async {
+    String? resolvedName =
+        name?.trim().isNotEmpty == true ? name!.trim() : null;
+    String? resolvedColor =
+        color?.trim().isNotEmpty == true ? color!.trim() : null;
+
+    bool needsLookup =
+        (resolvedName == null || resolvedColor == null) && (itemId != null);
+
+    if (needsLookup) {
+      try {
+        TmcModel? tmc;
+        try {
+          tmc = _allTmc.firstWhere((e) => e.id == itemId && e.type == 'pens');
+        } catch (_) {
+          try {
+            tmc = _allTmc.firstWhere((e) => e.id == itemId);
+          } catch (_) {}
+        }
+        final desc = (tmc?.description ?? '').trim();
+        if (desc.isNotEmpty) {
+          final parts = desc.split('•');
+          if (resolvedName == null && parts.isNotEmpty) {
+            resolvedName = parts.first.trim();
+          }
+          if (resolvedColor == null && parts.length > 1) {
+            resolvedColor = parts
+                .sublist(1)
+                .map((p) => p.trim())
+                .where((p) => p.isNotEmpty)
+                .join(' • ');
+          }
+        }
+      } catch (_) {}
+    }
+
+    if ((resolvedName == null || resolvedColor == null) && itemId != null) {
+      try {
+        final row = await _sb
+            .from(_tableByType('pens'))
+            .select('name, color')
+            .eq('id', itemId)
+            .maybeSingle();
+        if (row != null) {
+          resolvedName ??= (row['name'] ?? '').toString().trim().isEmpty
+              ? null
+              : row['name'].toString().trim();
+          resolvedColor ??= (row['color'] ?? '').toString().trim().isEmpty
+              ? null
+              : row['color'].toString().trim();
+        }
+      } catch (_) {}
+    }
+
+    final extras = <String, String>{};
+    if (resolvedName != null && resolvedName.isNotEmpty) {
+      extras['name'] = resolvedName;
+    }
+    if (resolvedColor != null && resolvedColor.isNotEmpty) {
+      extras['color'] = resolvedColor;
+    }
+    return extras;
+  }
+
+  Future<void> _logArrivalGeneric({
+    required String typeKey,
+    required String itemId,
+    required double qty,
+    String? note,
+    Map<String, dynamic>? extraPayload,
+  }) async {
+    if (qty <= 0) return;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+    final tables = _arrivalTables(typeKey);
+    final fkCandidates = <String>[
+      'item_id',
+      'stationery_id',
+      'paper_id',
+      'paint_id',
+      'material_id',
+      'tmc_id',
+      'fk_id',
+      if (_arrMap[typeKey]?['fk'] != null) _arrMap[typeKey]!['fk']!,
+    ];
+    final qtyCandidates = <String>[
+      'qty',
+      'quantity',
+      'amount',
+      'count',
+      if (_arrMap[typeKey]?['qty'] != null) _arrMap[typeKey]!['qty']!,
+    ];
+    final noteCandidates = <String>['note', 'comment', 'reason'];
+    final byName = (AuthHelper.currentUserName ?? '').trim().isEmpty
+        ? (AuthHelper.isTechLeader ? 'Технический лидер' : '—')
+        : AuthHelper.currentUserName!;
+
+    for (final table in tables) {
+      for (final fk in fkCandidates) {
+        final basePayload = <String, dynamic>{
+          fk: itemId,
+          'by_name': byName,
+          'employee': byName,
+        };
+        if (extraPayload != null && extraPayload.isNotEmpty) {
+          basePayload.addAll(extraPayload);
+        }
+        bool qtySet = false;
+        for (final q in qtyCandidates) {
+          if (!qtySet) {
+            basePayload[q] = qty;
+            qtySet = true;
+          }
+        }
+        if (note != null && note.trim().isNotEmpty) {
+          for (final n in noteCandidates) {
+            if (!basePayload.containsKey(n)) {
+              basePayload[n] = note.trim();
+              break;
+            }
+          }
+        }
+
+        final bool requiresKey = _tableRequiresStationeryKey(table);
+        final List<String> keyCandidates =
+            requiresKey ? _tableKeyCandidatesFor(typeKey) : const <String>[];
+
+        if (requiresKey) {
+          bool inserted = false;
+          for (final key in keyCandidates) {
+            final payload = Map<String, dynamic>.from(basePayload)
+              ..['table_key'] = key;
+            inserted = await _tryInsertWarehouseLog(table, payload);
+            if (inserted) {
+              _invalidateLogsForType(typeKey);
+              return;
+            }
+          }
+          if (!inserted) {
+            if (await _tryInsertWarehouseLog(table, basePayload)) {
+              _invalidateLogsForType(typeKey);
+              return;
+            }
+          }
+        } else {
+          if (await _tryInsertWarehouseLog(table, basePayload)) {
+            _invalidateLogsForType(typeKey);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  Future<double> _fetchCurrentQuantity(String typeKey, String itemId) async {
+    final baseTable = _tableByType(typeKey);
+    try {
+      var query = _sb.from(baseTable).select('quantity').eq('id', itemId);
+      if (typeKey == 'stationery') {
+        query = query.eq('table_key', _stationeryKey);
+      }
+      final row = await query.limit(1).maybeSingle();
+      final value = row?['quantity'];
+      return value is num ? value.toDouble() : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<bool> _deleteLogFromTables(
+    List<String> tables,
+    String logId, {
+    bool useStationeryKey = false,
+  }) async {
+    for (final table in tables) {
+      try {
+        var query = _sb.from(table).delete().eq('id', logId);
+        if (useStationeryKey && _tableRequiresStationeryKey(table)) {
+          query = query.eq('table_key', _stationeryKey);
+        }
+        final response = await query.select();
+        if (_hasAffectedRows(response)) {
+          return true;
+        }
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  String _appendCancelMarker(String? note) {
+    final existing = (note ?? '').trim();
+    if (existing.toLowerCase().contains(canceledMarker.toLowerCase())) {
+      return existing;
+    }
+    if (existing.isEmpty) {
+      return canceledMarker;
+    }
+    return '$canceledMarker $existing';
+  }
+
+  Future<bool> _markLogCanceled(
+    List<String> tables,
+    String logId, {
+    bool useStationeryKey = false,
+    required List<String> noteCandidates,
+  }) async {
+    for (final table in tables) {
+      for (final noteColumn in noteCandidates) {
+        try {
+          var selectQuery = _sb.from(table).select(noteColumn).eq('id', logId);
+          if (useStationeryKey && _tableRequiresStationeryKey(table)) {
+            selectQuery = selectQuery.eq('table_key', _stationeryKey);
+          }
+          final row = await selectQuery.maybeSingle();
+          if (row == null || row.isEmpty) {
+            continue;
+          }
+          final existing = row[noteColumn]?.toString();
+          final updatedNote = _appendCancelMarker(existing);
+          if (updatedNote == existing) {
+            return true;
+          }
+          var updateQuery =
+              _sb.from(table).update({noteColumn: updatedNote}).eq('id', logId);
+          if (useStationeryKey && _tableRequiresStationeryKey(table)) {
+            updateQuery = updateQuery.eq('table_key', _stationeryKey);
+          }
+          final response = await updateQuery.select();
+          if (_hasAffectedRows(response)) {
+            return true;
+          }
+        } on PostgrestException catch (e) {
+          final code = e.code ?? '';
+          final message = (e.message ?? '').toLowerCase();
+          if (code == '42703' || message.contains('column')) {
+            continue;
+          }
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
+  Future<void> _setQuantity({
+    required String typeKey,
+    required String itemId,
+    required double quantity,
+  }) async {
+    final baseTable = _tableByType(typeKey);
+    var query =
+        _sb.from(baseTable).update({'quantity': quantity}).eq('id', itemId);
+    if (typeKey == 'stationery') {
+      query = query.eq('table_key', _stationeryKey);
+    }
+    final response = await query.select();
+    if (!_hasAffectedRows(response)) {
+      throw Exception('Не удалось обновить остаток по позиции склада');
+    }
+  }
+
+  Future<void> cancelWriteoff({
+    required String logId,
+    required String itemId,
+    required double qty,
+    required String typeHint,
+    String? sourceTable,
+  }) async {
+    await _ensureAuthed();
+    final typeKey = _normalizeType(typeHint) ?? typeHint;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+
+    final currentQty = await _fetchCurrentQuantity(typeKey, itemId);
+    await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty + qty);
+
+    final tables = <String>[
+      if (sourceTable != null) sourceTable,
+      ..._writeoffTables(typeKey),
+    ];
+    final marked = await _markLogCanceled(
+      tables,
+      logId,
+      useStationeryKey: true,
+      noteCandidates: <String>[
+        if (_woMap[typeKey]?['note'] != null) _woMap[typeKey]!['note']!,
+        'note',
+        'reason',
+        'comment',
+      ],
+    );
+    if (!marked) {
+      try {
+        await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty);
+      } catch (_) {}
+      throw Exception('Не удалось пометить списание как отменённое');
+    }
+
+    _invalidateLogsForType(typeKey);
+    await fetchTmc();
+  }
+
+  Future<void> cancelArrival({
+    required String logId,
+    required String itemId,
+    required double qty,
+    required String typeHint,
+    String? sourceTable,
+  }) async {
+    await _ensureAuthed();
+    final typeKey = _normalizeType(typeHint) ?? typeHint;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+
+    final currentQty = await _fetchCurrentQuantity(typeKey, itemId);
+    if (qty > currentQty + 1e-9) {
+      throw Exception('Недостаточно материала для отмены приходов');
+    }
+
+    await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty - qty);
+
+    final tables = <String>[
+      if (sourceTable != null) sourceTable,
+      ..._arrivalTables(typeKey),
+    ];
+    final marked = await _markLogCanceled(
+      tables,
+      logId,
+      useStationeryKey: true,
+      noteCandidates: <String>[
+        if (_arrMap[typeKey]?['note'] != null) _arrMap[typeKey]!['note']!,
+        'note',
+        'reason',
+        'comment',
+      ],
+    );
+    if (!marked) {
+      try {
+        await _setQuantity(typeKey: typeKey, itemId: itemId, quantity: currentQty);
+      } catch (_) {}
+      throw Exception('Не удалось пометить приход как отменённый');
+    }
+
+    _invalidateLogsForType(typeKey);
+    await fetchTmc();
+  }
+
+  Future<void> cancelInventory({
+    required String logId,
+    required String itemId,
+    required double qty,
+    required String typeHint,
+    String? sourceTable,
+  }) async {
+    await _ensureAuthed();
+    final typeKey = _normalizeType(typeHint) ?? typeHint;
+    if (typeKey == 'pens') {
+      await _resolvePensTable();
+    }
+
+    final tables = <String>[
+      if (sourceTable != null) sourceTable,
+      ..._inventoryTables(typeKey),
+    ];
+    final marked = await _markLogCanceled(
+      tables,
+      logId,
+      useStationeryKey: true,
+      noteCandidates: <String>[
+        if (_invMap[typeKey]?['note'] != null) _invMap[typeKey]!['note']!,
+        'note',
+        'reason',
+        'comment',
+      ],
+    );
+    if (!marked) {
+      throw Exception('Не удалось пометить запись инвентаризации как отменённую');
+    }
+
+    _invalidateLogsForType(typeKey);
+    await fetchTmc();
+  }
+
   // ===================== HELPERS =====================
+  bool _tableRequiresStationeryKey(String table) {
+    final lower = table.toLowerCase();
+    return lower == 'warehouse_stationery' ||
+        lower == 'warehouse_stationery_inventories' ||
+        lower == 'warehouse_stationery_writeoffs' ||
+        lower == 'warehouse_stationery_arrivals' ||
+        lower == 'stationery' ||
+        lower == 'warehouse_stationeries';
+  }
+
+  List<String> _tableKeyCandidatesFor(String typeKey) {
+    final Set<String> keys = <String>{};
+    if (typeKey == 'stationery') {
+      final String trimmed = _stationeryKey.trim();
+      if (trimmed.isNotEmpty) keys.add(trimmed);
+    }
+    switch (typeKey) {
+      case 'stationery':
+        for (final candidate in const ['канцелярия', 'stationery']) {
+          if (candidate.trim().isNotEmpty) {
+            keys.add(candidate);
+          }
+        }
+        break;
+    }
+    return keys
+        .map((String e) => e.trim())
+        .where((String e) => e.isNotEmpty)
+        .toList();
+  }
+
+  bool _hasAffectedRows(dynamic response) {
+    if (response == null) return false;
+    if (response is List) return response.isNotEmpty;
+    if (response is Map) return response.isNotEmpty;
+    return true;
+  }
+
+  Future<bool> _tryInsertWarehouseLog(
+      String table, Map<String, dynamic> payload) async {
+    final sanitized = _sanitizeWarehouseLogPayload(table, payload);
+    try {
+      await _sb.from(table).insert(sanitized);
+      return true;
+    } on PostgrestException catch (e) {
+      String _lowercase(Object? value) =>
+          (value is String ? value : value?.toString() ?? '').toLowerCase();
+      final String code = _lowercase(e.code);
+      final String message = _lowercase(e.message);
+      final String details = _lowercase(e.details);
+
+      bool matches(String column) =>
+          column.isNotEmpty &&
+          (message.contains(column.toLowerCase()) ||
+              details.contains(column.toLowerCase()));
+
+      if (sanitized.containsKey('by_name') &&
+          (matches('by_name') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)..remove('by_name');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (sanitized.containsKey('employee') &&
+          (matches('employee') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)..remove('employee');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (sanitized.containsKey('created_name') &&
+          (matches('created_name') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)
+          ..remove('created_name');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (sanitized.containsKey('created_by') &&
+          (matches('created_by') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)
+          ..remove('created_by');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (sanitized.containsKey('type') &&
+          (matches('type') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)..remove('type');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (sanitized.containsKey('table_key') &&
+          (matches('table_key') || code == '42703')) {
+        final next = Map<String, dynamic>.from(sanitized)..remove('table_key');
+        return _tryInsertWarehouseLog(table, next);
+      }
+
+      if (_isMissingRelationError(e, table)) {
+        return false;
+      }
+
+      if (code == '42703') {
+        return false;
+      }
+
+      rethrow;
+    }
+  }
+
+  Map<String, dynamic> _sanitizeWarehouseLogPayload(
+      String table, Map<String, dynamic> payload) {
+    final sanitized = Map<String, dynamic>.from(payload)
+      ..removeWhere((key, value) => value == null);
+    sanitized.remove('name');
+    sanitized.remove('color');
+    sanitized.remove('pen_name');
+    sanitized.remove('pen_color');
+    return sanitized;
+  }
+
+  bool _isMissingRelationError(PostgrestException? error, [String? relation]) {
+    if (error == null) return false;
+    final String code = (error.code?.toString() ?? '').toLowerCase();
+    final String message = (error.message?.toString() ?? '').toLowerCase();
+    final String details = (error.details?.toString() ?? '').toLowerCase();
+    final String hint = (error.hint?.toString() ?? '').toLowerCase();
+    final String? relationLower = relation?.toLowerCase();
+    bool containsRelation(String value) {
+      if (relationLower == null || relationLower.isEmpty) return false;
+      return value.contains(relationLower);
+    }
+
+    if (code == '42p01' ||
+        code == 'pgrst201' ||
+        code == 'pgrst202' ||
+        code == 'pgrst301' ||
+        code == 'pgrst302') {
+      return true;
+    }
+
+    if (containsRelation(message) &&
+        (message.contains('does not exist') ||
+            message.contains('could not find'))) {
+      return true;
+    }
+    if (containsRelation(details) &&
+        (details.contains('does not exist') ||
+            details.contains('could not find'))) {
+      return true;
+    }
+    if (containsRelation(hint) &&
+        (hint.contains('does not exist') || hint.contains('could not find'))) {
+      return true;
+    }
+
+    return false;
+  }
+
   String? _normalizeType(String? type) {
     if (type == null) return null;
     final t = type.toLowerCase().trim();
@@ -702,6 +2171,46 @@ class WarehouseProvider with ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>?> _findExistingPaint(String description) async {
+    final normalized = description.trim();
+    if (normalized.isEmpty) return null;
+    final data = await _sb
+        .from('paints')
+        .select(
+            'id, description, unit, note, low_threshold, critical_threshold, image_url, image_base64')
+        .ilike('description', normalized)
+        .limit(1)
+        .maybeSingle();
+    if (data == null) return null;
+    final existingDescription =
+        (data['description'] ?? '').toString().trim().toLowerCase();
+    if (existingDescription != normalized.toLowerCase()) {
+      return null;
+    }
+    return data;
+  }
+
+  Future<Map<String, dynamic>?> _findExistingStationery(
+      String description) async {
+    final normalized = description.trim();
+    if (normalized.isEmpty) return null;
+    final data = await _sb
+        .from('warehouse_stationery')
+        .select(
+            'id, description, unit, note, low_threshold, critical_threshold, table_key, image_url, image_base64')
+        .eq('table_key', _stationeryKey)
+        .ilike('description', normalized)
+        .limit(1)
+        .maybeSingle();
+    if (data == null) return null;
+    final existingDescription =
+        (data['description'] ?? '').toString().trim().toLowerCase();
+    if (existingDescription != normalized.toLowerCase()) {
+      return null;
+    }
+    return data;
+  }
+
   String _inferType({
     required String unit,
     String? format,
@@ -723,30 +2232,30 @@ class WarehouseProvider with ChangeNotifier {
 
   Future<String?> _detectTypeById(String id) async {
     try {
+      final pensTable = await _resolvePensTable();
       final p =
           await _sb.from('paints').select('id').eq('id', id).maybeSingle();
       if (p != null) return 'paint';
       final m =
           await _sb.from('materials').select('id').eq('id', id).maybeSingle();
       if (m != null) return 'material';
-      final sNew = await _sb
-          .from('warehouse_stationery')
-          .select('id')
-          .eq('id', id)
-          .maybeSingle();
-      if (sNew != null) return 'stationery';
-      final sOld =
-          await _sb.from('stationery').select('id').eq('id', id).maybeSingle();
-      if (sOld != null) return 'stationery';
       final pr =
           await _sb.from('papers').select('id').eq('id', id).maybeSingle();
       if (pr != null) return 'paper';
-      final pe = await _sb
-          .from(_resolvedPensTable ?? 'warehouse_pens')
-          .select('id')
+      final pe =
+          await _sb.from(pensTable).select('id').eq('id', id).maybeSingle();
+      if (pe != null) return 'pens';
+      final sNew = await _sb
+          .from('warehouse_stationery')
+          .select('id, table_key')
           .eq('id', id)
           .maybeSingle();
-      if (pe != null) return 'pens';
+      if (sNew != null) {
+        return 'stationery';
+      }
+      final sOld =
+          await _sb.from('stationery').select('id').eq('id', id).maybeSingle();
+      if (sOld != null) return 'stationery';
     } catch (_) {}
     return null;
   }
@@ -794,6 +2303,10 @@ class WarehouseProvider with ChangeNotifier {
       type: type,
       description: (row['description'] ?? '').toString(),
       quantity: _d(row['quantity']),
+      reservedQty: _d(row['reserved_qty']),
+      availableQty: row.containsKey('available_qty')
+          ? _d(row['available_qty'])
+          : _d(row['quantity']) - _d(row['reserved_qty']),
       unit: (row['unit'] as String?) ?? '',
       note: row['note'] as String?,
       format: row['format'] as String?,
@@ -809,6 +2322,106 @@ class WarehouseProvider with ChangeNotifier {
       createdAt: row['created_at']?.toString(),
       updatedAt: row['updated_at']?.toString(),
     );
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse('$value'.replaceAll(',', '.')) ?? 0.0;
+  }
+
+  double _activePaintReserveQty(Map<String, dynamic> row) {
+    final reserved = _toDouble(row['reserved_qty']);
+    final used = _toDouble(row['used_qty']);
+    final released = _toDouble(row['released_qty']);
+    final active = reserved - used - released;
+    return active > 0 ? active : 0.0;
+  }
+
+  Future<Map<String, double>> _loadPaintReservedQty() async {
+    try {
+      final rows = await _sb
+          .from('order_paint_reservations')
+          .select('paint_id, reserved_qty, used_qty, released_qty');
+      if (rows is! List) return const {};
+      final out = <String, double>{};
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final paintId = (row['paint_id'] ?? '').toString().trim();
+        if (paintId.isEmpty) continue;
+        out.update(
+          paintId,
+          (value) => value + _activePaintReserveQty(row),
+          ifAbsent: () => _activePaintReserveQty(row),
+        );
+      }
+      return out;
+    } catch (e) {
+      debugPrint('⚠️ paint reservations load failed: $e');
+      return const {};
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getPaintReservationsByPaint(
+    String paintId,
+  ) async {
+    final normalizedId = paintId.trim();
+    if (normalizedId.isEmpty) return const [];
+    try {
+      final rows = await _sb
+          .from('order_paint_reservations')
+          .select('order_id, reserved_qty, used_qty, released_qty, created_at')
+          .eq('paint_id', normalizedId)
+          .order('created_at');
+      if (rows is! List) return const [];
+
+      final reservationRows = rows
+          .whereType<Map>()
+          .map((raw) {
+            final row = Map<String, dynamic>.from(raw as Map);
+            final activeQty = _activePaintReserveQty(row);
+            row['active_reserved_qty'] = activeQty;
+            row['qty'] = activeQty;
+            return row;
+          })
+          .where((row) => _toDouble(row['active_reserved_qty']) > 0)
+          .toList(growable: false);
+      if (reservationRows.isEmpty) return const [];
+
+      final orderIds = reservationRows
+          .map((row) => (row['order_id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (orderIds.isEmpty) return reservationRows;
+
+      final ordersById = <String, Map<String, dynamic>>{};
+      try {
+        final orderRows = await _sb
+            .from('orders')
+            .select('id, customer, new_form_no, form_code')
+            .inFilter('id', orderIds);
+        if (orderRows is List) {
+          for (final raw in orderRows.whereType<Map>()) {
+            final order = Map<String, dynamic>.from(raw as Map);
+            final orderId = (order['id'] ?? '').toString().trim();
+            if (orderId.isNotEmpty) ordersById[orderId] = order;
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ paint reservation orders load failed: $e');
+      }
+
+      return reservationRows.map((row) {
+        final next = Map<String, dynamic>.from(row);
+        final orderId = (next['order_id'] ?? '').toString().trim();
+        final order = ordersById[orderId];
+        if (order != null) next['orders'] = order;
+        return next;
+      }).toList(growable: false);
+    } catch (e) {
+      debugPrint('⚠️ paint reservations details failed: $e');
+      return const [];
+    }
   }
 
   Future<String> _uploadImage(
@@ -875,6 +2488,8 @@ class WarehouseProvider with ChangeNotifier {
     String? formSize,
     String? formProductType,
     String? formColors,
+    bool isEnabled = true,
+    String? disabledComment,
   }) async {
     await _ensureAuthed();
 
@@ -888,6 +2503,9 @@ class WarehouseProvider with ChangeNotifier {
       if (formProductType != null) 'product_type': formProductType,
       if (formColors != null) 'colors': formColors,
       'status': 'in_stock',
+      'is_enabled': isEnabled,
+      if (disabledComment != null && disabledComment.trim().isNotEmpty)
+        'disabled_comment': disabledComment.trim(),
     };
     final inserted =
         await _sb.from('forms').insert(insertData).select().single();
@@ -948,17 +2566,50 @@ class WarehouseProvider with ChangeNotifier {
 
     if (query != null && query.trim().isNotEmpty) {
       final q = query.trim();
-      sel = sel.or('series.ilike.%' +
-          q +
-          '%,code.ilike.%' +
-          q +
-          '%,title.ilike.%' +
-          q +
-          '%,description.ilike.%' +
-          q +
-          '%,number::text.ilike.%' +
-          q +
-          '%');
+      final sanitized = q.replaceAll("'", "''");
+      final normalized = q.replaceAll(RegExp(r'\s+'), '');
+      final sanitizedNormalized = normalized.replaceAll("'", "''");
+      final List<String> orFilters = [
+        'series.ilike.%$sanitized%',
+        'code.ilike.%$sanitized%',
+        'title.ilike.%$sanitized%',
+        'description.ilike.%$sanitized%',
+      ];
+
+      final int? numericQuery = int.tryParse(normalized);
+      if (numericQuery != null) {
+        orFilters.add('number.eq.$numericQuery');
+      }
+
+      if (sanitizedNormalized != sanitized) {
+        orFilters.addAll(<String>[
+          'series.ilike.%$sanitizedNormalized%',
+          'code.ilike.%$sanitizedNormalized%',
+        ]);
+        if (numericQuery == null) {
+          final maybeNumeric = int.tryParse(sanitizedNormalized);
+          if (maybeNumeric != null) {
+            orFilters.add('number.eq.$maybeNumeric');
+          }
+        }
+      }
+
+      final combinationMatch =
+          RegExp(r'^([^\d]+?)(\d+)$', unicode: true).firstMatch(normalized);
+      if (combinationMatch != null) {
+        final rawSeries = combinationMatch.group(1)!.trim();
+        final rawNumber = combinationMatch.group(2)!;
+        if (rawSeries.isNotEmpty) {
+          final sanitizedSeries = rawSeries.replaceAll("'", "''");
+          final parsedNumber = int.tryParse(rawNumber);
+          if (parsedNumber != null) {
+            orFilters.add(
+              'and(series.ilike.%$sanitizedSeries%,number.eq.$parsedNumber)');
+          }
+        }
+      }
+
+      sel = sel.or(orFilters.join(','));
     }
 
     final data = await sel.order('number', ascending: false).limit(limit);
@@ -992,6 +2643,9 @@ class WarehouseProvider with ChangeNotifier {
     String? formSize,
     String? formProductType,
     String? formColors,
+    bool? isEnabled,
+    String? disabledComment,
+    String? status,
   }) async {
     await _ensureAuthed();
     final updates = <String, dynamic>{};
@@ -1002,6 +2656,14 @@ class WarehouseProvider with ChangeNotifier {
     if (formSize != null) updates['size'] = formSize;
     if (formProductType != null) updates['product_type'] = formProductType;
     if (formColors != null) updates['colors'] = formColors;
+    if (isEnabled != null) updates['is_enabled'] = isEnabled;
+    if (disabledComment != null) {
+      updates['disabled_comment'] =
+          disabledComment.trim().isEmpty ? null : disabledComment.trim();
+    } else if (isEnabled == true) {
+      updates['disabled_comment'] = null;
+    }
+    if (status != null) updates['status'] = status;
 
     if (imageBytes != null && imageBytes.isNotEmpty) {
       try {
@@ -1207,7 +2869,7 @@ class WarehouseProvider with ChangeNotifier {
     if (existing == null) {
       await _sb.from('papers').insert({
         'id': paperId,
-        'date': DateTime.now().toIso8601String(),
+        'date': nowInKostanayIsoString(),
         'supplier': null,
         'description': name,
         'unit': 'м',

@@ -2,6 +2,8 @@
 // ASCII-only file to avoid any encoding issues on Windows builds.
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../modules/personnel/workplace_model.dart';
+
 class PersonnelDB {
   final SupabaseClient s;
   PersonnelDB({SupabaseClient? client})
@@ -122,8 +124,31 @@ class PersonnelDB {
 
   // Workplaces
   Future<List<Map<String, dynamic>>> listWorkplacesView() async {
-    final data = await s.from('workplaces_view').select('*').order('name');
-    return List<Map<String, dynamic>>.from(data as List);
+    final workplacesData = await s.from('workplaces').select('*').order('name');
+    final positionsData = await s
+        .from('workplace_positions')
+        .select('workplace_id,position_id');
+
+    final positionsByWorkplace = <String, List<String>>{};
+    for (final row in List<Map<String, dynamic>>.from(positionsData as List)) {
+      final workplaceId = row['workplace_id']?.toString();
+      final positionId = row['position_id']?.toString();
+      if (workplaceId == null || positionId == null) continue;
+      positionsByWorkplace
+          .putIfAbsent(workplaceId, () => <String>[])
+          .add(positionId);
+    }
+
+    return List<Map<String, dynamic>>.from(workplacesData as List)
+        .map((row) {
+      final id = row['id']?.toString();
+      return <String, dynamic>{
+        ...row,
+        'position_ids': id == null
+            ? const <String>[]
+            : positionsByWorkplace[id] ?? const <String>[],
+      };
+    }).toList();
   }
 
   Future<void> insertWorkplace({
@@ -131,8 +156,10 @@ class PersonnelDB {
     required String name,
     String? description,
     bool hasMachine = false,
-    int maxConcurrentWorkers = 1,
+    int maxConcurrentWorkers = 0,
     List<String> positionIds = const [],
+    String? unit,
+    WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
   }) async {
     await s.from('workplaces').insert({
       'id': id,
@@ -142,6 +169,8 @@ class PersonnelDB {
           : description.trim(),
       'has_machine': hasMachine,
       'max_concurrent_workers': maxConcurrentWorkers,
+      'unit': unit?.trim().isEmpty == true ? null : unit?.trim(),
+      'execution_mode': executionMode.name,
     });
     if (positionIds.isNotEmpty) {
       final rows = positionIds
@@ -160,6 +189,8 @@ class PersonnelDB {
     bool? hasMachine,
     int? maxConcurrentWorkers,
     List<String>? positionIds,
+    String? unit,
+    WorkplaceExecutionMode? executionMode,
   }) async {
     final patch = <String, dynamic>{};
     if (name != null) patch['name'] = name;
@@ -169,6 +200,13 @@ class PersonnelDB {
     if (hasMachine != null) patch['has_machine'] = hasMachine;
     if (maxConcurrentWorkers != null)
       patch['max_concurrent_workers'] = maxConcurrentWorkers;
+    if (unit != null) {
+      final trimmed = unit.trim();
+      patch['unit'] = trimmed.isEmpty ? null : trimmed;
+    }
+    if (executionMode != null) {
+      patch['execution_mode'] = executionMode.name;
+    }
     if (patch.isNotEmpty) {
       await s.from('workplaces').update(patch).eq('id', id);
     }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../warehouse/type_table_screen.dart';
+import 'type_table_tabs_screen.dart' as warehouse;
 
 /// Экран для отображения списка таблиц по остаткам.
 ///
@@ -48,7 +48,7 @@ class StockTables extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => TypeTableScreen(
+        builder: (_) => warehouse.TypeTableTabsScreen(
           type: type,
           title: title,
         ),

@@ -1,13 +1,11 @@
-import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:sheet_clone/services/app_auth.dart';
 
-/// NO-AUTH заглушка: в проекте отключён вход в Supabase,
-/// но код ожидает наличие AuthService.currentUser.
-/// Возвращаем null и гасим попытки авто-логина.
 class AuthService {
-  /// Всегда null в no-auth режиме.
-  static dynamic get currentUser => null;
+  /// Текущий пользователь Supabase (null, если не вошли).
+  static User? get currentUser => Supabase.instance.client.auth.currentUser;
 
-  static Future<void> tryBackendSignInIfConfigured() async {
-    debugPrint('AuthService: NO-AUTH mode – skipping signInWithPassword');
-  }
+  /// Для совместимости со старым кодом.
+  static Future<void> tryBackendSignInIfConfigured() =>
+      AppAuth.ensureSignedIn();
 }

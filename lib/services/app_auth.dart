@@ -14,9 +14,14 @@ class AppAuth {
     if (session != null && session.user != null) return;
 
     if (_email.isEmpty || _password.isEmpty) {
-      throw Exception(
-        'Анонимный вход выключен. Укажи креды запуска через --dart-define=WAREHOUSE_EMAIL=... и --dart-define=WAREHOUSE_PASSWORD=...',
-      );
+      try {
+        await _sb.auth.signInAnonymously();
+        return;
+      } catch (_) {
+        throw Exception(
+          'Анонимный вход выключен. Укажи креды запуска через --dart-define=WAREHOUSE_EMAIL=... и --dart-define=WAREHOUSE_PASSWORD=...',
+        );
+      }
     }
 
     try {

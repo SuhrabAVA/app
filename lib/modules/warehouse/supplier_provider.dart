@@ -21,10 +21,8 @@ class SupplierProvider with ChangeNotifier {
   /// Загрузка поставщиков из таблицы `suppliers`.
   Future<void> fetchSuppliers() async {
     await _ensureAuthed();
-    final res = await _sb
-        .from('suppliers')
-        .select()
-        .order('created_at', ascending: true);
+    final res =
+        await _sb.from('suppliers').select().order('name', ascending: true);
     if (res is List) {
       _suppliers = res.map((row) {
         final m = Map<String, dynamic>.from(row as Map);

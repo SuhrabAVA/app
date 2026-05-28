@@ -2,13 +2,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import '../../services/app_auth.dart';
-import '../../utils/auth_helper.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/storage_service.dart';
+import '../../utils/auth_helper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'orders_provider.dart';
@@ -17,12 +14,20 @@ import 'order_model.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
+import '../orders/orders_screen.dart';
+
 import '../production_planning/template_provider.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../tasks/task_provider.dart';
+import '../common/pdf_view_screen.dart';
+
+const String _canonicalFlexoWorkplaceId =
+    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+const String _canonicalBobbinWorkplaceId =
+    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -39,13 +44,66 @@ class EditOrderScreen extends StatefulWidget {
 
 class _PaintEntry {
   TmcModel? tmc;
-  double? qty;
+  double? qtyGrams;
   String memo;
   bool exceeded;
-  _PaintEntry({this.tmc, this.qty, this.memo = '', this.exceeded = false});
+  _PaintEntry({this.tmc, this.qtyGrams, this.memo = '', this.exceeded = false});
+
+  double? get qtyKg => qtyGrams == null ? null : qtyGrams! / 1000;
+  set qtyKg(double? value) => qtyGrams = value == null ? null : value * 1000;
+}
+
+class _ExtraPaperEntry {
+  _ExtraPaperEntry({
+    required this.material,
+    String? nameText,
+    String? formatText,
+    String? grammageText,
+  })  : nameCtl = TextEditingController(text: nameText ?? material.name),
+        formatCtl = TextEditingController(text: formatText ?? (material.format ?? '')),
+        gramCtl = TextEditingController(text: grammageText ?? (material.grammage ?? '')),
+        qtyCtl = TextEditingController(
+          text: material.quantity > 0 ? material.quantity.toStringAsFixed(2) : '',
+        ),
+        selectedName = (nameText ?? material.name).trim().isEmpty
+            ? null
+            : (nameText ?? material.name).trim(),
+        selectedFormat = (formatText ?? (material.format ?? '')).trim().isEmpty
+            ? null
+            : (formatText ?? (material.format ?? '')).trim(),
+        selectedGrammage = (grammageText ?? (material.grammage ?? '')).trim().isEmpty
+            ? null
+            : (grammageText ?? (material.grammage ?? '')).trim();
+
+  MaterialModel material;
+  final TextEditingController nameCtl;
+  final TextEditingController formatCtl;
+  final TextEditingController gramCtl;
+  final TextEditingController qtyCtl;
+  String? selectedName;
+  String? selectedFormat;
+  String? selectedGrammage;
+  String? nameError;
+  String? formatError;
+  String? gramError;
+
+  void dispose() {
+    nameCtl.dispose();
+    formatCtl.dispose();
+    gramCtl.dispose();
+    qtyCtl.dispose();
+  }
 }
 
 class _EditOrderScreenState extends State<EditOrderScreen> {
+  Future<void> _goToOrdersModuleHome() async {
+    if (!mounted) return;
+    await Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const OrdersScreen()),
+      (route) => route.isFirst,
+    );
+  }
+
   Future<void> _pickFormImage() async {
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.gallery);
@@ -129,14 +187,76 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     try {
       final wp = WarehouseProvider();
       // Не фильтруем по _formSeries, поскольку series теперь хранит полное название
-      _formResults = await wp.searchForms(
+      final fetchedForms = await wp.searchForms(
         query: search ?? _formSearchCtl.text,
         limit: 50,
+      );
+      _formResults = _prioritizeFormsByCustomer(
+        fetchedForms,
+        customerName: _customerController.text,
       );
     } catch (_) {
     } finally {
       if (mounted) setState(() => _loadingForms = false);
     }
+  }
+
+  List<Map<String, dynamic>> _prioritizeFormsByCustomer(
+    List<Map<String, dynamic>> forms, {
+    required String customerName,
+  }) {
+    if (forms.isEmpty) return forms;
+    final customer = _normalizeSearch(customerName);
+    if (customer.isEmpty) return forms;
+
+    final scored = forms.map((row) {
+      final series = _normalizeSearch((row['series'] ?? '').toString());
+      final title = _normalizeSearch((row['title'] ?? '').toString());
+      final description = _normalizeSearch((row['description'] ?? '').toString());
+      final code = _normalizeSearch((row['code'] ?? '').toString());
+
+      int score = 0;
+      if (series == customer || title == customer) {
+        score += 1000;
+      }
+      if (series.contains(customer) || customer.contains(series)) {
+        score += 400;
+      }
+      if (title.contains(customer) || customer.contains(title)) {
+        score += 300;
+      }
+      if (description.contains(customer) || customer.contains(description)) {
+        score += 200;
+      }
+      if (code.contains(customer)) {
+        score += 80;
+      }
+
+      final customerTokens = customer.split(' ').where((e) => e.isNotEmpty);
+      for (final token in customerTokens) {
+        if (token.length < 3) continue;
+        if (series.contains(token)) score += 50;
+        if (title.contains(token)) score += 40;
+        if (description.contains(token)) score += 20;
+      }
+
+      return (row: row, score: score);
+    }).toList();
+
+    scored.sort((a, b) {
+      if (a.score != b.score) return b.score.compareTo(a.score);
+      final aNumber = (a.row['number'] as num?)?.toInt() ?? 0;
+      final bNumber = (b.row['number'] as num?)?.toInt() ?? 0;
+      return bNumber.compareTo(aNumber);
+    });
+
+    return scored.map((e) => e.row).toList(growable: false);
+  }
+
+  String _normalizeSearch(String value) {
+    final lower = value.toLowerCase().trim();
+    if (lower.isEmpty) return '';
+    return lower.replaceAll(RegExp(r'\s+'), ' ');
   }
 
   final _formKey = GlobalKey<FormState>();
@@ -152,8 +272,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   late TextEditingController _commentsController;
   DateTime? _orderDate;
   DateTime? _dueDate;
-  bool _contractSigned = false;
-  bool _paymentDone = false;
+  // Поля "договор подписан / оплата произведена" временно исключены
+  // из создания и редактирования заказа по бизнес-требованию.
   late ProductModel _product;
   List<String> _selectedParams = [];
   // Ручки (из склада): выбранная ручка
@@ -166,6 +286,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // Кол-во ручек для списания
   double? _handleQty;
   MaterialModel? _selectedMaterial;
+  final List<_ExtraPaperEntry> _extraPaperEntries = <_ExtraPaperEntry>[];
   TmcModel? _selectedMaterialTmc;
   // === Каскадный выбор Материал → Формат → Грамаж (строгий) ===
   final TextEditingController _matNameCtl = TextEditingController();
@@ -190,6 +311,44 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final List<_PaintEntry> _paints = <_PaintEntry>[];
   bool _paintsRestored = false;
   bool _fetchedOrderForm = false;
+
+  String? _formatGramsForInput(double? grams) {
+    if (grams == null) return null;
+    if (grams == 0) return '0';
+    final fixed = grams.toStringAsFixed(grams % 1 == 0 ? 0 : 2);
+    if (!fixed.contains('.')) return fixed;
+    return fixed
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  double _gramsToStockUnit(double grams, TmcModel tmc) {
+    final unit = tmc.unit.toLowerCase();
+    if (unit.contains('кг') || unit.contains('kg')) {
+      return grams / 1000;
+    }
+    if (unit.contains('г') || unit.contains('g')) {
+      return grams;
+    }
+    return grams;
+  }
+
+  String _formatGrams(double grams) {
+    final precision = grams % 1 == 0 ? 0 : 2;
+    final fixed = grams.toStringAsFixed(precision);
+    final trimmed = !fixed.contains('.')
+        ? fixed
+        : fixed
+            .replaceFirst(RegExp(r'0+$'), '')
+            .replaceFirst(RegExp(r'\.$'), '');
+    return '$trimmed г';
+  }
+
+  double? _parseGrams(String value) {
+    final normalized = value.replaceAll(',', '.').trim();
+    if (normalized.isEmpty) return null;
+    return double.tryParse(normalized);
+  }
   // Форма: использование старой формы или создание новой
   bool _isOldForm = false;
   // Список существующих форм (номера) из склада
@@ -255,7 +414,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     super.initState();
 
-    _reloadForms();
     // order передан при редактировании, initialOrder - при создании на основе шаблона
     final template = widget.order ?? widget.initialOrder;
     // Текущий менеджер будет выбран позже в didChangeDependencies, когда загрузится список менеджеров.
@@ -267,8 +425,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _commentsController = TextEditingController(text: template?.comments ?? '');
     _orderDate = template?.orderDate;
     _dueDate = template?.dueDate;
-    _contractSigned = template?.contractSigned ?? false;
-    _paymentDone = template?.paymentDone ?? false;
+    // Поля договора/оплаты намеренно не инициализируем:
+    // в этой форме они временно отключены.
     _selectedParams = List<String>.from(template?.additionalParams ?? const []);
     _selectedHandle = template?.handle ?? '-';
     // Если редактируем и есть строка 'Ручки:' в параметрах - подставим предыдущее количество
@@ -285,7 +443,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _makeready = template?.makeready ?? 0;
     _val = template?.val ?? 0;
     _stageTemplateId = template?.stageTemplateId;
-    _selectedMaterial = template?.material;
+    final List<MaterialModel> initialPapers = template != null
+        ? (template.paperMaterials.isNotEmpty
+            ? List<MaterialModel>.from(template.paperMaterials)
+            : <MaterialModel>[
+                if (template.material != null) template.material!,
+              ])
+        : const <MaterialModel>[];
+    _selectedMaterial = initialPapers.isNotEmpty ? initialPapers.first : null;
+    for (final entry in _extraPaperEntries) {
+      entry.dispose();
+    }
+    _extraPaperEntries
+      ..clear()
+      ..addAll(
+        initialPapers
+            .skip(1)
+            .take(2)
+            .map((paper) => _ExtraPaperEntry(material: paper)),
+      );
 
     // Инициализация каскадных полей (если есть материал в шаблоне)
     _matNameCtl.text = (_selectedMaterial?.name ?? '').trim();
@@ -307,6 +483,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         parameters: p.parameters,
         roll: p.roll,
         widthB: p.widthB,
+        blQuantity: p.blQuantity,
         length: p.length,
         leftover: p.leftover,
       );
@@ -321,11 +498,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         parameters: '',
         roll: null,
         widthB: null,
+        blQuantity: null,
         length: null,
         leftover: null,
       );
     }
     _customerController.addListener(_updateStockExtra);
+    _reloadForms();
     // ensure at least one paint row only for new orders (not editing)
     if (_paints.isEmpty && widget.order == null) _paints.add(_PaintEntry());
     _loadCategoriesForProduct();
@@ -451,6 +630,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _matNameCtl.dispose();
     _matFormatCtl.dispose();
     _matGramCtl.dispose();
+    for (final entry in _extraPaperEntries) {
+      entry.dispose();
+    }
     _newFormNoCtl.dispose();
     _newFormNameCtl.dispose();
     _newFormSizeCtl.dispose();
@@ -563,6 +745,401 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     setState(() {});
   }
 
+  List<MaterialModel> _collectSelectedPapers() {
+    final List<MaterialModel> selected = <MaterialModel>[];
+    final double fallbackQty =
+        (_product.length ?? _selectedMaterial?.quantity ?? 0).toDouble();
+    if (_selectedMaterial != null) {
+      selected.add(
+        _selectedMaterial!.copyWith(
+          quantity: _selectedMaterial!.quantity > 0
+              ? _selectedMaterial!.quantity
+              : fallbackQty,
+          unit: 'м',
+        ),
+      );
+    }
+    for (final entry in _extraPaperEntries) {
+      final paper = entry.material;
+      final id = (paper.id ?? '').trim();
+      if (id.isEmpty) continue;
+      selected.add(
+        paper.copyWith(
+          quantity: paper.quantity > 0 ? paper.quantity : fallbackQty,
+          unit: 'м',
+        ),
+      );
+    }
+    if (selected.length > 3) {
+      return selected.take(3).toList(growable: false);
+    }
+    return selected;
+  }
+
+  void _addExtraPaperSlot() {
+    if (_extraPaperEntries.length >= 2) return;
+    setState(() {
+      _extraPaperEntries.add(
+        _ExtraPaperEntry(
+          material: MaterialModel(
+            id: '',
+            name: '',
+            quantity: (_product.length ?? 0).toDouble(),
+            unit: 'м',
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _buildExtraPaperSelectors() {
+    final papers = _paperItems();
+    if (papers.isEmpty) return const SizedBox.shrink();
+    Iterable<String> filter(Iterable<String> source, String q) {
+      final query = q.trim().toLowerCase();
+      if (query.isEmpty) return source;
+      return source.where((o) => o.toLowerCase().contains(query));
+    }
+
+    final nameSet = <String>{};
+    for (final t in papers) {
+      final n = t.description.trim();
+      if (n.isNotEmpty) nameSet.add(n);
+    }
+    final allNames = nameSet.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    List<String> formatsFor(String name) {
+      final set = <String>{};
+      for (final t in papers) {
+        if (t.description.trim().toLowerCase() == name.trim().toLowerCase()) {
+          final fmt = (t.format ?? '').trim();
+          if (fmt.isNotEmpty) set.add(fmt);
+        }
+      }
+      final list = set.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return list;
+    }
+
+    List<String> gramsFor(String name, String format) {
+      final set = <String>{};
+      for (final t in papers) {
+        if (t.description.trim().toLowerCase() == name.trim().toLowerCase() &&
+            (t.format ?? '').trim().toLowerCase() ==
+                format.trim().toLowerCase()) {
+          final gram = (t.grammage ?? '').trim();
+          if (gram.isNotEmpty) set.add(gram);
+        }
+      }
+      final list = set.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return list;
+    }
+
+    TmcModel? findExact(String name, String format, String grammage) {
+      for (final t in papers) {
+        if (t.description.trim().toLowerCase() == name.trim().toLowerCase() &&
+            (t.format ?? '').trim().toLowerCase() ==
+                format.trim().toLowerCase() &&
+            (t.grammage ?? '').trim().toLowerCase() ==
+                grammage.trim().toLowerCase()) {
+          return t;
+        }
+      }
+      return null;
+    }
+
+    void syncEntryWithSelectedValues(_ExtraPaperEntry entry) {
+      if (entry.selectedName == null ||
+          entry.selectedFormat == null ||
+          entry.selectedGrammage == null) {
+        entry.material = entry.material.copyWith(id: '');
+        return;
+      }
+      final tmc =
+          findExact(entry.selectedName!, entry.selectedFormat!, entry.selectedGrammage!);
+      if (tmc == null) {
+        entry.material = entry.material.copyWith(id: '');
+        return;
+      }
+      entry.material = entry.material.copyWith(
+        id: tmc.id,
+        name: tmc.description,
+        format: tmc.format ?? '',
+        grammage: tmc.grammage ?? '',
+        unit: 'м',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 6),
+        for (var i = 0; i < _extraPaperEntries.length; i++) ...[
+          Builder(builder: (context) {
+            final entry = _extraPaperEntries[i];
+            final formatOptions = entry.selectedName != null
+                ? formatsFor(entry.selectedName!)
+                : const <String>[];
+            final gramOptions = (entry.selectedName != null &&
+                    entry.selectedFormat != null)
+                ? gramsFor(entry.selectedName!, entry.selectedFormat!)
+                : const <String>[];
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Бумага №${i + 2}',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Удалить бумагу',
+                      onPressed: () {
+                        setState(() {
+                          final removed = _extraPaperEntries.removeAt(i);
+                          removed.dispose();
+                        });
+                      },
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                ),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(allNames, text.text),
+                  displayStringForOption: (s) => s,
+                  initialValue: TextEditingValue(text: entry.nameCtl.text),
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        labelText: 'Материал',
+                        border: const OutlineInputBorder(),
+                        errorText: entry.nameError,
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          entry.nameCtl.text = value;
+                          entry.selectedName = null;
+                          entry.selectedFormat = null;
+                          entry.selectedGrammage = null;
+                          entry.formatCtl.text = '';
+                          entry.gramCtl.text = '';
+                          entry.material = entry.material.copyWith(
+                            id: '',
+                            name: value.trim(),
+                            format: '',
+                            grammage: '',
+                          );
+                          entry.nameError = (value.trim().isEmpty ||
+                                  allNames
+                                      .map((e) => e.toLowerCase())
+                                      .contains(value.trim().toLowerCase()))
+                              ? null
+                              : 'Выберите материал из списка';
+                          entry.formatError = null;
+                          entry.gramError = null;
+                          final lowerNames =
+                              allNames.map((e) => e.toLowerCase()).toList();
+                          final typed = value.trim().toLowerCase();
+                          if (lowerNames.contains(typed)) {
+                            entry.selectedName =
+                                allNames[lowerNames.indexOf(typed)];
+                          }
+                          syncEntryWithSelectedValues(entry);
+                        });
+                      },
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      entry.nameCtl.text = value;
+                      entry.selectedName = value;
+                      entry.selectedFormat = null;
+                      entry.selectedGrammage = null;
+                      entry.formatCtl.text = '';
+                      entry.gramCtl.text = '';
+                      entry.material = entry.material.copyWith(
+                        id: '',
+                        name: value,
+                        format: '',
+                        grammage: '',
+                      );
+                      entry.nameError = null;
+                      entry.formatError = null;
+                      entry.gramError = null;
+                      syncEntryWithSelectedValues(entry);
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(formatOptions, text.text),
+                  displayStringForOption: (s) => s,
+                  initialValue: TextEditingValue(text: entry.formatCtl.text),
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled: entry.selectedName != null,
+                      decoration: InputDecoration(
+                        labelText: 'Формат',
+                        border: const OutlineInputBorder(),
+                        helperText: entry.selectedName != null
+                            ? null
+                            : 'Сначала выберите материал',
+                        errorText:
+                            entry.selectedName != null ? entry.formatError : null,
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          entry.formatCtl.text = value;
+                          entry.selectedFormat = null;
+                          entry.selectedGrammage = null;
+                          entry.gramCtl.text = '';
+                          entry.material = entry.material.copyWith(
+                            id: '',
+                            format: value.trim(),
+                            grammage: '',
+                          );
+                          entry.formatError = (value.trim().isEmpty ||
+                                  formatOptions
+                                      .map((e) => e.toLowerCase())
+                                      .contains(value.trim().toLowerCase()))
+                              ? null
+                              : 'Выберите формат из списка';
+                          entry.gramError = null;
+                          final lowerF =
+                              formatOptions.map((e) => e.toLowerCase()).toList();
+                          final typedF = value.trim().toLowerCase();
+                          if (lowerF.contains(typedF)) {
+                            entry.selectedFormat =
+                                formatOptions[lowerF.indexOf(typedF)];
+                          }
+                          syncEntryWithSelectedValues(entry);
+                        });
+                      },
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      entry.formatCtl.text = value;
+                      entry.selectedFormat = value;
+                      entry.selectedGrammage = null;
+                      entry.gramCtl.text = '';
+                      entry.material = entry.material.copyWith(
+                        id: '',
+                        format: value,
+                        grammage: '',
+                      );
+                      entry.formatError = null;
+                      entry.gramError = null;
+                      syncEntryWithSelectedValues(entry);
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                Autocomplete<String>(
+                  optionsBuilder: (text) => filter(gramOptions, text.text),
+                  displayStringForOption: (s) => s,
+                  initialValue: TextEditingValue(text: entry.gramCtl.text),
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled: entry.selectedName != null &&
+                          entry.selectedFormat != null,
+                      decoration: InputDecoration(
+                        labelText: 'Грамаж',
+                        border: const OutlineInputBorder(),
+                        helperText: (entry.selectedName != null &&
+                                entry.selectedFormat != null)
+                            ? null
+                            : 'Сначала выберите формат',
+                        errorText: (entry.selectedName != null &&
+                                entry.selectedFormat != null)
+                            ? entry.gramError
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          entry.gramCtl.text = value;
+                          entry.selectedGrammage = null;
+                          entry.material = entry.material.copyWith(
+                            id: '',
+                            grammage: value.trim(),
+                          );
+                          entry.gramError = null;
+                          final lowerG =
+                              gramOptions.map((e) => e.toLowerCase()).toList();
+                          final typedG = value.trim().toLowerCase();
+                          if (lowerG.contains(typedG)) {
+                            entry.selectedGrammage =
+                                gramOptions[lowerG.indexOf(typedG)];
+                          }
+                          syncEntryWithSelectedValues(entry);
+                        });
+                      },
+                      onSubmitted: (_) => onFieldSubmitted(),
+                    );
+                  },
+                  onSelected: (value) {
+                    setState(() {
+                      entry.gramCtl.text = value;
+                      entry.selectedGrammage = value;
+                      entry.gramError = null;
+                      syncEntryWithSelectedValues(entry);
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: entry.qtyCtl,
+                  decoration: const InputDecoration(
+                    labelText: 'Метраж, м',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (value) {
+                    final parsed = double.tryParse(value.replaceAll(',', '.'));
+                    setState(() {
+                      entry.material = entry.material.copyWith(
+                        quantity: parsed == null || parsed < 0 ? 0 : parsed,
+                        unit: 'м',
+                      );
+                    });
+                  },
+                ),
+              ],
+            );
+          }),
+          const SizedBox(height: 6),
+        ],
+        if (_extraPaperEntries.length < 2)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _addExtraPaperSlot,
+              icon: const Icon(Icons.add),
+              label: Text('Добавить бумагу №${_extraPaperEntries.length + 2}'),
+            ),
+          ),
+      ],
+    );
+  }
+
   void _restorePaintsFromParams(WarehouseProvider warehouse) {
     if (_paintsRestored) return;
     final template = widget.order ?? widget.initialOrder;
@@ -573,8 +1150,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     final paintTmcList = warehouse.getTmcByType('Краска');
     final reg = RegExp(
-        r'Краска:\s*(.+?)\s+([0-9]+(?:[.,][0-9]+)?)\s*кг(?:\s*\(([^)]+)\))?',
-        multiLine: false);
+        r'Краска:\s*(.+?)\s+([0-9]+(?:[.,][0-9]+)?)\s*(кг|г)(?:\s*\(([^)]+)\))?',
+        multiLine: false,
+        caseSensitive: false);
     final matches = reg.allMatches(params).toList();
     if (matches.isEmpty) {
       _paintsRestored = true;
@@ -584,9 +1162,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     for (final m in matches) {
       final name = (m.group(1) ?? '').trim();
       final qtyStr = (m.group(2) ?? '').replaceAll(',', '.');
-      final memo = (m.group(3) ?? '').trim();
+      final unit = (m.group(3) ?? '').toLowerCase();
+      final memo = (m.group(4) ?? '').trim();
       final qty = double.tryParse(qtyStr);
       if (name.isEmpty || qty == null) continue;
+      // Важно: "кг" содержит "г", поэтому сначала проверяем килограммы.
+      final grams = (unit.contains('кг') || unit.contains('kg')) ? qty * 1000 : qty;
       TmcModel? found;
       for (final t in paintTmcList) {
         if (t.description.trim() == name) {
@@ -595,7 +1176,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       }
       if (found != null) {
-        restored.add(_PaintEntry(tmc: found, qty: qty, memo: memo));
+        restored
+            .add(_PaintEntry(tmc: found, qtyGrams: grams, memo: memo));
       }
     }
     if (restored.isNotEmpty) {
@@ -629,13 +1211,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           'order_id': orderId,
           'name': row.tmc!.description,
           'info': row.memo.isNotEmpty ? row.memo : null,
-          'qty_kg': row.qty, // может быть null
+          'qty_kg': row.qtyKg, // может быть null
         });
       }
       // В product.parameters пишем только позиции с указанным количеством > 0
-      if (row.tmc != null && (row.qty ?? 0) > 0) {
+      if (row.tmc != null && (row.qtyGrams ?? 0) > 0) {
         infos.add(
-            'Краска: ${row.tmc!.description} ${row.qty!.toStringAsFixed(2)} кг${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
+            'Краска: ${row.tmc!.description} ${_formatGrams(row.qtyGrams!)}${row.memo.isNotEmpty ? ' (${row.memo})' : ''}');
       }
     }
 
@@ -649,12 +1231,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
     // 4) Перезаписываем таблицу order_paints
     try {
-      // удаляем старые
-      await _sb.from('order_paints').delete().eq('order_id', orderId);
-      // вставляем новые
-      if (rows.isNotEmpty) {
-        await _sb.from('order_paints').insert(rows);
-      }
+      final repo = OrdersRepository();
+      await repo.saveOrderPaints(orderId: orderId, paints: rows);
+      await repo.syncPaintReservations(
+        orderId: orderId,
+        paints: rows,
+        actor: AuthHelper.currentUserName ?? '',
+      );
     } catch (e) {
       // не блокируем сохранение заказа, просто сообщим в консоль
       debugPrint('❌ persist paints error: ' + e.toString());
@@ -673,14 +1256,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           final restored = <_PaintEntry>[];
           for (final it in items) {
             final name = (it['name'] ?? '').toString();
-            final qty = (it['qty_kg'] as num?)?.toDouble() ?? 0.0;
+            final qtyRaw = it['qty_kg'];
+            final qtyKg =
+                (qtyRaw is num) ? qtyRaw.toDouble() : double.tryParse('$qtyRaw');
+            final grams = qtyKg == null ? null : qtyKg * 1000;
             final memo = (it['info'] ?? '').toString();
             final tmc = warehouse.getPaintByName(name);
             if (tmc != null) {
-              restored.add(_PaintEntry(tmc: tmc, qty: qty, memo: memo));
+              restored.add(
+                  _PaintEntry(tmc: tmc, qtyGrams: grams, memo: memo));
             } else {
               // В редком случае, если номенклатуры уже нет - просто с текстом.
-              restored.add(_PaintEntry(qty: qty, memo: memo));
+              restored.add(_PaintEntry(qtyGrams: grams, memo: memo));
             }
           }
           setState(() {
@@ -713,11 +1300,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Future<void> _openPdf() async {
-    if (_pickedPdf != null && _pickedPdf!.path != null) {
-      await OpenFilex.open(_pickedPdf!.path!);
+    if (_pickedPdf != null) {
+      final bytes = _pickedPdf!.bytes;
+      if (bytes == null) return;
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PdfViewScreen(
+            bytes: bytes,
+            title: _pickedPdf!.name.isEmpty ? 'PDF' : _pickedPdf!.name,
+          ),
+        ),
+      );
     } else if (widget.order?.pdfUrl != null) {
       final url = await getSignedUrl(widget.order!.pdfUrl!);
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PdfViewScreen(
+            url: url,
+            title: widget.order!.pdfUrl!.split('/').last,
+          ),
+        ),
+      );
     }
   }
 
@@ -845,7 +1450,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
-  /// Build a map of previous paints {name -> qty_kg}
+  /// Build a map of previous paints {name -> qty_g}
   Future<Map<String, double>> _loadPreviousPaints(String orderId) async {
     try {
       final repo = OrdersRepository();
@@ -854,9 +1459,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       for (final r in rows) {
         final name = (r['name'] ?? '').toString().trim();
         final qv = r['qty_kg'];
-        final q =
-            (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}') ?? 0.0;
-        if (name.isNotEmpty) prev[name.toLowerCase()] = q;
+        final qKg =
+            (qv is num) ? qv.toDouble() : double.tryParse('${qv ?? ''}');
+        if (name.isNotEmpty && qKg != null) {
+          prev[name.toLowerCase()] = qKg * 1000;
+        }
       }
       return prev;
     } catch (_) {
@@ -900,7 +1507,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return;
     }
     final provider = Provider.of<OrdersProvider>(context, listen: false);
-    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+    final List<MaterialModel> selectedPapers = _collectSelectedPapers();
+    final MaterialModel? primaryPaper =
+        selectedPapers.isNotEmpty ? selectedPapers.first : _selectedMaterial;
     late OrderModel createdOrUpdatedOrder;
     if (widget.order == null) {
       // создаём новый заказ
@@ -913,12 +1522,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         additionalParams: _selectedParams,
         handle: _selectedHandle,
         cardboard: _selectedCardboard,
-        material: _selectedMaterial,
+        material: primaryPaper,
+        paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
         stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
+        // Временно отключено в форме создания/редактирования заказа.
+        contractSigned: false,
+        paymentDone: false,
         comments: _commentsController.text.trim(),
       );
       if (_created == null) {
@@ -940,13 +1551,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         additionalParams: _selectedParams,
         handle: _selectedHandle,
         cardboard: _selectedCardboard,
-        material: _selectedMaterial,
+        material: primaryPaper,
+        paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
         pdfUrl: widget.order!.pdfUrl,
         stageTemplateId: _stageTemplateId,
-        contractSigned: _contractSigned,
-        paymentDone: _paymentDone,
+        // Временно отключено в форме создания/редактирования заказа.
+        contractSigned: false,
+        paymentDone: false,
         comments: _commentsController.text.trim(),
         status: widget.order!.status,
         assignmentId: widget.order!.assignmentId,
@@ -973,6 +1586,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           handle: createdOrUpdatedOrder.handle,
           cardboard: createdOrUpdatedOrder.cardboard,
           material: createdOrUpdatedOrder.material,
+          paperMaterials: createdOrUpdatedOrder.paperMaterials,
           makeready: createdOrUpdatedOrder.makeready,
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
@@ -1013,12 +1627,59 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             stageMaps.add(Map<String, dynamic>.from(item));
           }
         } else if (stagesData is Map) {
-          (stagesData as Map).forEach((_, value) {
-            if (value is Map) {
-              stageMaps.add(Map<String, dynamic>.from(value));
+          final entries = stagesData.entries.toList()
+            ..sort((a, b) {
+              final ak = int.tryParse(a.key.toString());
+              final bk = int.tryParse(b.key.toString());
+              if (ak != null && bk != null) return ak.compareTo(bk);
+              if (ak != null) return -1;
+              if (bk != null) return 1;
+              return a.key.toString().compareTo(b.key.toString());
+            });
+          for (final entry in entries) {
+            if (entry.value is! Map) continue;
+            final map = Map<String, dynamic>.from(entry.value as Map);
+            final hasOrder = map.containsKey('order') ||
+                map.containsKey('step') ||
+                map.containsKey('position') ||
+                map.containsKey('step_no');
+            if (!hasOrder) {
+              final parsed = int.tryParse(entry.key.toString());
+              if (parsed != null) {
+                map['order'] = parsed;
+              }
             }
-          });
+            stageMaps.add(map);
+          }
         }
+
+        void _sortStageMaps() {
+          final entries = stageMaps.asMap().entries.toList();
+          int _orderOf(Map<String, dynamic> m, int fallback) {
+            final rawOrder =
+                m['order'] ?? m['step'] ?? m['position'] ?? m['step_no'];
+            if (rawOrder is num) return rawOrder.toInt();
+            if (rawOrder is String) {
+              final parsed = int.tryParse(rawOrder);
+              if (parsed != null) return parsed;
+            }
+            return fallback;
+          }
+
+          entries.sort((a, b) {
+            final ao = _orderOf(a.value, a.key);
+            final bo = _orderOf(b.value, b.key);
+            final cmp = ao.compareTo(bo);
+            if (cmp != 0) return cmp;
+            return a.key.compareTo(b.key);
+          });
+
+          stageMaps
+            ..clear()
+            ..addAll(entries.map((e) => e.value));
+        }
+
+        _sortStageMaps();
 
         // === Custom stage logic (Flexo insert; Bobbin remove when format==width) ===
         String? __flexoId;
@@ -1055,10 +1716,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           if (flexo != null) {
             __flexoId = (flexo['id'] as String?);
             __flexoTitle = (flexo['title'] as String?) ?? (flexo['name'] as String?);
-          if (__flexoTitle == null || __flexoTitle.trim().isEmpty) __flexoTitle = 'Флексопечать';
-          if (__flexoTitle == null || RegExp(r'^[a-z0-9_\-]+$').hasMatch(__flexoTitle)) {
-            __flexoTitle = 'Флексопечать';
-          }
+            if (__flexoTitle == null || __flexoTitle!.trim().isEmpty) {
+              __flexoTitle = 'Флексопечать';
+            }
+            if (__flexoTitle != null &&
+                RegExp(r'^[a-z0-9_\-]+$')
+                    .hasMatch(__flexoTitle!.toLowerCase())) {
+              __flexoTitle = 'Флексопечать';
+            }
           }
           // Bobbin by multiple patterns
           Map<String, dynamic>? bob = await _sb
@@ -1091,30 +1756,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               .ilike('name', 'Bobbin%')
               .limit(1)
               .maybeSingle();
+          if (bob == null) {
+            bob = await _sb
+                .from('workplaces')
+                .select('id,title,name')
+                .eq('id', _canonicalBobbinWorkplaceId)
+                .maybeSingle();
+          }
           if (bob != null) {
             __bobbinId = (bob['id'] as String?);
-            __bobbinTitle = (bob['title'] as String?);
+            __bobbinTitle = (bob['title'] as String?) ?? (bob['name'] as String?);
           }
         } catch (_) {}
 
-        // paints present?
-        bool __paintsFilled =
-            _paints.any((p) => p.tmc != null);
-
-        // If paints exist and template has no Flexo - insert Flexo at 1st position,
-        // or 2nd if Bobbin exists in the queue
-
-        if (true) {
-          // Determine if Flexo already present by id or by name
-                    // Ensure Flexo ID fallback
-          if (__flexoId == null || __flexoId!.isEmpty) {
-            __flexoId = 'w_flexoprint';
-          }
-          if (__flexoTitle == null || __flexoTitle!.trim().isEmpty) {
-            __flexoTitle = 'Флексопечать';
-          }
-          debugPrint('⚙️ Flexo resolved: id=' + (__flexoId ?? 'null') + ', title=' + (__flexoTitle ?? 'null'));
-final hasFlexo = stageMaps.any((m) {
+        int _findBobbinIndex() {
+          return stageMaps.indexWhere((m) {
             final sid = (m['stageId'] as String?) ??
                 (m['stageid'] as String?) ??
                 (m['stage_id'] as String?) ??
@@ -1122,9 +1778,90 @@ final hasFlexo = stageMaps.any((m) {
                 (m['workplace_id'] as String?) ??
                 (m['id'] as String?);
             final title =
-                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                    '';
-            final byId = (__flexoId != null && sid == __flexoId) || (sid != null && (sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            final byId = (__bobbinId != null && sid == __bobbinId);
+            final byName = title.contains('бобинорезка') ||
+                title.contains('бабинорезка') ||
+                title.contains('bobbin');
+            return byId || byName;
+          });
+        }
+
+        bool _removeBobbinStage() {
+          final idxBob = _findBobbinIndex();
+          if (idxBob >= 0) {
+            stageMaps.removeAt(idxBob);
+            return true;
+          }
+          return false;
+        }
+
+        double? _extractFormatWidth() {
+          double? fmtW;
+          if (_matSelectedFormat != null &&
+              _matSelectedFormat!.trim().isNotEmpty) {
+            final match =
+                RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
+            if (match != null) {
+              fmtW = double.tryParse(match.group(1)!.replaceAll(',', '.'));
+            }
+          }
+          return fmtW;
+        }
+
+        double? _productWidthValue() {
+          final dynamic widthValue = _product.widthB ?? _product.width;
+          if (widthValue is num) {
+            return widthValue.toDouble();
+          }
+          if (widthValue is String) {
+            return double.tryParse(widthValue.replaceAll(',', '.'));
+          }
+          return null;
+        }
+
+        // paints present?
+        const double __epsilon = 0.001;
+        final double? __formatWidth = _extractFormatWidth();
+        final double? __productWidth = _productWidthValue();
+        final bool __hasWidths =
+            __formatWidth != null && __productWidth != null && __productWidth > 0;
+        final bool __shouldAddBobbin = __hasWidths &&
+            (__productWidth! + __epsilon) < __formatWidth!;
+        final bool __shouldRemoveBobbin = __hasWidths &&
+            ((__formatWidth! + __epsilon) < __productWidth! ||
+                (__formatWidth - __productWidth).abs() <= __epsilon);
+
+        bool __paintsFilled = _paints.any((p) {
+          final hasTmc = p.tmc != null;
+          final hasQty = p.qtyGrams != null;
+          final hasMemo = p.memo.trim().isNotEmpty;
+          return hasTmc || hasQty || hasMemo;
+        });
+
+        // If paints exist and template has no Flexo - insert Flexo at 1st position,
+        // or 2nd if Bobbin exists in the queue
+
+        if (__paintsFilled) {
+          // Determine if Flexo already present by id or by name
+          if (__flexoId == null || __flexoId!.isEmpty) {
+            __flexoId = _canonicalFlexoWorkplaceId;
+          }
+          if (__flexoTitle == null || __flexoTitle!.trim().isEmpty) {
+            __flexoTitle = 'Флексопечать';
+          }
+          debugPrint('⚙️ Flexo resolved: id=' + (__flexoId ?? 'null') + ', title=' + (__flexoTitle ?? 'null'));
+          final hasFlexo = stageMaps.any((m) {
+            final sid = (m['stageId'] as String?) ??
+                (m['stageid'] as String?) ??
+                (m['stage_id'] as String?) ??
+                (m['workplaceId'] as String?) ??
+                (m['workplace_id'] as String?) ??
+                (m['id'] as String?);
+            final title =
+                ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ?? '';
+            final byId = (__flexoId != null && sid == __flexoId) ||
+                (sid != null && (sid == _canonicalFlexoWorkplaceId || sid == 'w_flexoprint' || sid.startsWith('w_flexo')));
             final byName =
                 title.contains('флексопечать') || title.contains('flexo');
             return byId || byName;
@@ -1132,22 +1869,7 @@ final hasFlexo = stageMaps.any((m) {
 
           if (!hasFlexo && __flexoId != null && __flexoId!.isNotEmpty) {
             int insertIndex = 0;
-            final bobIndex = stageMaps.indexWhere((m) {
-              final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-              final title =
-                  ((m['stageName'] ?? m['title']) as String?)?.toLowerCase() ??
-                      '';
-              final byId = (__bobbinId != null && sid == __bobbinId);
-              final byName = title.contains('бобинорезка') ||
-                  title.contains('бабинорезка') ||
-                  title.contains('bobbin');
-              return byId || byName;
-            });
+            final bobIndex = _findBobbinIndex();
             if (bobIndex >= 0) insertIndex = bobIndex + 1;
 
             debugPrint('➕ Inserting Flexo at index ' + insertIndex.toString());
@@ -1161,144 +1883,322 @@ final hasFlexo = stageMaps.any((m) {
             });
           }
 
-          // If material format equals width - remove Bobbin (only for this order)
-          if (__bobbinId != null || true) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remove Bobbin by id or title
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-                final title = ((m['stageName'] ?? m['title']) as String?)
-                        ?.toLowerCase() ??
-                    '';
-                final byId = (__bobbinId != null && sid == __bobbinId);
-                final byName = title.contains('бобинорезка') ||
-                    title.contains('бабинорезка') ||
-                    title.contains('bobbin');
-                return byId || byName;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
-          }
-          if (__bobbinId != null) {
-            double? fmtW;
-            if (_matSelectedFormat != null &&
-                _matSelectedFormat!.trim().isNotEmpty) {
-              final _m =
-                  RegExp(r'(\d+(?:[\.,]\d+)?)').firstMatch(_matSelectedFormat!);
-              if (_m != null) {
-                fmtW = double.tryParse(_m.group(1)!.replaceAll(',', '.'));
-              }
-            }
-            final double w =
-                ((_product.widthB ?? _product.width) ?? 0).toDouble();
-            if (fmtW != null && w > 0 && (fmtW - w).abs() <= 0.001) {
-              // remember for marking "done" if necessary, then remove
-              final idxBob = stageMaps.indexWhere((m) {
-                final sid = (m['stageId'] as String?) ??
-                (m['stageid'] as String?) ??
-                (m['stage_id'] as String?) ??
-                (m['workplaceId'] as String?) ??
-                (m['workplace_id'] as String?) ??
-                (m['id'] as String?);
-                return sid == __bobbinId;
-              });
-              if (idxBob >= 0) {
-                __shouldCompleteBobbin = true;
-                stageMaps.removeAt(idxBob);
-              }
-            }
-          }
-          // === /Custom stage logic ===
-// Save or update production plan in dedicated table 'production_plans'
-          final existingPlan = await _sb
-              .from('production_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          if (existingPlan != null) {
-            await _sb
-                .from('production_plans')
-                .update({'stages': stageMaps}).eq('id', existingPlan['id']);
-          } else {
-            await _sb.from('production_plans').insert(
-                {'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
-          debugPrint('💾 production_plans saved with ' + stageMaps.length.toString() + ' stages');
-          }
+        }
 
-          // Build a list of valid stage IDs (must exist in 'workplaces')
-          final List<String> __validStageIds = [];
-          for (final sm in stageMaps) {
-            final sid = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['id'] as String?);
-            if (sid == null || sid.isEmpty) continue;
+        if (__shouldRemoveBobbin && _removeBobbinStage()) {
+          __shouldCompleteBobbin = true;
+        } else if (__shouldAddBobbin) {
+          final hasBobbin = _findBobbinIndex() >= 0;
+          if (!hasBobbin && (__bobbinId != null && __bobbinId!.isNotEmpty)) {
+            final resolvedBobbinTitle =
+                (__bobbinTitle?.trim().isNotEmpty ?? false)
+                    ? __bobbinTitle!.trim()
+                    : 'Бабинорезка';
+            stageMaps.insert(0, {
+              'stageId': __bobbinId,
+              'workplaceId': __bobbinId,
+              'stageName': resolvedBobbinTitle,
+              'workplaceName': resolvedBobbinTitle,
+              'order': 0,
+            });
+        } else if (!hasBobbin &&
+            (__bobbinId == null || __bobbinId!.isEmpty)) {
+          final resolvedBobbinTitle =
+              (__bobbinTitle?.trim().isNotEmpty ?? false)
+                  ? __bobbinTitle!.trim()
+                  : 'Бабинорезка';
+          stageMaps.insert(0, {
+            'stageId': _canonicalBobbinWorkplaceId,
+            'workplaceId': _canonicalBobbinWorkplaceId,
+            'stageName': resolvedBobbinTitle,
+            'workplaceName': resolvedBobbinTitle,
+            'order': 0,
+          });
+        }
+      }
+      // === /Custom stage logic ===
+
+      // Normalize ordering and ensure sequential step numbers after all inserts
+      // (used by both production plan and tasks views).
+      _sortStageMaps();
+      for (var i = 0; i < stageMaps.length; i++) {
+        final step = i + 1;
+        stageMaps[i]['order'] = step;
+        stageMaps[i]['step'] = step;
+        stageMaps[i]['step_no'] = step;
+      }
+
+      // Save or update production plan in dedicated table 'production_plans'
+      final existingPlan = await _sb
+          .from('production_plans')
+          .select('id')
+          .eq('order_id', createdOrUpdatedOrder.id)
+          .maybeSingle();
+      if (existingPlan != null) {
+        await _sb
+            .from('production_plans')
+            .update({'stages': stageMaps}).eq('id', existingPlan['id']);
+      } else {
+        await _sb
+            .from('production_plans')
+            .insert({'order_id': createdOrUpdatedOrder.id, 'stages': stageMaps});
+      }
+      debugPrint('💾 production_plans saved with ' + stageMaps.length.toString() +
+          ' stages');
+
+      String _normalizeText(dynamic value) =>
+          (value?.toString() ?? '').trim();
+
+      final workplaceLookup = <String, String>{};
+      Future<List<Map<String, dynamic>>> _loadWorkplaceRows() async {
+        Future<List<Map<String, dynamic>>> readRows(String select) async {
+          final rows = await _sb.from('workplaces').select(select);
+          if (rows is! List) return const <Map<String, dynamic>>[];
+          return rows
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+        }
+
+        try {
+          return await readRows(
+            'id, code, name, title, short_name, workplace_name, stage_name',
+          );
+        } catch (_) {
+          try {
+            return await readRows('id, name, code, title, short_name');
+          } catch (_) {
             try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', sid)
-                  .maybeSingle();
-              if (exists != null) __validStageIds.add(sid);
-            } catch (_) {}
-          }
-          if (__validStageIds.isNotEmpty) {
-            await _sb
-                .from('tasks')
-                .delete()
-                .eq('order_id', createdOrUpdatedOrder.id);
-            // create new tasks for each stage
-          } else {
-            // No valid stages resolved — keep existing tasks to avoid losing assignments
-            // (logically indicates a template/config error)
-          }
-          // create new tasks for each stage (only if stage exists)
-          for (final sm in stageMaps) {
-            final stageId = (sm['stageId'] as String?) ??
-                (sm['stageid'] as String?) ??
-                (sm['stage_id'] as String?) ??
-                (sm['workplaceId'] as String?) ??
-                (sm['workplace_id'] as String?) ??
-                (sm['id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            try {
-              final exists = await _sb
-                  .from('workplaces')
-                  .select('id')
-                  .eq('id', stageId)
-                  .maybeSingle();
-              if (exists == null)
-                continue; // skip invalid stageId to avoid FK/insert errors
-              await _sb.from('tasks').insert({
-                'order_id': createdOrUpdatedOrder.id,
-                'stage_id': stageId,
-                'status': 'waiting',
-                'assignees': [],
-                'comments': [],
-              });
-            } catch (e) {
-              // ignore problematic stage ids to avoid breaking whole save
+              return await readRows('id, name');
+            } catch (_) {
+              return const <Map<String, dynamic>>[];
             }
           }
+        }
+      }
+
+      final workplaceRows = await _loadWorkplaceRows();
+      bool _containsBobbinWord(String value) {
+        final text = value.toLowerCase();
+        return text.contains('бобин') ||
+            text.contains('бабин') ||
+            text.contains('bobin') ||
+            text.contains('bobbin');
+      }
+
+      bool _containsFlexoWord(String value) {
+        final text = value.toLowerCase();
+        return text.contains('флекс') || text.contains('flexo');
+      }
+
+      final legacyStageLookup = <String, String>{};
+      legacyStageLookup['w_flexoprint'] = _canonicalFlexoWorkplaceId;
+      legacyStageLookup['w_flexo'] = _canonicalFlexoWorkplaceId;
+      legacyStageLookup['w_bobiner'] = _canonicalBobbinWorkplaceId;
+      legacyStageLookup['w_bobbin'] = _canonicalBobbinWorkplaceId;
+      for (final map in workplaceRows) {
+        final id = _normalizeText(map['id']);
+        if (id.isEmpty) continue;
+        final probes = [
+          map['id'],
+          map['code'],
+          map['name'],
+          map['title'],
+          map['short_name'],
+          map['workplace_name'],
+          map['stage_name'],
+        ];
+        final joined = probes.map(_normalizeText).join(' ').toLowerCase();
+        if (_containsBobbinWord(joined)) {
+          legacyStageLookup['w_bobiner'] = id;
+          legacyStageLookup['w_bobbin'] = id;
+        }
+        if (_containsFlexoWord(joined)) {
+          legacyStageLookup['w_flexoprint'] = id;
+          legacyStageLookup['w_flexo'] = id;
+        }
+        for (final probe in probes) {
+          final key = _normalizeText(probe).toLowerCase();
+          if (key.isEmpty) continue;
+          workplaceLookup.putIfAbsent(key, () => id);
+        }
+      }
+
+      String? _resolveStageId(dynamic raw) {
+        final normalized = _normalizeText(raw);
+        if (normalized.isEmpty) return null;
+        final key = normalized.toLowerCase();
+        return workplaceLookup[key] ?? legacyStageLookup[key] ?? normalized;
+      }
+
+      bool _looksLikeUuid(String value) {
+        final v = value.trim();
+        return RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+            .hasMatch(v);
+      }
+
+      List<String> _extractStageIds(Map<String, dynamic> sm) {
+        final ids = <String>{};
+
+        void addComposite(dynamic raw) {
+          final normalized = _normalizeText(raw);
+          if (normalized.isEmpty) return;
+          final chunks = normalized
+              .split(RegExp(r'\s*/\s*|\s*[,;]\s*'))
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toSet();
+          for (final chunk in chunks) {
+            final resolved = _resolveStageId(chunk);
+            if (resolved != null && resolved.isNotEmpty) {
+              ids.add(resolved);
+            }
+          }
+        }
+
+        void addList(dynamic raw) {
+          if (raw is List) {
+            for (final entry in raw) {
+              final id = _resolveStageId(entry);
+              if (id != null && id.isNotEmpty) ids.add(id);
+              addComposite(entry);
+            }
+          } else if (raw is String) {
+            addComposite(raw);
+          }
+        }
+
+        addList(sm['workplaceIds']);
+        addList(sm['workplace_ids']);
+
+        if (ids.isEmpty) {
+          final primary = _resolveStageId(
+            sm['stageId'] ??
+                sm['stageid'] ??
+                sm['stage_id'] ??
+                sm['workplaceId'] ??
+                sm['workplace_id'] ??
+                sm['id'] ??
+                sm['stageName'] ??
+                sm['stage_name'] ??
+                sm['workplaceName'] ??
+                sm['workplace_name'],
+          );
+          if (primary != null && primary.isNotEmpty) {
+            ids.add(primary);
+          }
+        }
+
+        addComposite(sm['stageName']);
+        addComposite(sm['stage_name']);
+        addComposite(sm['workplaceName']);
+        addComposite(sm['workplace_name']);
+        addComposite(sm['title']);
+        addComposite(sm['name']);
+
+        addList(sm['alternativeStageIds'] ?? sm['alternative_stage_ids']);
+
+        final rawAltNames =
+            sm['alternativeStageNames'] ?? sm['alternative_stage_names'];
+        if (rawAltNames is List) {
+          for (final entry in rawAltNames) {
+            final id = _resolveStageId(entry);
+            if (id != null && id.isNotEmpty) ids.add(id);
+            addComposite(entry);
+          }
+        }
+
+        return ids.toList();
+      }
+
+      // Build a list of resolved stage IDs.
+      // При неполном workplaceLookup (например, из-за RLS) не теряем валидные UUID,
+      // но и не пытаемся вставлять невалидные идентификаторы этапов.
+      final List<String> __validStageIds = [];
+      String _stageDisplayName(Map<String, dynamic> sm, String fallback) {
+        for (final key in const [
+          'name',
+          'stageName',
+          'stage_name',
+          'workplaceName',
+          'workplace_name',
+          'title',
+        ]) {
+          final value = sm[key]?.toString().trim() ?? '';
+          if (value.isNotEmpty) return value;
+        }
+        return fallback;
+      }
+
+      for (final sm in stageMaps) {
+        final stageIds = _extractStageIds(sm);
+        for (final sid in stageIds) {
+          if (sid.isEmpty) continue;
+          final resolved = workplaceLookup[sid.toLowerCase()] ??
+              legacyStageLookup[sid.toLowerCase()] ??
+              sid;
+          if (_looksLikeUuid(resolved) ||
+              workplaceLookup.containsValue(resolved) ||
+              legacyStageLookup.containsValue(resolved)) {
+            __validStageIds.add(resolved);
+          }
+        }
+      }
+      if (__validStageIds.isNotEmpty) {
+        await _sb
+            .from('tasks')
+            .delete()
+            .eq('order_id', createdOrUpdatedOrder.id);
+        // create new tasks for each stage
+      } else {
+        // No valid stages resolved — keep existing tasks to avoid losing assignments
+        // (logically indicates a template/config error)
+      }
+      // create new tasks for each stage (only if stage exists)
+      final createdStageIds = <String>{};
+      for (final sm in stageMaps) {
+        final stageIds = _extractStageIds(sm);
+        final resolvedStageIds = stageIds
+            .map((stageId) => workplaceLookup[stageId.toLowerCase()] ??
+                legacyStageLookup[stageId.toLowerCase()] ??
+                stageId)
+            .where((stageId) => stageId.trim().isNotEmpty)
+            .toList();
+        final canonical = List<String>.from(resolvedStageIds)..sort();
+        final stageGroupKey = canonical.join('|');
+        for (final stageId in stageIds) {
+          if (stageId.isEmpty) continue;
+          try {
+            final resolvedStageId = workplaceLookup[stageId.toLowerCase()] ??
+                legacyStageLookup[stageId.toLowerCase()] ??
+                stageId;
+            if (createdStageIds.contains(resolvedStageId)) {
+              continue;
+            }
+            if (!_looksLikeUuid(resolvedStageId) &&
+                !workplaceLookup.containsValue(resolvedStageId) &&
+                !legacyStageLookup.containsValue(resolvedStageId)) {
+              debugPrint(
+                '⚠️ skip task insert: unresolved non-uuid stage id=$stageId, resolved=$resolvedStageId',
+              );
+              continue;
+            }
+            await _sb.from('tasks').insert({
+              'order_id': createdOrUpdatedOrder.id,
+              'stage_id': resolvedStageId,
+              'stage_group_key': stageGroupKey.isEmpty ? resolvedStageId : stageGroupKey,
+              'status': 'waiting',
+              'assignees': [],
+              'comments': [],
+            });
+            createdStageIds.add(resolvedStageId);
+          } catch (e, st) {
+            debugPrint(
+              '❌ tasks insert failed for stage=$stageId, resolved=$resolvedStageId: $e\n$st',
+            );
+          }
+        }
+      }
         }
         // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
         try {
@@ -1314,7 +2214,6 @@ final hasFlexo = stageMaps.any((m) {
                 .from('prod_plans')
                 .insert({
                   'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
                 })
                 .select('id')
                 .single();
@@ -1325,16 +2224,32 @@ final hasFlexo = stageMaps.any((m) {
           // Rebuild plan stages
           await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
           int step = 1;
+          String? previousGroupKey;
           for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step++,
-              'status': 'waiting',
-            });
+            final stageIds = _extractStageIds(sm);
+            if (stageIds.isEmpty) continue;
+            final resolvedStageIds = stageIds
+                .map((stageId) => workplaceLookup[stageId.toLowerCase()] ??
+                    legacyStageLookup[stageId.toLowerCase()] ??
+                    stageId)
+                .where((stageId) => stageId.trim().isNotEmpty)
+                .toList();
+            final canonical = List<String>.from(resolvedStageIds)..sort();
+            final groupKey = canonical.join('|');
+            if (groupKey.isNotEmpty && groupKey == previousGroupKey) continue;
+            previousGroupKey = groupKey;
+            for (final stageId in resolvedStageIds) {
+              await _sb.from('prod_plan_stages').insert({
+                'plan_id': planId,
+                'stage_id': stageId,
+                'stage_group_key': groupKey,
+                'name': _stageDisplayName(sm, stageId),
+                'seq': step,
+                'step_no': step,
+                'status': 'waiting',
+              });
+            }
+            step++;
           }
           // Mark bobbin as done here as well
           if (__shouldCompleteBobbin && __bobbinId != null) {
@@ -1359,55 +2274,6 @@ final hasFlexo = stageMaps.any((m) {
             'stage_id': __bobbinId,
           });
         }
-
-        // ---- Sync normalized tables prod_plans/prod_plan_stages (if they exist) ----
-        try {
-          // Ensure prod_plans row exists
-          final planRow = await _sb
-              .from('prod_plans')
-              .select('id')
-              .eq('order_id', createdOrUpdatedOrder.id)
-              .maybeSingle();
-          String planId;
-          if (planRow == null) {
-            final inserted = await _sb
-                .from('prod_plans')
-                .insert({
-                  'order_id': createdOrUpdatedOrder.id,
-                  'status': 'planned',
-                })
-                .select('id')
-                .single();
-            planId = inserted['id'] as String;
-          } else {
-            planId = planRow['id'] as String;
-          }
-          // Rebuild plan stages
-          await _sb.from('prod_plan_stages').delete().eq('plan_id', planId);
-          int step = 1;
-          for (final sm in stageMaps) {
-            final stageId =
-                (sm['stageId'] as String?) ?? (sm['stage_id'] as String?);
-            if (stageId == null || stageId.isEmpty) continue;
-            await _sb.from('prod_plan_stages').insert({
-              'plan_id': planId,
-              'stage_id': stageId,
-              'step': step++,
-              'status': 'waiting',
-            });
-          }
-          // Mark bobbin as done here as well
-          if (__shouldCompleteBobbin && __bobbinId != null) {
-            await _sb.from('prod_plan_stages').update({
-              'status': 'done',
-              'finished_at': DateTime.now().toIso8601String(),
-            }).match({'plan_id': planId, 'stage_id': __bobbinId});
-          }
-        } catch (_) {
-          // ignore if tables don't exist
-        }
-        // ---- /sync normalized tables ----
-
         // update order status to inWork and mark assignment
         final withAssignment = OrderModel(
           id: createdOrUpdatedOrder.id,
@@ -1420,14 +2286,20 @@ final hasFlexo = stageMaps.any((m) {
           handle: createdOrUpdatedOrder.handle,
           cardboard: createdOrUpdatedOrder.cardboard,
           material: createdOrUpdatedOrder.material,
+          paperMaterials: createdOrUpdatedOrder.paperMaterials,
           makeready: createdOrUpdatedOrder.makeready,
           val: createdOrUpdatedOrder.val,
           pdfUrl: createdOrUpdatedOrder.pdfUrl,
           stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
+          hasForm: createdOrUpdatedOrder.hasForm,
+          isOldForm: createdOrUpdatedOrder.isOldForm,
+          newFormNo: createdOrUpdatedOrder.newFormNo,
+          formSeries: createdOrUpdatedOrder.formSeries,
+          formCode: createdOrUpdatedOrder.formCode,
           contractSigned: createdOrUpdatedOrder.contractSigned,
           paymentDone: createdOrUpdatedOrder.paymentDone,
           comments: createdOrUpdatedOrder.comments,
-          status: OrderStatus.inWork.name,
+          status: OrderStatus.in_production.name,
           assignmentId: provider.generateAssignmentId(),
           assignmentCreated: true,
         );
@@ -1440,273 +2312,130 @@ final hasFlexo = stageMaps.any((m) {
     // === Обработка формы ===
     if (isCreating) {
       try {
-        final wp = WarehouseProvider();
-        int? selectedFormNumber;
-        String series;
-        String? formCodeToSave;
-
-        if (_isOldForm) {
-          // При выборе старой формы копируем данные из выбранной строки
-          series = (_formSeries is String && _formSeries.isNotEmpty)
-              ? _formSeries
-              : 'F';
-          if (_selectedOldFormRow != null) {
-            selectedFormNumber =
-                ((_selectedOldFormRow!['number'] ?? 0) as num).toInt();
-            final s = (_selectedOldFormRow!['series'] ?? '').toString();
-            if (s.isNotEmpty) series = s;
-            final c = (_selectedOldFormRow!['code'] ?? '').toString();
-            if (c.isNotEmpty) formCodeToSave = c;
-          } else if (_selectedOldForm != null &&
-              _selectedOldForm!.trim().isNotEmpty) {
-            final code = _selectedOldForm!.trim();
-            final mDigits = RegExp(r'\d+').firstMatch(code);
-            final String digits = mDigits != null ? mDigits.group(0)! : code;
-            selectedFormNumber = int.tryParse(digits);
-            final mSeries = RegExp(r'^[A-Za-zА-Яа-я]+').firstMatch(code);
-            if (mSeries != null) series = mSeries.group(0)!;
-            formCodeToSave = code;
-          }
-        } else {
-          // Создание новой формы: используем введённые данные
-          final name = _newFormNameCtl.text.trim();
-          final size = _newFormSizeCtl.text.trim();
-          final colors = _newFormColorsCtl.text.trim();
-          series = name.isNotEmpty ? name : 'F';
-          final created = await wp.createFormAndReturn(
-            series: series,
-            title: size.isNotEmpty ? size : null,
-            description: colors.isNotEmpty ? colors : null,
-            imageBytes: _newFormImageBytes,
-          );
-          selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
-          final s = (created['series'] ?? '').toString();
-          if (s.isNotEmpty) series = s;
-          final c = (created['code'] ?? '').toString();
-          if (c.isNotEmpty) formCodeToSave = c;
-          try {
-            await _reloadForms();
-          } catch (_) {}
-        }
-
-        if (selectedFormNumber != null) {
-          await _sb.from('orders').update({
-            'is_old_form': _isOldForm,
-            'new_form_no': selectedFormNumber,
-            'form_series': series,
-            'form_code': formCodeToSave,
-          }).eq('id', createdOrUpdatedOrder.id);
-          try {
-            final upd = await _sb
-                .from('orders')
-                .update({
-                  'is_old_form': _isOldForm,
-                  'new_form_no': selectedFormNumber,
-                  'form_series': series,
-                  'form_code': formCodeToSave,
-                })
-                .eq('id', createdOrUpdatedOrder.id)
-                .select()
-                .maybeSingle();
-            if (upd == null) throw 'empty response';
-          } catch (e) {
-            if (mounted) {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                    content: Text(
-                        'Не удалось сохранить номер формы: ' + e.toString())),
-              );
-            }
-          }
-
+        final persistedOrderForm = await _sb
+            .from('orders')
+            .select('is_old_form, new_form_no, form_series, form_code')
+            .eq('id', createdOrUpdatedOrder.id)
+            .maybeSingle();
+        final persistedSeries =
+            (persistedOrderForm?['form_series'] ?? '').toString().trim();
+        final persistedCode =
+            (persistedOrderForm?['form_code'] ?? '').toString().trim();
+        final persistedNoRaw = persistedOrderForm?['new_form_no'];
+        final persistedNo = persistedNoRaw is num
+            ? persistedNoRaw.toInt()
+            : int.tryParse((persistedNoRaw ?? '').toString());
+        final hasPersistedForm = persistedCode.isNotEmpty ||
+            (persistedSeries.isNotEmpty && persistedNo != null);
+        if (hasPersistedForm) {
           if (mounted) {
             setState(() {
-              _orderFormDisplay = (formCodeToSave != null &&
-                      formCodeToSave.isNotEmpty)
-                  ? formCodeToSave
-                  : (series + selectedFormNumber!.toString().padLeft(4, '0'));
+              _orderFormDisplay = persistedCode.isNotEmpty
+                  ? persistedCode
+                  : (persistedSeries +
+                      persistedNo!.toString().padLeft(4, '0'));
             });
+          }
+          // Форма уже сохранена (вручную или автоматически), не пересоздаём и не перезаписываем.
+        } else {
+          final wp = WarehouseProvider();
+          int? selectedFormNumber;
+          String series;
+          String? formCodeToSave;
+
+          if (_isOldForm) {
+            // При выборе старой формы копируем данные из выбранной строки
+            series = (_formSeries is String && _formSeries.isNotEmpty)
+                ? _formSeries
+                : 'F';
+            if (_selectedOldFormRow != null) {
+              selectedFormNumber =
+                  ((_selectedOldFormRow!['number'] ?? 0) as num).toInt();
+              final s = (_selectedOldFormRow!['series'] ?? '').toString();
+              if (s.isNotEmpty) series = s;
+              final c = (_selectedOldFormRow!['code'] ?? '').toString();
+              if (c.isNotEmpty) formCodeToSave = c;
+            } else if (_selectedOldForm != null &&
+                _selectedOldForm!.trim().isNotEmpty) {
+              final code = _selectedOldForm!.trim();
+              final mDigits = RegExp(r'\d+').firstMatch(code);
+              final String digits = mDigits != null ? mDigits.group(0)! : code;
+              selectedFormNumber = int.tryParse(digits);
+              final mSeries = RegExp(r'^[A-Za-zА-Яа-я]+').firstMatch(code);
+              if (mSeries != null) series = mSeries.group(0)!;
+              formCodeToSave = code;
+            }
+          } else {
+            // Создание новой формы: используем введённые данные
+            final name = _newFormNameCtl.text.trim();
+            final size = _newFormSizeCtl.text.trim();
+            final colors = _newFormColorsCtl.text.trim();
+            series = name.isNotEmpty ? name : 'F';
+            final created = await wp.createFormAndReturn(
+              series: series,
+              title: size.isNotEmpty ? size : null,
+              description: colors.isNotEmpty ? colors : null,
+              imageBytes: _newFormImageBytes,
+            );
+            selectedFormNumber = ((created['number'] ?? 0) as num).toInt();
+            final s = (created['series'] ?? '').toString();
+            if (s.isNotEmpty) series = s;
+            final c = (created['code'] ?? '').toString();
+            if (c.isNotEmpty) formCodeToSave = c;
+            try {
+              await _reloadForms();
+            } catch (_) {}
+          }
+
+          if (selectedFormNumber != null) {
+            await _sb.from('orders').update({
+              'is_old_form': _isOldForm,
+              'new_form_no': selectedFormNumber,
+              'form_series': series,
+              'form_code': formCodeToSave,
+            }).eq('id', createdOrUpdatedOrder.id);
+            try {
+              final upd = await _sb
+                  .from('orders')
+                  .update({
+                    'is_old_form': _isOldForm,
+                    'new_form_no': selectedFormNumber,
+                    'form_series': series,
+                    'form_code': formCodeToSave,
+                  })
+                  .eq('id', createdOrUpdatedOrder.id)
+                  .select()
+                  .maybeSingle();
+              if (upd == null) throw 'empty response';
+            } catch (e) {
+              if (mounted) {
+                if (mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text(
+                            'Не удалось сохранить номер формы: ' + e.toString())),
+                  );
+              }
+            }
+
+            if (mounted) {
+              setState(() {
+                _orderFormDisplay = (formCodeToSave != null &&
+                        formCodeToSave.isNotEmpty)
+                    ? formCodeToSave
+                    : (series + selectedFormNumber!.toString().padLeft(4, '0'));
+              });
+            }
           }
         }
       } catch (_) {}
     }
     // === Конец обработки формы ===
 
-    // Списание ручек (канцтовары/ручки), если выбраны и указано количество
-    if (_selectedHandle != '-' && (_handleQty ?? 0) > 0) {
-      try {
-        final warehouse =
-            Provider.of<WarehouseProvider>(context, listen: false);
-        // Ищем позицию ручек по описанию среди типа 'pens'
-        final items = warehouse
-            .getTmcByType('pens')
-            .where((t) => t.description == _selectedHandle)
-            .toList(growable: false);
-        if (items.isNotEmpty) {
-          final item = items.first;
-          final double newQty = (_handleQty ?? 0);
-          // Определяем, сколько было ранее (если редактируем)
-          double prevQty = 0;
-          try {
-            prevQty = _previousPenQty(penName: _selectedHandle);
-          } catch (_) {}
-          final double diff = (newQty - prevQty);
-          if (diff > 0) {
-            // Списываем ТОЛЬКО разницу
-            await warehouse.writeOff(
-              itemId: item.id,
-              qty: diff,
-              currentQty: item.quantity,
-              reason: _customerController.text.trim(),
-              typeHint: 'pens',
-            );
-          } else if (diff < 0) {
-            // Если уменьшили количество по сравнению с прошлой версией - вернём на склад разницу
-            await warehouse.registerReturn(
-              id: item.id,
-              type: 'pens',
-              qty: -diff,
-              note: 'Коррекция заказа: ' + _customerController.text.trim(),
-            );
-          }
-          // Запишем выбранные ручки в parameters, чтобы при следующем сохранении посчитать дельту
-          _upsertPensInParameters(_selectedHandle, newQty);
-        }
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка списания ручек: $e')),
-        );
-      }
-    }
-// Списание материалов/готовой продукции (бумага по длине L)
-    if (_selectedMaterialTmc != null && (_product.length ?? 0) > 0) {
-      // Перепроверим остаток по актуальным данным провайдера склада
-      final current = Provider.of<WarehouseProvider>(context, listen: false)
-          .allTmc
-          .where((t) => t.id == _selectedMaterialTmc!.id)
-          .toList();
-      final availableQty = current.isNotEmpty
-          ? (current.first.quantity)
-          : _selectedMaterialTmc!.quantity;
-      final need = (_product.length ?? 0).toDouble();
-      // списываем дельту при редактировании
-      final prevLen = (widget.order?.product.length ?? 0).toDouble();
-      final delta = need - prevLen;
-      final toWriteOff =
-          (widget.order == null) ? need : (delta > 0 ? delta : 0.0);
-      if (need > availableQty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'Недостаточно материала на складе - обновите остатки или уменьшите длину L')),
-        );
-        return;
-      }
-
-      await warehouse.registerShipment(
-        id: _selectedMaterialTmc!.id,
-        type: 'paper',
-        qty: toWriteOff,
-        reason: _customerController.text.trim(),
-      );
-    }
-
-    // Повторная выборка позиций из динамической категории перед списанием - чтобы не зависеть от состояния UI.
-    if (_writeOffStockExtra) {
-      await AppAuth.ensureSignedIn();
-
-      try {
-        final String customer = _customerController.text.trim();
-        final String typeTitle = _product.type.trim();
-        if (customer.isNotEmpty && typeTitle.isNotEmpty) {
-          final cat = await _sb
-              .from('warehouse_categories')
-              .select('id, title, code')
-              .or('title.eq.' + typeTitle + ',code.eq.' + typeTitle)
-              .maybeSingle();
-          if (cat != null) {
-            final rows = await _sb
-                .from('warehouse_category_items')
-                .select('id, description, quantity, table_key')
-                .eq('category_id', cat['id'])
-                .eq('description', customer);
-            final toWriteOffRows = <Map<String, dynamic>>[];
-            for (final r in (rows as List)) {
-              final qv = r['quantity'];
-              final q = (qv is num)
-                  ? qv.toDouble()
-                  : double.tryParse('${qv ?? ''}') ?? 0.0;
-              if (q > 0) {
-                toWriteOffRows.add({'id': r['id'].toString(), 'quantity': q});
-              }
-            }
-            // Выполним списание, если нашли что списывать
-            for (final it in toWriteOffRows) {
-              final String itemId = it['id'].toString();
-              final double q = (it['quantity'] as num).toDouble();
-              // Лог списаний
-              await _sb.from('warehouse_category_writeoffs').insert({
-                'item_id': itemId,
-                'qty': q,
-                'reason': _customerController.text.trim(),
-                'by_name': AuthHelper.currentUserName ?? '',
-              });
-              // Обновим остаток
-              final row = await _sb
-                  .from('warehouse_category_items')
-                  .select('quantity')
-                  .eq('id', itemId)
-                  .maybeSingle();
-              final double cur =
-                  ((row?['quantity'] ?? 0) as num?)?.toDouble() ?? 0.0;
-              final double newQty = (cur - q);
-              await _sb.from('warehouse_category_items').update(
-                  {'quantity': newQty < 0 ? 0 : newQty}).match({'id': itemId});
-            }
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('Ошибка списания лишнего: ' + e.toString())));
-        }
-      }
-    }
-
-    // Списание красок (если указано несколько)
-    // При редактировании списываем только ДЕЛЬТУ, чтобы не дублировать списания
-    if _paints.any((p) => p.tmc != null) {
-      final prevRows = (widget.order == null)
-          ? <Map<String, dynamic>>[]
-          : await OrdersRepository().getPaints(createdOrUpdatedOrder.id);
-      final Map<String, double> prevByName = {};
-      for (final it in prevRows) {
-        final name = (it['name'] ?? '').toString();
-        final q = (it['qty_kg'] as num?)?.toDouble() ?? 0.0;
-        if (name.isNotEmpty) prevByName[name] = q;
-      }
-      for (final row in _paints) {
-        if (row.tmc != null && row.qty != null && row.qty! > 0) {
-          final name = row.tmc!.description;
-          final double newQ = (row.qty ?? 0);
-          final double oldQ = prevByName[name] ?? 0.0;
-          final double delta = newQ - oldQ;
-          if (delta > 0) {
-            await warehouse.registerShipment(
-              id: row.tmc!.id,
-              type: 'paint',
-              qty: delta,
-              reason: _customerController.text.trim(),
-            );
-          }
-        }
-      }
-    }
-
 // Независимо от создания/редактирования - синхронизируем список красок
 // c полем product.parameters и таблицей order_paints.
     await _persistPaints(createdOrUpdatedOrder.id);
-    if (mounted) Navigator.of(context).pop();
+    await _goToOrdersModuleHome();
   }
 
   @override
@@ -1754,14 +2483,18 @@ final hasFlexo = stageMaps.any((m) {
                 }
               },
             ),
-          TextButton(
-            onPressed: () async {
-              await _saveOrder();
-            },
-            child:
-                const Text('Сохранить', style: TextStyle(color: Colors.white)),
-          ),
         ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _saveOrder,
+            icon: const Icon(Icons.save),
+            label: const Text('Сохранить'),
+          ),
+        ),
       ),
       body: Form(
         key: _formKey,
@@ -1801,7 +2534,12 @@ final hasFlexo = stageMaps.any((m) {
                 labelText: 'Заказчик',
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) => _updateStockExtra(),
+              onChanged: (_) {
+                _updateStockExtra();
+                if (_isOldForm) {
+                  _reloadForms();
+                }
+              },
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
                   return 'Введите заказчика';
@@ -1914,10 +2652,8 @@ final hasFlexo = stageMaps.any((m) {
                         ? '$series ${n > 0 ? n.toString() : ''}'
                         : (n > 0 ? n.toString() : '?');
                     final size = (f['title'] ?? '').toString();
-                    final colors = (f['description'] ?? '').toString();
                     final subtitle = <String>[];
                     if (size.isNotEmpty) subtitle.add(size);
-                    if (colors.isNotEmpty) subtitle.add('Цвета: $colors');
                     return DropdownMenuItem<Map<String, dynamic>>(
                       value: f,
                       child: Text(subtitle.isEmpty
@@ -1997,9 +2733,6 @@ final hasFlexo = stageMaps.any((m) {
                   if (_orderFormSize != null &&
                       _orderFormSize!.trim().isNotEmpty)
                     Text('Размер, Тип продукта: ${_orderFormSize!}'),
-                  if (_orderFormColors != null &&
-                      _orderFormColors!.trim().isNotEmpty)
-                    Text('Цвета: ${_orderFormColors!}'),
                   if (_orderFormImageUrl != null &&
                       _orderFormImageUrl!.isNotEmpty)
                     Padding(
@@ -2017,7 +2750,7 @@ final hasFlexo = stageMaps.any((m) {
 // Всегда показываем отображаемый номер формы (предпросмотр при создании, сохранённый при редактировании)
             InputDecorator(
               decoration: const InputDecoration(
-                labelText: 'Номер формы',
+                labelText: 'Код формы',
                 border: OutlineInputBorder(),
               ),
               child: Text(_formDisplayPreview()),
@@ -2045,20 +2778,6 @@ final hasFlexo = stageMaps.any((m) {
               maxLines: 5,
             ),
             const SizedBox(height: 12),
-            // contract and payment
-            CheckboxListTile(
-              value: _contractSigned,
-              onChanged: (val) =>
-                  setState(() => _contractSigned = val ?? false),
-              title: const Text('Договор подписан'),
-              contentPadding: EdgeInsets.zero,
-            ),
-            CheckboxListTile(
-              value: _paymentDone,
-              onChanged: (val) => setState(() => _paymentDone = val ?? false),
-              title: const Text('Оплата произведена'),
-              contentPadding: EdgeInsets.zero,
-            ),
             const SizedBox(height: 16),
             Text('Продукт в заказе',
                 style: Theme.of(context).textTheme.titleMedium),
@@ -2437,12 +3156,21 @@ final hasFlexo = stageMaps.any((m) {
                       displayStringForOption: (s) => s,
                       fieldViewBuilder:
                           (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matNameCtl.text;
-                        controller.selection = _matNameCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matNameCtl.text) {
+                        if (controller.text != _matNameCtl.text) {
+                          controller.text = _matNameCtl.text;
+                          controller.selection = _matNameCtl.selection;
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: 'Материал',
+                            border: const OutlineInputBorder(),
+                            errorText: _matNameError,
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              _matNameCtl.text = controller.text;
+                              _matNameCtl.text = value;
                               _matNameCtl.selection = controller.selection;
                               // Сбрасываем выбор, пока не будет выбран вариант из списка
                               _matSelectedName = null;
@@ -2471,16 +3199,7 @@ final hasFlexo = stageMaps.any((m) {
                                     allNames[lowerNames.indexOf(typed)];
                               }
                             });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: 'Материал',
-                            border: const OutlineInputBorder(),
-                            errorText: _matNameError,
-                          ),
+                          },
                           onSubmitted: (_) => onFieldSubmitted(),
                         );
                       },
@@ -2509,12 +3228,27 @@ final hasFlexo = stageMaps.any((m) {
                       displayStringForOption: (s) => s,
                       fieldViewBuilder:
                           (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matFormatCtl.text;
-                        controller.selection = _matFormatCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matFormatCtl.text) {
+                        if (controller.text != _matFormatCtl.text) {
+                          controller.text = _matFormatCtl.text;
+                          controller.selection = _matFormatCtl.selection;
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          enabled: _matSelectedName != null,
+                          decoration: InputDecoration(
+                            labelText: 'Формат',
+                            border: const OutlineInputBorder(),
+                            helperText: _matSelectedName != null
+                                ? null
+                                : 'Сначала выберите материал',
+                            errorText: _matSelectedName != null
+                                ? _matFormatError
+                                : null,
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              _matFormatCtl.text = controller.text;
+                              _matFormatCtl.text = value;
                               _matFormatCtl.selection = controller.selection;
                               _matSelectedFormat = null;
                               _matSelectedGrammage = null;
@@ -2539,22 +3273,7 @@ final hasFlexo = stageMaps.any((m) {
                                     formatOptions[lowerF.indexOf(typedF)];
                               }
                             });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null,
-                          decoration: InputDecoration(
-                            labelText: 'Формат',
-                            border: const OutlineInputBorder(),
-                            helperText: _matSelectedName != null
-                                ? null
-                                : 'Сначала выберите материал',
-                            errorText: _matSelectedName != null
-                                ? _matFormatError
-                                : null,
-                          ),
+                          },
                           onSubmitted: (_) => onFieldSubmitted(),
                         );
                       },
@@ -2578,12 +3297,30 @@ final hasFlexo = stageMaps.any((m) {
                       displayStringForOption: (s) => s,
                       fieldViewBuilder:
                           (ctx, controller, focusNode, onFieldSubmitted) {
-                        controller.text = _matGramCtl.text;
-                        controller.selection = _matGramCtl.selection;
-                        controller.addListener(() {
-                          if (controller.text != _matGramCtl.text) {
+                        if (controller.text != _matGramCtl.text) {
+                          controller.text = _matGramCtl.text;
+                          controller.selection = _matGramCtl.selection;
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          enabled: _matSelectedName != null &&
+                              _matSelectedFormat != null,
+                          decoration: InputDecoration(
+                            labelText: 'Грамаж',
+                            border: const OutlineInputBorder(),
+                            helperText: (_matSelectedName != null &&
+                                    _matSelectedFormat != null)
+                                ? null
+                                : 'Сначала выберите формат',
+                            errorText: (_matSelectedName != null &&
+                                    _matSelectedFormat != null)
+                                ? _matGramError
+                                : null,
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              _matGramCtl.text = controller.text;
+                              _matGramCtl.text = value;
                               _matGramCtl.selection = controller.selection;
                               _matSelectedGrammage = null;
                               _matGramError = null; // обновится при выборе
@@ -2628,25 +3365,7 @@ final hasFlexo = stageMaps.any((m) {
                                 }
                               }
                             });
-                          }
-                        });
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          enabled: _matSelectedName != null &&
-                              _matSelectedFormat != null,
-                          decoration: InputDecoration(
-                            labelText: 'Грамаж',
-                            border: const OutlineInputBorder(),
-                            helperText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? null
-                                : 'Сначала выберите формат',
-                            errorText: (_matSelectedName != null &&
-                                    _matSelectedFormat != null)
-                                ? _matGramError
-                                : null,
-                          ),
+                          },
                           onSubmitted: (_) => onFieldSubmitted(),
                         );
                       },
@@ -2666,9 +3385,22 @@ final hasFlexo = stageMaps.any((m) {
                     ),
                     if (paperQty != null) ...[
                       const SizedBox(height: 8),
-                      Text(
-                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}'),
+                      SizedBox(
+                        width: double.infinity,
+                        child: Text(
+                          'Остаток бумаги по выбранному материалу: ${paperQty.toStringAsFixed(2)}',
+                          textAlign: TextAlign.left,
+                          softWrap: true,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(fontSize: 11, height: 1.1),
+                        ),
+                      ),
                     ],
+                    _buildExtraPaperSelectors(),
                   ],
                 );
               },
@@ -2724,11 +3456,58 @@ final hasFlexo = stageMaps.any((m) {
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextFormField(
+                    initialValue: product.blQuantity?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Количество',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.text,
+                    onChanged: (val) {
+                      final trimmed = val.trim();
+                      product.blQuantity = trimmed.isEmpty ? null : trimmed;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
                     initialValue: product.length?.toString() ?? '',
                     decoration: InputDecoration(
                       labelText: 'Длина L',
-                      border: const OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: _lengthExceeded
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: _lengthExceeded
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: _lengthExceeded
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      filled: _lengthExceeded,
+                      fillColor: _lengthExceeded
+                          ? Theme.of(context)
+                              .colorScheme
+                              .error
+                              .withOpacity(0.08)
+                          : null,
                       errorText: _lengthExceeded ? 'Недостаточно' : null,
+                    ),
+                    style: TextStyle(
+                      color: _lengthExceeded
+                          ? Theme.of(context).colorScheme.error
+                          : null,
                     ),
                     keyboardType: TextInputType.number,
                     onChanged: (val) {
@@ -2763,27 +3542,7 @@ final hasFlexo = stageMaps.any((m) {
             _buildPaintsSection(),
             const SizedBox(height: 12),
             // PDF вложение
-            Row(
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _pickPdf,
-                  icon: const Icon(Icons.attach_file),
-                  label: Text(
-                    _pickedPdf?.name ??
-                        (widget.order?.pdfUrl != null
-                            ? widget.order!.pdfUrl!.split('/').last
-                            : 'Прикрепить PDF'),
-                  ),
-                ),
-                if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: _openPdf,
-                  ),
-                ]
-              ],
-            ),
+            _buildPdfAttachmentRow(),
             const SizedBox(height: 8),
             // Параметры продукта (свободный текст)
             TextFormField(
@@ -2812,79 +3571,87 @@ final hasFlexo = stageMaps.any((m) {
           final row = _paints[i];
           return Padding(
             padding: const EdgeInsets.only(bottom: 8.0),
-            child: Row(
-              children: [
-                // Выбор краски
-                Expanded(
-                  flex: 5,
-                  child: Autocomplete<TmcModel>(
-                    optionsBuilder: (TextEditingValue text) {
-                      final provider = Provider.of<WarehouseProvider>(context,
-                          listen: false);
-                      final list = provider.getTmcByType('Краска');
-                      final query = text.text.toLowerCase();
-                      if (query.isEmpty) return list;
-                      return list.where(
-                          (t) => t.description.toLowerCase().contains(query));
-                    },
-                    displayStringForOption: (tmc) => tmc.description,
-                    fieldViewBuilder:
-                        (context, controller, focusNode, onFieldSubmitted) {
-                      if (row.tmc != null &&
-                          controller.text != row.tmc!.description) {
-                        controller.text = row.tmc!.description;
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 640;
+                final paintField = Autocomplete<TmcModel>(
+                  optionsBuilder: (TextEditingValue text) {
+                    final provider = Provider.of<WarehouseProvider>(context,
+                        listen: false);
+                    final list = provider.getTmcByType('Краска');
+                    final query = text.text.toLowerCase();
+                    if (query.isEmpty) return list;
+                    return list.where(
+                        (t) => t.description.toLowerCase().contains(query));
+                  },
+                  displayStringForOption: (tmc) => tmc.description,
+                  fieldViewBuilder:
+                      (context, controller, focusNode, onFieldSubmitted) {
+                    if (row.tmc != null &&
+                        controller.text != row.tmc!.description) {
+                      controller.text = row.tmc!.description;
+                    }
+                    return TextFormField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: const InputDecoration(
+                        labelText: 'Краска (необязательно)',
+                        border: OutlineInputBorder(),
+                      ),
+                    );
+                  },
+                  onSelected: (tmc) {
+                    setState(() {
+                      row.tmc = tmc;
+                      if (row.qtyGrams != null) {
+                        final need = _gramsToStockUnit(row.qtyGrams!, tmc);
+                        row.exceeded = need > tmc.quantity;
+                      } else {
+                        row.exceeded = false;
                       }
-                      return TextFormField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        decoration: const InputDecoration(
-                          labelText: 'Краска (необязательно)',
-                          border: OutlineInputBorder(),
-                        ),
-                      );
-                    },
-                    onSelected: (tmc) {
-                      setState(() {
-                        row.tmc = tmc;
-                        if (row.qty != null) {
-                          row.exceeded = row.qty! > tmc.quantity;
-                        } else {
-                          row.exceeded = false;
-                        }
-                      });
-                    },
-                    optionsViewBuilder: (context, onSelected, options) {
-                      return Align(
-                        alignment: Alignment.topLeft,
-                        child: Material(
-                          elevation: 4,
-                          child: SizedBox(
-                            width: 400,
-                            height: 240,
-                            child: ListView.builder(
-                              itemCount: options.length,
-                              itemBuilder: (context, index) {
-                                final tmc = options.elementAt(index);
-                                return ListTile(
-                                  title: Text(tmc.description),
-                                  subtitle: Text(
-                                      'Кол-во: ${tmc.quantity.toString()}'),
-                                  onTap: () => onSelected(tmc),
-                                );
-                              },
-                            ),
+                    });
+                  },
+                  optionsViewBuilder: (context, onSelected, options) {
+                    return Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        elevation: 6,
+                        borderRadius: BorderRadius.circular(10),
+                        clipBehavior: Clip.antiAlias,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minWidth: 280,
+                            maxWidth: 520,
+                            maxHeight: 260,
+                          ),
+                          child: ListView.builder(
+                            padding: EdgeInsets.zero,
+                            itemCount: options.length,
+                            itemBuilder: (context, index) {
+                              final tmc = options.elementAt(index);
+                              return ListTile(
+                                dense: true,
+                                title: Text(
+                                  tmc.description,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle:
+                                    Text('Кол-во: ${tmc.quantity.toString()}'),
+                                onTap: () => onSelected(tmc),
+                              );
+                            },
                           ),
                         ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Мелкая ячейка для пометок (напр. "1*2 4*0")
-                SizedBox(
+                      ),
+                    );
+                  },
+                );
+
+                final memoField = SizedBox(
                   width: 100,
                   child: TextFormField(
-                    key: ValueKey('memo_\${i}'),
+                    key: ValueKey('memo_${i}'),
                     initialValue: row.memo,
                     decoration: const InputDecoration(
                       labelText: 'Инфо',
@@ -2892,44 +3659,70 @@ final hasFlexo = stageMaps.any((m) {
                     ),
                     onChanged: (v) => setState(() => row.memo = v.trim()),
                   ),
-                ),
-                const SizedBox(width: 12),
-                // Кол-во (кг)
-                SizedBox(
+                );
+
+                final qtyField = SizedBox(
                   width: 130,
                   child: TextFormField(
-                    key: ValueKey('qty_\${i}'),
+                    key: ValueKey('qty_${i}'),
                     decoration: InputDecoration(
-                      labelText: 'Кол-во (кг)',
+                      labelText: 'Кол-во (г)',
                       border: const OutlineInputBorder(),
                       errorText: row.exceeded ? 'Недостаточно' : null,
                     ),
-                    initialValue:
-                        (row.qty == null) ? null : row.qty!.toString(),
+                    initialValue: _formatGramsForInput(row.qtyGrams),
                     keyboardType: TextInputType.number,
                     onChanged: (val) {
-                      final normalized = val.replaceAll(',', '.');
-                      final qty = double.tryParse(normalized);
+                      final qty = _parseGrams(val);
                       setState(() {
-                        row.qty = qty;
+                        row.qtyGrams = qty;
                         if (row.tmc != null && qty != null) {
-                          row.exceeded = qty > row.tmc!.quantity;
+                          final need = _gramsToStockUnit(qty, row.tmc!);
+                          row.exceeded = need > row.tmc!.quantity;
                         } else {
                           row.exceeded = false;
                         }
                       });
                     },
                   ),
-                ),
-                const SizedBox(width: 8),
-                // Удаление строки
-                if (_paints.length > 1)
-                  IconButton(
-                    tooltip: 'Удалить краску',
-                    onPressed: () => setState(() => _paints.removeAt(i)),
-                    icon: const Icon(Icons.remove_circle_outline),
-                  ),
-              ],
+                );
+
+                final removeButton = _paints.length > 1
+                    ? IconButton(
+                        tooltip: 'Удалить краску',
+                        onPressed: () => setState(() => _paints.removeAt(i)),
+                        icon: const Icon(Icons.remove_circle_outline),
+                      )
+                    : const SizedBox.shrink();
+
+                if (isCompact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      paintField,
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [memoField, qtyField, removeButton],
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    Expanded(flex: 7, child: paintField),
+                    const SizedBox(width: 8),
+                    memoField,
+                    const SizedBox(width: 12),
+                    qtyField,
+                    const SizedBox(width: 8),
+                    removeButton,
+                  ],
+                );
+              },
             ),
           );
         }),
@@ -2941,6 +3734,30 @@ final hasFlexo = stageMaps.any((m) {
             label: const Text('Добавить краску'),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildPdfAttachmentRow() {
+    return Row(
+      children: [
+        ElevatedButton.icon(
+          onPressed: _pickPdf,
+          icon: const Icon(Icons.attach_file),
+          label: Text(
+            _pickedPdf?.name ??
+                (widget.order?.pdfUrl != null
+                    ? widget.order!.pdfUrl!.split('/').last
+                    : 'Прикрепить PDF'),
+          ),
+        ),
+        if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.open_in_new),
+            onPressed: _openPdf,
+          ),
+        ]
       ],
     );
   }

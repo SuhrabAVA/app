@@ -20,6 +20,15 @@ import 'package:uuid/uuid.dart';
 import 'template_model.dart';
 import 'planned_stage_model.dart';
 
+class TemplateDeleteException implements Exception {
+  TemplateDeleteException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class TemplateProvider with ChangeNotifier {
   final _uuid = const Uuid();
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -83,21 +92,46 @@ class TemplateProvider with ChangeNotifier {
   }
 
   List<Map<String, dynamic>> _normalizeStages(dynamic raw) {
+    List<Map<String, dynamic>> _sortByOrder(List<Map<String, dynamic>> list) {
+      final entries = list.asMap().entries.toList();
+      int _orderOf(Map<String, dynamic> m, int fallback) {
+        final rawOrder = m['order'] ?? m['step'] ?? m['position'];
+        if (rawOrder is num) return rawOrder.toInt();
+        if (rawOrder is String) {
+          final parsed = int.tryParse(rawOrder);
+          if (parsed != null) return parsed;
+        }
+        return fallback;
+      }
+
+      entries.sort((a, b) {
+        final ao = _orderOf(a.value, a.key);
+        final bo = _orderOf(b.value, b.key);
+        final cmp = ao.compareTo(bo);
+        if (cmp != 0) return cmp;
+        return a.key.compareTo(b.key);
+      });
+
+      return entries.map((e) => e.value).toList();
+    }
+
     if (raw == null) return const [];
     if (raw is List) {
-      return raw.map<Map<String, dynamic>>((e) {
+      final list = raw.map<Map<String, dynamic>>((e) {
         if (e is Map<String, dynamic>) return e;
         if (e is Map) return Map<String, dynamic>.from(e);
         return <String, dynamic>{};
       }).toList();
+      return _sortByOrder(list);
     }
     if (raw is Map) {
       // Старый словарный формат {"1": {...}, "2": {...}}
-      return (raw as Map).entries.map<Map<String, dynamic>>((e) {
+      final list = (raw as Map).entries.map<Map<String, dynamic>>((e) {
         final v = Map<String, dynamic>.from(e.value as Map);
         v['order'] = int.tryParse(e.key.toString()) ?? v['order'] ?? 0;
         return v;
       }).toList();
+      return _sortByOrder(list);
     }
     return const [];
   }
@@ -186,13 +220,71 @@ class TemplateProvider with ChangeNotifier {
   /// Удаление шаблона.
   /// По умолчанию — мягкое (архивация). Для полного удаления укажи hard: true.
   Future<void> deleteTemplate(String id, {bool hard = false}) async {
-    if (hard) {
-      await _supabase.from('plan_templates').delete().eq('id', id);
-    } else {
-      await _supabase
+    Future<bool> hardDelete() async {
+      final deleted = await _supabase
           .from('plan_templates')
-          .update({'is_archived': true}).eq('id', id);
+          .delete()
+          .eq('id', id)
+          .select('id');
+      return (deleted as List).isNotEmpty;
     }
+
+    Future<bool> archiveTemplate() async {
+      final updated = await _supabase
+          .from('plan_templates')
+          .update({'is_archived': true})
+          .eq('id', id)
+          .select('id');
+      return (updated as List).isNotEmpty;
+    }
+
+    try {
+      bool affected = false;
+      if (hard) {
+        affected = await hardDelete();
+      } else {
+        try {
+          affected = await archiveTemplate();
+        } on PostgrestException catch (e) {
+          // На старых инсталляциях update недоступен, либо нет колонки.
+          // Также бывает, что UPDATE запрещён RLS-политикой,
+          // но DELETE разрешён. Тогда пробуем физическое удаление.
+          if (e.code == '42703' ||
+              e.code == 'PGRST204' ||
+              e.code == '42501') {
+            affected = await hardDelete();
+          } else {
+            rethrow;
+          }
+        }
+      }
+
+      if (!affected) {
+        throw TemplateDeleteException(
+          'Шаблон не был удалён: недостаточно прав или шаблон уже удалён.',
+        );
+      }
+    } on PostgrestException catch (e) {
+      if (e.code == '23503') {
+        throw TemplateDeleteException(
+          'Шаблон используется в заказах и не может быть удалён. '
+          'Снимите шаблон в связанных заказах или включите ON DELETE SET NULL для orders.stage_template_id.',
+        );
+      }
+
+      if (e.code == '42501') {
+        throw TemplateDeleteException(
+          'Недостаточно прав для удаления шаблона (RLS/policy). '
+          'Нужно разрешить UPDATE/DELETE для plan_templates '
+          'и применить миграцию supabase/migrations/20260301_fix_plan_templates_delete.sql.',
+        );
+      }
+
+      //throw TemplateDeleteException('Ошибка удаления шаблона: ${e.message}');
+    //} catch (e) {
+      //throw TemplateDeleteException('Ошибка удаления шаблона: $e');
+    }
+
     await _fetchAndSetTemplates(includeArchived: false);
   }
 

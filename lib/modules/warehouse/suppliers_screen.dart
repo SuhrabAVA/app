@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'supplier_provider.dart';
 import 'supplier_model.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран для отображения списка поставщиков и управления ими.
 ///
@@ -43,7 +44,8 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
       body: Consumer<SupplierProvider>(
         builder: (context, provider, _) {
           final suppliers = provider.suppliers
-              .where((s) => s.name.toLowerCase().contains(_searchQuery.toLowerCase()))
+              .where((s) =>
+                  s.name.toLowerCase().contains(_searchQuery.toLowerCase()))
               .toList();
           return Padding(
             padding: const EdgeInsets.all(8.0),
@@ -93,47 +95,64 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
                                 suppliers.length,
                                 (index) {
                                   final s = suppliers[index];
-                                  return DataRow(cells: [
-                                    DataCell(Text('${index + 1}')),
-                                    DataCell(Text(s.name)),
-                                    DataCell(Text(s.bin)),
-                                    DataCell(Text(s.contact)),
-                                    DataCell(Text(s.phone)),
-                                    DataCell(Row(
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.edit, size: 20),
-                                          onPressed: () => _openAddDialog(s),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete, size: 20),
-                                          onPressed: () async {
-                                            final confirm = await showDialog<bool>(
-                                              context: context,
-                                              builder: (ctx) => AlertDialog(
-                                                title: const Text('Удалить поставщика?'),
-                                                content: Text('Вы уверены, что хотите удалить ${s.name}?'),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () => Navigator.of(ctx).pop(false),
-                                                    child: const Text('Отмена'),
+                                  return DataRow(
+                                      color: warehouseRowHoverColor,
+                                      cells: [
+                                        DataCell(Text('${index + 1}')),
+                                        DataCell(Text(s.name)),
+                                        DataCell(Text(s.bin)),
+                                        DataCell(Text(s.contact)),
+                                        DataCell(Text(s.phone)),
+                                        DataCell(Row(
+                                          children: [
+                                            IconButton(
+                                              icon: const Icon(Icons.edit,
+                                                  size: 20),
+                                              onPressed: () =>
+                                                  _openAddDialog(s),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.delete,
+                                                  size: 20),
+                                              onPressed: () async {
+                                                final confirm =
+                                                    await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (ctx) => AlertDialog(
+                                                    title: const Text(
+                                                        'Удалить поставщика?'),
+                                                    content: Text(
+                                                        'Вы уверены, что хотите удалить ${s.name}?'),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(ctx)
+                                                                .pop(false),
+                                                        child: const Text(
+                                                            'Отмена'),
+                                                      ),
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(ctx)
+                                                                .pop(true),
+                                                        child: const Text(
+                                                            'Удалить'),
+                                                      ),
+                                                    ],
                                                   ),
-                                                  TextButton(
-                                                    onPressed: () => Navigator.of(ctx).pop(true),
-                                                    child: const Text('Удалить'),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                            if (confirm == true) {
-                                              await Provider.of<SupplierProvider>(context, listen: false)
-                                                  .deleteSupplier(s.id);
-                                            }
-                                          },
-                                        ),
-                                      ],
-                                    )),
-                                  ]);
+                                                );
+                                                if (confirm == true) {
+                                                  await Provider.of<
+                                                              SupplierProvider>(
+                                                          context,
+                                                          listen: false)
+                                                      .deleteSupplier(s.id);
+                                                }
+                                              },
+                                            ),
+                                          ],
+                                        )),
+                                      ]);
                                 },
                               ),
                             ),
@@ -170,8 +189,10 @@ class _SupplierDialogState extends State<_SupplierDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.existing?.name ?? '');
     _binController = TextEditingController(text: widget.existing?.bin ?? '');
-    _contactController = TextEditingController(text: widget.existing?.contact ?? '');
-    _phoneController = TextEditingController(text: widget.existing?.phone ?? '');
+    _contactController =
+        TextEditingController(text: widget.existing?.contact ?? '');
+    _phoneController =
+        TextEditingController(text: widget.existing?.phone ?? '');
   }
 
   @override
@@ -191,7 +212,8 @@ class _SupplierDialogState extends State<_SupplierDialog> {
     final contact = _contactController.text.trim();
     final phone = _phoneController.text.trim();
     if (widget.existing == null) {
-      await provider.addSupplier(name: name, bin: bin, contact: contact, phone: phone);
+      await provider.addSupplier(
+          name: name, bin: bin, contact: contact, phone: phone);
     } else {
       await provider.updateSupplier(
         id: widget.existing!.id,
@@ -208,7 +230,9 @@ class _SupplierDialogState extends State<_SupplierDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.existing == null ? 'Добавить поставщика' : 'Редактировать поставщика'),
+      title: Text(widget.existing == null
+          ? 'Добавить поставщика'
+          : 'Редактировать поставщика'),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -218,25 +242,30 @@ class _SupplierDialogState extends State<_SupplierDialog> {
               TextFormField(
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Название'),
-                validator: (value) => value == null || value.isEmpty ? 'Введите название' : null,
+                validator: (value) =>
+                    value == null || value.isEmpty ? 'Введите название' : null,
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _binController,
                 decoration: const InputDecoration(labelText: 'БИН'),
-                validator: (value) => value == null || value.isEmpty ? 'Введите БИН' : null,
+                validator: (value) =>
+                    value == null || value.isEmpty ? 'Введите БИН' : null,
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _contactController,
                 decoration: const InputDecoration(labelText: 'Контактное лицо'),
-                validator: (value) => value == null || value.isEmpty ? 'Введите контактное лицо' : null,
+                validator: (value) => value == null || value.isEmpty
+                    ? 'Введите контактное лицо'
+                    : null,
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _phoneController,
                 decoration: const InputDecoration(labelText: 'Телефон'),
-                validator: (value) => value == null || value.isEmpty ? 'Введите телефон' : null,
+                validator: (value) =>
+                    value == null || value.isEmpty ? 'Введите телефон' : null,
               ),
             ],
           ),

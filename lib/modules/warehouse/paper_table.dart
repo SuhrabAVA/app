@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'tmc_model.dart';
 import 'warehouse_provider.dart';
+import 'warehouse_table_styles.dart';
 
 class PaperTable extends StatefulWidget {
   const PaperTable({super.key});
@@ -13,6 +14,7 @@ class PaperTable extends StatefulWidget {
 
 class _PaperTableState extends State<PaperTable> {
   final TextEditingController _searchController = TextEditingController();
+  WarehouseProvider? _warehouseProvider;
 
   // ====== SOURCE ======
   List<TmcModel> _papers = [];
@@ -139,8 +141,24 @@ class _PaperTableState extends State<PaperTable> {
   @override
   void initState() {
     super.initState();
+    _warehouseProvider = context.read<WarehouseProvider>();
+    _warehouseProvider?.addListener(_handleWarehouseChanged);
     _loadData();
     _searchController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _warehouseProvider?.removeListener(_handleWarehouseChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleWarehouseChanged() async {
+    if (!mounted) return;
+    // Бизнес-логика резерва: при изменениях склада/резервов
+    // обновляем таблицу бумаги, чтобы колонка резерва была синхронизирована.
+    await _loadData();
   }
 
   Future<void> _loadData() async {
@@ -166,21 +184,71 @@ class _PaperTableState extends State<PaperTable> {
   void _deleteItem(TmcModel item) =>
       context.read<WarehouseProvider>().deleteItem(context, item);
 
+  Future<void> _showReserveDetails(TmcModel item) async {
+    final details = await context.read<WarehouseProvider>().paperReserveDetails(item.id);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Резерв: ${item.description}'),
+        content: SizedBox(
+          width: 420,
+          child: details.isEmpty
+              ? const Text('По этой бумаге нет активного резерва.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: details.map((row) {
+                    final orderName = (row['order_name'] ?? '').toString().trim();
+                    final hasOrderName = orderName.isNotEmpty &&
+                        orderName.toLowerCase() != 'null' &&
+                        orderName.toLowerCase() != 'undefined' &&
+                        orderName.toLowerCase() != 'nan' &&
+                        orderName != '-';
+                    final qty = (row['qty'] as num?)?.toDouble() ??
+                        double.tryParse('${row['qty']}') ??
+                        0;
+                    final orderLabel = hasOrderName ? orderName : 'Заказ без названия';
+                    return ListTile(
+                      dense: true,
+                      title: Text(orderLabel),
+                      subtitle: Text('Резерв: ${qty.toStringAsFixed(2)} м'),
+                    );
+                  }).toList(),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<DataRow> _buildGroupedRows() {
     // Текстовый поиск
-    final q = _searchController.text.toLowerCase();
+    final tokens = _searchController.text
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
 
     // 1) мульти-фильтр
     List<TmcModel> list = _applyMultiFilters(_papers);
 
     // 2) текстовый поиск
     list = list.where((item) {
-      if (q.isEmpty) return true;
-      return item.description.toLowerCase().contains(q) ||
-          (item.format ?? '').toLowerCase().contains(q) ||
-          (item.grammage ?? '').toLowerCase().contains(q) ||
-          (item.note ?? '').toLowerCase().contains(q) ||
-          item.quantity.toString().toLowerCase().contains(q);
+      if (tokens.isEmpty) return true;
+      final haystack = [
+        item.description,
+        item.format ?? '',
+        item.grammage ?? '',
+        item.note ?? '',
+        item.quantity.toString(),
+      ].join(' ').toLowerCase();
+
+      return tokens.every((token) => haystack.contains(token));
     }).toList();
 
     // 3) сортировка групп по алфавиту и внутри группы по формату, затем по грамажу
@@ -206,10 +274,12 @@ class _PaperTableState extends State<PaperTable> {
       if (currentName != item.description) {
         currentName = item.description;
         rows.add(
-          DataRow(
+          warehouseHoverableRow(
             cells: const [
               DataCell(Text('')),
               DataCell(Text('')), // заполним ниже
+              DataCell(Text('')),
+              DataCell(Text('')),
               DataCell(Text('')),
               DataCell(Text('')),
               DataCell(Text('')),
@@ -220,11 +290,13 @@ class _PaperTableState extends State<PaperTable> {
           ),
         );
         // заменить второй столбец на заголовок (жирный)
-        rows[rows.length - 1] = DataRow(
+        rows[rows.length - 1] = warehouseHoverableRow(
           cells: [
             const DataCell(Text('')),
             DataCell(Text(currentName!,
                 style: const TextStyle(fontWeight: FontWeight.w600))),
+            const DataCell(Text('')),
+            const DataCell(Text('')),
             const DataCell(Text('')),
             const DataCell(Text('')),
             const DataCell(Text('')),
@@ -237,15 +309,40 @@ class _PaperTableState extends State<PaperTable> {
 
       counter++;
       rows.add(
-        DataRow(
+        warehouseHoverableRow(
           cells: [
             DataCell(Text('$counter')), // №
             DataCell(Text(item.description)), // Наименование
-            DataCell(Text(item.quantity.toStringAsFixed(2))), // Кол-во
+            DataCell(
+              FutureBuilder<double>(
+                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
+                builder: (context, snapshot) {
+                  final reserved = snapshot.data ?? 0;
+                  final available = item.quantity - reserved;
+                  final safeAvailable = available < 0 ? 0 : available;
+                  return Text(safeAvailable.toStringAsFixed(2));
+                },
+              ),
+            ), // Остаток с учётом резерва
             DataCell(Text(item.unit)), // Ед.
             DataCell(Text(item.format ?? '')), // Формат
             DataCell(Text(item.grammage ?? '')), // Грамаж
             DataCell(Text(item.note ?? '')), // Заметки
+            DataCell(
+              FutureBuilder<double>(
+                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
+                builder: (context, snapshot) {
+                  final reserved = snapshot.data ?? 0;
+                  final reserveLabel = '${reserved.toStringAsFixed(2)} м';
+                  // Упрощённый UX по запросу: отдельная колонка с кнопкой,
+                  // где текст кнопки = общее количество бумаги в резерве (L).
+                  return OutlinedButton(
+                    onPressed: reserved > 0 ? () => _showReserveDetails(item) : null,
+                    child: Text(reserveLabel),
+                  );
+                },
+              ),
+            ),
             DataCell(Row(
               // Действия
               children: [
@@ -323,11 +420,12 @@ class _PaperTableState extends State<PaperTable> {
                       columns: const [
                         DataColumn(label: Text('№')),
                         DataColumn(label: Text('Наименование')),
-                        DataColumn(label: Text('Кол-во')),
+                        DataColumn(label: Text('Остаток')),
                         DataColumn(label: Text('Ед.')),
                         DataColumn(label: Text('Формат')),
                         DataColumn(label: Text('Грамаж')),
                         DataColumn(label: Text('Заметки')),
+                        DataColumn(label: Text('Резерв')),
                         DataColumn(label: Text('Действия')),
                       ],
                       rows: _buildGroupedRows(),

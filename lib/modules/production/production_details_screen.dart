@@ -1,48 +1,108 @@
 // lib/modules/production/production_details_screen.dart
 //
 // Полный файл без урезаний. НИЧЕГО лишнего не создаю.
-// Исправление: загрузка этапов теперь основана на СУЩЕСТВУЮЩИХ таблицах
-//   1) public.prod_plans -> public.prod_plan_stages  (основной путь)
-//   2) public.v_order_plan_stages                     (если есть)
-//   3) public.production_plans.stages (JSON, старый вариант) — фоллбек
+// Исправление: загрузка этапов использует общий источник очереди
+// OrderQueueService.loadSavedQueue / TaskProvider._loadStageSequence:
+// нормализованные prod_plan_stages -> сохранённая очередь -> legacy JSON ->
+// шаблонный фоллбек старых заказов. public.v_order_plan_stages остаётся только
+// низкоприоритетным фоллбеком, как в TaskProvider.
 // Плюс обязательная авторизация перед запросами (RLS).
 //
 // Требуется: services/app_auth.dart с AppAuth.ensureSignedIn().
 //
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../services/storage_service.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../services/storage_service.dart' as storage;
 import '../production_planning/compat.dart' as pcompat;
 import '../orders/orders_repository.dart';
 import '../orders/order_model.dart';
+import '../orders/order_queue_service.dart';
+import '../orders/stage_queue_builder.dart';
 import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
+import '../tasks/task_completion_rules.dart';
 // УДАЛЕНО: import '../production_planning/planned_stage_model.dart';
+import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
-import '../personnel/workplace_model.dart';
+import '../orders/order_comments_timeline.dart';
 import '../../services/app_auth.dart';
-import '../common/pdf_view_screen.dart'; // <= добавлено для встроенного просмотра PDF
+import '../orders/order_details_card.dart';
+import '../orders/restart_history_service.dart';
+import '../orders/order_restart_history_repository.dart';
 
-enum _AggregatedStatus { production, paused, problem, completed, waiting }
+@visibleForTesting
+List<pcompat.PlannedStage>
+    productionDetailsPlannedStagesFromQueueRowsForTesting({
+  required List<Map<String, dynamic>> rows,
+  Map<String, String> workplaceNames = const <String, String>{},
+}) {
+  final normalizedRows = normalizeBuiltOrderStageQueue(rows);
+  final planned = <pcompat.PlannedStage>[];
 
-const Map<_AggregatedStatus, String> _statusLabels = {
-  _AggregatedStatus.production: 'Производство',
-  _AggregatedStatus.paused: 'На паузе',
-  _AggregatedStatus.problem: 'Проблема',
-  _AggregatedStatus.completed: 'Завершено',
-  _AggregatedStatus.waiting: 'Ожидание',
-};
+  for (final row in normalizedRows) {
+    final stageIds = OrderQueueMapper.stageIdsFromRow(row);
+    final stageId = stageIds.isNotEmpty
+        ? stageIds.first
+        : (row['stageId'] ?? row['stage_id'] ?? row['workplaceId'] ?? row['id'])
+            ?.toString()
+            .trim();
+    if (stageId == null || stageId.isEmpty) continue;
 
-const Map<_AggregatedStatus, Color> _statusColors = {
-  _AggregatedStatus.production: Colors.blue,
-  _AggregatedStatus.paused: Colors.orange,
-  _AggregatedStatus.problem: Colors.red,
-  _AggregatedStatus.completed: Colors.green,
-  _AggregatedStatus.waiting: Colors.grey,
-};
+    final label = _productionDetailsStageLabelFromRow(
+      row,
+      stageId,
+      workplaceNames,
+    );
+    final allStageIds = stageIds.isNotEmpty ? stageIds : <String>[stageId];
+    planned.add(
+      pcompat.PlannedStage(
+        stageId: stageId,
+        stageName: label,
+        order: planned.length + 1,
+        extra: <String, dynamic>{
+          ...row,
+          'stage_id': stageId,
+          'stageId': stageId,
+          'stage_name': label,
+          'stageName': label,
+          'workplaceIds': allStageIds,
+          if (allStageIds.length > 1)
+            'alternativeStageIds': allStageIds.skip(1).toList(),
+        },
+      ),
+    );
+  }
+
+  return planned;
+}
+
+String _productionDetailsStageLabelFromRow(
+  Map<String, dynamic> row,
+  String stageId,
+  Map<String, String> workplaceNames,
+) {
+  for (final key in const <String>[
+    'stageName',
+    'stage_name',
+    'workplaceName',
+    'workplace_name',
+    'label',
+    'title',
+    'name',
+  ]) {
+    final value = row[key]?.toString().trim();
+    if (value != null && value.isNotEmpty) return value;
+  }
+  final workplaceName = workplaceNames[stageId]?.trim();
+  if (workplaceName != null && workplaceName.isNotEmpty) return workplaceName;
+  return stageId;
+}
 
 class ProductionDetailsScreen extends StatefulWidget {
   final OrderModel order;
@@ -54,362 +114,383 @@ class ProductionDetailsScreen extends StatefulWidget {
 }
 
 class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
+  final ScrollController _scrollController = ScrollController();
   List<pcompat.PlannedStage> _plannedStages = [];
   bool _loadingPlan = true;
+  bool _loadingFiles = false;
+  List<Map<String, dynamic>> _files = const [];
+  List<Map<String, dynamic>> _paints = const [];
+  String? _stageTemplateName;
+  String? _formImageUrl;
+  Map<String, dynamic>? _formDetails;
+  String _selectedCommentsOrderId = '';
+  List<OrderRestartHistoryEntry> _restartAncestors = const [];
+  bool _loadingRestartHistory = false;
 
-  Widget _buildOrderInfoCard(OrderModel o) {
-    final dateFmt = DateFormat('dd.MM.yyyy');
-    String d(DateTime? dt) => dt == null ? '—' : dateFmt.format(dt);
+  List<String> _decodeStringList(dynamic raw) {
+    if (raw == null) return const [];
+    if (raw is List) {
+      return raw.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toList();
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded
+              .map((e) => e?.toString() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList();
+        }
+      } catch (_) {}
+    }
+    return const [];
+  }
 
-    final p = o.product;
-    final material = o.material;
+  List<String> _plannedStageIds(pcompat.PlannedStage planned) {
+    final ids = <String>{};
+    final extra = planned.extra;
+    final workplaceIds = _decodeStringList(
+      extra['workplaceIds'] ?? extra['workplace_ids'],
+    );
+    if (workplaceIds.isNotEmpty) {
+      ids.addAll(workplaceIds.where((id) => id.trim().isNotEmpty));
+    } else {
+      final primary = planned.stageId.trim();
+      if (primary.isNotEmpty) ids.add(primary);
+    }
+    final altIds = _decodeStringList(
+      extra['alternativeStageIds'] ?? extra['alternative_stage_ids'],
+    );
+    ids.addAll(altIds.where((id) => id.trim().isNotEmpty));
+    return ids.toList();
+  }
 
-    Widget _tile(String label, String value, [IconData? icon]) {
-      return ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: icon != null ? Icon(icon, color: Colors.blueGrey) : null,
-        title: Text(label,
-            style: const TextStyle(fontSize: 13, color: Colors.black54)),
-        subtitle: Text(value, style: const TextStyle(fontSize: 15)),
-      );
+  List<String> _plannedStageNames(pcompat.PlannedStage planned) {
+    final ordered = <String>[];
+    final seen = <String>{};
+    void addName(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      final key = trimmed.toLowerCase();
+      if (!seen.add(key)) return;
+      ordered.add(trimmed);
     }
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Информация по заказу',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
-
-          // Основное
-          _tile('Менеджер', o.manager, Icons.person_outline),
-          _tile('Заказчик', o.customer, Icons.business_outlined),
-          Row(
-            children: [
-              Expanded(
-                  child: _tile('Дата заказа', d(o.orderDate), Icons.event)),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: _tile('Срок выполнения', d(o.dueDate),
-                      Icons.schedule_outlined)),
-            ],
-          ),
-
-          const Divider(height: 24),
-
-          // Продукт
-          const Text('Продукт',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          _tile('Наименование изделия', p.type, Icons.widgets_outlined),
-          Row(children: [
-            Expanded(
-                child: _tile('Тираж', p.quantity.toString(), Icons.numbers)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile('Параметры',
-                    p.parameters.isEmpty ? '—' : p.parameters, Icons.tune)),
-          ]),
-          Row(children: [
-            Expanded(
-                child: _tile('Ширина (мм)', p.width.toStringAsFixed(0),
-                    Icons.straighten)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile('Высота (мм)', p.height.toStringAsFixed(0),
-                    Icons.straighten)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile('Глубина (мм)', p.depth.toStringAsFixed(0),
-                    Icons.straighten)),
-          ]),
-          Row(children: [
-            Expanded(
-                child: _tile('Ролл', p.roll?.toStringAsFixed(2) ?? '—',
-                    Icons.view_stream)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile('Ширина b', p.widthB?.toStringAsFixed(2) ?? '—',
-                    Icons.swap_horiz)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile('Длина L', p.length?.toStringAsFixed(2) ?? '—',
-                    Icons.swap_vert)),
-          ]),
-
-          const Divider(height: 24),
-
-          // Материал
-          const Text('Материал',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          _tile('Материал', material?.name ?? '—', Icons.layers_outlined),
-          Row(children: [
-            Expanded(
-                child:
-                    _tile('Формат', material?.format ?? '—', Icons.crop_5_4)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile(
-                    'Плотность', material?.grammage ?? '—', Icons.texture)),
-          ]),
-
-          const Divider(height: 24),
-
-          // Краски
-          const Text('Краски',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          FutureBuilder<List<Map<String, dynamic>>>(
-            future: OrdersRepository().getPaints(o.id),
-            builder: (context, snap) {
-              if (snap.connectionState != ConnectionState.done) {
-                return const SizedBox.shrink();
-              }
-              final items = snap.data ?? const [];
-              if (items.isEmpty) {
-                return const Text('Не указаны',
-                    style: TextStyle(color: Colors.black54));
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: items.map((m) {
-                  final name =
-                      (m['name'] ?? m['paint_name'] ?? 'краска').toString();
-                  final info = (m['info'] ?? '').toString();
-                  final qty = (m['qty'] ?? m['quantity'] ?? '').toString();
-                  final parts = [
-                    name,
-                    if (info.isNotEmpty) info,
-                    if (qty.isNotEmpty) 'x$qty'
-                  ];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.color_lens_outlined, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(child: Text(parts.join(' · '))),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
-
-          const Divider(height: 24),
-          // Прочее
-          _tile('Ручки', o.handle.isEmpty ? '-' : o.handle,
-              Icons.handyman_outlined),
-          _tile('Картон', o.cardboard, Icons.inbox_outlined),
-          Row(children: [
-            Expanded(
-                child: _tile('Приладка', o.makeready.toStringAsFixed(2),
-                    Icons.calculate_outlined)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _tile(
-                    'ВАЛ', o.val.toStringAsFixed(2), Icons.calculate_outlined)),
-          ]),
-          if (o.additionalParams.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children:
-                  o.additionalParams.map((s) => Chip(label: Text(s))).toList(),
-            ),
-          ],
-
-          const SizedBox(height: 8),
-
-          // PDF и вложения
-          Builder(builder: (context) {
-            final hasPdf = (o.pdfUrl != null && o.pdfUrl!.isNotEmpty);
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Вложения',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 6),
-                if (hasPdf)
-                  Row(
-                    children: [
-                      const Icon(Icons.picture_as_pdf_outlined,
-                          color: Colors.redAccent),
-                      const SizedBox(width: 8),
-                      Expanded(
-                          child: Text(o.pdfUrl!.split('/').last,
-                              overflow: TextOverflow.ellipsis)),
-                      TextButton.icon(
-                        onPressed: () async {
-                          final url = await getSignedUrl(o.pdfUrl!);
-                          if (!mounted) return;
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  PdfViewScreen(url: url, title: 'PDF заказа'),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.open_in_new),
-                        label: const Text('Открыть'),
-                      ),
-                    ],
-                  )
-                else
-                  const Text('PDF не прикреплён',
-                      style: TextStyle(color: Colors.black54)),
-                const SizedBox(height: 4),
-                // Дополнительные файлы из метаданных, если есть
-                FutureBuilder<List<Map<String, dynamic>>>(
-                  future: listOrderFiles(o.id),
-                  builder: (context, snap) {
-                    if (snap.connectionState != ConnectionState.done) {
-                      return const SizedBox.shrink();
-                    }
-                    final items = snap.data ?? const [];
-                    if (items.isEmpty) return const SizedBox.shrink();
-                    return Column(
-                      children: items.map((it) {
-                        final fname =
-                            (it['fileName'] ?? it['name'] ?? 'file').toString();
-                        final path =
-                            (it['path'] ?? it['objectPath'] ?? '').toString();
-                        return Row(
-                          children: [
-                            const Icon(Icons.attachment_outlined),
-                            const SizedBox(width: 8),
-                            Expanded(
-                                child: Text(fname,
-                                    overflow: TextOverflow.ellipsis)),
-                            TextButton.icon(
-                              onPressed: path.isEmpty
-                                  ? null
-                                  : () async {
-                                      final url = await getSignedUrl(path);
-                                      if (!mounted) return;
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => PdfViewScreen(
-                                              url: url, title: 'Вложение'),
-                                        ),
-                                      );
-                                    },
-                              icon: const Icon(Icons.open_in_new),
-                              label: const Text('Открыть'),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                    );
-                  },
-                ),
-              ],
-            );
-          }),
-        ],
-      ),
+    final base = planned.stageName.trim();
+    addName(base);
+    final extra = planned.extra;
+    final altNames = _decodeStringList(
+      extra['alternativeStageNames'] ?? extra['alternative_stage_names'],
     );
+    for (final name in altNames) {
+      addName(name);
+    }
+    return ordered;
+  }
+
+  String _resolveStageName(
+    String stageId,
+    PersonnelProvider personnel,
+  ) {
+    try {
+      final stage = personnel.workplaces.firstWhere((s) => s.id == stageId);
+      if (stage.name.trim().isNotEmpty) return stage.name.trim();
+    } catch (_) {}
+    return stageId;
+  }
+
+  String _plannedStageLabel(
+    pcompat.PlannedStage planned,
+    List<String> stageIds,
+    PersonnelProvider personnel,
+  ) {
+    final normalized = <String>[];
+    final seen = <String>{};
+
+    void addParts(Iterable<String> values) {
+      for (final value in values) {
+        for (final rawPart in value.split(RegExp(r'[/,]'))) {
+          final cleaned = rawPart.trim().replaceAll(RegExp(r'^\(+|\)+$'), '');
+          if (cleaned.isEmpty) continue;
+          final key = cleaned.toLowerCase();
+          if (!seen.add(key)) continue;
+          normalized.add(cleaned);
+        }
+      }
+    }
+
+    addParts(_plannedStageNames(planned));
+    if (normalized.isNotEmpty) {
+      return normalized.join(' / ');
+    }
+
+    if (stageIds.isEmpty) return planned.stageName;
+    addParts(stageIds.map((id) => _resolveStageName(id, personnel)));
+    return normalized.isEmpty ? planned.stageName : normalized.join(' / ');
+  }
+
+  String _stageGroupKeyForPlannedStage(
+    pcompat.PlannedStage planned,
+    List<String> stageIds,
+  ) {
+    for (final key in const <String>[
+      'stageGroupKey',
+      'stage_group_key',
+      'queueStageKey',
+      'queue_stage_key',
+      'groupKey',
+      'group_key',
+      'stageKey',
+      'stage_key',
+    ]) {
+      final value = planned.extra[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return stageIds.isNotEmpty ? stageIds.first : planned.stageId.trim();
+  }
+
+  Future<void> _skipStageForTesting(
+    pcompat.PlannedStage planned,
+    List<TaskModel> stageTasks,
+    List<String> stageIds,
+  ) async {
+    if (stageTasks.isEmpty && stageIds.isEmpty) return;
+    final provider = context.read<TaskProvider>();
+    // Тестовый режим: помечаем текущий этап завершённым и передаём заказ дальше.
+    if (stageTasks.isEmpty) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final stageId =
+          stageIds.isNotEmpty ? stageIds.first : planned.stageId.trim();
+      final stageGroupKey = _stageGroupKeyForPlannedStage(planned, stageIds);
+      await Supabase.instance.client.from('tasks').insert({
+        'order_id': widget.order.id,
+        'stage_id': stageId,
+        'stage_group_key': stageGroupKey,
+        'status': TaskStatus.completed.name,
+        'spent_seconds': 0,
+        'assignees': <String>[],
+        'comments': {
+          'skip_stage_test_$now': {
+            'type': 'skip_stage_test',
+            'text': 'Этап пропущен в тестовом режиме',
+            'userId': 'system',
+            'timestamp': now,
+          },
+        },
+      });
+    } else {
+      for (final task in stageTasks) {
+        await provider.addComment(
+          taskId: task.id,
+          type: 'skip_stage_test',
+          text: 'Этап пропущен в тестовом режиме',
+          userId: 'system',
+        );
+        await provider.updateStatus(task.id, TaskStatus.completed);
+      }
+    }
+    await provider.refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Этап пропущен, переход к следующему этапу')),
+    );
+  }
+
+  TaskStatus? _groupStatus(List<TaskModel> stageTasks) {
+    if (stageTasks.isEmpty) return null;
+    if (isStageGroupFinallyCompleted(stageTasks)) {
+      return TaskStatus.completed;
+    }
+
+    if (stageTasks.any((t) => t.status == TaskStatus.problem)) {
+      return TaskStatus.problem;
+    }
+    if (stageTasks.any((t) => t.status == TaskStatus.inProgress)) {
+      return TaskStatus.inProgress;
+    }
+    if (stageTasks.any((t) => t.status == TaskStatus.paused)) {
+      return TaskStatus.paused;
+    }
+    return TaskStatus.waiting;
   }
 
   @override
   void initState() {
     super.initState();
+    _selectedCommentsOrderId = widget.order.id;
     _loadPlan();
+    _loadOrderDetails();
+    _loadRestartHistory();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  String get _currentOrderId => widget.order.id;
+  bool get _isHistoryReadOnly =>
+      _selectedCommentsOrderId.trim() != _currentOrderId.trim();
+
+  Future<void> _loadRestartHistory() async {
+    setState(() => _loadingRestartHistory = true);
+    try {
+      final service = RestartHistoryService(
+        SupabaseOrderRestartHistoryRepository(),
+      );
+      final history = await service.loadRestartHistoryChain(
+        _currentOrderId,
+        preferRpc: true,
+      );
+      if (!mounted) return;
+      setState(() => _restartAncestors = history);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _restartAncestors = const []);
+    } finally {
+      if (mounted) setState(() => _loadingRestartHistory = false);
+    }
+  }
+
+
+  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
+    final trimmed = rawUrl?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+
+    String resolvedUrl = trimmed;
+    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
+    }
+
+    final dt = DateTime.tryParse(updatedAt ?? '');
+    if (dt == null) return resolvedUrl;
+
+    final uri = Uri.tryParse(resolvedUrl);
+    if (uri == null) return resolvedUrl;
+
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['v'] = dt.millisecondsSinceEpoch.toString();
+    return uri.replace(queryParameters: query).toString();
+  }
+
+  Future<Map<String, dynamic>?> _loadFormDetails() async {
+    final formCode = widget.order.formCode?.trim();
+    final formSeries = widget.order.formSeries?.trim();
+    final formNo = widget.order.newFormNo;
+    if (formCode != null && formCode.isNotEmpty) {
+      final res = await Supabase.instance.client
+          .from('forms')
+          .select()
+          .eq('code', formCode)
+          .maybeSingle();
+      if (res != null && res is Map) return Map<String, dynamic>.from(res);
+    }
+    if (formSeries != null && formSeries.isNotEmpty && formNo != null) {
+      final res = await Supabase.instance.client
+          .from('forms')
+          .select()
+          .eq('series', formSeries)
+          .eq('number', formNo)
+          .maybeSingle();
+      if (res != null && res is Map) return Map<String, dynamic>.from(res);
+    }
+    return null;
+  }
+
+  Future<void> _loadOrderDetails() async {
+    setState(() => _loadingFiles = true);
+    try {
+      final repo = OrdersRepository();
+      final paints = await repo.getPaints(widget.order.id);
+      final files = await storage.listOrderFiles(widget.order.id);
+      final formDetails = await _loadFormDetails();
+      final formImageUrl = _buildFormImageUrl(
+        formDetails?['image_url']?.toString(),
+        updatedAt: formDetails?['updated_at']?.toString(),
+      );
+      String? stageTemplateName;
+      final tplId = widget.order.stageTemplateId;
+      if (tplId != null && tplId.isNotEmpty) {
+        final tpl = await Supabase.instance.client
+            .from('plan_templates')
+            .select('name')
+            .eq('id', tplId)
+            .maybeSingle();
+        final name = tpl?['name']?.toString();
+        if (name != null && name.isNotEmpty) stageTemplateName = name;
+      }
+      if (!mounted) return;
+      setState(() {
+        _paints = paints;
+        _files = files;
+        _stageTemplateName = stageTemplateName;
+        _formImageUrl = formImageUrl;
+        _formDetails = formDetails;
+      });
+    } catch (_) {
+      // ignore errors in read-only view
+    } finally {
+      if (mounted) setState(() => _loadingFiles = false);
+    }
+  }
+
+  Future<void> _reloadAll() async {
+    await Future.wait([
+      _loadPlan(),
+      _loadOrderDetails(),
+    ]);
   }
 
   Future<void> _loadPlan() async {
     try {
+      if (mounted) {
+        setState(() => _loadingPlan = true);
+      }
       final sb = Supabase.instance.client;
       await AppAuth.ensureSignedIn(); // важно для RLS
 
       final orderId = widget.order.id;
       final orderCode = widget.order.assignmentId ?? orderId;
+      final workplaceNames = <String, String>{
+        for (final workplace in context.read<PersonnelProvider>().workplaces)
+          workplace.id: workplace.name,
+      };
 
-      // ========== ПУТЬ 1: prod_plans -> prod_plan_stages ==========
       List<pcompat.PlannedStage> stages = [];
-      try {
-        final plan = await sb
-            .from('prod_plans')
-            .select('id')
-            .eq('order_id', orderId)
-            .maybeSingle();
-
-        if (plan != null && plan is Map && plan['id'] != null) {
-          final String planId = plan['id'] as String;
-          final rows = await sb
-              .from('prod_plan_stages')
-              .select('id, name, seq')
-              .eq('plan_id', planId)
-              .order('seq', ascending: true);
-
-          if (rows is List && rows.isNotEmpty) {
-            for (final r in rows) {
-              final m = (r as Map<String, dynamic>);
-              final id = (m['id'] ?? '').toString();
-              final name = (m['name'] ?? 'Этап').toString();
-              if (id.isNotEmpty) {
-                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
-              }
-            }
-          }
-        }
-      } catch (_) {
-        // игнорируем и перейдём к следующему источнику
+      final savedQueue = await OrderQueueService(sb).loadSavedQueue(orderId);
+      if (savedQueue.isNotEmpty) {
+        stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
+          rows: savedQueue.rows,
+          workplaceNames: workplaceNames,
+        );
       }
 
-      // ========== ПУТЬ 2: public.v_order_plan_stages (если есть) ==========
+      // Derived/public view is kept only as the same low-priority fallback as in
+      // TaskProvider._loadStageSequence; saved queue / normalized rows from
+      // OrderQueueService remain the source of truth for persisted plans.
       if (stages.isEmpty) {
         try {
           final rows = await sb
               .from('v_order_plan_stages')
-              .select('stage_id, stage_name, step_no, order_id, order_code')
+              .select(
+                'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+              )
               .or('order_id.eq.$orderId,order_code.eq.$orderCode')
               .order('step_no', ascending: true);
 
           if (rows is List && rows.isNotEmpty) {
-            for (final r in rows) {
-              final m = (r as Map<String, dynamic>);
-              final id = (m['stage_id'] ?? '').toString();
-              final name = (m['stage_name'] ?? 'Этап').toString();
-              if (id.isNotEmpty) {
-                stages.add(pcompat.PlannedStage(stageId: id, stageName: name));
-              }
-            }
+            stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
+              rows: rows
+                  .whereType<Map>()
+                  .map(Map<String, dynamic>.from)
+                  .toList(),
+              workplaceNames: workplaceNames,
+            );
           }
         } catch (_) {
-          // нет представления — идём дальше
+          // нет представления — показываем пустой план
         }
-      }
-
-      // ========== ПУТЬ 3: production_plans.stages (JSON, старый) ==========
-      if (stages.isEmpty) {
-        try {
-          final planJson = await sb
-              .from('production_plans')
-              .select('stages')
-              .eq('order_id', orderId)
-              .maybeSingle();
-
-          if (planJson != null &&
-              planJson is Map &&
-              planJson['stages'] != null) {
-            stages = pcompat.decodePlannedStages(planJson['stages']);
-          }
-        } catch (_) {}
       }
 
       if (mounted) {
@@ -428,84 +509,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
   }
 
-  _AggregatedStatus _computeAggregatedStatus(List<TaskModel> tasks) {
-    if (tasks.isEmpty) return _AggregatedStatus.waiting;
-    final hasProblem = tasks.any((t) => t.status == TaskStatus.problem);
-    if (hasProblem) return _AggregatedStatus.problem;
-    final hasPaused = tasks.any((t) => t.status == TaskStatus.paused);
-    final allCompleted = tasks.isNotEmpty &&
-        tasks.every((t) => t.status == TaskStatus.completed);
-    if (allCompleted) return _AggregatedStatus.completed;
-    if (hasPaused) return _AggregatedStatus.paused;
-    final hasInProgress = tasks.any((t) => t.status == TaskStatus.inProgress);
-    if (hasInProgress) return _AggregatedStatus.production;
-    final hasWaiting = tasks.any((t) => t.status == TaskStatus.waiting);
-    if (hasWaiting) return _AggregatedStatus.production;
-    return _AggregatedStatus.production;
-  }
-
-  Widget _buildStatusButton({
-    required String label,
-    required Color color,
-    required _AggregatedStatus targetStatus,
-    required _AggregatedStatus currentStatus,
-    required List<TaskModel> tasks,
-    required TaskProvider provider,
-  }) {
-    final bool selected = currentStatus == targetStatus;
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: ElevatedButton(
-          onPressed: selected
-              ? null
-              : () async {
-                  for (final t in tasks) {
-                    TaskStatus newStatus;
-                    switch (targetStatus) {
-                      case _AggregatedStatus.production:
-                        newStatus = TaskStatus.inProgress;
-                        break;
-                      case _AggregatedStatus.paused:
-                        newStatus = TaskStatus.paused;
-                        break;
-                      case _AggregatedStatus.problem:
-                        newStatus = TaskStatus.problem;
-                        break;
-                      case _AggregatedStatus.completed:
-                        newStatus = TaskStatus.completed;
-                        break;
-                      case _AggregatedStatus.waiting:
-                        newStatus = TaskStatus.waiting;
-                        break;
-                    }
-                    final seconds = _elapsed(t).inSeconds;
-                    await provider.updateStatus(
-                      t.id,
-                      newStatus,
-                      spentSeconds: newStatus == TaskStatus.inProgress
-                          ? t.spentSeconds
-                          : seconds,
-                      startedAt: newStatus == TaskStatus.inProgress
-                          ? DateTime.now().millisecondsSinceEpoch
-                          : null,
-                    );
-                  }
-                },
-          style: ElevatedButton.styleFrom(
-            backgroundColor:
-                selected ? color.withOpacity(0.8) : color.withOpacity(0.2),
-            foregroundColor: color,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          child: Text(label, textAlign: TextAlign.center),
-        ),
-      ),
-    );
-  }
-
   Duration _elapsed(TaskModel task) {
     var seconds = task.spentSeconds;
     if (task.status == TaskStatus.inProgress && task.startedAt != null) {
@@ -521,410 +524,560 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return formatter.format(dt);
   }
 
+  String _formatCommentTimestamp(int timestamp) {
+    if (timestamp <= 0) return '';
+    try {
+      final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+      return DateFormat('dd.MM.yyyy HH:mm').format(dt);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _commentAuthorName(String userId, List<EmployeeModel> employees) {
+    if (userId.isEmpty) return 'Неизвестный сотрудник';
+    EmployeeModel? found;
+    for (final emp in employees) {
+      if (emp.id == userId ||
+          (emp.login.isNotEmpty && emp.login == userId) ||
+          (emp.iin.isNotEmpty && emp.iin == userId)) {
+        found = emp;
+        break;
+      }
+    }
+    if (found == null) return userId;
+    final parts = [found.lastName, found.firstName, found.patronymic]
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return userId;
+    return parts.join(' ');
+  }
+
+  Widget _buildCommentMeta(TaskComment comment, List<EmployeeModel> employees) {
+    final timestampText = _formatCommentTimestamp(comment.timestamp);
+    final authorText = _commentAuthorName(comment.userId, employees);
+    final meta = [timestampText, authorText]
+        .where((s) => s.trim().isNotEmpty)
+        .join(' • ');
+    if (meta.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Text(
+        meta,
+        style: const TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+    );
+  }
+
+  String _timeTypeLabel(TaskTimeType type) {
+    switch (type) {
+      case TaskTimeType.production:
+        return 'Производство';
+      case TaskTimeType.pause:
+        return 'Пауза';
+      case TaskTimeType.problem:
+        return 'Проблема';
+      case TaskTimeType.shiftChange:
+        return 'Пересмена';
+      case TaskTimeType.setup:
+        return 'Наладка';
+    }
+  }
+
+  String _formatQuantityDisplay(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '0';
+    final value = double.tryParse(trimmed.replaceAll(',', '.'));
+    if (value == null) return trimmed;
+    if ((value - value.round()).abs() < 0.0001) {
+      return value.round().toString();
+    }
+    return value.toStringAsFixed(2);
+  }
+
+  String _renderCommentText(TaskComment comment, List<EmployeeModel> employees) {
+    final rawText = comment.text.trim();
+    if (rawText.isEmpty) {
+      switch (comment.type) {
+        case 'shift_pause':
+          return 'Пересмена: этап приостановлен';
+        case 'shift_resume':
+          return 'Пересмена: работа возобновлена';
+        case 'ink_writeoff':
+          return 'Зафиксировано списание краски';
+        default:
+          return 'Без комментария';
+      }
+    }
+
+    final parsed = TaskTimeEvent.fromPayload(
+      rawText,
+      comment.id,
+      comment.timestamp,
+      comment.userId,
+    );
+    if (parsed != null) {
+      final periodStart = DateFormat('dd.MM.yyyy HH:mm')
+          .format(parsed.startTime.toLocal());
+      final periodEnd = parsed.endTime == null
+          ? 'в процессе'
+          : DateFormat('dd.MM.yyyy HH:mm').format(parsed.endTime!.toLocal());
+      final subject = _commentAuthorName(parsed.subjectUserId, employees);
+      final note = parsed.note?.trim();
+      final notePart = (note != null && note.isNotEmpty) ? ' · $note' : '';
+      return '${_timeTypeLabel(parsed.type)}: $periodStart — $periodEnd · $subject$notePart';
+    }
+
+    switch (comment.type) {
+      case 'start':
+        return 'Начал(а) этап';
+      case 'pause':
+        return 'Пауза: $rawText';
+      case 'problem':
+        return 'Проблема: $rawText';
+      case 'setup_start':
+        return 'Начал(а) наладку';
+      case 'setup_resume':
+        return 'Продолжил(а) наладку';
+      case 'setup_done':
+        return 'Завершил(а) наладку';
+      case 'quantity_done':
+        return 'Выполнил(а): ${_formatQuantityDisplay(rawText)} шт.';
+      case 'quantity_team_total':
+        return 'Команда выполнила: ${_formatQuantityDisplay(rawText)} шт.';
+      case 'quantity_share':
+        return 'Личный вклад: ${_formatQuantityDisplay(rawText)} шт.';
+      case 'shift_pause':
+      case 'shift_resume':
+      case 'finish_note':
+      case 'ink_writeoff':
+        return rawText;
+      case 'shift_pause_state':
+      case 'exec_mode':
+      case 'exec_mode_stage':
+        return 'Служебная отметка этапа';
+    }
+
+    if (rawText.startsWith('{') && rawText.endsWith('}')) {
+      return 'Служебный комментарий';
+    }
+    return rawText;
+  }
+
+  String _stageStatusLabel(TaskStatus? status) {
+    switch (status) {
+      case TaskStatus.completed:
+        return 'Завершено';
+      case TaskStatus.inProgress:
+        return 'В процессе';
+      case TaskStatus.paused:
+        return 'На паузе';
+      case TaskStatus.problem:
+        return 'Проблема';
+      case TaskStatus.waiting:
+      default:
+        return 'Ожидание запуска';
+    }
+  }
+
+  String _restartOrderChipLabel(OrderRestartHistoryEntry entry) {
+    final index = _restartAncestors.indexWhere((e) => e.id == entry.id);
+    final orderLabel = index == -1 ? 'Заказ' : 'Заказ ${index + 1}';
+    final finishedAt = entry.completedAt ?? entry.archivedAt ?? entry.updatedAt;
+    if (finishedAt == null) return orderLabel;
+    final when = DateFormat('dd.MM HH:mm').format(finishedAt.toLocal());
+    return '$orderLabel · завершён $when';
+  }
+
+  Color _stageStatusColor(TaskStatus? status) {
+    switch (status) {
+      case TaskStatus.completed:
+        return Colors.green;
+      case TaskStatus.inProgress:
+        return Colors.blue;
+      case TaskStatus.paused:
+        return Colors.orange;
+      case TaskStatus.problem:
+        return Colors.redAccent;
+      case TaskStatus.waiting:
+      default:
+        return Colors.yellow.shade700;
+    }
+  }
+
+  Widget _buildProductionCard({
+    required List<TaskModel> commentsTasks,
+    required List<TaskModel> tasks,
+    required Map<String, List<TaskModel>> tasksByStage,
+    required PersonnelProvider personnel,
+  }) {
+    final comments = <TaskComment>[];
+    const hiddenTypes = <String>{
+      'shift_pause_state',
+      'exec_mode',
+      'exec_mode_stage',
+    };
+    for (final t in commentsTasks) {
+      comments.addAll(
+        t.comments.where(
+          (comment) => !hiddenTypes.contains(comment.type.trim().toLowerCase()),
+        ),
+      );
+    }
+    comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final selectedEntry = _restartAncestors
+        .where((e) => e.id == _selectedCommentsOrderId)
+        .cast<OrderRestartHistoryEntry?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final selectedFinishedAt = selectedEntry == null
+        ? null
+        : (selectedEntry.completedAt ??
+            selectedEntry.archivedAt ??
+            selectedEntry.updatedAt);
+    final selectedDate = selectedFinishedAt == null
+        ? _selectedCommentsOrderId
+        : DateFormat('dd.MM.yyyy HH:mm').format(selectedFinishedAt.toLocal());
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Комментарии',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text('Текущий заказ'),
+                      selected: !_isHistoryReadOnly,
+                      onSelected: (_) => setState(
+                        () => _selectedCommentsOrderId = _currentOrderId,
+                      ),
+                    ),
+                  ),
+                  for (final ancestor in _restartAncestors)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(_restartOrderChipLabel(ancestor)),
+                        selected: _selectedCommentsOrderId == ancestor.id,
+                        onSelected: (_) => setState(
+                          () => _selectedCommentsOrderId = ancestor.id,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (_loadingRestartHistory) const LinearProgressIndicator(),
+            const SizedBox(height: 6),
+            if (_isHistoryReadOnly) ...[
+              Text(
+                'Вы смотрите архивный заказ: $selectedDate',
+                style: const TextStyle(color: Colors.orange),
+              ),
+              const Text(
+                'Комментарии доступны только для чтения',
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 6),
+            ],
+            SizedBox(
+              height: 220,
+              child: OrderCommentsTimeline(
+                comments: comments,
+                attachmentsByComment: const {},
+                emptyLabel: _isHistoryReadOnly
+                    ? 'Комментариев по этому заказу нет'
+                    : 'Комментариев пока нет',
+              ),
+            ),
+            const Divider(height: 24),
+            const Text(
+              'Этапы производства',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            if (_loadingPlan)
+              const LinearProgressIndicator()
+            else if (_plannedStages.isEmpty)
+              const Text(
+                'План этапов отсутствует',
+                style: TextStyle(color: Colors.grey),
+              )
+            else
+              Column(
+                children: [
+                  for (final entry in _plannedStages.asMap().entries)
+                    Builder(
+                      builder: (context) {
+                        final planned = entry.value;
+                        final stageIds = _plannedStageIds(planned);
+                        final stageLabel =
+                            _plannedStageLabel(planned, stageIds, personnel);
+                        final stageTasks = <TaskModel>[];
+                        for (final id in stageIds) {
+                          stageTasks.addAll(
+                              tasksByStage[id] ?? const <TaskModel>[]);
+                        }
+                        final stageStatus = _groupStatus(stageTasks);
+                        final statusColor = _stageStatusColor(stageStatus);
+                        DateTime? start;
+                        DateTime? end;
+                        if (stageTasks.isNotEmpty) {
+                          for (final t in stageTasks) {
+                            if (t.startedAt != null) {
+                              final st = DateTime.fromMillisecondsSinceEpoch(
+                                t.startedAt!,
+                              );
+                              if (start == null || st.isBefore(start!)) {
+                                start = st;
+                              }
+                              final spent = _elapsed(t);
+                              if (spent.inSeconds > 0) {
+                                final en = st.add(spent);
+                                if (end == null || en.isAfter(end!)) {
+                                  end = en;
+                                }
+                              }
+                            }
+                          }
+                        }
+
+                        return Container(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: statusColor.withOpacity(0.4),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                radius: 12,
+                                backgroundColor: Colors.white,
+                                child: Text(
+                                  '${entry.key + 1}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      stageLabel,
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _stageStatusLabel(stageStatus),
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: statusColor,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (stageTasks.isNotEmpty)
+                                      Text(
+                                        'Исполнители: ${stageTasks.first.assignees.join(', ')}',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      start != null
+                                          ? 'Начало: ${_formatTime(start)}'
+                                          : 'Начало: —',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.black54,
+                                      ),
+                                    ),
+                                    Text(
+                                      end != null
+                                          ? 'Завершение: ${_formatTime(end)}'
+                                          : 'Завершение: —',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.black54,
+                                      ),
+                                    ),
+                                    if (stageStatus != TaskStatus.completed) ...[
+                                      const SizedBox(height: 6),
+                                      OutlinedButton.icon(
+                                        onPressed: _loadingPlan
+                                            ? null
+                                            : () => _skipStageForTesting(
+                                                  planned,
+                                                  stageTasks,
+                                                  stageIds,
+                                                ),
+                                        icon: const Icon(Icons.skip_next, size: 16),
+                                        label: const Text('Пропустить этап'),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              if (stageTasks.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.message_outlined,
+                                        size: 16,
+                                        color: Colors.grey,
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        '${stageTasks.fold<int>(0, (p, t) => p + t.comments.length)}',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.black54,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final taskProvider = context.watch<TaskProvider>();
     final personnel = context.watch<PersonnelProvider>();
-    final tasks =
-        taskProvider.tasks.where((t) => t.orderId == widget.order.id).toList();
+    final tasks = taskProvider.tasks
+        .where((t) => t.orderId == _currentOrderId)
+        .toList();
+    final commentsTasks = taskProvider.tasks
+        .where((t) => t.orderId == _selectedCommentsOrderId)
+        .toList();
 
     final Map<String, List<TaskModel>> tasksByStage = {};
     for (final t in tasks) {
       tasksByStage.putIfAbsent(t.stageId, () => []).add(t);
     }
 
-    final aggStatus = _computeAggregatedStatus(tasks);
+    final size = MediaQuery.of(context).size;
+    final dialogHeight = size.height - 32;
+    final dialogWidth = math.min(size.width - 32, 1100.0);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.order.customer),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: dialogHeight,
+          maxWidth: dialogWidth,
         ),
-      ),
-      body: _loadingPlan
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Информация по заказу (для сотрудника)
-                    _buildOrderInfoCard(widget.order),
-                    const SizedBox(height: 16),
-                    // Карточка с общей информацией и управлением статусом
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.withOpacity(0.2),
-                            blurRadius: 6,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.order.customer,
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            widget.order.customer,
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.order.product.type,
-                            style: const TextStyle(fontSize: 16),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.layers,
-                                size: 16,
-                                color: Colors.grey,
-                              ),
-                              const SizedBox(width: 4),
-                              Text('${widget.order.product.quantity} шт.'),
-                              const SizedBox(width: 16),
-                              const Icon(
-                                Icons.calendar_today,
-                                size: 16,
-                                color: Colors.grey,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                widget.order.dueDate == null
-                                    ? 'без срока'
-                                    : 'до ${DateFormat('dd.MM.yyyy').format(widget.order.dueDate!)}',
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          // Управление статусом заказа
-                          Row(
-                            children: [
-                              _buildStatusButton(
-                                label: 'Производство',
-                                color: Colors.blue,
-                                targetStatus: _AggregatedStatus.production,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
-                              ),
-                              _buildStatusButton(
-                                label: 'На паузе',
-                                color: Colors.orange,
-                                targetStatus: _AggregatedStatus.paused,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
-                              ),
-                              _buildStatusButton(
-                                label: 'Проблема',
-                                color: Colors.redAccent,
-                                targetStatus: _AggregatedStatus.problem,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
-                              ),
-                              _buildStatusButton(
-                                label: 'Завершено',
-                                color: Colors.green,
-                                targetStatus: _AggregatedStatus.completed,
-                                currentStatus: aggStatus,
-                                tasks: tasks,
-                                provider: taskProvider,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          // Список комментариев к заказу
-                          const Text(
-                            'Комментарии',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Builder(
-                            builder: (context) {
-                              final comments = <TaskComment>[];
-                              for (final t in tasks) {
-                                comments.addAll(t.comments);
-                              }
-                              comments.sort(
-                                (a, b) => a.timestamp.compareTo(b.timestamp),
-                              );
-                              if (comments.isEmpty) {
-                                return const Text(
-                                  'Нет комментариев',
-                                  style: TextStyle(color: Colors.grey),
-                                );
-                              }
-                              return Column(
-                                children: [
-                                  for (final c in comments)
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 2,
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Icon(
-                                            c.type == 'problem'
-                                                ? Icons.error_outline
-                                                : c.type == 'pause'
-                                                    ? Icons.pause_circle_outline
-                                                    : Icons.info_outline,
-                                            size: 18,
-                                            color: c.type == 'problem'
-                                                ? Colors.redAccent
-                                                : c.type == 'pause'
-                                                    ? Colors.orange
-                                                    : Colors.blueGrey,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Expanded(
-                                            child: Text(
-                                              c.text,
-                                              style: const TextStyle(
-                                                fontSize: 14,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                ],
-                              );
-                            },
-                          ),
-                        ],
-                      ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Заказ ${widget.order.assignmentId ?? widget.order.id}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 16),
-                    // Этапы производства
-                    const Text(
-                      'Этапы производства',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                  ),
+                  IconButton(
+                    tooltip: 'Обновить данные',
+                    onPressed:
+                        (_loadingFiles || _loadingPlan) ? null : _reloadAll,
+                    icon: const Icon(Icons.refresh),
+                  ),
+                  IconButton(
+                    tooltip: 'Закрыть',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Card(
+                        margin: EdgeInsets.zero,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: OrderDetailsCard(
+                            order: widget.order,
+                            paints: _paints,
+                            files: _files,
+                            stageTemplateName: _stageTemplateName,
+                            formImageUrl: _formImageUrl,
+                            formDetails: _formDetails,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (_plannedStages.isEmpty)
-                      const Text(
-                        'План этапов отсутствует',
-                        style: TextStyle(color: Colors.grey),
-                      )
-                    else
-                      Column(
-                        children: [
-                          for (final planned in _plannedStages)
-                            Builder(
-                              builder: (context) {
-                                final stageId = planned.stageId;
-                                final stage = personnel.workplaces.firstWhere(
-                                  (s) => s.id == stageId,
-                                  orElse: () => WorkplaceModel(
-                                    id: stageId,
-                                    name: planned.stageName,
-                                    positionIds: [],
-                                  ),
-                                );
-                                final stageTasks = tasksByStage[stageId] ?? [];
-                                TaskStatus? stageStatus;
-                                if (stageTasks.isEmpty) {
-                                  stageStatus = null;
-                                } else if (stageTasks.every(
-                                  (t) => t.status == TaskStatus.completed,
-                                )) {
-                                  stageStatus = TaskStatus.completed;
-                                } else if (stageTasks.any(
-                                  (t) => t.status == TaskStatus.problem,
-                                )) {
-                                  stageStatus = TaskStatus.problem;
-                                } else if (stageTasks.any(
-                                  (t) => t.status == TaskStatus.inProgress,
-                                )) {
-                                  stageStatus = TaskStatus.inProgress;
-                                } else if (stageTasks.any(
-                                  (t) => t.status == TaskStatus.paused,
-                                )) {
-                                  stageStatus = TaskStatus.paused;
-                                } else {
-                                  stageStatus = TaskStatus.waiting;
-                                }
-                                Color bgColor;
-                                switch (stageStatus) {
-                                  case TaskStatus.completed:
-                                    bgColor = Colors.green.withOpacity(0.2);
-                                    break;
-                                  case TaskStatus.inProgress:
-                                    bgColor = Colors.blue.withOpacity(0.2);
-                                    break;
-                                  case TaskStatus.paused:
-                                    bgColor = Colors.orange.withOpacity(0.2);
-                                    break;
-                                  case TaskStatus.problem:
-                                    bgColor = Colors.redAccent.withOpacity(0.2);
-                                    break;
-                                  case TaskStatus.waiting:
-                                  default:
-                                    bgColor = Colors.yellow.withOpacity(0.2);
-                                    break;
-                                }
-                                DateTime? start;
-                                DateTime? end;
-                                if (stageTasks.isNotEmpty) {
-                                  for (final t in stageTasks) {
-                                    if (t.startedAt != null) {
-                                      final st =
-                                          DateTime.fromMillisecondsSinceEpoch(
-                                        t.startedAt!,
-                                      );
-                                      if (start == null ||
-                                          st.isBefore(start!)) {
-                                        start = st;
-                                      }
-                                      final spent = _elapsed(t);
-                                      if (spent.inSeconds > 0) {
-                                        final en = st.add(spent);
-                                        if (end == null || en.isAfter(end!)) {
-                                          end = en;
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                                return Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: bgColor,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 12,
-                                        backgroundColor: Colors.white,
-                                        child: Text(
-                                          '${_plannedStages.indexOf(planned) + 1}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              stage.name,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                            Text(
-                                              stageTasks.isNotEmpty
-                                                  ? 'Исполнители: ${stageTasks.first.assignees.join(', ')}'
-                                                  : '',
-                                              style: const TextStyle(
-                                                fontSize: 14,
-                                                color: Colors.black87,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              start != null
-                                                  ? 'Начало: ${_formatTime(start)}'
-                                                  : 'Начало: —',
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.black54,
-                                              ),
-                                            ),
-                                            Text(
-                                              end != null
-                                                  ? 'Завершение: ${_formatTime(end)}'
-                                                  : stageStatus ==
-                                                          TaskStatus.completed
-                                                      ? 'Завершено'
-                                                      : stageStatus ==
-                                                              TaskStatus
-                                                                  .inProgress
-                                                          ? 'В процессе'
-                                                          : 'Плановое завершение: —',
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.black54,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      if (stageTasks.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            left: 8.0,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              const Icon(
-                                                Icons.message_outlined,
-                                                size: 16,
-                                                color: Colors.grey,
-                                              ),
-                                              const SizedBox(width: 2),
-                                              Text(
-                                                '${stageTasks.fold<int>(0, (p, t) => p + t.comments.length)}',
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.black54,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                        ],
+                      const SizedBox(height: 12),
+                      _buildProductionCard(
+                        commentsTasks: commentsTasks,
+                        tasks: tasks,
+                        tasksByStage: tasksByStage,
+                        personnel: personnel,
                       ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
+          ],
+        ),
+      ),
     );
   }
 }

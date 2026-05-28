@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../warehouse/supplier_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
+import '../../utils/kostanay_time.dart';
 
 class PaperOption {
   final String name;
@@ -85,14 +86,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   String? _selectedName;
   String? _selectedFormat;
   String? _selectedGrammage;
-  bool _manualFormat = false;
-  bool _manualGrammage = false;
 
   final Map<String, PaperOption> _paperMap = <String, PaperOption>{};
   String? _selectedPaperKey;
   bool _isNewPaper = false;
 
   String _paperMethod = 'meters'; // meters | weight | diameter
+  String? _paperDiameterColor; // white | brown
 
   String? _selectedUnit;
   final List<String> _units = const [
@@ -204,8 +204,28 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       // Список уникальных названий без дублей
       _paperNameChoices = _paperOptions.map((o) => o.name).toSet().toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      if (!mounted) return;
       setState(() {
         _rollItems = rolls;
+        if (_isEdit && _selectedTable == 'Бумага' && widget.existing != null) {
+          final existing = widget.existing!;
+          _selectedName = existing.description;
+          _refreshChoicesForName(existing.description);
+          final format = existing.format ?? '';
+          final grammage = existing.grammage ?? '';
+          if (format.isNotEmpty) {
+            _applyFormatSelection(format);
+          }
+          if (grammage.isNotEmpty) {
+            _applyGrammageSelection(grammage);
+          }
+          final descLower = existing.description.toLowerCase();
+          if (descLower.contains('бел')) {
+            _paperDiameterColor = 'white';
+          } else if (descLower.contains('коричнев')) {
+            _paperDiameterColor = 'brown';
+          }
+        }
       });
     });
 
@@ -283,7 +303,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         break;
       case 'Краска':
         _controllers['name']!.text = item.description;
-        _controllers['weight']!.text = item.quantity.toString();
+        final unitLower = item.unit.toLowerCase().trim();
+        final qtyGrams = unitLower == 'кг' ? item.quantity * 1000 : item.quantity;
+        _controllers['weight']!.text = qtyGrams.toString();
         break;
       case 'Канцелярия':
       case 'Универсальное изделие':
@@ -406,17 +428,21 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           case 'Краска':
             String? imageBase64 = item.imageBase64;
             if (_imageBytes != null) imageBase64 = base64Encode(_imageBytes!);
+            final currentQtyGrams = item.unit.toLowerCase().trim() == 'кг'
+                ? item.quantity * 1000
+                : item.quantity;
+            final enteredQty = double.tryParse(_controllers['weight']!
+                    .text
+                    .trim()
+                    .replaceAll(',', '.')) ??
+                currentQtyGrams;
             await wh.updateTmc(
               id: item.id,
               description: _controllers['name']!.text.trim().isNotEmpty
                   ? _controllers['name']!.text.trim()
                   : item.description,
-              unit: 'кг',
-              quantity: double.tryParse(_controllers['weight']!
-                      .text
-                      .trim()
-                      .replaceAll(',', '.')) ??
-                  item.quantity,
+              unit: 'гр',
+              quantity: enteredQty,
               note: note.isNotEmpty ? note : item.note,
               imageBase64: imageBase64,
               lowThreshold: lowTh,
@@ -452,9 +478,65 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       if (table == 'Инвентаризация') {
         final selectedKey = _selectedPaperKey ?? '';
         final opt = _paperMap[selectedKey];
-        final counted = double.tryParse(
-                _controllers['counted']!.text.trim().replaceAll(',', '.')) ??
-            0;
+        final formatStr = _controllers['format']!.text.trim();
+        final grammageStr = _controllers['grammage']!.text.trim();
+        final format = double.tryParse(formatStr.replaceAll(',', '.')) ?? 0.0;
+        final grammage =
+            double.tryParse(grammageStr.replaceAll(',', '.')) ?? 0.0;
+
+        double counted = 0;
+
+        double? fromWeight(double wKg) =>
+            ((wKg * 1000) / grammage) / (format / 100.0);
+
+        double? fromDiameter(double d, bool isWhite) {
+          final r_m = (d / 2.0) / 100.0;
+          final area_m2 = r_m * r_m * math.pi;
+          final k = (isWhite ? 8.8 : 7.75) * format;
+          return ((area_m2 * k) * 1000.0) / grammage / (format / 100.0);
+        }
+
+        if (_paperMethod == 'meters') {
+          counted = double.tryParse(
+                  _controllers['counted']!.text.trim().replaceAll(',', '.')) ??
+              0;
+        } else if (_paperMethod == 'weight') {
+          if (format <= 0 || grammage <= 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Укажите формат и грамаж')),
+            );
+            return;
+          }
+          final w = double.tryParse(
+                  _controllers['weight']!.text.replaceAll(',', '.')) ??
+              0.0;
+          counted = fromWeight(w) ?? 0.0;
+        } else if (_paperMethod == 'diameter') {
+          if (format <= 0 || grammage <= 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Укажите формат и грамаж')),
+            );
+            return;
+          }
+          if ((_paperDiameterColor ?? '').isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Выберите тип бумаги')),
+            );
+            return;
+          }
+          final d = double.tryParse(
+                  _controllers['diameter']!.text.replaceAll(',', '.')) ??
+              0.0;
+          final isWhite = _paperDiameterColor == 'white';
+          counted = fromDiameter(d, isWhite) ?? 0.0;
+        }
+
+        if (counted <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Укажите корректное количество')),
+          );
+          return;
+        }
 
         final papers = wh.getTmcByType('Бумага');
         final existing = papers.firstWhere(
@@ -545,9 +627,13 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           final d = double.tryParse(
                   _controllers['diameter']!.text.replaceAll(',', '.')) ??
               0.0;
-          final srcName =
-              (sel?.name ?? _controllers['name']!.text).toLowerCase();
-          final isWhite = srcName.contains('бел') || srcName.contains('white');
+          if ((_paperDiameterColor ?? '').isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Выберите тип бумаги')),
+            );
+            return;
+          }
+          final isWhite = _paperDiameterColor == 'white';
           length = fromDiameter(d, isWhite) ?? 0.0;
         }
 
@@ -691,7 +777,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             (r) => r.id == roll,
             orElse: () => TmcModel(
               id: roll,
-              date: DateTime.now().toIso8601String(),
+              date: nowInKostanayIsoString(),
               supplier: null,
               type: 'Рулон',
               description: roll,
@@ -729,25 +815,17 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       if (table == 'Краска') {
         final name = _controllers['name']!.text.trim();
         final color = _selectedColor ?? '';
-        final weight = double.tryParse(
+        final grams = double.tryParse(
                 _controllers['weight']!.text.trim().replaceAll(',', '.')) ??
             0;
         final description = color.isNotEmpty ? '$name $color' : name;
-
-        if (_imageBytes == null || _imageBytes!.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Для краски обязательно приложить фото')),
-          );
-          return;
-        }
 
         await wh.addTmc(
           id: const Uuid().v4(),
           type: 'Краска',
           description: description,
-          quantity: weight,
-          unit: 'кг',
+          quantity: grams,
+          unit: 'гр',
           note: note.isEmpty ? null : note,
           imageBytes: _imageBytes,
           lowThreshold: lowTh,
@@ -819,7 +897,107 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     );
   }
 
-  Widget _buildField(String key, String label, {TextInputType? keyboardType}) {
+  void _updateSelectedPaperKey() {
+    final name = _controllers['name']?.text.trim() ?? '';
+    final format = _controllers['format']?.text.trim() ?? '';
+    final grammage = _controllers['grammage']?.text.trim() ?? '';
+
+    final match = _paperOptions.where((o) {
+      final optFormat = o.format ?? '';
+      final optGrammage = o.grammage ?? '';
+      return o.name == name && optFormat == format && optGrammage == grammage;
+    }).toList();
+
+    if (match.isNotEmpty) {
+      _selectedPaperKey = match.first.key;
+      final lower = match.first.name.toLowerCase();
+      if (lower.contains('бел')) {
+        _paperDiameterColor = 'white';
+      } else if (lower.contains('коричнев')) {
+        _paperDiameterColor = 'brown';
+      }
+    } else {
+      _selectedPaperKey = null;
+    }
+  }
+
+  void _updateGrammageChoicesForFormat(String? formatValue) {
+    final currentName = _controllers['name']?.text.trim() ?? '';
+    final format = (formatValue ?? '').trim();
+    if (currentName.isEmpty || format.isEmpty) {
+      _grammageChoices = [];
+      _selectedGrammage = null;
+      return;
+    }
+
+    final seenG = <String>{};
+    _grammageChoices = _paperOptions
+        .where((o) => o.name == currentName && (o.format ?? '') == format)
+        .map((o) => o.grammage ?? '')
+        .where((s) => s.isNotEmpty && seenG.add(s))
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    final currentGrammage = _controllers['grammage']?.text.trim() ?? '';
+    if (_grammageChoices.contains(currentGrammage)) {
+      _selectedGrammage = currentGrammage;
+    } else {
+      _selectedGrammage = null;
+    }
+  }
+
+  void _applyFormatSelection(String value) {
+    final trimmed = value.trim();
+    _controllers['format']?.text = trimmed;
+    _selectedFormat = trimmed;
+    _updateGrammageChoicesForFormat(trimmed);
+    _updateSelectedPaperKey();
+  }
+
+  void _applyGrammageSelection(String value) {
+    final trimmed = value.trim();
+    _controllers['grammage']?.text = trimmed;
+    _selectedGrammage = trimmed;
+    _updateSelectedPaperKey();
+  }
+
+  void _refreshChoicesForName(String? name) {
+    final trimmed = (name ?? '').trim();
+    if (trimmed.isEmpty) {
+      _formatChoices = [];
+      _selectedFormat = null;
+      _grammageChoices = [];
+      _selectedGrammage = null;
+      _selectedPaperKey = null;
+      return;
+    }
+
+    final seenF = <String>{};
+    _formatChoices = _paperOptions
+        .where((o) => o.name == trimmed)
+        .map((o) => o.format ?? '')
+        .where((s) => s.isNotEmpty && seenF.add(s))
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    final currentFormat = _controllers['format']?.text.trim() ?? '';
+    if (_formatChoices.contains(currentFormat)) {
+      _selectedFormat = currentFormat;
+    } else {
+      _selectedFormat = null;
+    }
+
+    _updateGrammageChoicesForFormat(currentFormat);
+    _updateSelectedPaperKey();
+  }
+
+  Widget _buildField(
+    String key,
+    String label, {
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+    void Function(String)? onChanged,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: TextFormField(
@@ -829,10 +1007,14 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           border: const OutlineInputBorder(),
         ),
         keyboardType: keyboardType,
-        validator: (value) {
-          if (key == 'note') return null;
-          return (value == null || value.isEmpty) ? 'Обязательное поле' : null;
-        },
+        onChanged: onChanged,
+        validator: validator ??
+            (value) {
+              if (key == 'note') return null;
+              return (value == null || value.isEmpty)
+                  ? 'Обязательное поле'
+                  : null;
+            },
       ),
     );
   }
@@ -844,10 +1026,23 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (_isEdit)
-              _buildField('name', 'Вид бумаги')
+              _buildField(
+                'name',
+                'Вид бумаги',
+                onChanged: (value) {
+                  setState(() {
+                    final trimmed = value.trim();
+                    _selectedName = trimmed.isEmpty ? null : trimmed;
+                    _refreshChoicesForName(value);
+                  });
+                },
+              )
             else
               DropdownButtonFormField<String>(
-                value: _selectedName,
+                value: _selectedName != null &&
+                        _paperNameChoices.contains(_selectedName)
+                    ? _selectedName
+                    : null,
                 items: [
                   ..._paperNameChoices.map(
                     (n) => DropdownMenuItem<String>(value: n, child: Text(n)),
@@ -862,27 +1057,20 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                     if (v == '__new__') {
                       _isNewPaper = true;
                       _selectedName = null;
+                      _selectedPaperKey = null;
                       _controllers['name']?.text = '';
-                      _formatChoices = [];
-                      _grammageChoices = [];
-                      _selectedFormat = null;
-                      _selectedGrammage = null;
+                      _controllers['format']?.text = '';
+                      _controllers['grammage']?.text = '';
+                      _refreshChoicesForName(null);
                     } else {
                       _isNewPaper = false;
                       _selectedName = v;
                       _controllers['name']?.text = v ?? '';
-                      final seenF = <String>{};
-                      _formatChoices = _paperOptions
-                          .where((o) => o.name == v)
-                          .map((o) => o.format ?? '')
-                          .where((s) => s.isNotEmpty && seenF.add(s))
-                          .toList()
-                        ..sort((a, b) =>
-                            a.toLowerCase().compareTo(b.toLowerCase()));
-                      _grammageChoices = [];
-                      _selectedFormat = null;
-                      _selectedGrammage = null;
+                      _controllers['format']?.text = '';
+                      _controllers['grammage']?.text = '';
+                      _refreshChoicesForName(v);
                     }
+                    _updateSelectedPaperKey();
                   });
                 },
                 decoration: const InputDecoration(
@@ -895,61 +1083,62 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                         ? 'Обязательное поле'
                         : null),
               ),
+            if (_isNewPaper) ...[
+              const SizedBox(height: 8),
+              _buildField(
+                'name',
+                'Название нового вида',
+                onChanged: (value) {
+                  setState(() {
+                    final trimmed = value.trim();
+                    _selectedName = trimmed.isEmpty ? null : trimmed;
+                    _refreshChoicesForName(value);
+                  });
+                },
+              ),
+            ],
             const SizedBox(height: 8),
             // ФОРМАТ
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                DropdownButtonFormField<String>(
-                  value: _selectedFormat,
-                  items: [
-                    ..._formatChoices.map(
-                      (f) => DropdownMenuItem<String>(value: f, child: Text(f)),
-                    ),
-                    const DropdownMenuItem<String>(
-                      value: '__manual__',
-                      child: Text('Ввести вручную'),
-                    ),
-                  ],
-                  onChanged: (v) {
+                _buildField(
+                  'format',
+                  'Формат',
+                  onChanged: (value) {
                     setState(() {
-                      if (v == '__manual__') {
-                        _manualFormat = true;
-                        _selectedFormat = null;
-                        _controllers['format']?.text = '';
-                        _grammageChoices = [];
-                        _selectedGrammage = null;
+                      final trimmed = value.trim();
+                      if (_formatChoices.contains(trimmed)) {
+                        _selectedFormat = trimmed;
                       } else {
-                        _manualFormat = false;
-                        _selectedFormat = v;
-                        _controllers['format']?.text = v ?? '';
-                        final seenG = <String>{};
-                        _grammageChoices = _paperOptions
-                            .where(
-                                (o) => o.name == _selectedName && o.format == v)
-                            .map((o) => o.grammage ?? '')
-                            .where((s) => s.isNotEmpty && seenG.add(s))
-                            .toList()
-                          ..sort((a, b) =>
-                              a.toLowerCase().compareTo(b.toLowerCase()));
-                        _selectedGrammage = null;
+                        _selectedFormat = null;
                       }
+                      _updateGrammageChoicesForFormat(trimmed);
+                      _updateSelectedPaperKey();
                     });
                   },
-                  decoration: const InputDecoration(
-                    labelText: 'Формат',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (_isNewPaper) return null;
-                    if (_manualFormat) return null;
-                    return (value == null || value.isEmpty)
-                        ? 'Обязательное поле'
-                        : null;
-                  },
                 ),
-                if (_manualFormat) const SizedBox(height: 8),
-                if (_manualFormat) _buildField('format', 'Формат'),
+                if (_formatChoices.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6.0),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _formatChoices
+                          .map(
+                            (f) => ChoiceChip(
+                              label: Text(f),
+                              selected: _selectedFormat == f,
+                              onSelected: (_) {
+                                setState(() {
+                                  _applyFormatSelection(f);
+                                });
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -957,44 +1146,42 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                DropdownButtonFormField<String>(
-                  value: _selectedGrammage,
-                  items: [
-                    ..._grammageChoices.map(
-                      (g) => DropdownMenuItem<String>(value: g, child: Text(g)),
-                    ),
-                    const DropdownMenuItem<String>(
-                      value: '__manual__',
-                      child: Text('Ввести вручную'),
-                    ),
-                  ],
-                  onChanged: (v) {
+                _buildField(
+                  'grammage',
+                  'Грамаж',
+                  onChanged: (value) {
                     setState(() {
-                      if (v == '__manual__') {
-                        _manualGrammage = true;
-                        _selectedGrammage = null;
-                        _controllers['grammage']?.text = '';
+                      final trimmed = value.trim();
+                      if (_grammageChoices.contains(trimmed)) {
+                        _selectedGrammage = trimmed;
                       } else {
-                        _manualGrammage = false;
-                        _selectedGrammage = v;
-                        _controllers['grammage']?.text = v ?? '';
+                        _selectedGrammage = null;
                       }
+                      _updateSelectedPaperKey();
                     });
                   },
-                  decoration: const InputDecoration(
-                    labelText: 'Грамаж',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (_isNewPaper) return null;
-                    if (_manualGrammage) return null;
-                    return (value == null || value.isEmpty)
-                        ? 'Обязательное поле'
-                        : null;
-                  },
                 ),
-                if (_manualGrammage) const SizedBox(height: 8),
-                if (_manualGrammage) _buildField('grammage', 'Грамаж'),
+                if (_grammageChoices.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6.0),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _grammageChoices
+                          .map(
+                            (g) => ChoiceChip(
+                              label: Text(g),
+                              selected: _selectedGrammage == g,
+                              onSelected: (_) {
+                                setState(() {
+                                  _applyGrammageSelection(g);
+                                });
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -1027,13 +1214,57 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
               ),
-            if (_paperMethod == 'diameter')
+            if (_paperMethod == 'diameter') ...[
               _buildField(
                 'diameter',
                 'Диаметр (см)',
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
               ),
+              const SizedBox(height: 8),
+              FormField<String>(
+                initialValue: _paperDiameterColor,
+                validator: (value) {
+                  final current = value ?? _paperDiameterColor;
+                  if (_paperMethod == 'diameter' && (current == null || current.isEmpty)) {
+                    return 'Выберите тип бумаги';
+                  }
+                  return null;
+                },
+                builder: (state) {
+                  final options = const <Map<String, String>>[
+                    {'key': 'white', 'label': 'Белый крафт'},
+                    {'key': 'brown', 'label': 'Крафт коричневый'},
+                  ];
+                  return InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Тип бумаги',
+                      border: const OutlineInputBorder(),
+                      errorText: state.errorText,
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: options.map((opt) {
+                        final key = opt['key']!;
+                        final label = opt['label']!;
+                        final isSelected = _paperDiameterColor == key;
+                        return ChoiceChip(
+                          label: Text(label),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _paperDiameterColor = selected ? key : null;
+                            });
+                            state.didChange(selected ? key : null);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  );
+                },
+              ),
+            ],
             _buildThresholdFields(),
             _buildField('note', 'Заметки'),
           ],
@@ -1166,13 +1397,87 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                 validator: (val) => val == null ? 'Выберите бумагу' : null,
               ),
             ),
-            _buildField(
-              'counted',
-              'Фактическое количество метров',
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Способ ввода',
+                border: OutlineInputBorder(),
               ),
+              value: _paperMethod,
+              items: const [
+                DropdownMenuItem(value: 'meters', child: Text('Ввести метры')),
+                DropdownMenuItem(value: 'weight', child: Text('По весу (кг)')),
+                DropdownMenuItem(
+                    value: 'diameter', child: Text('По диаметру (см)')),
+              ],
+              onChanged: (v) => setState(() => _paperMethod = v ?? 'meters'),
             ),
+            const SizedBox(height: 8),
+            if (_paperMethod == 'meters')
+              _buildField(
+                'counted',
+                'Фактическое количество метров',
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+            if (_paperMethod == 'weight')
+              _buildField(
+                'weight',
+                'Вес (кг)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+            if (_paperMethod == 'diameter') ...[
+              _buildField(
+                'diameter',
+                'Диаметр (см)',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 8),
+              FormField<String>(
+                initialValue: _paperDiameterColor,
+                validator: (value) {
+                  final current = value ?? _paperDiameterColor;
+                  if (_paperMethod == 'diameter' && (current == null || current.isEmpty)) {
+                    return 'Выберите тип бумаги';
+                  }
+                  return null;
+                },
+                builder: (state) {
+                  final options = const <Map<String, String>>[
+                    {'key': 'white', 'label': 'Белый крафт'},
+                    {'key': 'brown', 'label': 'Крафт коричневый'},
+                  ];
+                  return InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Тип бумаги',
+                      border: const OutlineInputBorder(),
+                      errorText: state.errorText,
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: options.map((opt) {
+                        final key = opt['key']!;
+                        final label = opt['label']!;
+                        final isSelected = _paperDiameterColor == key;
+                        return ChoiceChip(
+                          label: Text(label),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _paperDiameterColor = selected ? key : null;
+                            });
+                            state.didChange(selected ? key : null);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  );
+                },
+              ),
+            ],
             _buildField('note', 'Заметки'),
           ],
         );
@@ -1359,7 +1664,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             ),
             _buildField(
               'weight',
-              'Вес (кг)',
+              'Вес (г)',
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),

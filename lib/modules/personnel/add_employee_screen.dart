@@ -104,16 +104,11 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
     final login = _loginController.text.trim();
     final password = _passwordController.text.trim();
 
-    if (lastName.isEmpty ||
-        firstName.isEmpty ||
-        iin.isEmpty ||
-        login.isEmpty ||
-        password.isEmpty ||
-        _selectedImage == null) {
+    if (firstName.isEmpty || login.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text(
-                'Заполните все обязательные поля, логин/пароль и выберите фото')),
+            content:
+                Text('Заполните имя, логин и пароль (остальные поля не обязательны)')),
       );
       return;
     }
@@ -181,7 +176,7 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
             const SizedBox(height: 16),
             TextField(
               controller: _lastNameController,
-              decoration: const InputDecoration(labelText: 'Фамилия *'),
+              decoration: const InputDecoration(labelText: 'Фамилия'),
             ),
             const SizedBox(height: 10),
             TextField(
@@ -196,7 +191,7 @@ class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
             const SizedBox(height: 10),
             TextField(
               controller: _iinController,
-              decoration: const InputDecoration(labelText: 'ИИН *'),
+              decoration: const InputDecoration(labelText: 'ИИН'),
               keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 10),

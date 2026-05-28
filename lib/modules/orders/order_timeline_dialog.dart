@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../personnel/personnel_provider.dart';
+import '../tasks/task_model.dart';
+import '../tasks/quantity_status_service.dart';
+import 'id_format.dart';
 import 'order_model.dart';
 
-/// A dialog that displays the history (timeline) of events associated with an
-/// order. It expects a list of event maps, where each map should contain
-/// at least `timestamp`, `event_type`, `quantity_change`, and `note` keys.
+/// Диалог, показывающий ход выполнения заказа на основе комментариев этапов.
 class OrderTimelineDialog extends StatelessWidget {
   final OrderModel order;
   final List<Map<String, dynamic>> events;
@@ -14,30 +20,332 @@ class OrderTimelineDialog extends StatelessWidget {
     required this.events,
   });
 
+  static final DateFormat _dateTimeFormat = DateFormat('dd.MM.yyyy в HH:mm', 'ru');
+
+  DateTime? _parseTimestamp(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is int) {
+      if (value > 2000000000) {
+        return DateTime.fromMillisecondsSinceEpoch(value);
+      }
+      return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+    }
+    if (value is num) {
+      return _parseTimestamp(value.toInt());
+    }
+    if (value is String) {
+      if (value.isEmpty) return null;
+      final parsedInt = int.tryParse(value);
+      if (parsedInt != null) {
+        return _parseTimestamp(parsedInt);
+      }
+      return DateTime.tryParse(value);
+    }
+    return null;
+  }
+
+  String _formatTimestamp(dynamic value) {
+    final dt = _parseTimestamp(value);
+    if (dt == null) return '';
+    return _dateTimeFormat.format(dt);
+  }
+
+  String _formatQuantity(String text, double? parsed) {
+    final payloadDisplay = quantityDisplayText(text);
+    if (payloadDisplay != text) return payloadDisplay;
+    if (parsed != null) {
+      final bool isInt = (parsed - parsed.round()).abs() < 0.0001;
+      final display = isInt ? parsed.round().toString() : parsed.toStringAsFixed(2);
+      return '$display шт.';
+    }
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return '—';
+    final normalised = trimmed.replaceAll(',', '.');
+    final numeric = double.tryParse(normalised);
+    if (numeric != null) {
+      return _formatQuantity('', numeric);
+    }
+    return trimmed;
+  }
+
+  String _executionModeLabel(String? rawMode) {
+    final mode = (rawMode ?? '').trim().toLowerCase();
+    if (mode.contains('separ') || mode.contains('single') || mode.contains('отдель')) {
+      return 'отдельный исполнитель';
+    }
+    if (mode.contains('joint') || mode.contains('team') || mode.contains('совмест')) {
+      return 'совместная работа';
+    }
+    return '';
+  }
+
+  String _timeTypeLabel(TaskTimeType type) {
+    switch (type) {
+      case TaskTimeType.production:
+        return 'Производство';
+      case TaskTimeType.pause:
+        return 'Пауза';
+      case TaskTimeType.problem:
+        return 'Проблема';
+      case TaskTimeType.shiftChange:
+        return 'Пересмена';
+      case TaskTimeType.setup:
+        return 'Наладка';
+    }
+  }
+
+  String? _describeTaskTimePayload(String text, PersonnelProvider personnel) {
+    final parsed = TaskTimeEvent.fromPayload(text, '', 0, '');
+    if (parsed == null) return null;
+
+    final started = _formatTimestamp(parsed.startTime);
+    final ended = parsed.endTime == null ? 'в процессе' : _formatTimestamp(parsed.endTime);
+    final subject = _userDisplay(personnel, parsed.subjectUserId);
+    final initiator = _userDisplay(personnel, parsed.initiatedBy);
+    final mode = _executionModeLabel(parsed.executionMode);
+    final note = (parsed.note ?? '').trim();
+
+    final List<String> details = [
+      '${_timeTypeLabel(parsed.type)}: ${started.isEmpty ? '—' : started} — $ended',
+      if (subject.isNotEmpty) 'Исполнитель: $subject',
+      if (initiator.isNotEmpty && initiator != subject) 'Инициатор: $initiator',
+      if (mode.isNotEmpty) 'Режим: $mode',
+      if (note.isNotEmpty) 'Комментарий: $note',
+    ];
+    return details.join(' · ');
+  }
+
+  String _describeComment(
+    String type,
+    String text,
+    double? quantity,
+    PersonnelProvider personnel,
+  ) {
+    final taskTimeDescription = _describeTaskTimePayload(text, personnel);
+    if (taskTimeDescription != null) return taskTimeDescription;
+
+    switch (type) {
+      case 'start':
+        return 'Начал(а) этап';
+      case 'pause':
+        return text.isEmpty ? 'Пауза' : 'Пауза: $text';
+      case 'resume':
+        return 'Возобновил(а) этап';
+      case 'user_done':
+        return 'Завершил(а) этап';
+      case 'problem':
+        return text.isEmpty ? 'Сообщил(а) о проблеме' : 'Проблема: $text';
+      case 'setup_start':
+        return 'Начал(а) настройку станка';
+      case 'setup_done':
+        return 'Завершил(а) настройку станка';
+      case 'quantity_done':
+        return 'Выполнил(а): ${_formatQuantity(text, quantity)}';
+      case 'quantity_team_total':
+        return 'Команда выполнила: ${_formatQuantity(text, quantity)}';
+      case 'quantity_share':
+        return 'Доля участника: ${_formatQuantity(text, quantity)}';
+      case 'finish_note':
+        return text.isEmpty
+            ? 'Комментарий к завершению'
+            : 'Комментарий к завершению: $text';
+      case 'joined':
+        return 'Присоединился(лась) к этапу';
+      case 'exec_mode':
+        final normalised = text.toLowerCase();
+        if (normalised.contains('separ') || normalised.contains('отдель')) {
+          return 'Режим: отдельный исполнитель';
+        }
+        return 'Режим: одиночная или совместная работа';
+      case 'msg':
+        return text.isEmpty ? 'Комментарий' : text;
+      default:
+        return text.isEmpty ? type : text;
+    }
+  }
+
+  String _describeOrderEvent(String type, String description) {
+    final formattedJson = _formatTechnicalPayload(description);
+    if (formattedJson != null) return formattedJson;
+    if (description.isNotEmpty) return description;
+    final lower = type.toLowerCase();
+    switch (lower) {
+      case 'created':
+      case 'создание':
+        return 'Заказ создан';
+      case 'updated':
+      case 'обновление':
+        return 'Заказ обновлён';
+      case 'deleted':
+      case 'удаление':
+        return 'Заказ удалён';
+      case 'produced_qty':
+        return 'Обновлено произведённое количество';
+      default:
+        return type.isEmpty ? 'Событие заказа' : type;
+    }
+  }
+
+  String _orderEventTitle(String type) {
+    if (type.isEmpty) return 'Событие заказа';
+    final lower = type.toLowerCase();
+    switch (lower) {
+      case 'created':
+      case 'создание':
+        return 'Создание заказа';
+      case 'updated':
+      case 'обновление':
+        return 'Обновление заказа';
+      case 'deleted':
+      case 'удаление':
+        return 'Удаление заказа';
+      case 'produced_qty':
+        return 'Произведено';
+      case 'shipment':
+        return 'Отгрузка';
+      default:
+        return type;
+    }
+  }
+
+  String? _formatTechnicalPayload(String rawDescription) {
+    final text = rawDescription.trim();
+    if (!(text.startsWith('{') && text.endsWith('}'))) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      final String eventType = (map['type'] ?? '').toString().trim().toLowerCase();
+      if (eventType.isEmpty) return null;
+      if (eventType == 'setup') {
+        final started = _formatTimestamp(map['startTime']);
+        final ended = _formatTimestamp(map['endTime']);
+        final who = (map['initiatedBy'] ?? '').toString();
+        final workplace = (map['workplaceId'] ?? '').toString();
+        final participants = map['participantsSnapshot'];
+        final participantsText = participants is List
+            ? participants.map((e) => e.toString()).where((e) => e.isNotEmpty).join(', ')
+            : '';
+        final parts = <String>[
+          if (started.isNotEmpty) 'Наладка начата: $started',
+          if (ended.isNotEmpty) 'Наладка завершена: $ended',
+          if (who.isNotEmpty) 'Инициатор: $who',
+          if (workplace.isNotEmpty) 'Рабочее место: $workplace',
+          if (participantsText.isNotEmpty) 'Участники: $participantsText',
+        ];
+        return parts.isEmpty ? 'Событие наладки' : parts.join('\n');
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _userDisplay(PersonnelProvider provider, String? userId) {
+    if (userId == null || userId.isEmpty) return '';
+    try {
+      final emp = provider.employees.firstWhere((e) => e.id == userId);
+      final full = '${emp.firstName} ${emp.lastName}'.trim();
+      return full.isNotEmpty ? full : userId;
+    } catch (_) {
+      return userId;
+    }
+  }
+
+  String _stageDisplay(PersonnelProvider provider, String? stageId) {
+    if (stageId == null || stageId.isEmpty) return '';
+    try {
+      final wp = provider.workplaces.firstWhere((w) => w.id == stageId);
+      return wp.name.isNotEmpty ? wp.name : stageId;
+    } catch (_) {
+      return stageId;
+    }
+  }
+
+  Widget _buildEventTile(
+      BuildContext context, Map<String, dynamic> event, PersonnelProvider personnel) {
+    final source = (event['source'] ?? 'order_event').toString();
+    final bool isComment = source == 'task_comment';
+    final bool isChat = source == 'chat_message';
+    final dynamic timestampRaw = event['timestamp'] ?? event['created_at'];
+    final String timeLabel = _formatTimestamp(timestampRaw);
+    final String userLabel = _userDisplay(personnel, event['user_id'] as String?);
+    final String stageLabel =
+        isComment ? _stageDisplay(personnel, event['stage_id'] as String?) : '';
+
+    final List<String> metaParts = [];
+    if (timeLabel.isNotEmpty) metaParts.add(timeLabel);
+    if (userLabel.isNotEmpty) metaParts.add(userLabel);
+    final String meta = metaParts.join(' • ');
+
+    final double? quantity =
+        (event['quantity'] is num) ? (event['quantity'] as num).toDouble() : null;
+    final String eventType = (event['event_type'] ?? '').toString();
+    final String description = (event['description'] ?? '').toString();
+
+    final String titleText = isChat
+        ? 'Чат заказа'
+        : isComment
+        ? (stageLabel.isNotEmpty ? stageLabel : 'Комментарий к этапу')
+        : _orderEventTitle(eventType);
+    final String bodyText = isChat
+        ? (description.isEmpty ? 'Сообщение в чате' : description)
+        : isComment
+        ? _describeComment(eventType, description, quantity, personnel)
+        : _describeOrderEvent(eventType, description);
+
+    final List<Widget> subtitleWidgets = [];
+    if (meta.isNotEmpty) {
+      subtitleWidgets.add(
+        Text(meta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+      );
+      subtitleWidgets.add(const SizedBox(height: 2));
+    }
+    subtitleWidgets.add(Text(bodyText));
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      title: Text(
+        titleText,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: subtitleWidgets,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final personnel = context.watch<PersonnelProvider>();
+    final List<Map<String, dynamic>> sortedEvents =
+        List<Map<String, dynamic>>.from(events);
+    sortedEvents.sort((a, b) {
+      final int tsA = (a['timestamp'] as int?) ?? 0;
+      final int tsB = (b['timestamp'] as int?) ?? 0;
+      return tsA.compareTo(tsB);
+    });
+
+    final displayId = orderDisplayId(order);
+    final orderTitle = displayId == '—' ? order.id : displayId;
+
     return AlertDialog(
-      title: Text('История заказа ${order.id}'),
+      title: Text('Выполнение заказа $orderTitle'),
       content: SizedBox(
         width: double.maxFinite,
-        child: events.isEmpty
-            ? const Text('История пуста')
-            : ListView.builder(
+        child: sortedEvents.isEmpty
+            ? const Text('Комментариев по выполнению пока нет')
+            : ListView.separated(
                 shrinkWrap: true,
-                itemCount: events.length,
-                itemBuilder: (_, index) {
-                  final event = events[index];
-                  final time = (event['timestamp'] ?? '').toString();
-                  final type = (event['event_type'] ?? '').toString();
-                  final qtyChange = (event['quantity_change'] ?? '').toString();
-                  final note = (event['note'] ?? '').toString();
-                  return ListTile(
-                    title: Text(type.isNotEmpty ? type : 'Событие'),
-                    subtitle: Text(
-                      'Время: $time\nКол-во: $qtyChange\nПримечание: $note',
-                    ),
-                  );
-                },
+                itemCount: sortedEvents.length,
+                separatorBuilder: (_, __) => const Divider(height: 16),
+                itemBuilder: (_, index) =>
+                    _buildEventTile(context, sortedEvents[index], personnel),
               ),
       ),
       actions: [

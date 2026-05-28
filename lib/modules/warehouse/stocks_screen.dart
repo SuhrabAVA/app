@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
 import 'tmc_model.dart';
 import 'add_entry_dialog.dart';
+import 'warehouse_table_styles.dart';
 
 /// Экран, отображающий сводную таблицу всех текущих запасов на складе.
 ///
@@ -220,70 +221,75 @@ class _StocksScreenState extends State<StocksScreen> {
                                 (index) {
                                   final item = filtered[index];
                                   final characteristics = item.supplier ?? '';
-                                  return DataRow(cells: [
-                                    DataCell(Text('${index + 1}')),
-                                    DataCell(Text(item.description)),
-                                    DataCell(Text(characteristics.isEmpty
-                                        ? '-'
-                                        : characteristics)),
-                                    DataCell(Text(item.unit)),
-                                    DataCell(Text(item.quantity.toString())),
-                                    DataCell(Row(
-                                      children: [
-                                        IconButton(
-                                          icon:
-                                              const Icon(Icons.edit, size: 20),
-                                          onPressed: () =>
-                                              _openAddDialog(existing: item),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(
-                                              Icons.remove_circle_outline,
-                                              size: 20),
-                                          tooltip: 'Списать',
-                                          onPressed: () => _writeOffItem(item),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete,
-                                              size: 20),
-                                          onPressed: () async {
-                                            final confirm =
-                                                await showDialog<bool>(
-                                              context: context,
-                                              builder: (ctx) => AlertDialog(
-                                                title: const Text(
-                                                    'Удалить запись?'),
-                                                content: Text(
-                                                    'Вы уверены, что хотите удалить ${item.description}?'),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.of(ctx)
-                                                            .pop(false),
-                                                    child: const Text('Отмена'),
+                                  return DataRow(
+                                      color: warehouseRowHoverColor,
+                                      cells: [
+                                        DataCell(Text('${index + 1}')),
+                                        DataCell(Text(item.description)),
+                                        DataCell(Text(characteristics.isEmpty
+                                            ? '-'
+                                            : characteristics)),
+                                        DataCell(Text(item.unit)),
+                                        DataCell(
+                                            Text(item.quantity.toString())),
+                                        DataCell(Row(
+                                          children: [
+                                            IconButton(
+                                              icon: const Icon(Icons.edit,
+                                                  size: 20),
+                                              onPressed: () => _openAddDialog(
+                                                  existing: item),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(
+                                                  Icons.remove_circle_outline,
+                                                  size: 20),
+                                              tooltip: 'Списать',
+                                              onPressed: () =>
+                                                  _writeOffItem(item),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.delete,
+                                                  size: 20),
+                                              onPressed: () async {
+                                                final confirm =
+                                                    await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (ctx) => AlertDialog(
+                                                    title: const Text(
+                                                        'Удалить запись?'),
+                                                    content: Text(
+                                                        'Вы уверены, что хотите удалить ${item.description}?'),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(ctx)
+                                                                .pop(false),
+                                                        child: const Text(
+                                                            'Отмена'),
+                                                      ),
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.of(ctx)
+                                                                .pop(true),
+                                                        child: const Text(
+                                                            'Удалить'),
+                                                      ),
+                                                    ],
                                                   ),
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.of(ctx)
-                                                            .pop(true),
-                                                    child:
-                                                        const Text('Удалить'),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                            if (confirm == true) {
-                                              await Provider.of<
-                                                          WarehouseProvider>(
-                                                      context,
-                                                      listen: false)
-                                                  .deleteTmc(item.id);
-                                            }
-                                          },
-                                        ),
-                                      ],
-                                    )),
-                                  ]);
+                                                );
+                                                if (confirm == true) {
+                                                  await Provider.of<
+                                                              WarehouseProvider>(
+                                                          context,
+                                                          listen: false)
+                                                      .deleteTmc(item.id);
+                                                }
+                                              },
+                                            ),
+                                          ],
+                                        )),
+                                      ]);
                                 },
                               ),
                             ),

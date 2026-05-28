@@ -5,6 +5,8 @@ import 'orders_provider.dart';
 import 'order_model.dart';
 import 'product_model.dart';
 import 'edit_order_screen.dart';
+import 'id_format.dart';
+import 'order_timeline_dialog.dart';
 
 /// Экран архива заказов. Показывает завершённые заказы с поиском и
 /// возможностью переключения вида (список/карточки). Из архива можно
@@ -31,8 +33,10 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
     return orders.where((o) {
       if (o.statusEnum != OrderStatus.completed) return false;
       if (query.isEmpty) return true;
+      final displayId = orderDisplayId(o).toLowerCase();
       return o.customer.toLowerCase().contains(query) ||
           o.id.toLowerCase().contains(query) ||
+          displayId.contains(query) ||
           o.product.type.toLowerCase().contains(query);
     }).toList();
   }
@@ -55,6 +59,7 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
         parameters: p.parameters,
         roll: null,
         widthB: null,
+        blQuantity: null,
         length: null,
         leftover: p.leftover,
       ),
@@ -69,6 +74,9 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
       contractSigned: order.contractSigned,
       paymentDone: order.paymentDone,
       comments: '',
+      restartedFromOrderId: order.id,
+      restartRootOrderId: order.restartRootOrderId ?? order.id,
+      restartGeneration: order.restartGeneration + 1,
     );
 
     Navigator.of(context).push(
@@ -78,27 +86,50 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
     );
   }
 
+
+
   Widget _buildCard(BuildContext context, OrderModel o) {
     final product = o.product;
+    final displayId = orderDisplayId(o);
+    final orderNumber = displayId == '—' ? o.id : displayId;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Заказ ${o.id}',
+            Text('Заказ $orderNumber',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             Text('Заказчик: ${o.customer}'),
             Text('Продукт: ${product.type}'),
+            Text(
+              'Произведено: ${(o.actualQty ?? o.shippedQty ?? 0).toStringAsFixed(0)}',
+            ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: () => _resumeOrder(context, o),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Возобновить'),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: () async {
+                    final events = await context
+                        .read<OrdersProvider>()
+                        .fetchOrderHistory(o.id);
+                    if (!context.mounted) return;
+                    await showDialog<void>(
+                      context: context,
+                      builder: (_) => OrderTimelineDialog(order: o, events: events),
+                    );
+                  },
+                  icon: const Icon(Icons.history),
+                  label: const Text('История'),
+                ),
+                TextButton.icon(
+                  onPressed: () => _resumeOrder(context, o),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Возобновить'),
+                ),
+              ],
             ),
           ],
         ),
@@ -155,13 +186,41 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
                       itemBuilder: (_, i) {
                         final o = orders[i];
                         final product = o.product.type;
+                        final displayId = orderDisplayId(o);
+                        final orderNumber = displayId == '—' ? o.id : displayId;
                         return ListTile(
                           title: Text(o.customer),
-                          subtitle: Text(product),
-                          leading: Text(o.id),
-                          trailing: TextButton(
-                            onPressed: () => _resumeOrder(context, o),
-                            child: const Text('Возобновить'),
+                          subtitle: Text(
+                            '$product\nПроизведено: ${(o.actualQty ?? o.shippedQty ?? 0).toStringAsFixed(0)}',
+                          ),
+                          isThreeLine: true,
+                          leading: Text(orderNumber),
+                          trailing: PopupMenuButton<String>(
+                            onSelected: (value) async {
+                              if (value == 'history') {
+                                final events = await context
+                                    .read<OrdersProvider>()
+                                    .fetchOrderHistory(o.id);
+                                if (!context.mounted) return;
+                                await showDialog<void>(
+                                  context: context,
+                                  builder: (_) =>
+                                      OrderTimelineDialog(order: o, events: events),
+                                );
+                                return;
+                              }
+                              _resumeOrder(context, o);
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'history',
+                                child: Text('История'),
+                              ),
+                              PopupMenuItem(
+                                value: 'resume',
+                                child: Text('Возобновить'),
+                              ),
+                            ],
                           ),
                         );
                       },

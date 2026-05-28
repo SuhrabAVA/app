@@ -2,36 +2,283 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
 
+import '../../services/app_auth.dart';
+import '../../services/attachment_service.dart';
+
 import '../orders/order_model.dart';
+import '../orders/order_queue_service.dart';
+import '../orders/stage_queue_builder.dart' as stage_queue;
+import 'task_completion_rules.dart';
+import 'stage_sequence_utils.dart';
 import 'task_model.dart';
+
+const String _canonicalFlexoWorkplaceId =
+    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+const String _canonicalBobbinWorkplaceId =
+    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
+
+class _KnownWorkplaceAliasSpec {
+  const _KnownWorkplaceAliasSpec({
+    required this.canonicalId,
+    required this.aliases,
+    this.containsAny = const <String>{},
+  });
+
+  final String canonicalId;
+  final Set<String> aliases;
+  final Set<String> containsAny;
+
+  bool matches(String value) {
+    final normalized = _normalizeWorkplaceAlias(value);
+    if (normalized.isEmpty) return false;
+    if (aliases.contains(normalized)) return true;
+    return containsAny.any(normalized.contains);
+  }
+}
+
+String _normalizeWorkplaceAlias(String value) => value
+    .trim()
+    .toLowerCase()
+    .replaceAll('ё', 'е')
+    .replaceAll(RegExp(r'[‐‑‒–—−_/]+'), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+const List<_KnownWorkplaceAliasSpec> _knownWorkplaceAliases = [
+  _KnownWorkplaceAliasSpec(
+    canonicalId: _canonicalFlexoWorkplaceId,
+    aliases: {'w_flexoprint', 'w_flexo', 'флексопечать', 'флексо печать'},
+    containsAny: {'флекс', 'flexo'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: _canonicalBobbinWorkplaceId,
+    aliases: {
+      'w_bobiner',
+      'w_bobbin',
+      'бобинорезка',
+      'бабинорезка',
+    },
+    containsAny: {'бобин', 'бабин', 'bobbin', 'bobiner'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kPackagingStageId,
+    aliases: {'упаковка', 'упаков'},
+    containsAny: {'упаков'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kFriStageId,
+    aliases: {'фри', 'fri'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kWindowStageId,
+    aliases: {'окно', 'window'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kAutoBigStageId,
+    aliases: {'автомат большой', 'большой автомат', 'auto big', 'automatic big'},
+    containsAny: {'автомат большой', 'большой автомат', 'auto big'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kAutoSmallStageId,
+    aliases: {
+      'автомат маленький',
+      'маленький автомат',
+      'auto small',
+      'automatic small',
+    },
+    containsAny: {'автомат маленький', 'маленький автомат', 'auto small'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kTubeStageId,
+    aliases: {'труба', 'tube'},
+    containsAny: {'труба', 'tube'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kSheetCutStageId,
+    aliases: {'листорезка', 'листо резка', 'sheet cut', 'sheet cutter'},
+    containsAny: {'листорез', 'sheet cut'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kCuttingStageId,
+    aliases: {'резка', 'cutting'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kCardboardCuttingStageId,
+    aliases: {'резка картона', 'картон резка', 'cardboard cutting'},
+    containsAny: {'резка картона', 'cardboard cutting'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kCardboardInsertStageId,
+    aliases: {'вставка картона', 'картон вставка', 'cardboard insert'},
+    containsAny: {'вставка картона', 'cardboard insert'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomWithCardboardAssemblyStageId,
+    aliases: {
+      'сборка дно картон',
+      'сборка дна картон',
+      'сборка дно+картон',
+      'bottom cardboard assembly',
+    },
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kDieCutA1WorkplaceId,
+    aliases: {'высечка a1', 'высечка а1', 'die cut a1'},
+    containsAny: {'высечка a1', 'высечка а1', 'die cut a1'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kDieCutA2WorkplaceId,
+    aliases: {'высечка a2', 'высечка а2', 'die cut a2'},
+    containsAny: {'высечка a2', 'высечка а2', 'die cut a2'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kScotchStageId,
+    aliases: {'скотч', 'scotch'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kFromTwoSheetsStageId,
+    aliases: {'с 2х листов', 'с двух листов', 'из 2х листов'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kTubeAssemblyStageId,
+    aliases: {'сборка трубы', 'tube assembly'},
+    containsAny: {'сборка трубы', 'tube assembly'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomGlueWorkplaceId,
+    aliases: {'склейка дна', 'клей дна', 'bottom glue'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomGlueAltWorkplaceId,
+    aliases: {'склейка дна 2', 'клей дна 2', 'bottom glue 2'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kBottomGlueSecondAltWorkplaceId,
+    aliases: {'склейка дна 3', 'клей дна 3', 'bottom glue 3'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kTwistedHandleWorkplaceId,
+    aliases: {'крученая ручка', 'крученная ручка', 'twisted handle'},
+    containsAny: {'крученая ручка', 'крученная ручка', 'twisted handle'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kFlatHandleWorkplaceId,
+    aliases: {'плоская ручка', 'flat handle'},
+    containsAny: {'плоская ручка', 'flat handle'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kSharedHandleWorkplaceId,
+    aliases: {'ручная ручка', 'ручки вручную', 'manual handle'},
+  ),
+  _KnownWorkplaceAliasSpec(
+    canonicalId: stage_queue.kDieCutHandleStageId,
+    aliases: {'вырубка ручки', 'вырубка', 'die cut handle'},
+  ),
+];
+
+class _StageSequenceData {
+  final List<String> ids;
+  final Map<String, Map<String, dynamic>> meta;
+  final Map<String, String> groupByStageId;
+
+  const _StageSequenceData({
+    required this.ids,
+    required this.meta,
+    required this.groupByStageId,
+  });
+  const _StageSequenceData.empty()
+      : ids = const [],
+        meta = const {},
+        groupByStageId = const {};
+}
 
 class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
+  late final AttachmentService _attachmentService = AttachmentService(supabase: _supabase);
 
   final List<TaskModel> _tasks = [];
-  RealtimeChannel? _channel;
+  final Map<String, String> _workplaceAliasToId = <String, String>{};
+  final Map<String, List<String>> _orderStageSequences = {};
+  final Map<String, Map<String, String>> _orderStageNames = {};
+  final Map<String, Map<String, String>> _orderStageGroupMaps = {};
+  final Map<String, List<TaskCommentAttachment>> _attachmentsByComment = {};
+  final Set<String> _loadingAttachmentKeys = <String>{};
+  final Set<String> _loadedStageSequenceOrderIds = <String>{};
+  RealtimeChannel? _tasksChannel;
+  final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
 
   TaskProvider() {
     _listenToTasks();
   }
 
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
+  List<TaskCommentAttachment> attachmentsForComment(String commentId) =>
+      List.unmodifiable(_attachmentsByComment[commentId] ?? const <TaskCommentAttachment>[]);
+  List<String>? stageSequenceForOrder(String orderId) {
+    final seq = _orderStageSequences[orderId];
+    return seq == null ? null : List.unmodifiable(normalizeStageSequence(seq));
+  }
+
+  Map<String, String>? stageGroupMapForOrder(String orderId) {
+    final map = _orderStageGroupMaps[orderId];
+    return map == null ? null : Map.unmodifiable(map);
+  }
+
+  List<String>? stageGroupMembersForOrder(String orderId, String stageId) {
+    final map = _orderStageGroupMaps[orderId];
+    if (map == null || map.isEmpty) return null;
+    final groupKey = map[stageId.trim()]?.trim();
+    if (groupKey == null || groupKey.isEmpty) return null;
+    final members = <String>[];
+    for (final entry in map.entries) {
+      if (entry.value == groupKey && !members.contains(entry.key)) {
+        members.add(entry.key);
+      }
+    }
+    return members.isEmpty ? null : List.unmodifiable(members);
+  }
 
   Future<void> _ensureAuthed() async {
-    final auth = _supabase.auth;
-    if (auth.currentUser == null) {
-      // Use anon sign-in or your existing auth flow
-      try {
-        await auth.signInAnonymously();
-      } catch (_) {}
-    }
+    await AppAuth.ensureSignedIn();
   }
 
   // Convert SQL row (snake_case) into TaskModel (camelCase map)
   TaskModel _rowToTask(Map<String, dynamic> row) {
     Map<String, dynamic> data = {};
-    data['orderId'] = (row['order_id'] ?? '').toString();
-    data['stageId'] = (row['stage_id'] ?? '').toString();
+    String _normalizeId(dynamic value) {
+      final raw = value?.toString() ?? '';
+      return raw.trim();
+    }
+
+    data['orderId'] = _normalizeId(row['order_id']);
+    final rawStageId = row['stage_id'] ??
+        row['stageId'] ??
+        row['workplace_id'] ??
+        row['workplaceId'];
+    final resolvedStageId = _resolveWorkplaceId(_normalizeId(rawStageId));
+    data['stageId'] = resolvedStageId;
+    final rawStageGroupKey = row['stage_group_key'] ??
+        row['stageGroupKey'] ??
+        row['queue_stage_key'] ??
+        row['queueStageKey'] ??
+        row['group_key'];
+    final normalizedGroupKey = _normalizeId(rawStageGroupKey);
+    data['stageGroupKey'] =
+        normalizedGroupKey.isEmpty ? resolvedStageId : normalizedGroupKey;
+    data['capturedByWorkplaceId'] = _resolveWorkplaceId(_normalizeId(
+      row['captured_by_workplace_id'] ?? row['capturedByWorkplaceId'],
+    ));
+    data['capturedByUserId'] = _normalizeId(
+      row['captured_by_user_id'] ?? row['capturedByUserId'],
+    );
+    final capturedAt = row['captured_at'] ?? row['capturedAt'];
+    if (capturedAt != null) {
+      if (capturedAt is int) data['capturedAt'] = capturedAt;
+      if (capturedAt is String) {
+        final v = int.tryParse(capturedAt);
+        if (v != null) data['capturedAt'] = v;
+      }
+    }
     data['status'] = (row['status'] ?? 'waiting').toString();
     data['spentSeconds'] = (row['spent_seconds'] as int?) ?? 0;
     final startedAt = row['started_at'];
@@ -66,14 +313,153 @@ class TaskProvider with ChangeNotifier {
     return TaskModel.fromMap(data, id);
   }
 
+  String _resolveWorkplaceId(String rawStageId) {
+    final normalized = rawStageId.trim();
+    if (normalized.isEmpty) return '';
+    return _workplaceAliasToId[normalized.toLowerCase()] ?? normalized;
+  }
+
+  bool _isFlexoAlias(String text) =>
+      _knownWorkplaceAliases[0].matches(text);
+
+  bool _isBobbinAlias(String text) =>
+      _knownWorkplaceAliases[1].matches(text);
+
+  String? _detectWorkplaceIdByAlias(
+      List<Map<String, dynamic>> rows, bool Function(String text) matcher) {
+    for (final row in rows) {
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      final probes = [
+        row['id'],
+        row['name'],
+        row['title'],
+        row['short_name'],
+        row['workplace_name'],
+        row['stage_name'],
+      ];
+      for (final probe in probes) {
+        final alias = probe?.toString().trim();
+        if (alias == null || alias.isEmpty) continue;
+        if (matcher(alias)) return id;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _loadWorkplaceAliases() async {
+    Future<List<Map<String, dynamic>>> _readRows(String select) async {
+      final rows = await _supabase.from('workplaces').select(select);
+      if (rows is! List) return const <Map<String, dynamic>>[];
+      return rows
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+    }
+
+    List<Map<String, dynamic>> rows = const <Map<String, dynamic>>[];
+    try {
+      rows = await _readRows(
+        'id, name, title, short_name, workplace_name, stage_name',
+      );
+    } catch (_) {
+      try {
+        rows = await _readRows('id, name');
+      } catch (_) {
+        rows = const <Map<String, dynamic>>[];
+      }
+    }
+
+    final knownIds = rows
+        .map((row) => row['id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    final detectedByCanonicalId = <String, String>{};
+    for (final spec in _knownWorkplaceAliases) {
+      final detectedId = _detectWorkplaceIdByAlias(rows, spec.matches) ??
+          (knownIds.contains(spec.canonicalId) ? spec.canonicalId : null);
+      if (detectedId != null) {
+        detectedByCanonicalId[spec.canonicalId] = detectedId;
+      }
+    }
+
+    final detectedFlexoId = detectedByCanonicalId[_canonicalFlexoWorkplaceId];
+    final detectedBobbinId = detectedByCanonicalId[_canonicalBobbinWorkplaceId];
+
+    final aliases = <String, String>{};
+    for (final spec in _knownWorkplaceAliases) {
+      final detectedId = detectedByCanonicalId[spec.canonicalId];
+      if (detectedId == null) continue;
+      aliases[_normalizeWorkplaceAlias(spec.canonicalId)] = detectedId;
+      aliases[_normalizeWorkplaceAlias(detectedId)] = detectedId;
+      for (final alias in spec.aliases) {
+        aliases[_normalizeWorkplaceAlias(alias)] = detectedId;
+      }
+    }
+    for (final row in rows) {
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      final probes = [
+        row['id'],
+        row['name'],
+        row['title'],
+        row['short_name'],
+        row['workplace_name'],
+        row['stage_name'],
+      ];
+      for (final probe in probes) {
+        final alias = probe?.toString().trim() ?? '';
+        if (alias.isEmpty) continue;
+        final normalizedAlias = _normalizeWorkplaceAlias(alias);
+        if (normalizedAlias == 'w_flexoprint' || normalizedAlias == 'w_flexo') {
+          if (detectedFlexoId != null) {
+            aliases[normalizedAlias] = detectedFlexoId;
+          }
+          continue;
+        }
+        if (normalizedAlias == 'w_bobiner' || normalizedAlias == 'w_bobbin') {
+          if (detectedBobbinId != null) {
+            aliases[normalizedAlias] = detectedBobbinId;
+          }
+          continue;
+        }
+        aliases.putIfAbsent(normalizedAlias, () => id);
+      }
+    }
+
+    _workplaceAliasToId
+      ..clear()
+      ..addAll(aliases);
+  }
+
+  String? stageNameForOrder(String orderId, String stageId) {
+    if (orderId.isNotEmpty) {
+      final names = _orderStageNames[orderId];
+      final resolved = names?[stageId]?.trim();
+      if (resolved != null && resolved.isNotEmpty) return resolved;
+    }
+
+    for (final entry in _orderStageNames.values) {
+      final resolved = entry[stageId]?.trim();
+      if (resolved != null && resolved.isNotEmpty) return resolved;
+    }
+
+    return null;
+  }
+
   Future<void> refresh() async {
     await _ensureAuthed();
     try {
+      await _loadWorkplaceAliases();
       final rows =
           await _supabase.from('tasks').select('*').order('created_at');
       _tasks
         ..clear()
         ..addAll(List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
+      final orderIds = _tasks.map((t) => t.orderId).toSet();
+      _loadedStageSequenceOrderIds.clear();
+      await _preloadStageSequences(orderIds);
       notifyListeners();
     } catch (e, st) {
       debugPrint('❌ refresh tasks error: $e\n$st');
@@ -85,12 +471,13 @@ class TaskProvider with ChangeNotifier {
     refresh();
 
     // remove old channel
-    if (_channel != null) {
-      _supabase.removeChannel(_channel!);
-      _channel = null;
+    if (_tasksChannel != null) {
+      _supabase.removeChannel(_tasksChannel!);
+      _tasksChannel = null;
     }
+    _disposeStageSyncChannels();
 
-    _channel = _supabase
+    _tasksChannel = _supabase
         .channel('public:tasks')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
@@ -101,9 +488,532 @@ class TaskProvider with ChangeNotifier {
           },
         )
         .subscribe();
+
+    // Изменения рабочих мест/маршрутов этапов часто не трогают напрямую
+    // таблицу tasks, поэтому без этих подписок очередь может устаревать.
+    _registerStageSyncChannel(
+      channelName: 'public:orders:task-sync',
+      schema: 'public',
+      table: 'orders',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:production_plans:task-sync',
+      schema: 'public',
+      table: 'production_plans',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:prod_plan_stages:task-sync',
+      schema: 'public',
+      table: 'prod_plan_stages',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:workplace_stages:task-sync',
+      schema: 'public',
+      table: 'workplace_stages',
+    );
+    _registerStageSyncChannel(
+      channelName: 'public:order_stages:task-sync',
+      schema: 'public',
+      table: 'order_stages',
+    );
+    _registerStageSyncChannel(
+      channelName: 'production:plan_stages:task-sync',
+      schema: 'production',
+      table: 'plan_stages',
+    );
+  }
+
+  void _registerStageSyncChannel({
+    required String channelName,
+    required String schema,
+    required String table,
+  }) {
+    try {
+      final channel = _supabase
+          .channel(channelName)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: schema,
+            table: table,
+            callback: (_) async {
+              await refresh();
+            },
+          )
+          .subscribe();
+      _stageSyncChannels.add(channel);
+    } catch (_) {
+      // Таблица/схема может отсутствовать в конкретной инсталляции.
+    }
+  }
+
+  void _disposeStageSyncChannels() {
+    for (final channel in _stageSyncChannels) {
+      _supabase.removeChannel(channel);
+    }
+    _stageSyncChannels.clear();
   }
 
   // ===== updates =====
+
+  Future<void> ensureStageSequencesForOrders(Iterable<String> orderIds) async {
+    final missingOrderIds = orderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .where((id) => !_loadedStageSequenceOrderIds.contains(id))
+        .toSet();
+    if (missingOrderIds.isEmpty) return;
+
+    await _preloadStageSequences(missingOrderIds);
+    notifyListeners();
+  }
+
+  Future<void> _preloadStageSequences(Iterable<String> orderIds) async {
+    for (final orderId in orderIds) {
+      if (orderId.isEmpty) {
+        continue;
+      }
+      final data = await _fetchStageSequence(orderId);
+      _loadedStageSequenceOrderIds.add(orderId);
+      if (data.ids.isNotEmpty) {
+        _orderStageSequences[orderId] = data.ids;
+      } else {
+        _orderStageSequences.remove(orderId);
+      }
+      if (data.groupByStageId.isNotEmpty) {
+        _orderStageGroupMaps[orderId] = data.groupByStageId;
+      } else {
+        _orderStageGroupMaps.remove(orderId);
+      }
+      if (data.meta.isNotEmpty) {
+        final names = <String, String>{};
+        data.meta.forEach((stageId, meta) {
+          final name = _readStageName(meta).trim();
+          if (name.isNotEmpty) {
+            names[stageId] = name;
+          }
+        });
+        if (names.isNotEmpty) {
+          _orderStageNames[orderId] = names;
+        } else {
+          _orderStageNames.remove(orderId);
+        }
+      } else {
+        _orderStageNames.remove(orderId);
+      }
+    }
+  }
+
+  int _readOrderIndex(Map<String, dynamic> row) {
+    dynamic pick(List<String> keys) {
+      for (final k in keys) {
+        if (row.containsKey(k) && row[k] != null) return row[k];
+      }
+      return null;
+    }
+
+    final raw = pick(const [
+      'order',
+      'position',
+      'idx',
+      'seq',
+      'step_no',
+      'stepNo',
+      'step',
+      'sequence',
+      'sequence_no'
+    ]);
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) {
+      final trimmed = raw.trim();
+      final parsed = int.tryParse(trimmed);
+      if (parsed != null) return parsed;
+      final alt = int.tryParse(trimmed.replaceAll(RegExp(r'[^0-9-]'), ''));
+      if (alt != null) return alt;
+    }
+    return 0;
+  }
+
+  List<String> _readStageIds(Map<String, dynamic> row) {
+    dynamic pick(List<String> keys) {
+      for (final k in keys) {
+        if (row.containsKey(k) && row[k] != null) return row[k];
+      }
+      return null;
+    }
+
+    final result = <String>[];
+    void addCandidate(dynamic raw) {
+      if (raw == null) return;
+      final id = _resolveWorkplaceId(raw.toString().trim());
+      if (id.isEmpty || result.contains(id)) return;
+      result.add(id);
+    }
+
+    addCandidate(
+      pick(const ['stage_id', 'stageId', 'workplace_id', 'workplaceId', 'id']),
+    );
+
+    dynamic workplaceIds = pick(const ['workplaceIds', 'workplace_ids']);
+    if (workplaceIds is List) {
+      for (final value in workplaceIds) {
+        addCandidate(value);
+      }
+    } else if (workplaceIds is String) {
+      for (final token in workplaceIds.split(',')) {
+        addCandidate(token);
+      }
+    }
+
+    dynamic alt = pick(const [
+      'alternativeStageIds',
+      'alternative_stage_ids',
+      'allStageIds',
+      'all_stage_ids',
+      'stageIds',
+      'stage_ids',
+    ]);
+    if (alt is List) {
+      for (final value in alt) {
+        addCandidate(value);
+      }
+    } else if (alt is String) {
+      for (final token in alt.split(',')) {
+        addCandidate(token);
+      }
+    }
+
+    return result;
+  }
+
+  String _readStageName(Map<String, dynamic> row) {
+    const keys = [
+      'stage_name',
+      'stageName',
+      'workplace_name',
+      'workplaceName',
+      'workplace_title',
+      'workplaceTitle',
+      'title',
+      'name',
+    ];
+    for (final key in keys) {
+      if (!row.containsKey(key)) continue;
+      final value = row[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  bool _isFlexoStage(String id, Map<String, dynamic> row) {
+    final probes = <String>[
+      id,
+      _readStageName(row),
+      if (row['stage_code'] != null) row['stage_code'].toString(),
+    ];
+    for (final probe in probes) {
+      final lower = probe.toLowerCase();
+      if (lower.contains('флекс') || lower.contains('flexo')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isBobbinStage(String id, Map<String, dynamic> row) {
+    final probes = <String>[
+      id,
+      _readStageName(row),
+      if (row['stage_code'] != null) row['stage_code'].toString(),
+    ];
+    for (final probe in probes) {
+      final lower = probe.toLowerCase();
+      if (lower.contains('бобин') ||
+          lower.contains('бабин') ||
+          lower.contains('bobbin')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _workplaceMeta(
+      List<String> stageIds) async {
+    if (stageIds.isEmpty) return const {};
+    try {
+      final rows = await _supabase
+          .from('workplaces')
+          .select('id, name, title, short_name, code')
+          .inFilter('id', stageIds);
+      final result = <String, Map<String, dynamic>>{};
+      if (rows is List) {
+        for (final row in rows) {
+          if (row is! Map) continue;
+          final map = Map<String, dynamic>.from(row as Map);
+          final id = map['id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          final nameCandidates = [
+            map['name'],
+            map['title'],
+            map['short_name'],
+          ];
+          String? resolvedName;
+          for (final candidate in nameCandidates) {
+            if (candidate == null) continue;
+            final text = candidate.toString().trim();
+            if (text.isNotEmpty) {
+              resolvedName = text;
+              break;
+            }
+          }
+          result[id] = {
+            if (resolvedName != null) 'stage_name': resolvedName,
+            if (map['code'] != null) 'stage_code': map['code'].toString(),
+          };
+        }
+      }
+      return result;
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<_StageSequenceData> _fetchStageSequence(String orderId) async {
+    await _ensureAuthed();
+    String? orderCode;
+    try {
+      final order = await _supabase
+          .from('orders')
+          .select('assignment_id')
+          .eq('id', orderId)
+          .maybeSingle();
+      final orderMap = order is Map
+          ? Map<String, dynamic>.from(order as Map)
+          : const <String, dynamic>{};
+      orderCode = orderMap['assignment_id']?.toString();
+    } catch (_) {}
+
+    Future<_StageSequenceData> fromRows(dynamic rows) async {
+      if (rows == null) return const _StageSequenceData.empty();
+      final list = <Map<String, dynamic>>[];
+      if (rows is List) {
+        if (rows.isEmpty) return const _StageSequenceData.empty();
+        for (final r in rows) {
+          if (r is Map<String, dynamic>) {
+            list.add(r);
+          } else if (r is Map) {
+            list.add(Map<String, dynamic>.from(r));
+          }
+        }
+      } else if (rows is Map) {
+        if (rows.isEmpty) return const _StageSequenceData.empty();
+        final entries = rows.entries.toList()
+          ..sort((a, b) {
+            final ak = int.tryParse(a.key.toString());
+            final bk = int.tryParse(b.key.toString());
+            if (ak != null && bk != null) return ak.compareTo(bk);
+            if (ak != null) return -1;
+            if (bk != null) return 1;
+            return a.key.toString().compareTo(b.key.toString());
+          });
+        for (final entry in entries) {
+          if (entry.value is! Map) continue;
+          final map = Map<String, dynamic>.from(entry.value as Map);
+          if (!map.containsKey('order') &&
+              !map.containsKey('position') &&
+              !map.containsKey('idx') &&
+              !map.containsKey('seq') &&
+              !map.containsKey('step_no') &&
+              !map.containsKey('stepNo') &&
+              !map.containsKey('step') &&
+              !map.containsKey('sequence') &&
+              !map.containsKey('sequence_no')) {
+            final parsed = int.tryParse(entry.key.toString());
+            if (parsed != null) {
+              map['order'] = parsed;
+            }
+          }
+          list.add(map);
+        }
+      }
+      if (list.isEmpty) return const _StageSequenceData.empty();
+      const orderKeys = [
+        'order',
+        'position',
+        'idx',
+        'seq',
+        'step_no',
+        'stepNo',
+        'step',
+        'sequence',
+        'sequence_no',
+      ];
+      bool hasOrderValue(Map<String, dynamic> row) {
+        for (final key in orderKeys) {
+          if (!row.containsKey(key)) continue;
+          final value = row[key];
+          if (value == null) continue;
+          if (value is String && value.trim().isEmpty) continue;
+          return true;
+        }
+        return false;
+      }
+
+      if (list.length > 1) {
+        final indexed = list.asMap().entries.toList();
+        indexed.sort((a, b) {
+          final ai = hasOrderValue(a.value) ? _readOrderIndex(a.value) : a.key;
+          final bi = hasOrderValue(b.value) ? _readOrderIndex(b.value) : b.key;
+          if (ai != bi) return ai.compareTo(bi);
+          if (a.key != b.key) return a.key.compareTo(b.key);
+          final aStage = _readStageIds(a.value);
+          final bStage = _readStageIds(b.value);
+          final aKey = aStage.isEmpty ? '' : aStage.first;
+          final bKey = bStage.isEmpty ? '' : bStage.first;
+          return aKey.compareTo(bKey);
+        });
+        list
+          ..clear()
+          ..addAll(indexed.map((e) => e.value));
+      }
+      final result = <String>[];
+      final filteredRows = <Map<String, dynamic>>[];
+      final groupByStageId = <String, String>{};
+      for (final m in list) {
+        final stageIds = _readStageIds(m);
+        if (stageIds.isEmpty) {
+          continue;
+        }
+        final explicitGroupKey = (m['stage_group_key'] ??
+                m['stageGroupKey'] ??
+                m['queue_stage_key'] ??
+                m['queueStageKey'] ??
+                m['group_key'])
+            ?.toString()
+            .trim();
+        final fallbackGroupKey = stageIds.join('|');
+        final groupKey = explicitGroupKey != null && explicitGroupKey.isNotEmpty
+            ? explicitGroupKey
+            : fallbackGroupKey;
+        for (final id in stageIds) {
+          if (id.isNotEmpty) {
+            groupByStageId[id] = groupKey;
+          }
+          if (id.isEmpty || result.contains(id)) {
+            continue;
+          }
+          result.add(id);
+          final normalizedRow = Map<String, dynamic>.from(m);
+          normalizedRow['stage_id'] = id;
+          normalizedRow['stageId'] = id;
+          normalizedRow['stage_group_key'] = groupKey;
+          filteredRows.add(normalizedRow);
+        }
+      }
+      final normalizedIds = normalizeStageSequence(result);
+      if (normalizedIds.isEmpty) return const _StageSequenceData.empty();
+      final meta = await _workplaceMeta(normalizedIds);
+      for (var i = 0; i < filteredRows.length; i++) {
+        final id = result[i];
+        final extras = meta[id];
+        if (extras != null && extras.isNotEmpty) {
+          filteredRows[i].addAll(extras);
+        }
+      }
+      final names = <String, Map<String, dynamic>>{};
+      for (final row in filteredRows) {
+        final stageIds = _readStageIds(row);
+        for (final id in stageIds) {
+          if (id.isEmpty) continue;
+          names[id] = Map<String, dynamic>.from(row)
+            ..['stage_id'] = id
+            ..['stageId'] = id;
+        }
+      }
+
+      return _StageSequenceData(
+        ids: normalizedIds,
+        meta: names,
+        groupByStageId: groupByStageId,
+      );
+    }
+
+    // Shared priority: normalized rows -> saved order queue -> legacy
+    // production_plans.stages -> template fallback for old orders only.
+    final savedQueue =
+        await OrderQueueService(_supabase).loadSavedQueue(orderId);
+    if (savedQueue.isNotEmpty) {
+      final seq = await fromRows(savedQueue.rows);
+      if (seq.ids.isNotEmpty) return seq;
+    }
+
+    // stageTemplateId is not read directly here: OrderQueueService already
+    // applies templates only as the last fallback for legacy orders.
+
+    // Fallback: derived/public views. They can contain auto-added or repeated
+    // stages, so they are intentionally lower priority.
+    try {
+      final filters = <String>[
+        'order_id.eq.$orderId',
+        'order_code.eq.$orderId',
+        if (orderCode != null &&
+            orderCode!.isNotEmpty &&
+            orderCode != orderId)
+          'order_code.eq.$orderCode',
+      ];
+      final rows = await _supabase
+          .from('v_order_plan_stages')
+          .select(
+            'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+          )
+          .or(filters.join(','))
+          .order('step_no', ascending: true);
+      final seq = await fromRows(rows);
+      if (seq.ids.isNotEmpty) return seq;
+    } catch (_) {}
+
+    try {
+      final filters = <String>[
+        'order_id.eq.$orderId',
+        'order_code.eq.$orderId',
+        if (orderCode != null &&
+            orderCode!.isNotEmpty &&
+            orderCode != orderId)
+          'order_code.eq.$orderCode',
+      ];
+      final rows = await _supabase
+          .from('production.v_plan_with_stages')
+          .select(
+            'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+          )
+          .or(filters.join(','))
+          .order('step_no', ascending: true);
+      final seq = await fromRows(rows);
+      if (seq.ids.isNotEmpty) return seq;
+    } catch (_) {}
+
+    // Last fallback for old deployments.
+    try {
+      final plan = await _supabase
+          .from('workplace_stages')
+          .select('stage_id, order')
+          .eq('order_id', orderId);
+      final seq = await fromRows(plan);
+      if (seq.ids.isNotEmpty) return seq;
+    } catch (_) {}
+    try {
+      final rows = await _supabase
+          .from('order_stages')
+          .select('stage_id, order')
+          .eq('order_id', orderId);
+      final seq = await fromRows(rows);
+      if (seq.ids.isNotEmpty) return seq;
+    } catch (_) {}
+
+    return const _StageSequenceData.empty();
+  }
 
   /// Создаёт отдельную задачу для пользователя (режим "Отдельный исполнитель").
   /// Клонирует order_id и stage_id, задаёт status=inProgress и started_at=now,
@@ -115,6 +1025,10 @@ class TaskProvider with ChangeNotifier {
       final row = {
         'order_id': src.orderId,
         'stage_id': src.stageId,
+        'stage_group_key': src.stageGroupKey,
+        'captured_by_workplace_id': src.capturedByWorkplaceId,
+        'captured_by_user_id': src.capturedByUserId,
+        'captured_at': src.capturedAt,
         'status': 'inProgress',
         'spent_seconds': 0,
         'started_at': now,
@@ -132,65 +1046,684 @@ class TaskProvider with ChangeNotifier {
     }
   }
 
-  Future<void> updateStatus(
+  Future<bool> updateStatus(
     String id,
     TaskStatus status, {
     int? spentSeconds,
     int? startedAt,
+    bool clearStartedAt = false,
   }) async {
     final index = _tasks.indexWhere((t) => t.id == id);
-    if (index == -1) return;
+    if (index == -1) return false;
 
     final current = _tasks[index];
+    final shouldClearStartedAt =
+        clearStartedAt || (status != TaskStatus.inProgress && startedAt == null);
+    final effectiveStartedAt =
+        shouldClearStartedAt ? null : (startedAt ?? current.startedAt);
     final updated = current.copyWith(
       status: status,
       spentSeconds: spentSeconds ?? current.spentSeconds,
-      startedAt: startedAt ?? current.startedAt,
+      startedAt: effectiveStartedAt,
+      clearStartedAt: shouldClearStartedAt,
       comments: current.comments,
       assignees: current.assignees,
     );
-    _tasks[index] = updated;
-    notifyListeners();
 
     final updates = <String, dynamic>{
       'status': status.name,
       'spent_seconds': updated.spentSeconds,
-      'started_at': updated.startedAt,
-      'updated_at': 'now()',
+      'started_at': effectiveStartedAt,
     };
-    try {
-      await _supabase.from('tasks').update(updates).eq('id', id);
-      // if this task just became completed — check last-stage and update actual_qty
-      if (status == TaskStatus.completed) {
-        final orderId = updated.orderId;
-        final stageId = updated.stageId;
-        if (orderId.isNotEmpty && stageId.isNotEmpty) {
-          await _maybeUpdateActualQtyAfterStage(orderId, stageId);
-        }
-      }
-    } catch (e, st) {
-      debugPrint('❌ tasks.updateStatus error: $e\n$st');
+    final bool becameInProgress =
+        current.status != TaskStatus.inProgress && status == TaskStatus.inProgress;
+    final int? capturedAt =
+        becameInProgress ? DateTime.now().millisecondsSinceEpoch : null;
+    if (capturedAt != null) {
+      updates['captured_by_workplace_id'] = current.stageId;
+      updates['captured_at'] = capturedAt;
     }
 
-    // If all tasks for order are completed — close the order
+    Map<String, dynamic>? persistedRow;
+    try {
+      var baseQuery = _supabase.from('tasks').update(updates).eq('id', id);
+      // CAS-защита для старта этапа:
+      // если другой сотрудник успел поменять статус первым,
+      // повторный "старт" с устаревшего клиента не должен проходить.
+      if (becameInProgress) {
+        baseQuery = baseQuery.eq('status', current.status.name);
+      }
+      final rows = await (capturedAt != null
+          ? baseQuery
+              .or(
+                'captured_by_workplace_id.is.null,captured_by_workplace_id.eq.${current.stageId}',
+              )
+              .select()
+          : baseQuery.select());
+      if (rows.isEmpty) {
+        if (becameInProgress) {
+          await refresh();
+        }
+        return false;
+      }
+      persistedRow = Map<String, dynamic>.from(rows.first);
+    } catch (e, st) {
+      debugPrint('❌ tasks.updateStatus error: $e\n$st');
+      return false;
+    }
+
+    _tasks[index] = _rowToTask(persistedRow);
+    notifyListeners();
+
+    if (capturedAt != null) {
+      // Если этап состоит из нескольких рабочих мест (одна группа),
+      // первый старт фиксирует "захват" для всех задач группы
+      // и валидирует, что параллельного запуска конкурирующего места не произошло.
+      final groupKey = current.stageGroupKey.trim();
+      if (groupKey.isNotEmpty) {
+        try {
+          final conflicts = await _supabase
+              .from('tasks')
+              .select('id')
+              .eq('order_id', current.orderId)
+              .eq('stage_group_key', groupKey)
+              .not('captured_by_workplace_id', 'is', null)
+              .neq('captured_by_workplace_id', current.stageId)
+              .limit(1);
+          if ((conflicts as List).isNotEmpty) {
+            await _supabase.from('tasks').update({
+              'status': current.status.name,
+              'started_at': current.startedAt,
+              'captured_by_workplace_id': current.capturedByWorkplaceId,
+              'captured_at': current.capturedAt,
+            }).eq('id', current.id);
+            await refresh();
+            return false;
+          }
+
+          await _supabase
+              .from('tasks')
+              .update({
+                'captured_by_workplace_id': current.stageId,
+                'captured_at': capturedAt,
+              })
+              .eq('order_id', current.orderId)
+              .eq('stage_group_key', groupKey)
+              .isFilter('captured_by_workplace_id', null);
+          for (var i = 0; i < _tasks.length; i++) {
+            final task = _tasks[i];
+            if (task.orderId == current.orderId &&
+                task.stageGroupKey == groupKey &&
+                task.capturedByWorkplaceId == null) {
+              _tasks[i] = task.copyWith(
+                capturedByWorkplaceId: current.stageId,
+                capturedAt: capturedAt,
+              );
+            }
+          }
+          notifyListeners();
+        } catch (e, st) {
+          debugPrint('⚠️ capture stage group update failed: $e\n$st');
+        }
+      }
+    }
+
+    await _syncStageGroupStatusToSharedSources(
+      updated,
+      status,
+      spentSeconds: updated.spentSeconds,
+      startedAt: updated.startedAt,
+      completedAt: status == TaskStatus.completed
+          ? DateTime.now().millisecondsSinceEpoch
+          : null,
+    );
+
+    // if this task just became completed — check last-stage and update actual_qty
+    if (status == TaskStatus.completed) {
+      final orderId = updated.orderId;
+      final stageId = updated.stageId;
+      if (orderId.isNotEmpty && stageId.isNotEmpty) {
+        await _maybeUpdateActualQtyAfterStage(orderId, stageId);
+      }
+    }
+
+    // If all stage groups for order are finally completed — close the order
     final orderId = updated.orderId;
-    if (orderId != null && orderId.isNotEmpty) {
+    if (orderId.isNotEmpty) {
       try {
         final rows = await _supabase
             .from('tasks')
-            .select('status')
+            .select('*')
             .eq('order_id', orderId);
-        final list = List<Map<String, dynamic>>.from(rows as List);
-        final allCompleted = list.isNotEmpty &&
-            list.every((r) => (r['status'] ?? '') == 'completed');
-        if (allCompleted) {
+        final list = List<Map<String, dynamic>>.from(rows as List)
+            .map(_rowToTask)
+            .toList(growable: false);
+        if (isOrderFinallyCompleted(list)) {
           await _supabase
               .from('orders')
-              .update({'status': OrderStatus.completed.name}).eq('id', orderId);
+              .update({
+                  'status': OrderStatus.completed.name,
+                  'completed_at': DateTime.now().toUtc().toIso8601String(),
+                }).eq('id', orderId);
         }
       } catch (_) {}
     }
+
+    return true;
   }
+
+  Future<void> _syncStageGroupStatusToSharedSources(
+    TaskModel task,
+    TaskStatus status, {
+    int? spentSeconds,
+    int? startedAt,
+    int? completedAt,
+  }) async {
+    final groupKey = task.stageGroupKey.trim().isNotEmpty
+        ? task.stageGroupKey.trim()
+        : task.stageId.trim();
+    if (task.orderId.trim().isEmpty || groupKey.isEmpty) return;
+
+    final shouldClearStartedAt =
+        status != TaskStatus.inProgress && startedAt == null;
+    final taskUpdates = <String, dynamic>{
+      'status': status.name,
+      if (spentSeconds != null) 'spent_seconds': spentSeconds,
+      if (shouldClearStartedAt) 'started_at': null,
+      if (!shouldClearStartedAt && startedAt != null) 'started_at': startedAt,
+      if (completedAt != null) 'completed_at': completedAt,
+    };
+    final startedIso = startedAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(startedAt)
+            .toUtc()
+            .toIso8601String();
+    final completedIso = completedAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(completedAt)
+            .toUtc()
+            .toIso8601String();
+    final planUpdates = <String, dynamic>{
+      'status': status.name,
+      if (startedIso != null) 'started_at': startedIso,
+      if (completedIso != null) ...{
+        'finished_at': completedIso,
+        'completed_at': completedIso,
+      },
+    };
+
+    try {
+      await _updateTaskStageGroup(
+        orderId: task.orderId,
+        groupKey: groupKey,
+        updates: taskUpdates,
+      );
+      for (var i = 0; i < _tasks.length; i++) {
+        final local = _tasks[i];
+        if (local.orderId == task.orderId && local.stageGroupKey == groupKey) {
+          _tasks[i] = local.copyWith(
+            status: status,
+            spentSeconds: spentSeconds ?? local.spentSeconds,
+            startedAt: shouldClearStartedAt
+                ? null
+                : (startedAt ?? local.startedAt),
+            clearStartedAt: shouldClearStartedAt,
+          );
+        }
+      }
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('⚠️ stage group task status sync failed: $e\n$st');
+    }
+
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', task.orderId)
+          .maybeSingle();
+      final planId = plan != null ? plan['id']?.toString() : null;
+      if (planId == null || planId.isEmpty) return;
+      await _updateProdPlanStageGroup(
+        planId: planId,
+        groupKey: groupKey,
+        updates: planUpdates,
+      );
+    } catch (e, st) {
+      debugPrint('⚠️ prod_plan_stages status sync failed: $e\n$st');
+    }
+  }
+
+  Future<void> _updateTaskStageGroup({
+    required String orderId,
+    required String groupKey,
+    required Map<String, dynamic> updates,
+  }) async {
+    Future<void> run(Map<String, dynamic> payload) async {
+      await _supabase
+          .from('tasks')
+          .update(payload)
+          .eq('order_id', orderId)
+          .eq('stage_group_key', groupKey);
+    }
+
+    try {
+      await run(updates);
+    } catch (error) {
+      if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+      final fallback = Map<String, dynamic>.from(updates)
+        ..remove('completed_at');
+      await run(fallback);
+    }
+  }
+
+  Future<void> _updateProdPlanStageGroup({
+    required String planId,
+    required String groupKey,
+    required Map<String, dynamic> updates,
+  }) async {
+    Future<void> run(Map<String, dynamic> payload) async {
+      await _supabase
+          .from('prod_plan_stages')
+          .update(payload)
+          .eq('plan_id', planId)
+          .eq('stage_group_key', groupKey);
+    }
+
+    try {
+      await run(updates);
+    } catch (error) {
+      if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+      final fallback = Map<String, dynamic>.from(updates)
+        ..remove('completed_at');
+      await run(fallback);
+    }
+  }
+
+  bool _isMissingColumnError(Object error, String columnName) {
+    if (error is! PostgrestException) return false;
+    final message = error.message.toLowerCase();
+    return message.contains(columnName.toLowerCase()) &&
+        (error.code == '42703' || error.code == 'PGRST204');
+  }
+
+
+  Future<bool> reportProblem({
+    required String taskId,
+    required String text,
+    required String userId,
+    required List<String> participantsSnapshot,
+    required List<String> subjectUserIds,
+    String? workplaceId,
+    String? executionMode,
+    List<AttachmentDraft> attachments = const <AttachmentDraft>[],
+  }) async {
+    final localIndex = _tasks.indexWhere((task) => task.id == taskId);
+    if (localIndex == -1) return false;
+    final localTask = _tasks[localIndex];
+    if (localTask.status != TaskStatus.inProgress) return false;
+
+    final now = DateTime.now().toUtc();
+    final timestamp = now.millisecondsSinceEpoch;
+    final commentId = '$timestamp';
+    final normalizedSubjects = subjectUserIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedSubjects.isEmpty) normalizedSubjects.add(userId);
+
+    final uploaded = <TaskCommentAttachment>[];
+    List<Map<String, dynamic>> previousComments = const <Map<String, dynamic>>[];
+    var commentsPersisted = false;
+    var statusPersisted = false;
+    Map<String, dynamic>? previousTaskUpdates;
+
+    Future<void> cleanupUploads() async {
+      for (final attachment in uploaded) {
+        await _attachmentService.removeAttachment(attachment);
+      }
+    }
+
+    try {
+      for (final draft in attachments) {
+        uploaded.add(await _attachmentService.uploadTaskCommentAttachment(
+          draft: draft,
+          taskId: localTask.id,
+          orderId: localTask.orderId,
+          stageId: localTask.stageId,
+          commentId: commentId,
+          userId: userId,
+        ));
+      }
+
+      final row = await _supabase
+          .from('tasks')
+          .select(
+            'comments,status,spent_seconds,started_at,'
+            'captured_by_workplace_id,captured_at,captured_by_user_id',
+          )
+          .eq('id', taskId)
+          .single();
+      final status = (row['status'] ?? '').toString();
+      if (status != TaskStatus.inProgress.name) {
+        await cleanupUploads();
+        await refresh();
+        return false;
+      }
+
+      previousTaskUpdates = {
+        'status': row['status'],
+        'spent_seconds': row['spent_seconds'],
+        'started_at': row['started_at'],
+        'captured_by_workplace_id': row['captured_by_workplace_id'],
+        'captured_at': row['captured_at'],
+        'captured_by_user_id': row['captured_by_user_id'],
+      };
+      previousComments = _normalizeComments(row['comments']);
+      final comments = previousComments
+          .map((comment) => Map<String, dynamic>.from(comment))
+          .toList(growable: true);
+      comments.add({
+        'id': commentId,
+        'type': 'problem',
+        'text': text,
+        'userId': userId,
+        'timestamp': timestamp,
+      });
+
+      for (final subjectUserId in normalizedSubjects) {
+        final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
+        if (openIndex != null) {
+          final open = comments[openIndex];
+          final openEvent = TaskTimeEvent.fromPayload(
+            open['text']?.toString() ?? '',
+            open['id']?.toString() ?? '',
+            _parseCommentTimestamp(open['timestamp']),
+            open['userId']?.toString() ?? '',
+          );
+          if (openEvent != null && openEvent.endTime == null) {
+            open['text'] = TaskTimeEvent.encodePayload(
+              openEvent.copyWith(endTime: now, note: text),
+            );
+          }
+        }
+
+        final event = TaskTimeEvent(
+          id: '$timestamp-$subjectUserId',
+          type: TaskTimeType.problem,
+          startTime: now,
+          endTime: null,
+          initiatedBy: userId,
+          subjectUserId: subjectUserId,
+          taskId: localTask.id,
+          workplaceId: workplaceId ?? localTask.stageId,
+          participantsSnapshot: participantsSnapshot,
+          executionMode: executionMode,
+          helperId: subjectUserId == userId ? null : subjectUserId,
+          note: text,
+        );
+        comments.add({
+          'id': event.id,
+          'type': 'time_event',
+          'text': TaskTimeEvent.encodePayload(event),
+          'userId': subjectUserId,
+          'timestamp': timestamp,
+        });
+      }
+
+      comments.sort((a, b) => _parseCommentTimestamp(a['timestamp'])
+          .compareTo(_parseCommentTimestamp(b['timestamp'])));
+      await _supabase
+          .from('tasks')
+          .update({'comments': comments}).eq('id', taskId);
+      commentsPersisted = true;
+
+      final spentSeconds = localTask.startedAt == null
+          ? localTask.spentSeconds
+          : localTask.spentSeconds +
+              ((DateTime.now().millisecondsSinceEpoch - localTask.startedAt!) ~/
+                  1000);
+      final updates = <String, dynamic>{
+        'status': TaskStatus.problem.name,
+        'spent_seconds': spentSeconds,
+        'started_at': null,
+        'captured_by_workplace_id': null,
+        'captured_at': null,
+        'captured_by_user_id': null,
+      };
+      final statusRows = await _supabase
+          .from('tasks')
+          .update(updates)
+          .eq('id', taskId)
+          .eq('status', TaskStatus.inProgress.name)
+          .select();
+      if ((statusRows as List).isEmpty) {
+        await _supabase
+            .from('tasks')
+            .update({'comments': previousComments}).eq('id', taskId);
+        await cleanupUploads();
+        await refresh();
+        return false;
+      }
+
+      statusPersisted = true;
+
+      final groupKey = localTask.stageGroupKey.trim();
+      if (groupKey.isNotEmpty) {
+        await _supabase
+            .from('tasks')
+            .update({
+              'status': TaskStatus.problem.name,
+              'spent_seconds': spentSeconds,
+              'started_at': null,
+              'captured_by_workplace_id': null,
+              'captured_at': null,
+              'captured_by_user_id': null,
+            })
+            .eq('order_id', localTask.orderId)
+            .eq('stage_group_key', groupKey);
+      }
+
+      await _syncStageGroupStatusToSharedSources(
+        localTask.copyWith(
+          status: TaskStatus.problem,
+          spentSeconds: spentSeconds,
+          startedAt: null,
+          clearStartedAt: true,
+        ),
+        TaskStatus.problem,
+        spentSeconds: spentSeconds,
+        startedAt: null,
+      );
+
+      if (uploaded.isNotEmpty) {
+        _attachmentsByComment[commentId] = uploaded;
+      }
+      await refresh();
+      notifyListeners();
+      return true;
+    } catch (e, st) {
+      if (statusPersisted && previousTaskUpdates != null) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update(previousTaskUpdates)
+              .eq('id', taskId);
+        } catch (_) {}
+      }
+      if (commentsPersisted) {
+        try {
+          await _supabase
+              .from('tasks')
+              .update({'comments': previousComments}).eq('id', taskId);
+        } catch (_) {}
+      }
+      await cleanupUploads();
+      debugPrint('❌ reportProblem error: $e\n$st');
+      rethrow;
+    }
+  }
+
+  Future<void> createCommentWithAttachments({
+    required String taskId,
+    required String type,
+    required String text,
+    required String userId,
+    List<AttachmentDraft> attachments = const <AttachmentDraft>[],
+  }) async {
+    final task = _tasks.cast<TaskModel?>().firstWhere(
+          (item) => item?.id == taskId,
+          orElse: () => null,
+        );
+    if (task == null) {
+      await addComment(
+        taskId: taskId,
+        type: type,
+        text: text,
+        userId: userId,
+      );
+      return;
+    }
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final commentId = '$timestamp';
+    final uploaded = <TaskCommentAttachment>[];
+    try {
+      for (final draft in attachments) {
+        uploaded.add(await _attachmentService.uploadTaskCommentAttachment(
+          draft: draft,
+          taskId: task.id,
+          orderId: task.orderId,
+          stageId: task.stageId,
+          commentId: commentId,
+          userId: userId,
+        ));
+      }
+      await _insertCommentWithId(
+        taskId: taskId,
+        id: commentId,
+        type: type,
+        text: text,
+        userId: userId,
+        timestamp: timestamp,
+      );
+      if (uploaded.isNotEmpty) {
+        _attachmentsByComment[commentId] = uploaded;
+        notifyListeners();
+      }
+    } catch (e, st) {
+      for (final attachment in uploaded) {
+        await _attachmentService.removeAttachment(attachment);
+      }
+      debugPrint('❌ createCommentWithAttachments error: $e\n$st');
+      rethrow;
+    }
+  }
+
+  Future<void> _insertCommentWithId({
+    required String taskId,
+    required String id,
+    required String type,
+    required String text,
+    required String userId,
+    required int timestamp,
+  }) async {
+    final row = await _supabase
+        .from('tasks')
+        .select('comments')
+        .eq('id', taskId)
+        .single();
+    final comments = _normalizeComments(row['comments']);
+    comments.add({
+      'id': id,
+      'type': type,
+      'text': text,
+      'userId': userId,
+      'timestamp': timestamp,
+    });
+    comments.sort((a, b) =>
+        _parseCommentTimestamp(a['timestamp'])
+            .compareTo(_parseCommentTimestamp(b['timestamp'])));
+    await _supabase.from('tasks').update({'comments': comments}).eq('id', taskId);
+
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx != -1) {
+      final current = _tasks[idx];
+      final updatedComments = List<TaskComment>.from(current.comments)
+        ..add(TaskComment(
+          id: id,
+          type: type,
+          text: text,
+          userId: userId,
+          timestamp: timestamp,
+        ))
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      _tasks[idx] = current.copyWith(comments: updatedComments);
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadAttachmentsForComments(Iterable<String> commentIds) async {
+    final ids = commentIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final missing = ids
+        .where((id) => !_attachmentsByComment.containsKey(id))
+        .toList(growable: false);
+    if (missing.isEmpty) return;
+    final key = 'comments:${missing.join(',')}';
+    if (_loadingAttachmentKeys.contains(key)) return;
+    _loadingAttachmentKeys.add(key);
+    try {
+      final loaded = await _attachmentService.loadTaskCommentAttachments(
+        commentIds: missing,
+      );
+      for (final id in missing) {
+        _attachmentsByComment[id] = loaded
+            .where((attachment) => attachment.commentId == id)
+            .toList(growable: false);
+      }
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('❌ loadAttachmentsForComments error: $e\n$st');
+    } finally {
+      _loadingAttachmentKeys.remove(key);
+    }
+  }
+
+  Future<void> loadAttachmentsForOrder(String orderId, {String? stageId}) async {
+    final key = 'order:$orderId:${stageId ?? ''}';
+    if (_loadingAttachmentKeys.contains(key)) return;
+    _loadingAttachmentKeys.add(key);
+    try {
+      final loaded = await _attachmentService.loadTaskCommentAttachments(
+        orderId: orderId,
+        stageId: stageId,
+      );
+      for (final attachment in loaded) {
+        final list = _attachmentsByComment.putIfAbsent(
+          attachment.commentId,
+          () => <TaskCommentAttachment>[],
+        );
+        final index = list.indexWhere((item) => item.id == attachment.id);
+        if (index == -1) {
+          list.add(attachment);
+        } else {
+          list[index] = attachment;
+        }
+      }
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('❌ loadAttachmentsForOrder error: $e\n$st');
+    } finally {
+      _loadingAttachmentKeys.remove(key);
+    }
+  }
+
+  Future<void> removeStorageObject(String storagePath) =>
+      _attachmentService.removeStorageObject(storagePath);
 
   Future<void> addComment(
       {required String taskId,
@@ -229,6 +1762,38 @@ class TaskProvider with ChangeNotifier {
           .from('tasks')
           .update({'comments': comments}).eq('id', taskId);
 
+      if (type == 'start') {
+        // Фиксируем фактического инициатора захвата этапа.
+        final task = _tasks.cast<TaskModel?>().firstWhere(
+              (t) => t?.id == taskId,
+              orElse: () => null,
+            );
+        if (task != null &&
+            (task.capturedByUserId == null || task.capturedByUserId!.isEmpty)) {
+          final groupKey = task.stageGroupKey.trim();
+          try {
+            await _supabase
+                .from('tasks')
+                .update({'captured_by_user_id': userId})
+                .eq('order_id', task.orderId)
+                .eq('stage_group_key', groupKey)
+                .isFilter('captured_by_user_id', null);
+            for (var i = 0; i < _tasks.length; i++) {
+              final local = _tasks[i];
+              if (local.orderId == task.orderId &&
+                  local.stageGroupKey == groupKey &&
+                  (local.capturedByUserId == null ||
+                      local.capturedByUserId!.isEmpty)) {
+                _tasks[i] = local.copyWith(capturedByUserId: userId);
+              }
+            }
+            notifyListeners();
+          } catch (e, st) {
+            debugPrint('⚠️ capture user update failed: $e\n$st');
+          }
+        }
+      }
+
       // update locally
       final idx = _tasks.indexWhere((t) => t.id == taskId);
       if (idx != -1) {
@@ -247,6 +1812,189 @@ class TaskProvider with ChangeNotifier {
       }
     } catch (e, st) {
       debugPrint('❌ addComment error: $e\n$st');
+    }
+  }
+
+  List<Map<String, dynamic>> _normalizeComments(dynamic value) {
+    final comments = <Map<String, dynamic>>[];
+    if (value is List) {
+      for (final item in value) {
+        if (item is Map) {
+          comments.add(Map<String, dynamic>.from(item));
+        }
+      }
+    } else if (value is Map) {
+      value.forEach((_, v) {
+        if (v is Map) {
+          comments.add(Map<String, dynamic>.from(v));
+        }
+      });
+    }
+    return comments;
+  }
+
+  int _parseCommentTimestamp(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value.trim());
+      if (parsed != null) return parsed;
+    }
+    return 0;
+  }
+
+  List<TaskComment> _toTaskComments(List<Map<String, dynamic>> comments) {
+    final result = <TaskComment>[];
+    for (final raw in comments) {
+      final id = (raw['id'] ?? '').toString();
+      result.add(TaskComment.fromMap(raw, id));
+    }
+    result.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return result;
+  }
+
+  int? _findOpenTimeEventIndex(List<Map<String, dynamic>> comments,
+      String subjectUserId) {
+    int? openIndex;
+    int latestTs = -1;
+    for (var i = 0; i < comments.length; i++) {
+      final comment = comments[i];
+      if ((comment['type'] ?? '') != 'time_event') continue;
+      final text = comment['text']?.toString() ?? '';
+      final timestamp = _parseCommentTimestamp(comment['timestamp']);
+      final event =
+          TaskTimeEvent.fromPayload(text, comment['id']?.toString() ?? '', timestamp, comment['userId']?.toString() ?? '');
+      if (event == null) continue;
+      if (event.subjectUserId != subjectUserId) continue;
+      if (event.endTime != null) continue;
+      if (timestamp > latestTs) {
+        latestTs = timestamp;
+        openIndex = i;
+      }
+    }
+    return openIndex;
+  }
+
+  Future<void> recordTimeEvent({
+    required TaskModel task,
+    required TaskTimeType type,
+    required String initiatedBy,
+    required String subjectUserId,
+    required String workplaceId,
+    required List<String> participantsSnapshot,
+    String? executionMode,
+    String? helperId,
+    String? note,
+  }) async {
+    try {
+      final row = await _supabase
+          .from('tasks')
+          .select('comments')
+          .eq('id', task.id)
+          .single();
+      final comments = _normalizeComments(row['comments']);
+      final now = DateTime.now().toUtc();
+      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
+      if (openIndex != null) {
+        final open = comments[openIndex];
+        final rawText = open['text']?.toString() ?? '';
+        final openEvent = TaskTimeEvent.fromPayload(
+            rawText,
+            open['id']?.toString() ?? '',
+            _parseCommentTimestamp(open['timestamp']),
+            open['userId']?.toString() ?? '');
+        if (openEvent != null) {
+          if (openEvent.type == type && openEvent.endTime == null) {
+            return;
+          }
+          final closed = openEvent.copyWith(endTime: now, note: note);
+          open['text'] = TaskTimeEvent.encodePayload(closed);
+        }
+      }
+
+      final event = TaskTimeEvent(
+        id: '${now.millisecondsSinceEpoch}-${subjectUserId}',
+        type: type,
+        startTime: now,
+        endTime: null,
+        initiatedBy: initiatedBy,
+        subjectUserId: subjectUserId,
+        taskId: task.id,
+        workplaceId: workplaceId,
+        participantsSnapshot: participantsSnapshot,
+        executionMode: executionMode,
+        helperId: helperId,
+        note: note,
+      );
+
+      comments.add({
+        'id': event.id,
+        'type': 'time_event',
+        'text': TaskTimeEvent.encodePayload(event),
+        'userId': subjectUserId,
+        'timestamp': now.millisecondsSinceEpoch,
+      });
+
+      comments.sort((a, b) =>
+          _parseCommentTimestamp(a['timestamp'])
+              .compareTo(_parseCommentTimestamp(b['timestamp'])));
+      await _supabase
+          .from('tasks')
+          .update({'comments': comments}).eq('id', task.id);
+
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        final current = _tasks[idx];
+        _tasks[idx] = current.copyWith(comments: _toTaskComments(comments));
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint('❌ recordTimeEvent error: $e\n$st');
+    }
+  }
+
+  Future<void> closeOpenTimeEvent({
+    required TaskModel task,
+    required String initiatedBy,
+    required String subjectUserId,
+    String? note,
+  }) async {
+    try {
+      final row = await _supabase
+          .from('tasks')
+          .select('comments')
+          .eq('id', task.id)
+          .single();
+      final comments = _normalizeComments(row['comments']);
+      final now = DateTime.now().toUtc();
+      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
+      if (openIndex == null) return;
+      final open = comments[openIndex];
+      final rawText = open['text']?.toString() ?? '';
+      final openEvent = TaskTimeEvent.fromPayload(
+          rawText,
+          open['id']?.toString() ?? '',
+          _parseCommentTimestamp(open['timestamp']),
+          open['userId']?.toString() ?? '');
+      if (openEvent == null) return;
+      final closed = openEvent.copyWith(endTime: now, note: note);
+      open['text'] = TaskTimeEvent.encodePayload(closed);
+
+      comments.sort((a, b) =>
+          _parseCommentTimestamp(a['timestamp'])
+              .compareTo(_parseCommentTimestamp(b['timestamp'])));
+      await _supabase
+          .from('tasks')
+          .update({'comments': comments}).eq('id', task.id);
+
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        final current = _tasks[idx];
+        _tasks[idx] = current.copyWith(comments: _toTaskComments(comments));
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint('❌ closeOpenTimeEvent error: $e\n$st');
     }
   }
 
@@ -284,11 +2032,15 @@ class TaskProvider with ChangeNotifier {
   Future<void> createTask({
     required String orderId,
     required String stageId,
+    String? stageGroupKey,
   }) async {
     try {
       await _supabase.from('tasks').insert({
         'order_id': orderId,
         'stage_id': stageId,
+        'stage_group_key': (stageGroupKey == null || stageGroupKey.trim().isEmpty)
+            ? stageId
+            : stageGroupKey.trim(),
         'status': 'waiting',
         'assignees': [],
         'comments': [],
@@ -349,93 +2101,117 @@ class TaskProvider with ChangeNotifier {
 
   // ---- Helpers for last-stage quantity propagation to orders.actual_qty ----
   Future<bool> _isLastStage(String orderId, String stageId) async {
-    // Try new schema: production.*
-    try {
-      final plan = await _supabase
-          .from('production.plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('production.plan_stages')
-            .select('*')
-            .eq('plan_id', plan['id'].toString());
-        if (rows is List && rows.isNotEmpty) {
-          // find max 'order' value
-          int maxOrder = 0;
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi > maxOrder) maxOrder = oi;
-          }
-          // collect stage_ids with max order
-          final lastIds = <String>{};
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi == maxOrder) {
-              final sid =
-                  (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
-              if (sid.isNotEmpty) lastIds.add(sid);
+    Future<bool?> fromPlan(String planTable, String stagesTable) async {
+      try {
+        final plan = await _supabase
+            .from(planTable)
+            .select('id')
+            .eq('order_id', orderId)
+            .maybeSingle();
+        if (plan != null && plan is Map && plan['id'] != null) {
+          final rows = await _supabase
+              .from(stagesTable)
+              .select('*')
+              .eq('plan_id', plan['id'].toString());
+          if (rows is List && rows.isNotEmpty) {
+            int maxOrder = 0;
+            for (final r in rows) {
+              final o = r['order'] ??
+                  r['position'] ??
+                  r['idx'] ??
+                  r['step_no'] ??
+                  r['step'] ??
+                  r['seq'] ??
+                  0;
+              final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
+              if (oi > maxOrder) maxOrder = oi;
             }
+            final lastIds = <String>{};
+            for (final r in rows) {
+              final o = r['order'] ??
+                  r['position'] ??
+                  r['idx'] ??
+                  r['step_no'] ??
+                  r['step'] ??
+                  r['seq'] ??
+                  0;
+              final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
+              if (oi == maxOrder) {
+                final sid =
+                    (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
+                if (sid.isNotEmpty) lastIds.add(sid);
+              }
+            }
+            return lastIds.contains(stageId);
           }
-          return lastIds.contains(stageId);
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+      return null;
+    }
 
-    // Fallback to legacy public.*
+    final prodPlanResult =
+        await fromPlan('production.plans', 'production.plan_stages');
+    if (prodPlanResult != null) return prodPlanResult;
+
+    final legacyPlanResult = await fromPlan('prod_plans', 'prod_plan_stages');
+    if (legacyPlanResult != null) return legacyPlanResult;
+
+    // Fallback: consider stage last if there are no other stages in work/pending.
     try {
-      final plan = await _supabase
-          .from('prod_plans')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle();
-      if (plan != null && plan is Map && plan['id'] != null) {
-        final rows = await _supabase
-            .from('prod_plan_stages')
-            .select('*')
-            .eq('plan_id', plan['id'].toString());
-        if (rows is List && rows.isNotEmpty) {
-          int maxOrder = 0;
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi > maxOrder) maxOrder = oi;
+      final rows = await _supabase
+          .from('tasks')
+          .select('stage_id, status')
+          .eq('order_id', orderId);
+      bool hasPendingOtherStage = false;
+      if (rows is List) {
+        for (final r in rows) {
+          final sid = (r['stage_id'] ?? r['stageId'] ?? '').toString();
+          if (sid.isEmpty || sid == stageId) continue;
+          final statusRaw = (r['status'] ?? '').toString().toLowerCase();
+          if (statusRaw != 'completed') {
+            hasPendingOtherStage = true;
+            break;
           }
-          final lastIds = <String>{};
-          for (final r in rows) {
-            final o = r['order'] ?? r['position'] ?? r['idx'] ?? 0;
-            final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-            if (oi == maxOrder) {
-              final sid =
-                  (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
-              if (sid.isNotEmpty) lastIds.add(sid);
-            }
-          }
-          return lastIds.contains(stageId);
         }
       }
+      if (!hasPendingOtherStage) return true;
     } catch (_) {}
 
     return false;
   }
 
-  int _parseIntSafe(dynamic v) {
+  double _parseQtySafe(dynamic v) {
     if (v == null) return 0;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
+    if (v is num) return v.toDouble();
     if (v is String) {
-      final s = v.trim();
-      return int.tryParse(s) ??
-          int.tryParse(s.replaceAll(RegExp(r'[^0-9-]'), '')) ??
-          0;
+      final normalized = v.replaceAll(',', '.').trim();
+      final totalFromFormula =
+          RegExp(r'=\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+      if (totalFromFormula != null) {
+        return double.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
+      }
+      final packsMatch =
+          RegExp(r'(-?\d+(?:\.\d+)?)\s*пач', caseSensitive: false)
+              .firstMatch(normalized);
+      final inPackMatch = RegExp(r'[x×*]\s*(-?\d+(?:\.\d+)?)')
+          .firstMatch(normalized);
+      if (packsMatch != null && inPackMatch != null) {
+        final packs = double.tryParse(packsMatch.group(1) ?? '') ?? 0;
+        final inPack = double.tryParse(inPackMatch.group(1) ?? '') ?? 0;
+        return packs * inPack;
+      }
+      final parsed = double.tryParse(normalized);
+      if (parsed != null) return parsed;
+      final firstNumber = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(normalized);
+      if (firstNumber != null) {
+        return double.tryParse(firstNumber.group(0) ?? '') ?? 0;
+      }
+      return 0;
     }
     return 0;
   }
 
-  Future<int> _sumLastStageQuantity(String orderId, String stageId) async {
+  Future<double> _sumLastStageQuantity(String orderId, String stageId) async {
     // get all tasks for this order & stage
     final rows = await _supabase
         .from('tasks')
@@ -443,7 +2219,7 @@ class TaskProvider with ChangeNotifier {
         .eq('order_id', orderId)
         .eq('stage_id', stageId);
 
-    int total = 0;
+    double total = 0;
     if (rows is List) {
       for (final r in rows) {
         // comments can be list or map
@@ -466,14 +2242,14 @@ class TaskProvider with ChangeNotifier {
               ((a['timestamp'] ?? 0) as int) >= ((b['timestamp'] ?? 0) as int)
                   ? a
                   : b);
-          total += _parseIntSafe(last['text']);
+          total += _parseQtySafe(last['text']);
           continue;
         }
         // Else sum 'quantity_done' (separate executors)
         final parts =
             comments.where((m) => (m['type'] ?? '') == 'quantity_done');
         for (final m in parts) {
-          total += _parseIntSafe(m['text']);
+          total += _parseQtySafe(m['text']);
         }
       }
     }
@@ -510,10 +2286,11 @@ class TaskProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    if (_channel != null) {
-      _supabase.removeChannel(_channel!);
-      _channel = null;
+    if (_tasksChannel != null) {
+      _supabase.removeChannel(_tasksChannel!);
+      _tasksChannel = null;
     }
+    _disposeStageSyncChannels();
     super.dispose();
   }
 
@@ -522,10 +2299,14 @@ class TaskProvider with ChangeNotifier {
     required String taskId,
     required String type,
     required String text,
+    String? userIdOverride,
   }) async {
     await _ensureAuthed();
-    final uid = _supabase.auth.currentUser?.id;
-    if (uid == null) {
+    final uid =
+        (userIdOverride != null && userIdOverride.isNotEmpty)
+            ? userIdOverride
+            : _supabase.auth.currentUser?.id;
+    if (uid == null || uid.isEmpty) {
       debugPrint('❌ addCommentAutoUser: нет авторизованного пользователя');
       return;
     }

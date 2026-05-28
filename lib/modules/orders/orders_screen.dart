@@ -1,12 +1,21 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_model.dart';
+import '../tasks/task_completion_rules.dart';
+import '../warehouse/warehouse_table_styles.dart';
+import '../warehouse/warehouse_provider.dart';
+import '../personnel/personnel_provider.dart';
 import 'orders_provider.dart';
 import 'order_model.dart';
+import 'product_model.dart';
 import 'edit_order_screen.dart';
 import 'view_order_screen.dart';
 import 'order_timeline_dialog.dart';
+import 'id_format.dart';
+import 'order_launch_rules.dart';
 
 enum SortOption {
   orderDateAsc,
@@ -16,6 +25,8 @@ enum SortOption {
   quantityAsc,
   quantityDesc,
 }
+
+enum ShipmentQuantityMode { tirage, custom, actual }
 
 /// Главный экран модуля оформления заказа. Показывает список заказов с
 /// возможностью фильтрации по статусам, поиска и создания нового заказа.
@@ -37,6 +48,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<String> _filterCustomers = [];
   List<String> _filterProducts = [];
   DateTimeRange? _filterDateRange;
+  final Set<String> _shippingInProgress = <String>{};
+  final Set<String> _launchingInProgress = <String>{};
+  final ScrollController _tableHorizontalController = ScrollController();
+  final ScrollController _tableVerticalController = ScrollController();
+  final ScrollController _cardsScrollController = ScrollController();
 
   /// Проверяет, полностью ли заполнены ключевые поля заказа для отправки
   /// в производство. Заказ считается «незавершённым», если не выбран
@@ -52,6 +68,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _tableHorizontalController.dispose();
+    _tableVerticalController.dispose();
+    _cardsScrollController.dispose();
     super.dispose();
   }
 
@@ -61,17 +80,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
       appBar: AppBar(
         title: const Text('Модуль оформления заказа'),
         actions: [
-          TextButton.icon(
-            onPressed: () {
-              // История заказов — пока просто snackbar
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Раздел "История" в разработке')),
-              );
-            },
-            icon: const Icon(Icons.history, color: Colors.white),
-            label: const Text('История', style: TextStyle(color: Colors.white)),
-          ),
-          const SizedBox(width: 8),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.push(
@@ -100,8 +108,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
             _buildStatusTabs(),
             const SizedBox(height: 12),
             Expanded(
-              child: Consumer2<OrdersProvider, TaskProvider>(
-                builder: (context, ordersProvider, taskProvider, child) {
+              child: Consumer4<OrdersProvider, TaskProvider, PersonnelProvider,
+                  WarehouseProvider>(
+                builder:
+                    (context, ordersProvider, taskProvider, personnel, warehouse, child) {
                   final orders = _filteredOrders(ordersProvider.orders);
                   final allTasks = taskProvider.tasks;
                   if (orders.isEmpty) {
@@ -109,89 +119,144 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   }
                   // Если выбран режим таблицы, отображаем DataTable, иначе карточки
                   if (_asTable) {
-                    return SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('№')),
-                          DataColumn(label: Text('Заказчик')),
-                          DataColumn(label: Text('ID заказа')),
-                          DataColumn(label: Text('Дата заказа')),
-                          DataColumn(label: Text('Срок')),
-                          DataColumn(label: Text('Продукт')),
-                          DataColumn(label: Text('Тираж')),
-                          DataColumn(label: Text('Статус')),
-                          DataColumn(label: Text('Действия')),
-                        ],
-                        rows: List<DataRow>.generate(
-                          orders.length,
-                          (index) {
-                            final o = orders[index];
-                            final product = o.product;
-                            final totalQty = product.quantity;
-                            final statusInfo = _computeStatus(o, allTasks);
-                            final statusLabel = statusInfo.label;
-                            final missing = _isIncomplete(o);
-                            return DataRow(
-                              color: MaterialStateProperty.resolveWith<Color?>(
-                                  (states) {
-                                // Если заказ неполон, подсвечиваем строку серым
-                                return missing ? Colors.grey.shade200 : null;
-                              }),
-                              cells: [
-                                DataCell(Text('${index + 1}')),
-                                DataCell(Text(o.customer)),
-                                DataCell(Text(o.id)),
-                                DataCell(Text(_formatDate(o.orderDate))),
-                                DataCell(Text(_formatDate(o.dueDate))),
-                                DataCell(Text(product.type)),
-                                DataCell(Text(totalQty.toString())),
-                                DataCell(Text(statusLabel)),
-                                DataCell(Row(
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(
-                                          Icons.remove_red_eye_outlined),
-                                      tooltip: 'Просмотр',
-                                      onPressed: () => _openViewOrder(o),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.history),
-                                      tooltip: 'Время',
-                                      onPressed: () => _showOrderTimeline(o),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit),
-                                      tooltip: 'Редактировать',
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                              builder: (_) =>
-                                                  EditOrderScreen(order: o)),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                )),
+                    return Scrollbar(
+                      controller: _tableVerticalController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _tableVerticalController,
+                        child: Scrollbar(
+                          controller: _tableHorizontalController,
+                          thumbVisibility: true,
+                          notificationPredicate: (notif) => notif.depth == 1,
+                          child: SingleChildScrollView(
+                            controller: _tableHorizontalController,
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              showCheckboxColumn: false,
+                              columns: const [
+                                DataColumn(label: Text('Номер заказа')),
+                                DataColumn(label: Text('Дата')),
+                                DataColumn(label: Text('Заказчик')),
+                                DataColumn(label: Text('Продукт')),
+                                DataColumn(label: Text('Размер')),
+                                DataColumn(label: Text('Тираж')),
+                                DataColumn(label: Text('Статус')),
+                                DataColumn(label: Text('Действия')),
                               ],
-                            );
-                          },
+                              rows: List<DataRow>.generate(
+                                orders.length,
+                                (index) {
+                                  final o = orders[index];
+                                  final product = o.product;
+                                  final totalQty = product.quantity;
+                                  final productSize = _formatProductSize(product);
+                                  final statusInfo = _computeStatus(o, allTasks);
+                                  final statusLabel = statusInfo.label;
+                                  final missing = _isIncomplete(o);
+                                  final stageName =
+                                      _currentStageName(o, allTasks, personnel);
+                                  final canLaunch = _canLaunchOrder(o, warehouse);
+                                  final isLaunching =
+                                      _launchingInProgress.contains(o.id);
+                                  final isMaterialBlocked =
+                                      o.statusEnum == OrderStatus.waiting_materials;
+                                  return DataRow(
+                                    onSelectChanged: (_) => _openViewOrder(o),
+                                    color: MaterialStateProperty
+                                        .resolveWith<Color?>((states) {
+                                      final hoverColor =
+                                          warehouseRowHoverColor.resolve(states);
+                                      if (hoverColor != null) return hoverColor;
+                                      if (isMaterialBlocked) {
+                                        return Colors.red.shade50;
+                                      }
+                                      // Если заказ неполон, подсвечиваем строку серым
+                                      return missing ? Colors.grey.shade200 : null;
+                                    }),
+                                    cells: [
+                                      DataCell(Text(orderDisplayId(o))),
+                                      DataCell(Text(_formatDate(o.orderDate))),
+                                      DataCell(Text(o.customer)),
+                                      DataCell(Text(product.type)),
+                                      DataCell(Text(productSize)),
+                                      DataCell(Text(totalQty.toString())),
+                                      DataCell(
+                                        statusLabel == 'В производстве' &&
+                                                stageName != null
+                                            ? Tooltip(
+                                                message:
+                                                    'Текущий этап: $stageName',
+                                                child: _StatusBadge(
+                                                    color: statusInfo.color,
+                                                    label: statusLabel),
+                                              )
+                                            : _StatusBadge(
+                                                color: statusInfo.color,
+                                                label: statusLabel,
+                                              ),
+                                      ),
+                                      DataCell(Row(
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.history),
+                                            tooltip: 'Время',
+                                            onPressed: () =>
+                                                _showOrderTimeline(o),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.edit),
+                                            tooltip: 'Редактировать',
+                                            onPressed: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        EditOrderScreen(
+                                                            order: o)),
+                                              );
+                                            },
+                                          ),
+                                          if (canLaunch)
+                                            ElevatedButton(
+                                              onPressed: isLaunching
+                                                  ? null
+                                                  : () => _launchOrder(o),
+                                              child: isLaunching
+                                                  ? const SizedBox(
+                                                      width: 16,
+                                                      height: 16,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                    )
+                                                  : const Text('Запустить'),
+                                            ),
+                                        ],
+                                      )),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     );
                   } else {
-                    final Map<String, List<OrderModel>> ordersByCustomer = {};
-                    for (final o in orders) {
-                      ordersByCustomer.putIfAbsent(o.customer, () => []).add(o);
-                    }
-                    return SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: orders
-                            .map((o) => _buildOrderCard(o, allTasks))
-                            .toList(),
+                    return Scrollbar(
+                      controller: _cardsScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _cardsScrollController,
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: orders
+                              .map((o) =>
+                                  _buildOrderCard(o, allTasks, personnel, warehouse))
+                              .toList(),
+                        ),
                       ),
                     );
                   }
@@ -249,8 +314,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget _buildStatusTabs() {
     final tabs = [
       {'key': 'all', 'label': 'Все заказы'},
-      {'key': 'new', 'label': 'Новые'},
-      {'key': 'inWork', 'label': 'В работе'},
+      {'key': 'draft', 'label': 'Черновики'},
+      {'key': 'waiting_materials', 'label': 'Ожидание материалов'},
+      {'key': 'ready_to_start', 'label': 'Готовы к запуску'},
+      {'key': 'in_production', 'label': 'В производстве'},
       {'key': 'completed', 'label': 'Завершенные'},
     ];
     return Row(
@@ -280,6 +347,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // Filter by search query
     final query = _searchController.text.toLowerCase();
     List<OrderModel> filtered = all.where((order) {
+      if (order.isShipped) return false;
       final matchesSearch = query.isEmpty ||
           order.id.toLowerCase().contains(query) ||
           order.customer.toLowerCase().contains(query);
@@ -309,14 +377,24 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     // Filter by status
     switch (_selectedFilter) {
-      case 'new':
+      case 'draft':
         filtered = filtered
-            .where((o) => o.statusEnum == OrderStatus.newOrder)
+            .where((o) => o.statusEnum == OrderStatus.draft)
             .toList();
         break;
-      case 'inWork':
+      case 'waiting_materials':
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.waiting_materials)
+            .toList();
+        break;
+      case 'ready_to_start':
+        filtered = filtered
+            .where((o) => o.statusEnum == OrderStatus.ready_to_start)
+            .toList();
+        break;
+      case 'in_production':
         filtered =
-            filtered.where((o) => o.statusEnum == OrderStatus.inWork).toList();
+            filtered.where((o) => o.statusEnum == OrderStatus.in_production).toList();
         break;
       case 'completed':
         filtered = filtered
@@ -351,6 +429,306 @@ class _OrdersScreenState extends State<OrdersScreen> {
         break;
     }
     return filtered;
+  }
+
+  String _formatQuantity(num value) {
+    final doubleVal = value.toDouble();
+    if (doubleVal == doubleVal.roundToDouble()) {
+      return doubleVal.toInt().toString();
+    }
+    return doubleVal.toStringAsFixed(2);
+  }
+
+  String _formatProductSize(ProductModel product) {
+    String? formatDimension(double? value) {
+      if (value == null || value <= 0) return null;
+      final rounded = value.toDouble();
+      if (rounded == rounded.roundToDouble()) {
+        return rounded.toInt().toString();
+      }
+      return rounded.toStringAsFixed(2);
+    }
+
+    final dims = <String>[];
+    final width = formatDimension(product.width);
+    final height = formatDimension(product.height);
+    final depth = formatDimension(product.depth);
+    if (width != null) dims.add(width);
+    if (height != null) dims.add(height);
+    if (depth != null) dims.add(depth);
+
+    var result = dims.join('×');
+
+    final extras = <String>[];
+    final roll = formatDimension(product.roll);
+    if (roll != null) extras.add('Рулон $roll');
+    final blQty = product.blQuantity;
+    if (blQty != null && blQty.isNotEmpty) extras.add('');
+
+    if (extras.isNotEmpty) {
+      final extraText = extras.join(', ');
+      result = result.isEmpty ? extraText : '$result ($extraText)';
+    }
+
+    return result.isEmpty ? '—' : result;
+  }
+
+  Future<void> _confirmShipment(OrderModel order) async {
+    final double plannedQty = order.product.quantity.toDouble();
+    final double actualQty = order.actualQty ?? plannedQty;
+    final double safeActual = actualQty < 0 ? 0 : actualQty;
+    double? warehouseExtraQty;
+    String? warehouseExtraSize;
+    try {
+      final snapshot =
+          await context.read<OrdersProvider>().loadCategoryItemSnapshot(order);
+      if (snapshot != null) {
+        final dynamic qv = snapshot['quantity'];
+        if (qv is num) {
+          warehouseExtraQty = qv.toDouble();
+        } else if (qv is String) {
+          final normalized = qv.replaceAll(',', '.');
+          final parsed = double.tryParse(normalized);
+          if (parsed != null) {
+            warehouseExtraQty = parsed;
+          }
+        }
+        final String sizeRaw = (snapshot['size'] ?? '').toString().trim();
+        if (sizeRaw.isNotEmpty) {
+          warehouseExtraSize = sizeRaw;
+        }
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ shipment leftover snapshot error: $e\n$st');
+    }
+
+    final bool actualLessThanPlanned = safeActual < plannedQty;
+    final double maxWriteoffQty = safeActual;
+    final double suggestedWriteoff = math.min(plannedQty, maxWriteoffQty);
+    double customQty = suggestedWriteoff;
+    ShipmentQuantityMode mode = actualLessThanPlanned
+        ? ShipmentQuantityMode.actual
+        : ShipmentQuantityMode.tirage;
+    final TextEditingController customController =
+        TextEditingController(text: _formatQuantity(customQty));
+    bool updatingCustomText = false;
+
+    double sliderMax = maxWriteoffQty;
+    final bool sliderEnabled = sliderMax > 0;
+    if (!sliderEnabled) {
+      sliderMax = 1;
+    }
+    final double? selectedWriteoff = await showDialog<double>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final bool customQtyExceedsMax =
+                mode == ShipmentQuantityMode.custom &&
+                    customQty > maxWriteoffQty;
+            final double effectiveCustom = sliderEnabled
+                ? math.max(0, math.min(customQty, sliderMax))
+                : math.max(0, math.min(customQty, maxWriteoffQty));
+            double currentWriteoff;
+            switch (mode) {
+              case ShipmentQuantityMode.tirage:
+                currentWriteoff = math.min(plannedQty, maxWriteoffQty);
+                break;
+              case ShipmentQuantityMode.actual:
+                currentWriteoff = safeActual;
+                break;
+              case ShipmentQuantityMode.custom:
+                currentWriteoff = effectiveCustom;
+                break;
+            }
+            if (currentWriteoff < 0) currentWriteoff = 0;
+            if (currentWriteoff > maxWriteoffQty) {
+              currentWriteoff = maxWriteoffQty;
+            }
+            final double leftoverQty = safeActual > currentWriteoff
+                ? (safeActual - currentWriteoff)
+                : 0;
+
+            return AlertDialog(
+              title: const Text('Подтвердить отгрузку?'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Заказчик: ${order.customer}'),
+                    const SizedBox(height: 8),
+                    Text('Тираж: ${_formatQuantity(plannedQty)}'),
+                    Text('Факт: ${_formatQuantity(safeActual)}'),
+                    if (order.product.leftover != null &&
+                        order.product.leftover! > 0)
+                      Text(
+                        'Запланировано как лишнее: '
+                        '${_formatQuantity(order.product.leftover!)}',
+                      ),
+                    if (warehouseExtraQty != null)
+                      Text(
+                        'Сейчас на складе: '
+                        '${_formatQuantity(warehouseExtraQty!)}',
+                      ),
+                    if (warehouseExtraSize != null)
+                      Text('Размер: $warehouseExtraSize'),
+                    const SizedBox(height: 12),
+                    RadioListTile<ShipmentQuantityMode>(
+                      title: Text(
+                          'Списать тираж (${_formatQuantity(plannedQty)})'),
+                      subtitle: plannedQty > maxWriteoffQty
+                          ? Text(
+                              'Недоступно: факт ${_formatQuantity(maxWriteoffQty)} меньше тиража',
+                            )
+                          : null,
+                      value: ShipmentQuantityMode.tirage,
+                      groupValue: mode,
+                      onChanged: plannedQty > maxWriteoffQty
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+                              setDialogState(() {
+                                mode = value;
+                              });
+                            },
+                    ),
+                    RadioListTile<ShipmentQuantityMode>(
+                      title: Text(
+                          'Списать фактическое (${_formatQuantity(safeActual)})'),
+                      value: ShipmentQuantityMode.actual,
+                      groupValue: mode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          mode = value;
+                        });
+                      },
+                    ),
+                    RadioListTile<ShipmentQuantityMode>(
+                      title: const Text('Указать количество'),
+                      value: ShipmentQuantityMode.custom,
+                      groupValue: mode,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          mode = value;
+                        });
+                      },
+                    ),
+                    if (mode == ShipmentQuantityMode.custom) ...[
+                      TextField(
+                        controller: customController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: 'Количество к списанию',
+                          helperText:
+                              'Не больше факта: ${_formatQuantity(maxWriteoffQty)}',
+                          errorText: customQtyExceedsMax
+                              ? 'Количество не должно быть больше факта'
+                              : null,
+                          border: const OutlineInputBorder(),
+                        ),
+                        onChanged: (value) {
+                          if (updatingCustomText) return;
+                          final normalized = value.replaceAll(',', '.');
+                          final parsed = double.tryParse(normalized);
+                          setDialogState(() {
+                            customQty =
+                                parsed != null && parsed >= 0 ? parsed : 0;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Slider(
+                        value: sliderEnabled ? effectiveCustom : 0,
+                        min: 0,
+                        max: sliderEnabled ? sliderMax : 1,
+                        divisions: sliderEnabled
+                            ? math
+                                .max(
+                                    1,
+                                    math.min(200,
+                                        (sliderMax * 10).round()))
+                                .toInt()
+                            : null,
+                        label: _formatQuantity(
+                            sliderEnabled ? effectiveCustom : 0),
+                        onChanged: sliderEnabled
+                            ? (val) {
+                                setDialogState(() {
+                                  customQty = val;
+                                  updatingCustomText = true;
+                                  final text = _formatQuantity(val);
+                                  customController.value = TextEditingValue(
+                                    text: text,
+                                    selection: TextSelection.collapsed(
+                                        offset: text.length),
+                                  );
+                                  updatingCustomText = false;
+                                });
+                              }
+                            : null,
+                      ),
+                    ],
+                    const Divider(),
+                    Text('К списанию: ${_formatQuantity(currentWriteoff)}'),
+                    Text(
+                      'Остаток после отгрузки: ${_formatQuantity(leftoverQty)}',
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: const Text('Отмена'),
+                ),
+                ElevatedButton(
+                  onPressed: currentWriteoff <= 0 ||
+                          currentWriteoff > maxWriteoffQty ||
+                          customQtyExceedsMax
+                      ? null
+                      : () => Navigator.pop(ctx, currentWriteoff),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Отгрузить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    customController.dispose();
+
+    if (selectedWriteoff == null) {
+      return;
+    }
+
+    setState(() => _shippingInProgress.add(order.id));
+    try {
+      await context
+          .read<OrdersProvider>()
+          .shipOrder(order, writeoffOverride: selectedWriteoff);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Заказ отправлен в архив')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось выполнить отгрузку: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _shippingInProgress.remove(order.id));
+      }
+    }
   }
 
   void _showSortOptions() {
@@ -581,11 +959,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// Открывает экран просмотра заказа.
   void _openViewOrder(OrderModel order) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ViewOrderScreen(order: order),
-      ),
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => ViewOrderDialog(order: order),
     );
   }
 
@@ -593,185 +970,248 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void _showOrderTimeline(OrderModel order) async {
     final provider = context.read<OrdersProvider>();
     final events = await provider.fetchOrderHistory(order.id);
+
     showDialog(
       context: context,
       builder: (_) => OrderTimelineDialog(order: order, events: events),
     );
   }
 
+  bool _canLaunchOrder(OrderModel order, WarehouseProvider warehouse) {
+    return canLaunchOrder(order, warehouse.allTmc);
+  }
+
+  Future<void> _launchOrder(OrderModel order) async {
+    if (_launchingInProgress.contains(order.id)) return;
+    setState(() => _launchingInProgress.add(order.id));
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final provider = context.read<OrdersProvider>();
+      final error = await provider.launchOrder(order);
+      if (!mounted) return;
+      if (error != null) {
+        messenger.showSnackBar(SnackBar(content: Text(error)));
+      } else {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Заказ запущен в производство')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _launchingInProgress.remove(order.id));
+      }
+    }
+  }
+
   /// Возвращает цвет и текст статуса для заказа с учётом связанных задач.
   _OrderStatusInfo _computeStatus(OrderModel order, List<TaskModel> allTasks) {
     final tasks = allTasks.where((t) => t.orderId == order.id).toList();
     if (tasks.isNotEmpty) {
-      if (tasks.every((t) => t.status == TaskStatus.completed)) {
+      if (isOrderFinallyCompleted(tasks)) {
         return const _OrderStatusInfo(Colors.green, 'Завершено');
       }
       if (tasks.any((t) => t.status == TaskStatus.inProgress)) {
-        return const _OrderStatusInfo(Colors.orange, 'В работе');
+        return const _OrderStatusInfo(Colors.orange, 'В производстве');
       }
-      return const _OrderStatusInfo(Colors.blue, 'Новый');
+      return const _OrderStatusInfo(Colors.blue, 'Ожидание запуска');
     }
     switch (order.statusEnum) {
-      case OrderStatus.inWork:
-        return const _OrderStatusInfo(Colors.orange, 'В работе');
+      case OrderStatus.in_production:
+        return const _OrderStatusInfo(Colors.orange, 'В производстве');
       case OrderStatus.completed:
         return const _OrderStatusInfo(Colors.green, 'Завершено');
-      case OrderStatus.newOrder:
+      case OrderStatus.waiting_materials:
+        return const _OrderStatusInfo(Colors.red, 'Ожидание материалов');
+      case OrderStatus.ready_to_start:
+        return const _OrderStatusInfo(Colors.blueGrey, 'Готов к запуску');
+      case OrderStatus.draft:
       default:
-        return const _OrderStatusInfo(Colors.blue, 'Новый');
+        return const _OrderStatusInfo(Colors.blue, 'Черновик');
     }
   }
 
-  /// Контейнер для информации о статусе заказа.
+  String? _currentStageName(OrderModel order, List<TaskModel> allTasks,
+      PersonnelProvider personnel) {
+    final activeTasks = allTasks
+        .where((t) =>
+            t.orderId == order.id && t.status == TaskStatus.inProgress)
+        .toList()
+      ..sort((a, b) => (a.startedAt ?? 0).compareTo(b.startedAt ?? 0));
+    if (activeTasks.isEmpty) return null;
+    final stageId = activeTasks.first.stageId;
+    if (stageId.isEmpty) return null;
+    try {
+      final wp =
+          personnel.workplaces.firstWhere((w) => w.id == stageId);
+      if (wp.name.trim().isNotEmpty) return wp.name.trim();
+    } catch (_) {}
+    return stageId;
+  }
 
   /// Строит карточку заказа для отображения в списке.
-  Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks) {
+  Widget _buildOrderCard(OrderModel order, List<TaskModel> allTasks,
+      PersonnelProvider personnel, WarehouseProvider warehouse) {
     // Определяем цвет и текст для статуса с учётом задач
     final statusInfo = _computeStatus(order, allTasks);
     final Color statusColor = statusInfo.color;
     final String statusLabel = statusInfo.label;
     final product = order.product;
     final totalQty = product.quantity;
+    final productSize = _formatProductSize(product);
     final missing = _isIncomplete(order);
+    final bool isCompleted = statusLabel == 'Завершено';
+    final bool isMaterialBlocked =
+        order.statusEnum == OrderStatus.waiting_materials;
+    final bool isShipping = _shippingInProgress.contains(order.id);
+    final bool canLaunch = _canLaunchOrder(order, warehouse);
+    final bool isLaunching = _launchingInProgress.contains(order.id);
+    final String? stageName =
+        _currentStageName(order, allTasks, personnel);
     return SizedBox(
-      width: 320,
+      width: 240,
       child: Card(
-        color: missing ? Colors.grey.shade100 : null,
+        color: isMaterialBlocked
+            ? Colors.red.shade50
+            : (missing ? Colors.grey.shade100 : null),
         elevation: 1,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Первая строка: заказчик и статус
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      order.customer,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _openViewOrder(order),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Заказчик
+                Text(
+                  order.customer,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 15),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                // Номер и статус заказа
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      '№ ${orderDisplayId(order)}',
                       style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 14),
-                      overflow: TextOverflow.ellipsis,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 11,
+                        color: Colors.black54,
+                      ),
                     ),
+                    statusLabel == 'В производстве' && stageName != null
+                        ? Tooltip(
+                            message: 'Текущий этап: $stageName',
+                            child: _StatusBadge(
+                                color: statusColor, label: statusLabel),
+                          )
+                        : _StatusBadge(color: statusColor, label: statusLabel),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                // Дата заказа
+                Text('Дата заказа: ${_formatDate(order.orderDate)}',
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                if (isMaterialBlocked &&
+                    order.materialShortageMessage.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    order.materialShortageMessage,
+                    style: const TextStyle(fontSize: 10, color: Colors.red),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                ],
+                const SizedBox(height: 6),
+                // Информация о продукте
+                Text('Изделие: ${product.type}',
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text('Размер: $productSize',
+                    style: const TextStyle(fontSize: 11)),
+                const SizedBox(height: 2),
+                Text('Тираж: $totalQty шт.',
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+                if (isCompleted)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
                     child: Text(
-                      statusLabel,
-                      style: TextStyle(color: statusColor, fontSize: 12),
+                      'Факт: ${order.actualQty != null ? _formatQuantity(order.actualQty!) : '—'} шт.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              // Вторая строка: ID заказа
-              Text('ID: ${order.id}',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
-              const SizedBox(height: 4),
-              // Даты
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('Дата заказа: ${_formatDate(order.orderDate)}',
-                        style: const TextStyle(fontSize: 11)),
-                  ),
-                  Expanded(
-                    child: Text('Срок: ${_formatDate(order.dueDate)}',
-                        style: const TextStyle(fontSize: 11)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // Информация о продукте
-              Text('Изделие: ${product.type}',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text('Тираж: $totalQty шт.',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 6),
-              // Статусы договора и оплаты
-              Row(
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                          order.contractSigned
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                          size: 16,
-                          color:
-                              order.contractSigned ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(
-                          order.contractSigned
-                              ? 'Договор подписан'
-                              : 'Договор не подписан',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: order.contractSigned
-                                  ? Colors.green
-                                  : Colors.red)),
-                    ],
-                  ),
-                  const SizedBox(width: 8),
-                  Row(
-                    children: [
-                      Icon(
-                          order.paymentDone
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                          size: 16,
-                          color: order.paymentDone ? Colors.green : Colors.red),
-                      const SizedBox(width: 4),
-                      Text(order.paymentDone ? 'Оплачено' : 'Не оплачено',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: order.paymentDone
-                                  ? Colors.green
-                                  : Colors.red)),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Кнопки действий
-              Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 4,
-                runSpacing: 4,
-                children: [
-                  TextButton(
-                    onPressed: () => _openViewOrder(order),
-                    child: const Text('Просмотр'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton(
-                    onPressed: () => _showOrderTimeline(order),
-                    child: const Text('Время'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => EditOrderScreen(order: order)),
-                      );
-                    },
-                    child: const Text('Редактировать'),
-                  ),
-                ],
-              ),
-            ],
+                const SizedBox(height: 8),
+                // Кнопки действий
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: () => _showOrderTimeline(order),
+                          icon: const Icon(Icons.schedule),
+                          tooltip: 'Время',
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      EditOrderScreen(order: order)),
+                            );
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          tooltip: 'Редактировать',
+                        ),
+                      ],
+                    ),
+                    if (canLaunch)
+                      ElevatedButton(
+                        onPressed: isLaunching ? null : () => _launchOrder(order),
+                        child: isLaunching
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Запустить'),
+                      )
+                    else if (isCompleted && !order.isShipped)
+                      ElevatedButton(
+                        onPressed:
+                            isShipping ? null : () => _confirmShipment(order),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: isShipping
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : const Text('Отгрузить'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -789,4 +1229,26 @@ class _OrderStatusInfo {
   final Color color;
   final String label;
   const _OrderStatusInfo(this.color, this.label);
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 12),
+      ),
+    );
+  }
 }

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -9,7 +11,7 @@ import '../personnel/personnel_provider.dart';
 // Для выхода и возврата на экран входа
 import '../../utils/auth_helper.dart';
 import '../../login_screen.dart';
-import '../analytics/analytics_provider.dart';
+import '../../services/audit_log_service.dart';
 /// Рабочее пространство сотрудника.
 ///
 /// Экран поддерживает одновременную работу нескольких сотрудников в рамках
@@ -50,12 +52,15 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
   Future<void> _addEmployeeTab() async {
     final personnel = context.read<PersonnelProvider>();
     // Список доступных для выбора сотрудников (не включаем уже открытые)
-    final available = personnel.employees.where((e) => !_employeeIds.contains(e.id)).toList();
+    final available = personnel.employees
+        .where((e) => !e.isFired && !_employeeIds.contains(e.id))
+        .toList();
     if (available.isEmpty) {
       // Все сотрудники уже открыты
       return;
     }
     String? selectedId;
+    String searchQuery = '';
     String password = '';
     bool wrongPass = false;
     await showDialog(
@@ -64,24 +69,75 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setStateDialog) {
+            final query = searchQuery.trim().toLowerCase();
+            final filtered = available.where((emp) {
+              if (query.isEmpty) return true;
+              final fullName =
+                  '${emp.lastName} ${emp.firstName} ${emp.patronymic}'.toLowerCase();
+              final login = emp.login.toLowerCase();
+              return fullName.contains(query) || login.contains(query);
+            }).toList();
+            final currentValue =
+                filtered.any((e) => e.id == selectedId) ? selectedId : null;
             return AlertDialog(
               title: const Text('Добавить сотрудника'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: 'Сотрудник'),
-                    items: [
-                      for (final e in available)
-                        DropdownMenuItem(value: e.id, child: Text('${e.lastName} ${e.firstName}')),
-                    ],
-                    onChanged: (val) {
+                  TextField(
+                    decoration: const InputDecoration(
+                      labelText: 'Поиск сотрудника',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (value) {
                       setStateDialog(() {
-                        selectedId = val;
+                        searchQuery = value;
+                        selectedId = null;
                         wrongPass = false;
                       });
                     },
                   ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: currentValue,
+                    decoration: const InputDecoration(labelText: 'Сотрудник'),
+                    items: [
+                      for (final e in filtered)
+                        DropdownMenuItem(
+                          value: e.id,
+                          child: Text(
+                            () {
+                              final joined = [e.lastName, e.firstName, e.patronymic]
+                                  .where((part) => part.trim().isNotEmpty)
+                                  .join(' ')
+                                  .trim();
+                              if (joined.isNotEmpty) return joined;
+                              if (e.login.isNotEmpty) return e.login;
+                              return 'Без имени';
+                            }(),
+                          ),
+                        ),
+                    ],
+                    onChanged: filtered.isEmpty
+                        ? null
+                        : (val) {
+                            setStateDialog(() {
+                              selectedId = val;
+                              wrongPass = false;
+                            });
+                          },
+                  ),
+                  if (filtered.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8.0),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Совпадения не найдены',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 8),
                   TextField(
                     obscureText: true,
@@ -152,62 +208,164 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
-    return Scaffold(
+    final media = MediaQuery.of(context);
+    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
+    final bool isTablet1280x800 = isTablet &&
+        ((media.size.width == 1280 && media.size.height == 800) ||
+            (media.size.width == 800 && media.size.height == 1280));
+    final bool isTablet1000x700 = isTablet &&
+        ((media.size.width == 1000 && media.size.height == 700) ||
+            (media.size.width == 700 && media.size.height == 1000));
+    const double topBlockScale = 0.6;
+    final double toolbarHeight = isTablet
+        ? ((isTablet1280x800
+                ? 20
+                : (isTablet1000x700 ? 19 : (isCompactTablet ? 24 : 28))) *
+            topBlockScale)
+        : 50 * topBlockScale;
+    final double actionIconSize = isTablet
+        ? ((isTablet1280x800
+                ? 11
+                : (isTablet1000x700 ? 10 : (isCompactTablet ? 14 : 16))) *
+            0.8)
+        : 22 * 0.8;
+    final double tabLabelSize = isTablet1280x800
+        ? 7
+        : (isTablet1000x700
+            ? 6.8
+            : (isCompactTablet ? 8 : (isTablet ? 9.5 : 13 * topBlockScale)));
+    final EdgeInsetsGeometry tabPadding = isTablet
+        ? EdgeInsets.symmetric(
+            horizontal: isTablet1280x800
+                ? 6
+                : (isTablet1000x700 ? 5 : 8),
+            vertical: isTablet1280x800
+                ? 1
+                : (isTablet1000x700 ? 0.5 : 2),
+          )
+        : const EdgeInsets.symmetric(horizontal: 8, vertical: 2);
+
+    final theme = Theme.of(context);
+    final TextStyle? tabLabelStyle = theme.textTheme.labelLarge?.copyWith(
+      fontSize: tabLabelSize,
+      fontWeight: FontWeight.w600,
+    );
+    final TextStyle? tabUnselectedStyle = theme.textTheme.labelMedium?.copyWith(
+      fontSize: tabLabelSize,
+      fontWeight: FontWeight.w500,
+    );
+
+    final scaffold = Scaffold(
       appBar: AppBar(
+          toolbarHeight: toolbarHeight,
+          titleTextStyle: theme.textTheme.titleMedium?.copyWith(
+            fontSize: isTablet ? tabLabelSize + 2 : null,
+            fontWeight: FontWeight.w600,
+        ),
         title: const Text('Рабочее пространство'),
         actions: [
           // Кнопка добавления сотрудника
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Добавить сотрудника',
-            onPressed: _addEmployeeTab,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE1E1E8)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tightFor(
+                  width: isTablet ? 26 : 24,
+                  height: isTablet ? 26 : 24,
+                ),
+                iconSize: actionIconSize,
+                icon: const Icon(Icons.add),
+                tooltip: 'Добавить сотрудника',
+                onPressed: _addEmployeeTab,
+              ),
+            ),
           ),
           // Кнопка выхода из рабочего места сотрудника
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Выйти',
-            onPressed: () async {
-              final tabIndex = _employeeTabController.index;
-              final analytics = context.read<AnalyticsProvider>();
-              final userId = _employeeIds[tabIndex];
-              await analytics.logEvent(
-                orderId: '',
-                stageId: '',
-                userId: userId,
-                action: 'logout',
-                category: 'production',
-              );
-              if (_employeeIds.length > 1) {
-                // Если открыто несколько вкладок, закрываем текущую вкладку
-                setState(() {
-                  _employeeIds.removeAt(tabIndex);
-                  // Пересоздаём TabController для нового списка сотрудников
-                  _employeeTabController.dispose();
-                  _employeeTabController =
-                      TabController(length: _employeeIds.length, vsync: this);
-                  // Выставляем индекс на предыдущую вкладку, если она есть
-                  if (tabIndex > 0) {
-                    _employeeTabController.index = tabIndex - 1;
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE1E1E8)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tightFor(
+                  width: isTablet ? 26 : 24,
+                  height: isTablet ? 26 : 24,
+                ),
+                iconSize: actionIconSize,
+                icon: const Icon(Icons.logout),
+                tooltip: 'Выйти',
+                onPressed: () async {
+                  final tabIndex = _employeeTabController.index;
+                  final analytics = AuditLogService();
+                  final userId = _employeeIds[tabIndex];
+                  await analytics.logEvent(
+                    userId: userId,
+                    action: 'logout',
+                    category: 'production',
+                  );
+                  if (_employeeIds.length > 1) {
+                    // Если открыто несколько вкладок, закрываем текущую вкладку
+                    final oldController = _employeeTabController;
+                    setState(() {
+                      _employeeIds.removeAt(tabIndex);
+                      // Пересоздаём TabController для нового списка сотрудников
+                      _employeeTabController =
+                          TabController(length: _employeeIds.length, vsync: this);
+                      // Выставляем индекс на предыдущую вкладку, если она есть
+                      if (tabIndex > 0) {
+                        _employeeTabController.index = tabIndex - 1;
+                      }
+                    });
+                    oldController.dispose();
+                  } else {
+                    // Если это последняя вкладка, выходим на экран входа
+                    AuthHelper.clear();
+                    if (!mounted) return;
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (route) => false,
+                    );
                   }
-                });
-              } else {
-                // Если это последняя вкладка, выходим на экран входа
-                AuthHelper.clear();
-                if (!mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  (route) => false,
-                );
-              }
-            },
+                },
+              ),
+            ),
           ),
         ],
         bottom: TabBar(
           controller: _employeeTabController,
           isScrollable: true,
+          labelPadding: isTablet ? tabPadding : null,
+          labelStyle: tabLabelStyle,
+          unselectedLabelStyle: tabUnselectedStyle,
           tabs: [
             for (final id in _employeeIds)
               Tab(
+                height: isTablet ? 28 : 18,
                 text: () {
                   final emp = personnel.employees.firstWhere(
                     (e) => e.id == id,
@@ -234,6 +392,23 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
         ],
       ),
     );
+
+    if (!isTablet) {
+      return scaffold;
+    }
+
+    return Theme(
+      data: theme.copyWith(
+        tabBarTheme: theme.tabBarTheme.copyWith(
+          labelPadding: tabPadding,
+          labelStyle: tabLabelStyle,
+          unselectedLabelStyle: tabUnselectedStyle,
+        ),
+        iconTheme: theme.iconTheme.copyWith(size: actionIconSize),
+        appBarTheme: theme.appBarTheme.copyWith(toolbarHeight: toolbarHeight),
+      ),
+      child: scaffold,
+    );
   }
 }
 
@@ -244,7 +419,7 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-     final personnel = context.watch<PersonnelProvider>();
+    final personnel = context.watch<PersonnelProvider>();
     final EmployeeModel emp = personnel.employees.firstWhere(
       (e) => e.id == employeeId,
       orElse: () => EmployeeModel(
@@ -267,29 +442,160 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
         .join(' ')
         .trim();
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: Container(
-            color: Colors.white,
-            child: const TabBar(
-              tabs: [
-                Tab(text: 'Задания'),
-                Tab(text: 'Чат'),
+    final media = MediaQuery.of(context);
+    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
+    final bool isTablet1280x800 = isTablet &&
+        ((media.size.width == 1280 && media.size.height == 800) ||
+            (media.size.width == 800 && media.size.height == 1280));
+    final bool isTablet1000x700 = isTablet &&
+        ((media.size.width == 1000 && media.size.height == 700) ||
+            (media.size.width == 700 && media.size.height == 1000));
+    final double targetTextScale = math.max(
+      media.textScaleFactor,
+      isTablet1280x800
+          ? 1.0
+          : (isTablet1000x700
+              ? 0.98
+              : (isCompactTablet
+                  ? 1.12
+                  : (isTablet
+                      ? 1.08
+                      : 1.0))),
+    );
+    final mediaData = media.copyWith(textScaleFactor: targetTextScale);
+    final theme = Theme.of(context);
+    final TextStyle? baseTabLabel = theme.tabBarTheme.labelStyle ?? theme.textTheme.labelLarge;
+    final TextStyle? baseTabUnselected = theme.tabBarTheme.unselectedLabelStyle ?? theme.textTheme.labelMedium;
+    final ThemeData compactTheme = theme.copyWith(
+      visualDensity: isTablet1280x800
+          ? const VisualDensity(horizontal: -0.2, vertical: -0.2)
+          : (isTablet1000x700
+              ? const VisualDensity(horizontal: -0.4, vertical: -0.4)
+              : (isCompactTablet
+                  ? const VisualDensity(horizontal: 0.5, vertical: 0.5)
+                  : (isTablet
+                      ? const VisualDensity(horizontal: 0.25, vertical: 0.25)
+                      : theme.visualDensity))),
+      tabBarTheme: theme.tabBarTheme.copyWith(
+        labelPadding: isTablet
+            ? EdgeInsets.symmetric(horizontal: isTablet1000x700 ? 6 : 8)
+            : theme.tabBarTheme.labelPadding,
+        labelStyle: baseTabLabel?.copyWith(
+          fontSize: isTablet1280x800
+              ? 12
+              : (isTablet1000x700
+                  ? 11
+                  : (isCompactTablet ? 13 : (isTablet ? 14 : baseTabLabel?.fontSize))),
+        ),
+        unselectedLabelStyle: baseTabUnselected?.copyWith(
+          fontSize: isTablet1280x800
+              ? 12
+              : (isTablet1000x700
+                  ? 11
+                  : (isCompactTablet ? 13 : (isTablet ? 14 : baseTabUnselected?.fontSize))),
+        ),
+      ),
+      iconTheme: theme.iconTheme.copyWith(
+        size: isTablet1280x800
+            ? 20
+            : (isTablet1000x700
+                ? 18
+                : (isCompactTablet ? 22 : (isTablet ? 24 : theme.iconTheme.size))),
+      ),
+      appBarTheme: theme.appBarTheme.copyWith(
+        toolbarHeight: isTablet1280x800
+            ? 48
+            : (isTablet1000x700
+                ? 44
+                : (isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight))),
+      ),
+    );
+    final double tabBarHeight = isTablet1280x800
+        ? 18
+        : (isTablet1000x700 ? 17 : (isCompactTablet ? 23 : (isTablet ? 25 : 26)));
+    const Color tabBackground = Color(0xFFF1F1F5);
+    const Color tabBorder = Color(0xFFE1E1E8);
+
+    return MediaQuery(
+      data: mediaData,
+      child: Theme(
+        data: compactTheme,
+        child: DefaultTabController(
+          length: 3,
+          child: Scaffold(
+            appBar: PreferredSize(
+              preferredSize: Size.fromHeight(tabBarHeight + 6),
+              child: Container(
+                color: Colors.white,
+                padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: tabBackground,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: tabBorder),
+                  ),
+                  child: TabBar(
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    indicatorPadding: const EdgeInsets.all(1.2),
+                    labelColor: Colors.black,
+                    unselectedLabelColor: const Color(0xFF6F6F7B),
+                    labelStyle: Theme.of(context)
+                        .textTheme
+                        .labelLarge
+                        ?.copyWith(
+                          fontSize: isTablet1280x800
+                              ? 7
+                              : (isTablet1000x700 ? 6.5 : (isCompactTablet ? 8.8 : 9.8)),
+                          fontWeight: FontWeight.w600,
+                        ),
+                    unselectedLabelStyle: Theme.of(context)
+                        .textTheme
+                        .labelMedium
+                        ?.copyWith(
+                          fontSize: isTablet1280x800
+                              ? 6.7
+                              : (isTablet1000x700 ? 6.2 : (isCompactTablet ? 8.2 : 9.2)),
+                          fontWeight: FontWeight.w500,
+                        ),
+                    indicator: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    tabs: const [
+                      Tab(text: 'Список заданий'),
+                      Tab(text: 'Задание'),
+                      Tab(text: 'Чат'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            body: TabBarView(
+              children: [
+                TasksScreen(
+                  employeeId: employeeId,
+                  showListOnly: true,
+                  compactList: true,
+                ),
+                TasksScreen(
+                  employeeId: employeeId,
+                  hideListPanel: true,
+                ),
+                ChatTab(
+                  currentUserId: employeeId,
+                  currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
+                ),
               ],
             ),
           ),
-        ),
-        body: TabBarView(
-          children: [
-            TasksScreen(employeeId: employeeId),
-            ChatTab(
-              currentUserId: employeeId,
-              currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
-            ),
-          ],
         ),
       ),
     );

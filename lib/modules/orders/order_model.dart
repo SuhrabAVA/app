@@ -4,7 +4,38 @@ import 'product_model.dart';
 import 'material_model.dart';
 
 /// Статус заказа.
-enum OrderStatus { newOrder, inWork, completed }
+///
+/// Канонические значения:
+/// - draft
+/// - waiting_materials
+/// - ready_to_start
+/// - in_production
+/// - completed
+enum OrderStatus {
+  draft,
+  waiting_materials,
+  ready_to_start,
+  in_production,
+  completed,
+}
+
+class QueueBuildStatus {
+  static const String notBuilt = 'not_built';
+  static const String built = 'built';
+  static const String outdated = 'outdated';
+
+  static String normalize(String? raw) {
+    final value = (raw ?? '').trim();
+    switch (value) {
+      case notBuilt:
+      case built:
+      case outdated:
+        return value;
+      default:
+        return notBuilt;
+    }
+  }
+}
 
 /// ===== SAFE CAST HELPERS =====
 bool? _asBool(dynamic v) {
@@ -86,11 +117,13 @@ class OrderModel {
   String handle;
   String cardboard;
   MaterialModel? material;
+  List<MaterialModel> paperMaterials;
   double makeready;
   double val;
   String? pdfUrl;
   String? stageTemplateId;
   // Формы
+  final bool hasForm;
   final bool isOldForm;
   final int? newFormNo;
   final String? formSeries;
@@ -99,10 +132,24 @@ class OrderModel {
   bool paymentDone;
   String comments;
 
-  /// Храним строкой (name), чтобы не падать на незнакомых значениях
+  double? actualQty;
+  DateTime? shippedAt;
+  String? shippedBy;
+  double? shippedQty;
+
+  /// Храним строкой, чтобы не падать на незнакомых значениях.
   String status;
+  bool hasMaterialShortage;
+  String materialShortageMessage;
   String? assignmentId;
   bool assignmentCreated;
+  String queueBuildStatus;
+  String? selectedVStage;
+  String? selectedPStage;
+  Map<String, dynamic>? queueSignature;
+  String? restartedFromOrderId;
+  String? restartRootOrderId;
+  int restartGeneration;
 
   OrderModel({
     required this.id,
@@ -115,11 +162,13 @@ class OrderModel {
     String? handle,
     String? cardboard,
     this.material,
+    List<MaterialModel>? paperMaterials,
     double? makeready,
     double? val,
     this.pdfUrl,
     this.stageTemplateId,
     // формы
+    this.hasForm = false,
     this.isOldForm = false,
     this.newFormNo,
     this.formSeries,
@@ -128,50 +177,126 @@ class OrderModel {
     bool? paymentDone,
     String? comments,
     String? status,
+    bool? hasMaterialShortage,
+    String? materialShortageMessage,
     this.assignmentId,
     bool? assignmentCreated,
+    this.actualQty,
+    this.shippedAt,
+    this.shippedBy,
+    this.shippedQty,
+    String? queueBuildStatus,
+    this.selectedVStage,
+    this.selectedPStage,
+    Map<String, dynamic>? queueSignature,
+    this.restartedFromOrderId,
+    this.restartRootOrderId,
+    this.restartGeneration = 0,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
+        paperMaterials = List<MaterialModel>.from(
+          (paperMaterials != null && paperMaterials.isNotEmpty)
+              ? paperMaterials
+              : (material != null ? [material] : const <MaterialModel>[]),
+        ),
         makeready = (makeready ?? 0).toDouble(),
         val = (val ?? 0).toDouble(),
         contractSigned = contractSigned ?? false,
         paymentDone = paymentDone ?? false,
         comments = comments ?? '',
-        status = status ?? 'newOrder',
-        assignmentCreated = assignmentCreated ?? false;
+        status = status ?? OrderStatus.draft.name,
+        hasMaterialShortage = hasMaterialShortage ?? false,
+        materialShortageMessage = materialShortageMessage ?? '',
+        assignmentCreated = assignmentCreated ?? false,
+        queueBuildStatus = QueueBuildStatus.normalize(queueBuildStatus),
+        queueSignature = queueSignature == null
+            ? null
+            : Map<String, dynamic>.from(queueSignature);
 
-  OrderStatus get statusEnum => OrderStatus.values
-      .firstWhere((s) => s.name == status, orElse: () => OrderStatus.newOrder);
+  static String normalizeStatus(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return OrderStatus.draft.name;
+    switch (value) {
+      // legacy
+      case 'newOrder':
+        return OrderStatus.draft.name;
+      case 'inWork':
+        return OrderStatus.in_production.name;
+      // canonical
+      case 'draft':
+      case 'waiting_materials':
+      case 'ready_to_start':
+      case 'in_production':
+      case 'completed':
+        return value;
+      default:
+        return OrderStatus.draft.name;
+    }
+  }
+
+  OrderStatus get statusEnum => OrderStatus.values.firstWhere(
+      (s) => s.name == normalizeStatus(status),
+      orElse: () => OrderStatus.draft);
   set statusEnum(OrderStatus s) => status = s.name;
 
   /// В БД пишем snake_case.
-  Map<String, dynamic> toMap() => {
+  ///
+  /// [includeNulls] нужен для UPDATE-сценариев, когда необходимо явно
+  /// сбросить значение колонки в `null` (например, при удалении очереди этапов).
+  Map<String, dynamic> toMap({bool includeNulls = false}) => {
         'id': id,
         'manager': manager,
         'customer': customer,
         'order_date': orderDate.toIso8601String(),
-        if (dueDate != null) 'due_date': dueDate!.toIso8601String(),
+        if (includeNulls || dueDate != null)
+          'due_date': dueDate?.toIso8601String(),
         'product': product.toMap(),
         'additional_params':
             additionalParams, // массив строк; БД примет и объект
         'handle': handle,
         'cardboard': cardboard,
-        if (material != null) 'material': material!.toMap(),
+        if (includeNulls || material != null)
+          'material': material?.toMap(),
+        if (includeNulls || paperMaterials.isNotEmpty)
+          'material_list': paperMaterials.isEmpty
+              ? null
+              : paperMaterials.map((m) => m.toMap()).toList(),
         'makeready': makeready,
         'val': val,
+        'has_form': hasForm,
         'is_old_form': isOldForm,
-        if (newFormNo != null) 'new_form_no': newFormNo,
-        if (formSeries != null) 'form_series': formSeries,
-        if (formCode != null) 'form_code': formCode,
-        if (pdfUrl != null) 'pdf_url': pdfUrl,
-        if (stageTemplateId != null) 'stage_template_id': stageTemplateId,
+        if (includeNulls || newFormNo != null) 'new_form_no': newFormNo,
+        if (includeNulls || formSeries != null) 'form_series': formSeries,
+        if (includeNulls || formCode != null) 'form_code': formCode,
+        if (includeNulls || pdfUrl != null) 'pdf_url': pdfUrl,
+        if (includeNulls || stageTemplateId != null)
+          'stage_template_id': stageTemplateId,
         'contract_signed': contractSigned,
         'payment_done': paymentDone,
         'comments': comments,
-        'status': status,
-        if (assignmentId != null) 'assignment_id': assignmentId,
+        'status': normalizeStatus(status),
+        'has_material_shortage': hasMaterialShortage,
+        'material_shortage_message': materialShortageMessage,
+        if (includeNulls || assignmentId != null) 'assignment_id': assignmentId,
         'assignment_created': assignmentCreated,
+        if (includeNulls || actualQty != null) 'actual_qty': actualQty,
+        if (includeNulls || shippedAt != null)
+          'shipped_at': shippedAt?.toIso8601String(),
+        if (includeNulls || shippedBy != null) 'shipped_by': shippedBy,
+        if (includeNulls || shippedQty != null) 'shipped_qty': shippedQty,
+        'queue_build_status': QueueBuildStatus.normalize(queueBuildStatus),
+        if (includeNulls || selectedVStage != null)
+          'selected_v_stage': selectedVStage,
+        if (includeNulls || selectedPStage != null)
+          'selected_p_stage': selectedPStage,
+        if (includeNulls || queueSignature != null)
+          'queue_signature': queueSignature,
+        if (includeNulls || restartedFromOrderId != null)
+          'restarted_from_order_id': restartedFromOrderId,
+        if (includeNulls || restartRootOrderId != null)
+          'restart_root_order_id': restartRootOrderId,
+        'restart_generation': restartGeneration,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -188,6 +313,17 @@ class OrderModel {
 
     final productMap = _asMap(_pickAny(map, const ['product', 'productMap']));
     final materialMap = _asMap(_pickAny(map, const ['material']));
+    final List<MaterialModel> materialList = (() {
+      final raw = _pickAny(map, const ['material_list', 'materialList']);
+      if (raw is List) {
+        return raw
+            .whereType<Map>()
+            .map((item) =>
+                MaterialModel.fromMap(Map<String, dynamic>.from(item as Map)))
+            .toList();
+      }
+      return const <MaterialModel>[];
+    })();
 
     final assignmentCreatedBool = _asBool(
             _pickAny(map, const ['assignment_created', 'assignmentCreated'])) ??
@@ -200,12 +336,37 @@ class OrderModel {
 
     final isOldFormBool =
         _asBool(_pickAny(map, const ['is_old_form', 'isOldForm'])) ?? false;
-    final int? newFormNoVal =
-        (_pickAny(map, const ['new_form_no', 'newFormNo']) as num?)?.toInt();
+    final dynamic rawNewFormNo =
+        _pickAny(map, const ['new_form_no', 'newFormNo']);
+    final int? newFormNoVal = (() {
+      if (rawNewFormNo is num) return rawNewFormNo.toInt();
+      if (rawNewFormNo is String) return int.tryParse(rawNewFormNo.trim());
+      return null;
+    })();
     final String? formSeriesVal =
         (_pickAny(map, const ['form_series', 'formSeries']) as String?);
     final String? formCodeVal =
         (_pickAny(map, const ['form_code', 'formCode']) as String?);
+    final hasFormBool = _asBool(_pickAny(map, const ['has_form', 'hasForm'])) ??
+        isOldFormBool ||
+        newFormNoVal != null ||
+        ((formCodeVal ?? '').trim().isNotEmpty);
+
+    double? _parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) {
+        final s = value.trim();
+        if (s.isEmpty) return null;
+        final normalized = s.replaceAll(',', '.');
+        final parsed = double.tryParse(normalized);
+        if (parsed != null) return parsed;
+        final fallback =
+            double.tryParse(normalized.replaceAll(RegExp(r'[^0-9.-]'), ''));
+        if (fallback != null) return fallback;
+      }
+      return null;
+    }
 
     return OrderModel(
       id: (_pickAny(map, const ['id']) as String?) ?? '',
@@ -221,6 +382,11 @@ class OrderModel {
       handle: (_pickAny(map, const ['handle']) as String?) ?? '-',
       cardboard: (_pickAny(map, const ['cardboard']) as String?) ?? 'нет',
       material: materialMap.isEmpty ? null : MaterialModel.fromMap(materialMap),
+      paperMaterials: materialList.isNotEmpty
+          ? materialList
+          : (materialMap.isEmpty
+              ? const <MaterialModel>[]
+              : [MaterialModel.fromMap(materialMap)]),
       makeready:
           ((_pickAny(map, const ['makeready']) as num?)?.toDouble()) ?? 0,
       val: ((_pickAny(map, const ['val']) as num?)?.toDouble()) ?? 0,
@@ -228,6 +394,7 @@ class OrderModel {
       stageTemplateId:
           (_pickAny(map, const ['stage_template_id', 'stageTemplateId'])
               as String?),
+      hasForm: hasFormBool,
       isOldForm: isOldFormBool,
       newFormNo: newFormNoVal,
       formSeries: formSeriesVal,
@@ -235,10 +402,142 @@ class OrderModel {
       contractSigned: contractSignedBool,
       paymentDone: paymentDoneBool,
       comments: (_pickAny(map, const ['comments']) as String?) ?? '',
-      status: (_pickAny(map, const ['status']) as String?) ?? 'newOrder',
+      status:
+          normalizeStatus((_pickAny(map, const ['status']) as String?) ?? ''),
+      hasMaterialShortage: _asBool(_pickAny(map, const [
+            'has_material_shortage',
+            'hasMaterialShortage'
+          ])) ??
+          false,
+      materialShortageMessage: (_pickAny(map, const [
+            'material_shortage_message',
+            'materialShortageMessage'
+          ]) as String?) ??
+          '',
       assignmentId:
           (_pickAny(map, const ['assignment_id', 'assignmentId']) as String?),
       assignmentCreated: assignmentCreatedBool,
+      actualQty: _parseDouble(
+          _pickAny(map, const ['actual_qty', 'actualQty', 'actualQuantity'])),
+      shippedAt:
+          _parseDate(_pickAny(map, const ['shipped_at', 'shippedAt'])),
+      shippedBy: (_pickAny(map, const ['shipped_by', 'shippedBy']) as String?),
+      shippedQty:
+          _parseDouble(_pickAny(map, const ['shipped_qty', 'shippedQty'])),
+      queueBuildStatus: QueueBuildStatus.normalize(
+          _pickAny(map, const ['queue_build_status', 'queueBuildStatus'])
+              ?.toString()),
+      selectedVStage:
+          (_pickAny(map, const ['selected_v_stage', 'selectedVStage'])
+              as String?),
+      selectedPStage:
+          (_pickAny(map, const ['selected_p_stage', 'selectedPStage'])
+              as String?),
+      queueSignature: (() {
+        final raw = _pickAny(map, const ['queue_signature', 'queueSignature']);
+        final decoded = _asMap(raw);
+        return decoded.isEmpty ? null : decoded;
+      })(),
+      restartedFromOrderId: (_pickAny(
+          map, const ['restarted_from_order_id', 'restartedFromOrderId']) as String?),
+      restartRootOrderId: (_pickAny(
+          map, const ['restart_root_order_id', 'restartRootOrderId']) as String?),
+      restartGeneration:
+          ((_pickAny(map, const ['restart_generation', 'restartGeneration'])
+                      as num?)
+                  ?.toInt()) ??
+              0,
+    );
+  }
+
+  bool get isShipped => shippedAt != null;
+
+  OrderModel copyWith({
+    String? manager,
+    String? customer,
+    DateTime? orderDate,
+    DateTime? dueDate,
+    ProductModel? product,
+    List<String>? additionalParams,
+    String? handle,
+    String? cardboard,
+    MaterialModel? material,
+    List<MaterialModel>? paperMaterials,
+    double? makeready,
+    double? val,
+    String? pdfUrl,
+    String? stageTemplateId,
+    bool? contractSigned,
+    bool? paymentDone,
+    String? comments,
+    String? status,
+    bool? hasMaterialShortage,
+    String? materialShortageMessage,
+    String? assignmentId,
+    bool? assignmentCreated,
+    double? actualQty,
+    DateTime? shippedAt,
+    String? shippedBy,
+    double? shippedQty,
+    bool? hasForm,
+    bool? isOldForm,
+    int? newFormNo,
+    String? formSeries,
+    String? formCode,
+    String? queueBuildStatus,
+    String? selectedVStage,
+    String? selectedPStage,
+    Map<String, dynamic>? queueSignature,
+    String? restartedFromOrderId,
+    String? restartRootOrderId,
+    int? restartGeneration,
+  }) {
+    return OrderModel(
+      id: id,
+      manager: manager ?? this.manager,
+      customer: customer ?? this.customer,
+      orderDate: orderDate ?? this.orderDate,
+      dueDate: dueDate ?? this.dueDate,
+      product: product ?? this.product,
+      additionalParams:
+          additionalParams ?? List<String>.from(this.additionalParams),
+      handle: handle ?? this.handle,
+      cardboard: cardboard ?? this.cardboard,
+      material: material ?? this.material,
+      paperMaterials:
+          paperMaterials ?? List<MaterialModel>.from(this.paperMaterials),
+      makeready: makeready ?? this.makeready,
+      val: val ?? this.val,
+      pdfUrl: pdfUrl ?? this.pdfUrl,
+      stageTemplateId: stageTemplateId ?? this.stageTemplateId,
+      hasForm: hasForm ?? this.hasForm,
+      isOldForm: isOldForm ?? this.isOldForm,
+      newFormNo: newFormNo ?? this.newFormNo,
+      formSeries: formSeries ?? this.formSeries,
+      formCode: formCode ?? this.formCode,
+      contractSigned: contractSigned ?? this.contractSigned,
+      paymentDone: paymentDone ?? this.paymentDone,
+      comments: comments ?? this.comments,
+      status: status ?? this.status,
+      hasMaterialShortage: hasMaterialShortage ?? this.hasMaterialShortage,
+      materialShortageMessage:
+          materialShortageMessage ?? this.materialShortageMessage,
+      assignmentId: assignmentId ?? this.assignmentId,
+      assignmentCreated: assignmentCreated ?? this.assignmentCreated,
+      actualQty: actualQty ?? this.actualQty,
+      shippedAt: shippedAt ?? this.shippedAt,
+      shippedBy: shippedBy ?? this.shippedBy,
+      shippedQty: shippedQty ?? this.shippedQty,
+      queueBuildStatus: queueBuildStatus ?? this.queueBuildStatus,
+      selectedVStage: selectedVStage ?? this.selectedVStage,
+      selectedPStage: selectedPStage ?? this.selectedPStage,
+      queueSignature: queueSignature ??
+          (this.queueSignature == null
+              ? null
+              : Map<String, dynamic>.from(this.queueSignature!)),
+      restartedFromOrderId: restartedFromOrderId ?? this.restartedFromOrderId,
+      restartRootOrderId: restartRootOrderId ?? this.restartRootOrderId,
+      restartGeneration: restartGeneration ?? this.restartGeneration,
     );
   }
 }
