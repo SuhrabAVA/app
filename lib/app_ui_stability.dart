@@ -21,5 +21,20 @@ final ThemeData appTheme = ThemeData(
 bool isTransientFlutterVisualAssertion(FlutterErrorDetails details) {
   final exceptionText = details.exceptionAsString();
   return exceptionText.contains("'referenceBox.attached': is not true") ||
-      exceptionText.contains("'!_skipMarkNeedsLayout': is not true");
+      exceptionText.contains("'!_skipMarkNeedsLayout': is not true") ||
+      _isWindowsAltKeyStateAssertion(exceptionText);
+}
+
+/// Flutter on Windows can occasionally report a synthesized Alt key-down event
+/// without modifier flags (for example after focus changes or system menu
+/// shortcuts). The event is rejected before application-level keyboard handlers
+/// can see it, so treat only this narrowly identified framework assertion as a
+/// transient platform-keyboard assertion and keep all other keyboard errors
+/// visible.
+bool _isWindowsAltKeyStateAssertion(String exceptionText) {
+  return exceptionText.contains(
+        'Attempted to send a key down event when no keys are in keysPressed',
+      ) &&
+      exceptionText.contains('RawKeyEventDataWindows') &&
+      exceptionText.contains('Alt Left');
 }

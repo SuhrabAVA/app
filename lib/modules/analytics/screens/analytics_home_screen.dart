@@ -36,6 +36,8 @@ class AnalyticsHomeScreen extends StatefulWidget {
 class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
   late AnalyticsTopTab _tab;
   late AnalyticsService _service;
+  late TaskProvider _taskProvider;
+  late OrdersProvider _ordersProvider;
   bool _bootstrapped = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -50,16 +52,19 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
     super.didChangeDependencies();
     if (!_bootstrapped) {
       _bootstrapped = true;
+      final personnelProvider = context.read<PersonnelProvider>();
+      _ordersProvider = context.read<OrdersProvider>();
+      _taskProvider = context.read<TaskProvider>();
       _service = AnalyticsService(
-        personnel: context.read<PersonnelProvider>(),
-        orders: context.read<OrdersProvider>(),
-        tasks: context.read<TaskProvider>(),
+        personnel: personnelProvider,
+        orders: _ordersProvider,
+        tasks: _taskProvider,
         permission: widget.permission,
       );
       _service.loadMonth(AnalyticsMonth.current());
       // если пришла обновлённая база — перезагрузим аналитику.
-      context.read<TaskProvider>().addListener(_onProvidersChanged);
-      context.read<OrdersProvider>().addListener(_onProvidersChanged);
+      _taskProvider.addListener(_onProvidersChanged);
+      _ordersProvider.addListener(_onProvidersChanged);
     }
   }
 
@@ -70,9 +75,11 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
 
   @override
   void dispose() {
-    context.read<TaskProvider>().removeListener(_onProvidersChanged);
-    context.read<OrdersProvider>().removeListener(_onProvidersChanged);
-    _service.dispose();
+    if (_bootstrapped) {
+      _taskProvider.removeListener(_onProvidersChanged);
+      _ordersProvider.removeListener(_onProvidersChanged);
+      _service.dispose();
+    }
     super.dispose();
   }
 
