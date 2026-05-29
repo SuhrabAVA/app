@@ -1,209 +1,156 @@
-import '../../orders/order_model.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../tasks/task_model.dart';
 import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
 
-/// Превращает `tasks.comments` в сырой поток `AnalyticsEvent`.
-///
-/// Источники:
-///  - TaskTimeEvent (тип comment == 'time_event'): время начала/окончания,
-///    тип (production / pause / problem / setup), сотрудник, рабочее место,
-///    задача и причина.
-///  - quantity_done / quantity_team_total / quantity_share — количество
-///    продукции, привязываемое к ближайшему завершившемуся work-событию
-///    того же сотрудника на той же задаче.
-///  - setup_done — количество приладки, привязываемое к ближайшему setup-
-///    событию того же сотрудника на той же задаче.
 class AnalyticsRepository {
-  /// Готовит события на месяц.
-  ///
-  /// [tasks]      — все задачи проекта (TaskProvider.tasks)
-  /// [ordersById] — карта заказов (для получения customer)
-  /// [month]      — выбранный месяц
-  /// [now]        — текущее время для расчёта активных событий
-  List<AnalyticsEvent> buildEvents({
-    required List<TaskModel> tasks,
-    required Map<String, OrderModel> ordersById,
-    required AnalyticsMonth month,
-    DateTime? now,
-  }) {
-    final reference = now ?? DateTime.now();
-    final monthFirst = month.firstDay;
-    final monthEnd = month.nextMonthFirstDay;
-    final events = <AnalyticsEvent>[];
+  AnalyticsRepository({SupabaseClient? client})
+      : _client = client ?? Supabase.instance.client;
 
-    // 1. Сначала вытаскиваем все TaskTimeEvent из задач, группируя по (task,user).
-    //    Параллельно собираем количество и наладки в очередь по той же группе.
+  final SupabaseClient _client;
+
+  Future<List<AnalyticsEvent>> loadEventsForMonth(AnalyticsMonth month,
+      {DateTime? now}) async {
+    final monthStart = month.firstDay.toUtc();
+    final monthEnd = month.nextMonthFirstDay.toUtc();
+    final reference = (now ?? DateTime.now()).toUtc();
+
+    final List<dynamic> rows = await _client
+        .from('comments')
+        .select(
+            'id, type, text, user_id, timestamp, task_id, tasks!inner(id, stage_id, order_id, orders(id, customer))')
+        .inFilter('type', [
+      'time_event',
+      'quantity_done',
+      'quantity_team_total',
+      'quantity_share',
+      'setup_done',
+    ])
+        .gte('timestamp', monthStart.toIso8601String())
+        .lt('timestamp', monthEnd.toIso8601String());
+
+    final events = <AnalyticsEvent>[];
     final Map<String, List<TaskTimeEvent>> rawEventsByGroup = {};
     final Map<String, List<_QtyRecord>> qtyRecordsByGroup = {};
     final Map<String, List<_QtyRecord>> setupRecordsByGroup = {};
+    final Map<String, _TaskJoinData> taskDataById = {};
 
-    for (final task in tasks) {
-      for (final comment in task.comments) {
-        final type = comment.type;
-        if (type == 'time_event') {
-          final ev = TaskTimeEvent.fromPayload(
-            comment.text,
-            comment.id,
-            comment.timestamp,
-            comment.userId,
-          );
-          if (ev == null) continue;
-          // оставляем только события, попадающие в месяц
-          if (!_overlapsMonth(ev.startTime, ev.endTime, monthFirst, monthEnd)) {
-            continue;
-          }
-          final groupKey = '${task.id}::${ev.subjectUserId}';
-          rawEventsByGroup.putIfAbsent(groupKey, () => []).add(ev);
-        } else if (type == 'quantity_done' ||
-            type == 'quantity_team_total' ||
-            type == 'quantity_share') {
-          final qty = _parseQty(comment.text);
-          if (qty <= 0) continue;
-          final ts = DateTime.fromMillisecondsSinceEpoch(
-              comment.timestamp,
-              isUtc: true);
-          if (ts.isBefore(monthFirst) || !ts.isBefore(monthEnd)) continue;
-          final groupKey = '${task.id}::${comment.userId}';
-          qtyRecordsByGroup.putIfAbsent(groupKey, () => []).add(
-                _QtyRecord(timestamp: ts, qty: qty),
-              );
-        } else if (type == 'setup_done') {
-          final qty = _parseQty(comment.text);
-          // приладка может быть «штучной» — учитываем как 1, если qty не задано
-          final double setupQty = qty > 0 ? qty : 1.0;
-          final ts = DateTime.fromMillisecondsSinceEpoch(
-              comment.timestamp,
-              isUtc: true);
-          if (ts.isBefore(monthFirst) || !ts.isBefore(monthEnd)) continue;
-          final groupKey = '${task.id}::${comment.userId}';
-          setupRecordsByGroup.putIfAbsent(groupKey, () => []).add(
-                _QtyRecord(timestamp: ts, qty: setupQty),
-              );
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final map = Map<String, dynamic>.from(row);
+      final type = (map['type'] ?? '').toString();
+      final taskId = (map['task_id'] ?? '').toString();
+      if (taskId.isEmpty) continue;
+
+      final taskMap = map['tasks'] is Map ? Map<String, dynamic>.from(map['tasks']) : const <String, dynamic>{};
+      final orderMap = taskMap['orders'] is Map ? Map<String, dynamic>.from(taskMap['orders']) : const <String, dynamic>{};
+      taskDataById[taskId] = _TaskJoinData(
+        stageId: (taskMap['stage_id'] ?? '').toString(),
+        orderId: (taskMap['order_id'] ?? '').toString(),
+        customer: orderMap['customer']?.toString(),
+      );
+
+      final timestamp = DateTime.tryParse((map['timestamp'] ?? '').toString())?.toUtc();
+      if (timestamp == null) continue;
+      final commentId = (map['id'] ?? '').toString();
+      final userId = (map['user_id'] ?? '').toString();
+
+      if (type == 'time_event') {
+        final ev = TaskTimeEvent.fromPayload(
+          (map['text'] ?? '').toString(),
+          commentId,
+          timestamp.millisecondsSinceEpoch,
+          userId,
+        );
+        if (ev == null) continue;
+        final normalized = _normalizeTimeRange(ev.startTime, ev.endTime, reference);
+        if (normalized == null) continue;
+        if (!_overlapsMonth(normalized.$1, normalized.$2, monthStart, monthEnd)) continue;
+        rawEventsByGroup.putIfAbsent('$taskId::${ev.subjectUserId}', () => []).add(
+              ev.copyWith(startTime: normalized.$1, endTime: normalized.$2),
+            );
+      } else if (type == 'setup_done' || type == 'quantity_done' || type == 'quantity_team_total' || type == 'quantity_share') {
+        final qty = _parseQty((map['text'] ?? '').toString());
+        final groupKey = '$taskId::$userId';
+        if (type == 'setup_done') {
+          final setupQty = qty > 0 ? qty : 1.0;
+          setupRecordsByGroup.putIfAbsent(groupKey, () => []).add(_QtyRecord(timestamp: timestamp, qty: setupQty));
+        } else if (qty > 0) {
+          qtyRecordsByGroup.putIfAbsent(groupKey, () => []).add(_QtyRecord(timestamp: timestamp, qty: qty));
         }
-        // claim создаётся отдельной таблицей; здесь не обрабатывается.
       }
     }
 
-    // 2. Преобразуем каждую группу в AnalyticsEvent'ы и привязываем qty.
     rawEventsByGroup.forEach((groupKey, list) {
-      // task/user id
       final parts = groupKey.split('::');
-      final taskId = parts.isNotEmpty ? parts[0] : '';
+      final taskId = parts.first;
       final employeeId = parts.length > 1 ? parts[1] : '';
+      final taskData = taskDataById[taskId];
 
-      // Находим саму задачу — она нужна для orderId и workplaceId fallback.
-      TaskModel? task;
-      try {
-        task = tasks.firstWhere((t) => t.id == taskId);
-      } catch (_) {
-        task = null;
-      }
-      final orderId = task?.orderId ?? '';
-      final order = ordersById[orderId];
-      final customer = order?.customer;
-
-      // Сортируем raw events по времени старта.
       list.sort((a, b) => a.startTime.compareTo(b.startTime));
-
-      // Подготовим очереди qty/setup, отсортированные по времени.
-      final qtyQueue = List<_QtyRecord>.from(qtyRecordsByGroup[groupKey] ?? const [])
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      final setupQueue = List<_QtyRecord>.from(setupRecordsByGroup[groupKey] ?? const [])
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final qtyQueue = List<_QtyRecord>.from(qtyRecordsByGroup[groupKey] ?? const [])..sort((a,b)=>a.timestamp.compareTo(b.timestamp));
+      final setupQueue = List<_QtyRecord>.from(setupRecordsByGroup[groupKey] ?? const [])..sort((a,b)=>a.timestamp.compareTo(b.timestamp));
 
       for (final raw in list) {
-        final type = _mapType(raw.type);
-        if (type == null) continue;
-
-        final isActive = raw.endTime == null;
+        final eventType = _mapType(raw.type);
+        if (eventType == null) continue;
         final effectiveEnd = raw.endTime ?? reference;
-
-        double qty = 0;
-        double setupQty = 0;
-
-        if (type == AnalyticsEventType.work) {
-          // Берём все qty-записи в пределах [start, end].
-          while (qtyQueue.isNotEmpty &&
-              !qtyQueue.first.timestamp.isAfter(effectiveEnd)) {
+        double qty = 0, setupQty = 0;
+        if (eventType == AnalyticsEventType.work) {
+          while (qtyQueue.isNotEmpty && !qtyQueue.first.timestamp.isAfter(effectiveEnd)) {
             final rec = qtyQueue.removeAt(0);
-            if (rec.timestamp.isBefore(raw.startTime)) continue;
-            qty += rec.qty;
+            if (!rec.timestamp.isBefore(raw.startTime)) qty += rec.qty;
           }
-        } else if (type == AnalyticsEventType.setup) {
-          while (setupQueue.isNotEmpty &&
-              !setupQueue.first.timestamp.isAfter(effectiveEnd)) {
+        } else if (eventType == AnalyticsEventType.setup) {
+          while (setupQueue.isNotEmpty && !setupQueue.first.timestamp.isAfter(effectiveEnd)) {
             final rec = setupQueue.removeAt(0);
-            if (rec.timestamp.isBefore(raw.startTime)) continue;
-            setupQty += rec.qty;
+            if (!rec.timestamp.isBefore(raw.startTime)) setupQty += rec.qty;
           }
         }
 
         events.add(AnalyticsEvent(
           id: raw.id,
-          type: type,
+          type: eventType,
           startTime: raw.startTime.toLocal(),
           endTime: raw.endTime?.toLocal(),
           employeeId: employeeId,
-          workplaceId: raw.workplaceId.isNotEmpty
-              ? raw.workplaceId
-              : (task?.stageId ?? ''),
+          workplaceId: raw.workplaceId.isNotEmpty ? raw.workplaceId : (taskData?.stageId ?? ''),
           taskId: taskId,
-          orderId: orderId,
-          customer: customer,
+          orderId: taskData?.orderId ?? '',
+          customer: taskData?.customer,
           note: raw.note,
           qty: qty,
           setupQty: setupQty,
-          isActive: isActive,
+          isActive: raw.endTime == null,
         ));
       }
-
-      // Если qty или setup остались «висящими» (нет привязанного work-события),
-      // оставим их без события — они не повлияют на timeline, но смогут
-      // быть подсчитаны в общих агрегатах через TaskProvider напрямую.
     });
 
-    // 3. Сортируем итоговый список по времени.
-    events.sort((a, b) => a.startTime.compareTo(b.startTime));
+    events.sort((a,b)=>a.startTime.compareTo(b.startTime));
     return events;
   }
 
-  static AnalyticsEventType? _mapType(TaskTimeType raw) {
-    switch (raw) {
-      case TaskTimeType.production:
-        return AnalyticsEventType.work;
-      case TaskTimeType.pause:
-        return AnalyticsEventType.pause;
-      case TaskTimeType.problem:
-        return AnalyticsEventType.problem;
-      case TaskTimeType.setup:
-        return AnalyticsEventType.setup;
-      case TaskTimeType.shiftChange:
+  static (DateTime, DateTime?)? _normalizeTimeRange(DateTime start, DateTime? end, DateTime reference) {
+    final utcStart = start.toUtc();
+    DateTime? utcEnd = end?.toUtc();
+    if (utcEnd == null) return (utcStart, null);
+    if (utcEnd.isBefore(utcStart)) {
+      final crossedMidnight = utcEnd.difference(utcStart).inHours.abs() <= 18;
+      if (crossedMidnight) {
+        utcEnd = utcEnd.add(const Duration(days: 1));
+      } else {
         return null;
+      }
     }
+    if (utcEnd.isAfter(reference.add(const Duration(days: 31)))) return null;
+    return (utcStart, utcEnd);
   }
 
-  static bool _overlapsMonth(
-      DateTime start, DateTime? end, DateTime monthFirst, DateTime monthEnd) {
-    final endEffective = end ?? DateTime.now();
-    // overlap, если start < monthEnd && end >= monthFirst
-    return start.toLocal().isBefore(monthEnd) &&
-        !endEffective.toLocal().isBefore(monthFirst);
-  }
-
-  static double _parseQty(String raw) {
-    final normalized = raw.replaceAll(',', '.').trim();
-    final match =
-        RegExp(r'-?[0-9]+(?:\.[0-9]+)?').firstMatch(normalized);
-    if (match != null) {
-      return double.tryParse(match.group(0)!) ?? 0;
-    }
-    return double.tryParse(normalized) ?? 0;
-  }
+  static AnalyticsEventType? _mapType(TaskTimeType raw) { switch (raw) { case TaskTimeType.production:return AnalyticsEventType.work; case TaskTimeType.pause:return AnalyticsEventType.pause; case TaskTimeType.problem:return AnalyticsEventType.problem; case TaskTimeType.setup:return AnalyticsEventType.setup; case TaskTimeType.shiftChange:return null; } }
+  static bool _overlapsMonth(DateTime start, DateTime? end, DateTime monthFirst, DateTime monthEnd) { final endEffective = end ?? DateTime.now().toUtc(); return start.isBefore(monthEnd) && !endEffective.isBefore(monthFirst); }
+  static double _parseQty(String raw) { final normalized = raw.replaceAll(',', '.').trim(); final match = RegExp(r'-?[0-9]+(?:\.[0-9]+)?').firstMatch(normalized); if (match != null) return double.tryParse(match.group(0)!) ?? 0; return double.tryParse(normalized) ?? 0; }
 }
 
-class _QtyRecord {
-  final DateTime timestamp;
-  final double qty;
-  const _QtyRecord({required this.timestamp, required this.qty});
-}
+class _QtyRecord { final DateTime timestamp; final double qty; const _QtyRecord({required this.timestamp, required this.qty}); }
+class _TaskJoinData { final String stageId; final String orderId; final String? customer; const _TaskJoinData({required this.stageId, required this.orderId, this.customer}); }
