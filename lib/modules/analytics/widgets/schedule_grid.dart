@@ -10,6 +10,9 @@ import '../models/work_schedule_entry.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
 
+const double _employeeColumnWidth = 220;
+const double _dayColumnWidth = 74;
+
 class ScheduleGrid extends StatelessWidget {
   const ScheduleGrid({
     super.key,
@@ -43,9 +46,10 @@ class ScheduleGrid extends StatelessWidget {
               .compareTo('${b.lastName} ${b.firstName}'));
 
     return LayoutBuilder(builder: (context, constraints) {
+      final contentWidth = _employeeColumnWidth + _dayColumnWidth * days.length;
       final width = constraints.maxWidth.isFinite
-          ? math.max(constraints.maxWidth, 2400.0)
-          : 2400.0;
+          ? math.max(constraints.maxWidth, contentWidth)
+          : contentWidth;
       return SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: SizedBox(
@@ -71,7 +75,7 @@ class ScheduleGrid extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 220,
+            width: _employeeColumnWidth,
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: const Text('Сотрудник',
@@ -83,7 +87,7 @@ class ScheduleGrid extends StatelessWidget {
           ),
           for (final d in days)
             SizedBox(
-              width: 74,
+              width: _dayColumnWidth,
               child: Padding(
                 padding: const EdgeInsets.all(8),
                 child: Text(
@@ -118,7 +122,7 @@ class ScheduleGrid extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 220,
+            width: _employeeColumnWidth,
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
@@ -132,7 +136,7 @@ class ScheduleGrid extends StatelessWidget {
           ),
           for (final d in days)
             SizedBox(
-              width: 74,
+              width: _dayColumnWidth,
               child: _Cell(
                 month: month,
                 employeeId: employee.id,
