@@ -116,8 +116,9 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                       child: AnalyticsKpiCard(
                           label: 'КПД',
                           value: '${kpd.kpdPercent.round()}%',
-                          sub:
-                              'Сравнение с предыдущими месяцами'),
+                          sub: kpd.noBaseline
+                              ? 'Нет базы — показан безопасный fallback'
+                              : 'К средней базе всех прошлых месяцев'),
                     ),
                   ],
                 ),
