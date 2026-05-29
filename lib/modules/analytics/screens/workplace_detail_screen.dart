@@ -7,6 +7,7 @@ import '../calculators/kpd_calculator.dart';
 import '../calculators/rating_calculator.dart';
 import '../calculators/timeline_calculator.dart';
 import '../models/analytics_event.dart';
+import '../services/analytics_pdf_export_service.dart';
 import '../services/analytics_permission_service.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
@@ -35,11 +36,45 @@ class WorkplaceDetailScreen extends StatefulWidget {
 class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
   late String _workplaceId;
   int? _selectedDay;
+  final _pdfService = AnalyticsPdfExportService();
+  bool _pdfLoading = false;
 
   @override
   void initState() {
     super.initState();
     _workplaceId = widget.workplaceId;
+  }
+
+  Future<void> _exportPdf(PersonnelProvider personnel) async {
+    if (_pdfLoading) return;
+    setState(() => _pdfLoading = true);
+    try {
+      final path = await _pdfService.exportWorkplaceDetailPdf(
+        service: widget.service,
+        personnel: personnel,
+        workplaceId: _workplaceId,
+        selectedDay: _selectedDay,
+      );
+      if (!mounted || path == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('PDF сохранён: $path'),
+          action: SnackBarAction(
+            label: 'Открыть',
+            onPressed: () => _pdfService.openPdfFile(path),
+          ),
+        ),
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Workplace PDF export failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось создать PDF: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _pdfLoading = false);
+    }
   }
 
   @override
@@ -217,6 +252,17 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                     fontSize: 11)),
           ),
           const SizedBox(width: 12),
+          TextButton.icon(
+            onPressed: _pdfLoading ? null : () => _exportPdf(personnel),
+            icon: _pdfLoading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.picture_as_pdf_outlined),
+            label: Text(_pdfLoading ? 'Создаём PDF…' : 'Скачать PDF'),
+          ),
           DropdownButton<String>(
             value: _workplaceId,
             dropdownColor: AnalyticsColors.card2,
