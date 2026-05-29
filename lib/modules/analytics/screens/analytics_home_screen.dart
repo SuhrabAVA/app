@@ -12,40 +12,36 @@ import '../widgets/analytics_month_picker.dart';
 import '../widgets/analytics_shell.dart';
 import '../widgets/analytics_states.dart';
 import '../widgets/analytics_topbar.dart';
-import '../widgets/employees_table.dart';
 import '../widgets/salary_settings_drawer.dart';
-import '../widgets/schedule_grid.dart';
-import '../widgets/workplaces_table.dart';
 import 'employee_detail_screen.dart';
-import 'workplace_detail_screen.dart';
+import 'employees_analytics_screen.dart';
+import 'work_schedule_screen.dart';
+import 'workplaces_analytics_screen.dart';
 
 class AnalyticsHomeScreen extends StatefulWidget {
-  const AnalyticsHomeScreen({super.key, required this.permission});
+  const AnalyticsHomeScreen({
+    super.key,
+    required this.permission,
+    this.initialTab = AnalyticsTopTab.employees,
+  });
+
   final AnalyticsPermissionService permission;
+  final AnalyticsTopTab initialTab;
 
   @override
   State<AnalyticsHomeScreen> createState() => _AnalyticsHomeScreenState();
 }
 
 class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
-  AnalyticsTopTab _tab = AnalyticsTopTab.employees;
+  late AnalyticsTopTab _tab;
   late AnalyticsService _service;
   bool _bootstrapped = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  // Отдельные контроллеры на каждую вкладку — чтобы Scrollbar и
-  // SingleChildScrollView всегда использовали один и тот же controller
-  // и не пытались хватать PrimaryScrollController.
-  late final ScrollController _scrollEmployees;
-  late final ScrollController _scrollWorkplaces;
-  late final ScrollController _scrollSchedule;
-
   @override
   void initState() {
     super.initState();
-    _scrollEmployees = ScrollController();
-    _scrollWorkplaces = ScrollController();
-    _scrollSchedule = ScrollController();
+    _tab = widget.initialTab;
   }
 
   @override
@@ -75,9 +71,6 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
     context.read<TaskProvider>().removeListener(_onProvidersChanged);
     context.read<OrdersProvider>().removeListener(_onProvidersChanged);
     _service.dispose();
-    _scrollEmployees.dispose();
-    _scrollWorkplaces.dispose();
-    _scrollSchedule.dispose();
     super.dispose();
   }
 
@@ -121,17 +114,7 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
                 onBack: () => Navigator.of(context).maybePop(),
               ),
               _filtersBar(state.month),
-              Expanded(
-                child: state.loading
-                    ? const AnalyticsLoadingState()
-                    : state.error != null
-                        ? AnalyticsErrorState(
-                            message:
-                                'Не удалось загрузить аналитику.\n${state.error}',
-                            onRetry: () => _service.refresh(),
-                          )
-                        : _content(state),
-              ),
+              Expanded(child: _content()),
             ],
           ),
         );
@@ -180,81 +163,24 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
     );
   }
 
-  Widget _content(state) {
-    switch (_tab) {
-      case AnalyticsTopTab.employees:
-        return _scrollable(
-          controller: _scrollEmployees,
-          child: EmployeesTable(
-            service: _service,
-            personnel: context.read<PersonnelProvider>(),
-            canViewFinance: widget.permission.canViewFinance,
-            onEmployeeTap: (id) {
-              Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => EmployeeDetailScreen(
-                  service: _service,
-                  permission: widget.permission,
-                  employeeId: id,
-                ),
-              ));
-            },
-          ),
-        );
-      case AnalyticsTopTab.workplaces:
-        return _scrollable(
-          controller: _scrollWorkplaces,
-          child: WorkplacesTable(
-            service: _service,
-            personnel: context.read<PersonnelProvider>(),
-            canEditCoefficient: widget.permission.canEdit,
-            onWorkplaceTap: (id) {
-              Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => WorkplaceDetailScreen(
-                  service: _service,
-                  permission: widget.permission,
-                  workplaceId: id,
-                ),
-              ));
-            },
-          ),
-        );
-      case AnalyticsTopTab.schedule:
-        return _scrollable(
-          controller: _scrollSchedule,
-          child: ScheduleGrid(
-            service: _service,
-            personnel: context.read<PersonnelProvider>(),
-            canEdit: widget.permission.canEdit,
-          ),
-        );
-    }
-  }
-
-  Widget _scrollable({
-    required Widget child,
-    required ScrollController controller,
-  }) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        child: Container(
-          // Bounded height приходит сверху от Expanded -> Padding -> Container.
-          // Scrollbar и SingleChildScrollView используют ОДИН ScrollController,
-          // primary: false — чтобы не цепляться за PrimaryScrollController.
-          decoration: BoxDecoration(
-            color: AnalyticsColors.card,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AnalyticsColors.line),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Scrollbar(
-            controller: controller,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: controller,
-              primary: false,
-              child: child,
-            ),
-          ),
+  Widget _content() {
+    return IndexedStack(
+      index: _tab.index,
+      sizing: StackFit.expand,
+      children: [
+        EmployeesAnalyticsScreen(
+          service: _service,
+          permission: widget.permission,
         ),
-      );
+        WorkplacesAnalyticsScreen(
+          service: _service,
+          permission: widget.permission,
+        ),
+        WorkScheduleScreen(
+          service: _service,
+          permission: widget.permission,
+        ),
+      ],
+    );
+  }
 }
