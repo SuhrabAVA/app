@@ -13,6 +13,7 @@ import '../widgets/analytics_shell.dart';
 import '../widgets/analytics_states.dart';
 import '../widgets/analytics_topbar.dart';
 import '../widgets/salary_settings_drawer.dart';
+import 'analytics_access_denied_screen.dart';
 import 'employee_detail_screen.dart';
 import 'employees_analytics_screen.dart';
 import 'work_schedule_screen.dart';
@@ -53,6 +54,7 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
         personnel: context.read<PersonnelProvider>(),
         orders: context.read<OrdersProvider>(),
         tasks: context.read<TaskProvider>(),
+        permission: widget.permission,
       );
       _service.loadMonth(AnalyticsMonth.current());
       // если пришла обновлённая база — перезагрузим аналитику.
@@ -83,11 +85,15 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
         final state = _service.state;
         final canViewAll = permission.canViewAllEmployees;
 
-        // Сотрудник без прав видит только свою деталку.
+        // Сотрудник без прав видит только свою деталку; прямые
+        // маршруты в разделы списка/графиков/рабочих мест блокируются явно.
+        if (!canViewAll && widget.initialTab != AnalyticsTopTab.employees) {
+          return const AnalyticsAccessDeniedScreen();
+        }
+
         if (!canViewAll) {
           if (permission.currentEmployeeId == null) {
-            return const AnalyticsShell(
-                child: Center(child: AnalyticsAccessDeniedState()));
+            return const AnalyticsAccessDeniedScreen();
           }
           // Сразу подсунем деталку сотрудника.
           return EmployeeDetailScreen(

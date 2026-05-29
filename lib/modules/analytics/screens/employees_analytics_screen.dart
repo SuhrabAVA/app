@@ -70,7 +70,7 @@ class _EmployeesAnalyticsScreenState extends State<EmployeesAnalyticsScreen> {
           child: EmployeesTable(
             service: widget.service,
             personnel: personnel,
-            canViewFinance: widget.permission.canViewFinance,
+            permission: widget.permission,
             onEmployeeTap: (id) {
               Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => EmployeeDetailScreen(

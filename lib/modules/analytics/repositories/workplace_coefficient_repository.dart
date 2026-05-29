@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/workplace_coefficient.dart';
+import '../services/analytics_permission_service.dart';
 
 class WorkplaceCoefficientRepository {
   WorkplaceCoefficientRepository({SupabaseClient? client})
@@ -48,11 +49,15 @@ class WorkplaceCoefficientRepository {
   }
 
   Future<void> upsert({
+    required AnalyticsPermissionService? permission,
     required String workplaceId,
     required double coefficient,
     required DateTime month,
     String? updatedBy,
   }) async {
+    if (permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     final iso = _isoDate(DateTime(month.year, month.month, 1));
     await _client.from('workplace_coefficients').upsert(
       {
