@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../../orders/order_model.dart';
 import '../../orders/orders_provider.dart';
 import '../../personnel/personnel_provider.dart';
 import '../../tasks/task_provider.dart';
@@ -133,19 +132,10 @@ class AnalyticsService extends ChangeNotifier {
     _state = _state.copyWith(month: month, loading: true, clearError: true);
     notifyListeners();
     try {
-      // 1. Заказы по id для customer.
-      final ordersById = <String, OrderModel>{
-        for (final o in orders.orders) o.id: o,
-      };
+      // 1. События аналитики на текущий месяц.
+      final events = await _analyticsRepo.loadEventsForMonth(month);
 
-      // 2. События аналитики на текущий месяц.
-      final events = _analyticsRepo.buildEvents(
-        tasks: tasks.tasks,
-        ordersById: ordersById,
-        month: month,
-      );
-
-      // 3. Settings, coefficients, adjustments, schedules, claims.
+      // 2. Settings, coefficients, adjustments, schedules, claims.
       final coeffsFuture = _coefficientsRepo.loadEffective(month.firstDay);
       final settingsFuture =
           _salarySettingsRepo.loadEffective(month.firstDay);
@@ -167,15 +157,11 @@ class AnalyticsService extends ChangeNotifier {
       final empPayTypes = await employeePayTypesFuture;
       final claims = await claimsFuture;
 
-      // 4. Скорости предыдущих месяцев — для КПД (3 предыдущих месяца).
+      // 3. Скорости предыдущих месяцев — для КПД (3 предыдущих месяца).
       final prevMonths = month.previousMonths(3);
       final prevSpeeds = <String, List<double>>{};
       for (final prev in prevMonths) {
-        final prevEvents = _analyticsRepo.buildEvents(
-          tasks: tasks.tasks,
-          ordersById: ordersById,
-          month: prev,
-        );
+        final prevEvents = await _analyticsRepo.loadEventsForMonth(prev);
         final byWorkplace = <String, List<AnalyticsEvent>>{};
         for (final e in prevEvents) {
           if (e.type != AnalyticsEventType.work) continue;
