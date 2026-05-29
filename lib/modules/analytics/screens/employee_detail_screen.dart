@@ -19,6 +19,7 @@ import '../widgets/analytics_states.dart';
 import '../widgets/day_events_table.dart';
 import '../widgets/employee_workplace_strip.dart';
 import '../widgets/timeline_widget.dart';
+import 'analytics_access_denied_screen.dart';
 
 class EmployeeDetailScreen extends StatefulWidget {
   const EmployeeDetailScreen({
@@ -52,8 +53,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
   @override
   Widget build(BuildContext context) {
     if (!widget.permission.canViewEmployee(_employeeId)) {
-      return const AnalyticsShell(
-          child: Center(child: AnalyticsAccessDeniedState()));
+      return const AnalyticsAccessDeniedScreen();
     }
     return AnimatedBuilder(
       animation: widget.service,

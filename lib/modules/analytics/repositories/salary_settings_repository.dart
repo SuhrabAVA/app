@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/salary_settings.dart';
+import '../services/analytics_permission_service.dart';
 
 class SalarySettingsRepository {
   SalarySettingsRepository({SupabaseClient? client})
@@ -28,12 +29,16 @@ class SalarySettingsRepository {
 
   /// Сохраняет настройки для указанного месяца (upsert).
   Future<SalarySettings> save({
+    required AnalyticsPermissionService? permission,
     required DateTime month,
     required double nightPercent,
     required double mealAmount,
     required double socialDefault,
     String? updatedBy,
   }) async {
+    if (permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     final firstDay = DateTime(month.year, month.month, 1);
     final iso = _isoDate(firstDay);
     final result = await _client

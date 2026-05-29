@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'analytics_module.dart';
+import 'screens/analytics_access_denied_screen.dart';
 import 'widgets/analytics_topbar.dart';
 
 class AnalyticsRoutes {
@@ -10,6 +11,14 @@ class AnalyticsRoutes {
   static const String employees = '/analytics/employees';
   static const String workplaces = '/analytics/workplaces';
   static const String schedule = '/analytics/schedule';
+  static const String accessDenied = '/analytics/access-denied';
+
+  static Route<dynamic> buildAccessDeniedRoute() {
+    return MaterialPageRoute(
+      settings: const RouteSettings(name: accessDenied),
+      builder: (_) => const AnalyticsAccessDeniedScreen(),
+    );
+  }
 
   static Route<dynamic> buildHomeRoute({
     required bool isTechLeader,

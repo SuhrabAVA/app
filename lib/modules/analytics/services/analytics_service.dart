@@ -17,6 +17,7 @@ import '../repositories/salary_adjustments_repository.dart';
 import '../repositories/salary_settings_repository.dart';
 import '../repositories/work_schedule_repository.dart';
 import '../repositories/workplace_coefficient_repository.dart';
+import 'analytics_permission_service.dart';
 
 /// Состояние данных аналитики на выбранный месяц.
 class AnalyticsState {
@@ -104,13 +105,15 @@ class AnalyticsService extends ChangeNotifier {
     EmployeeStatusRepository? statusRepo,
     ClaimsRepository? claimsRepo,
     AnalyticsRepository? analyticsRepo,
+    AnalyticsPermissionService? permission,
   })  : _coefficientsRepo = coefficientsRepo ?? WorkplaceCoefficientRepository(),
         _salarySettingsRepo = salarySettingsRepo ?? SalarySettingsRepository(),
         _adjustmentsRepo = adjustmentsRepo ?? SalaryAdjustmentsRepository(),
         _scheduleRepo = scheduleRepo ?? WorkScheduleRepository(),
         _statusRepo = statusRepo ?? EmployeeStatusRepository(),
         _claimsRepo = claimsRepo ?? ClaimsRepository(),
-        _analyticsRepo = analyticsRepo ?? AnalyticsRepository();
+        _analyticsRepo = analyticsRepo ?? AnalyticsRepository(),
+        _permission = permission;
 
   final PersonnelProvider personnel;
   final OrdersProvider orders;
@@ -123,6 +126,7 @@ class AnalyticsService extends ChangeNotifier {
   final EmployeeStatusRepository _statusRepo;
   final ClaimsRepository _claimsRepo;
   final AnalyticsRepository _analyticsRepo;
+  final AnalyticsPermissionService? _permission;
 
   AnalyticsState _state =
       AnalyticsState(month: AnalyticsMonth.current(), loading: true);
@@ -190,7 +194,11 @@ class AnalyticsService extends ChangeNotifier {
     required double coefficient,
     String? actorId,
   }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     await _coefficientsRepo.upsert(
+      permission: _permission,
       workplaceId: workplaceId,
       coefficient: coefficient,
       month: _state.month.firstDay,
@@ -209,7 +217,11 @@ class AnalyticsService extends ChangeNotifier {
     required double socialDefault,
     String? actorId,
   }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     final saved = await _salarySettingsRepo.save(
+      permission: _permission,
       month: _state.month.firstDay,
       nightPercent: nightPercent,
       mealAmount: mealAmount,
@@ -223,7 +235,14 @@ class AnalyticsService extends ChangeNotifier {
   /// Сохраняет ручные корректировки зарплаты по сотруднику за месяц.
   Future<void> saveSalaryAdjustments(SalaryAdjustments adj,
       {String? actorId}) async {
-    final saved = await _adjustmentsRepo.upsert(adj, updatedBy: actorId);
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
+    final saved = await _adjustmentsRepo.upsert(
+      adj,
+      permission: _permission,
+      updatedBy: actorId,
+    );
     final next = Map<String, SalaryAdjustments>.from(_state.adjustments);
     next[saved.employeeId] = saved;
     _state = _state.copyWith(adjustments: next);

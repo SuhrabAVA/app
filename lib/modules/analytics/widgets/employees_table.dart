@@ -10,6 +10,7 @@ import '../models/analytics_event.dart';
 import '../models/employee_status.dart';
 import '../models/pay_type.dart';
 import '../models/salary_adjustments.dart';
+import '../services/analytics_permission_service.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
 import '../utils/analytics_constants.dart';
@@ -20,17 +21,18 @@ class EmployeesTable extends StatelessWidget {
     super.key,
     required this.service,
     required this.personnel,
-    required this.canViewFinance,
+    required this.permission,
     required this.onEmployeeTap,
   });
 
   final AnalyticsService service;
   final PersonnelProvider personnel;
-  final bool canViewFinance;
+  final AnalyticsPermissionService permission;
   final ValueChanged<String> onEmployeeTap;
 
   @override
   Widget build(BuildContext context) {
+    final canViewFinance = permission.canViewFinance;
     final state = service.state;
     final events = state.events;
     final eventsByEmployee = <String, List<AnalyticsEvent>>{};
@@ -47,8 +49,9 @@ class EmployeesTable extends StatelessWidget {
       for (final s in state.statuses) s.id: s,
     };
 
-    final activeEmployees =
-        personnel.employees.where((e) => !e.isFired).toList()
+    final activeEmployees = personnel.employees
+        .where((e) => !e.isFired && permission.canViewEmployee(e.id))
+        .toList()
           ..sort((a, b) => ('${a.lastName} ${a.firstName}')
               .compareTo('${b.lastName} ${b.firstName}'));
 
@@ -176,7 +179,9 @@ class EmployeesTable extends StatelessWidget {
     }).toList();
 
     return InkWell(
-      onTap: () => onEmployeeTap(r.employee.id),
+      onTap: permission.canViewEmployee(r.employee.id)
+          ? () => onEmployeeTap(r.employee.id)
+          : null,
       child: Container(
         decoration: BoxDecoration(
           color: AnalyticsColors.card2.withOpacity(0.6),
