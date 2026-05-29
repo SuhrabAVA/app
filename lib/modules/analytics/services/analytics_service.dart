@@ -30,7 +30,7 @@ class AnalyticsState {
   final Map<String, String> employeeStatusIds;
   final Map<String, String?> employeePayTypes;
   final List<ClaimModel> claims;
-  /// Скорости рабочих мест за каждый из предыдущих месяцев (от 1 до 12).
+  /// Помесячные скорости рабочих мест за все месяцы до выбранного.
   /// Используется для расчёта КПД.
   final Map<String, List<double>> workplacePreviousSpeeds;
   final bool loading;
@@ -157,24 +157,9 @@ class AnalyticsService extends ChangeNotifier {
       final empPayTypes = await employeePayTypesFuture;
       final claims = await claimsFuture;
 
-      // 3. Скорости предыдущих месяцев — для КПД (3 предыдущих месяца).
-      final prevMonths = month.previousMonths(3);
-      final prevSpeeds = <String, List<double>>{};
-      for (final prev in prevMonths) {
-        final prevEvents = await _analyticsRepo.loadEventsForMonth(prev);
-        final byWorkplace = <String, List<AnalyticsEvent>>{};
-        for (final e in prevEvents) {
-          if (e.type != AnalyticsEventType.work) continue;
-          byWorkplace.putIfAbsent(e.workplaceId, () => []).add(e);
-        }
-        byWorkplace.forEach((wpId, list) {
-          final qty = list.fold<double>(0, (s, e) => s + e.qty);
-          final minutes = list.fold<int>(0, (s, e) => s + e.durationMinutes());
-          if (minutes <= 0) return;
-          final speed = qty / minutes;
-          prevSpeeds.putIfAbsent(wpId, () => []).add(speed);
-        });
-      }
+      // 3. Помесячная база скоростей по всем месяцам до выбранного.
+      final prevSpeeds =
+          await _analyticsRepo.loadPreviousWorkplaceMonthSpeeds(month);
 
       _state = AnalyticsState(
         month: month,

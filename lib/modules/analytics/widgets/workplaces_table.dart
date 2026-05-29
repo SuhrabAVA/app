@@ -185,7 +185,9 @@ class WorkplacesTable extends StatelessWidget {
             _cell('${r.claims}'),
             _cellLong(
               '${r.kpd.kpdPercent.round()}%',
-              r.kpd.noBaseline ? 'нет базы' : 'к предыдущим месяцам',
+              r.kpd.noBaseline
+                  ? 'нет базы — безопасный fallback'
+                  : 'к средней базе всех прошлых месяцев',
             ),
           ],
         ),
