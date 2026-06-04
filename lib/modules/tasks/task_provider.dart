@@ -208,6 +208,9 @@ class TaskProvider with ChangeNotifier {
   final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
   Future<void>? _activeRefresh;
   bool _refreshQueued = false;
+  Timer? _refreshDebounceTimer;
+  bool _stageSequencePreloadRunning = false;
+  Set<String>? _pendingStageSequencePreloadOrderIds;
 
   TaskProvider() {
     _listenToTasks();
@@ -475,6 +478,7 @@ class TaskProvider with ChangeNotifier {
 
   Future<void> _refreshOnceWithRetry() async {
     try {
+      late final Set<String> orderIds;
       await _retryTransientSupabase('refresh tasks', () async {
         await _ensureAuthed();
         await _loadWorkplaceAliases();
@@ -484,11 +488,14 @@ class TaskProvider with ChangeNotifier {
           ..clear()
           ..addAll(
               List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
-        final orderIds = _tasks.map((t) => t.orderId).toSet();
-        _loadedStageSequenceOrderIds.clear();
-        await _preloadStageSequences(orderIds);
+        orderIds = _tasks
+            .map((t) => t.orderId.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        _invalidateStageSequenceCache(orderIds);
       });
       notifyListeners();
+      _scheduleStageSequencePreload(orderIds);
     } catch (e, st) {
       debugPrint('❌ refresh tasks error: $e\n$st');
     }
@@ -551,8 +558,8 @@ class TaskProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'tasks',
-          callback: (payload) async {
-            await refresh();
+          callback: (payload) {
+            _scheduleRefresh();
           },
         )
         .subscribe();
@@ -603,8 +610,8 @@ class TaskProvider with ChangeNotifier {
             event: PostgresChangeEvent.all,
             schema: schema,
             table: table,
-            callback: (_) async {
-              await refresh();
+            callback: (_) {
+              _scheduleRefresh();
             },
           )
           .subscribe();
@@ -619,6 +626,61 @@ class TaskProvider with ChangeNotifier {
       _supabase.removeChannel(channel);
     }
     _stageSyncChannels.clear();
+  }
+
+
+  void _scheduleRefresh({Duration delay = const Duration(milliseconds: 350)}) {
+    _refreshDebounceTimer?.cancel();
+    _refreshDebounceTimer = Timer(delay, () {
+      _refreshDebounceTimer = null;
+      refresh();
+    });
+  }
+
+  void _invalidateStageSequenceCache(Set<String> activeOrderIds) {
+    _loadedStageSequenceOrderIds.removeWhere((id) => !activeOrderIds.contains(id));
+    _orderStageSequences.removeWhere((id, _) => !activeOrderIds.contains(id));
+    _orderStageNames.removeWhere((id, _) => !activeOrderIds.contains(id));
+    _orderStageGroupMaps.removeWhere((id, _) => !activeOrderIds.contains(id));
+  }
+
+  void _scheduleStageSequencePreload(Iterable<String> orderIds) {
+    final pending = orderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .where((id) => !_loadedStageSequenceOrderIds.contains(id))
+        .toSet();
+    if (pending.isEmpty) return;
+
+    final existing = _pendingStageSequencePreloadOrderIds;
+    if (existing == null) {
+      _pendingStageSequencePreloadOrderIds = pending;
+    } else {
+      existing.addAll(pending);
+    }
+
+    if (_stageSequencePreloadRunning) return;
+    _stageSequencePreloadRunning = true;
+    unawaited(_drainStageSequencePreloadQueue());
+  }
+
+  Future<void> _drainStageSequencePreloadQueue() async {
+    try {
+      while (_pendingStageSequencePreloadOrderIds?.isNotEmpty ?? false) {
+        final batch = _pendingStageSequencePreloadOrderIds!;
+        _pendingStageSequencePreloadOrderIds = null;
+        await _preloadStageSequences(batch);
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint('❌ preload stage sequences error: $e\n$st');
+    } finally {
+      _stageSequencePreloadRunning = false;
+      if (_pendingStageSequencePreloadOrderIds?.isNotEmpty ?? false) {
+        _stageSequencePreloadRunning = true;
+        unawaited(_drainStageSequencePreloadQueue());
+      }
+    }
   }
 
   // ===== updates =====
@@ -640,7 +702,13 @@ class TaskProvider with ChangeNotifier {
       if (orderId.isEmpty) {
         continue;
       }
-      final data = await _fetchStageSequence(orderId);
+      final data = await _fetchStageSequence(orderId).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () {
+          debugPrint('⚠️ preload stage sequence timeout for order $orderId');
+          return const _StageSequenceData.empty();
+        },
+      );
       _loadedStageSequenceOrderIds.add(orderId);
       if (data.ids.isNotEmpty) {
         _orderStageSequences[orderId] = data.ids;
@@ -2354,6 +2422,8 @@ class TaskProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _refreshDebounceTimer?.cancel();
+    _refreshDebounceTimer = null;
     if (_tasksChannel != null) {
       _supabase.removeChannel(_tasksChannel!);
       _tasksChannel = null;

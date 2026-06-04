@@ -51,8 +51,9 @@ class EditOrderScreen extends StatefulWidget {
   State<EditOrderScreen> createState() => _EditOrderScreenState();
 }
 
-const bool _disableSwitchableStageDotTooltipDiagnostic =
-    bool.fromEnvironment('DISABLE_SWITCHABLE_STAGE_DOT_TOOLTIP_DIAGNOSTIC');
+final bool _disableSwitchableStageDotTooltipDiagnostic =
+    defaultTargetPlatform == TargetPlatform.windows ||
+        bool.fromEnvironment('DISABLE_SWITCHABLE_STAGE_DOT_TOOLTIP_DIAGNOSTIC');
 
 class _SwitchableStageOption {
   const _SwitchableStageOption(this.stageId, this.label);
