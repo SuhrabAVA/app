@@ -6,6 +6,7 @@ import '../services/analytics_pdf_export_service.dart';
 import '../services/analytics_permission_service.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
+import '../widgets/analytics_shell.dart';
 import '../widgets/analytics_states.dart';
 import '../widgets/schedule_grid.dart';
 
@@ -95,54 +96,77 @@ class _WorkScheduleScreenState extends State<WorkScheduleScreen> {
           );
         }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: _PdfButton(
-                  loading: _pdfLoading,
-                  onPressed: () => _exportPdf(personnel),
-                ),
+        return _AnalyticsTableCard(
+          controller: _scrollController,
+          title: 'Графики работы',
+          subtitle:
+              'В каждой ячейке сверху время прихода, по центру день и тип смены, снизу время ухода. '
+              'ЛКМ по числу переключает День → Ночь → Выходной, ПКМ по ячейке быстро открывает ввод времени прихода.',
+          trailing: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const _ScheduleLegend(),
+              AnalyticsPdfButton(
+                loading: _pdfLoading,
+                onPressed: () => _exportPdf(personnel),
               ),
-            ),
-            Expanded(
-              child: _AnalyticsTableCard(
-                controller: _scrollController,
-                child: ScheduleGrid(
-                  service: widget.service,
-                  personnel: personnel,
-                  canEdit: widget.permission.canEdit,
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
+          child: ScheduleGrid(
+            service: widget.service,
+            personnel: personnel,
+            canEdit: widget.permission.canEdit,
+          ),
         );
       },
     );
   }
 }
 
-class _PdfButton extends StatelessWidget {
-  const _PdfButton({required this.loading, required this.onPressed});
-
-  final bool loading;
-  final VoidCallback onPressed;
+/// Легенда смен в шапке графика: День / Ночь / Выходной.
+class _ScheduleLegend extends StatelessWidget {
+  const _ScheduleLegend();
 
   @override
   Widget build(BuildContext context) {
-    return FilledButton.icon(
-      onPressed: loading ? null : onPressed,
-      icon: loading
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.picture_as_pdf_outlined),
-      label: Text(loading ? 'Создаём PDF…' : 'Скачать PDF'),
+    return Wrap(
+      spacing: 12,
+      runSpacing: 6,
+      children: const [
+        _LegendItem(color: AnalyticsColors.yellow, label: 'День'),
+        _LegendItem(color: AnalyticsColors.blackShift, label: 'Ночь'),
+        _LegendItem(color: AnalyticsColors.gray, label: 'Выходной'),
+      ],
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 13,
+          height: 13,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: const Color(0x33FFFFFF)),
+          ),
+        ),
+        const SizedBox(width: 7),
+        Text(label,
+            style: const TextStyle(color: AnalyticsColors.muted, fontSize: 12)),
+      ],
     );
   }
 }
@@ -151,10 +175,16 @@ class _AnalyticsTableCard extends StatelessWidget {
   const _AnalyticsTableCard({
     required this.controller,
     required this.child,
+    required this.title,
+    this.subtitle,
+    this.trailing,
   });
 
   final ScrollController controller;
   final Widget child;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -165,16 +195,36 @@ class _AnalyticsTableCard extends StatelessWidget {
           color: AnalyticsColors.card,
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: AnalyticsColors.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x29000000),
+              blurRadius: 42,
+              offset: Offset(0, 12),
+            ),
+          ],
         ),
         clipBehavior: Clip.antiAlias,
-        child: Scrollbar(
-          controller: controller,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            controller: controller,
-            primary: false,
-            child: child,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnalyticsCardHeader(
+              title: title,
+              subtitle: subtitle,
+              trailing: trailing,
+            ),
+            const Divider(height: 1, color: AnalyticsColors.line),
+            Expanded(
+              child: Scrollbar(
+                controller: controller,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: controller,
+                  primary: false,
+                  child: child,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

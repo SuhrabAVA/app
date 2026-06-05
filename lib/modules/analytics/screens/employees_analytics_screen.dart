@@ -6,6 +6,7 @@ import '../services/analytics_pdf_export_service.dart';
 import '../services/analytics_permission_service.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
+import '../widgets/analytics_shell.dart';
 import '../widgets/analytics_states.dart';
 import '../widgets/employees_table.dart';
 import 'employee_detail_screen.dart';
@@ -98,63 +99,31 @@ class _EmployeesAnalyticsScreenState extends State<EmployeesAnalyticsScreen> {
           );
         }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: _PdfButton(
-                  loading: _pdfLoading,
-                  onPressed: () => _exportPdf(personnel),
-                ),
-              ),
-            ),
-            Expanded(
-              child: _AnalyticsTableCard(
-                controller: _scrollController,
-                child: EmployeesTable(
+        return _AnalyticsTableCard(
+          controller: _scrollController,
+          title: 'Сотрудники',
+          subtitle:
+              'Клик по строке открывает детальную аналитику. Таблица прокручивается по горизонтали и вертикали.',
+          trailing: AnalyticsPdfButton(
+            loading: _pdfLoading,
+            onPressed: () => _exportPdf(personnel),
+          ),
+          child: EmployeesTable(
+            service: widget.service,
+            personnel: personnel,
+            permission: widget.permission,
+            onEmployeeTap: (id) {
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => EmployeeDetailScreen(
                   service: widget.service,
-                  personnel: personnel,
                   permission: widget.permission,
-                  onEmployeeTap: (id) {
-                    Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => EmployeeDetailScreen(
-                        service: widget.service,
-                        permission: widget.permission,
-                        employeeId: id,
-                      ),
-                    ));
-                  },
+                  employeeId: id,
                 ),
-              ),
-            ),
-          ],
+              ));
+            },
+          ),
         );
       },
-    );
-  }
-}
-
-class _PdfButton extends StatelessWidget {
-  const _PdfButton({required this.loading, required this.onPressed});
-
-  final bool loading;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return FilledButton.icon(
-      onPressed: loading ? null : onPressed,
-      icon: loading
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.picture_as_pdf_outlined),
-      label: Text(loading ? 'Создаём PDF…' : 'Скачать PDF'),
     );
   }
 }
@@ -163,10 +132,16 @@ class _AnalyticsTableCard extends StatelessWidget {
   const _AnalyticsTableCard({
     required this.controller,
     required this.child,
+    required this.title,
+    this.subtitle,
+    this.trailing,
   });
 
   final ScrollController controller;
   final Widget child;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -177,16 +152,36 @@ class _AnalyticsTableCard extends StatelessWidget {
           color: AnalyticsColors.card,
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: AnalyticsColors.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x29000000),
+              blurRadius: 42,
+              offset: Offset(0, 12),
+            ),
+          ],
         ),
         clipBehavior: Clip.antiAlias,
-        child: Scrollbar(
-          controller: controller,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            controller: controller,
-            primary: false,
-            child: child,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnalyticsCardHeader(
+              title: title,
+              subtitle: subtitle,
+              trailing: trailing,
+            ),
+            const Divider(height: 1, color: AnalyticsColors.line),
+            Expanded(
+              child: Scrollbar(
+                controller: controller,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: controller,
+                  primary: false,
+                  child: child,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

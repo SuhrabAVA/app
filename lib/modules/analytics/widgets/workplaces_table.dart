@@ -11,6 +11,7 @@ import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
 import '../utils/format_utils.dart';
 import '../utils/h_scroll_sync.dart';
+import 'analytics_table_parts.dart';
 
 class WorkplacesTable extends StatefulWidget {
   const WorkplacesTable({
@@ -114,8 +115,8 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
     _maybeRecompute(state);
     final rows = _rows;
 
-    // Sticky column: 220 px. Rest: min 1280 px.
-    const stickyWidth = 220.0;
+    // Sticky column: 260 px. Rest: min 1280 px.
+    const stickyWidth = 260.0;
     const restMinWidth = 1280.0;
 
     return LayoutBuilder(builder: (context, constraints) {
@@ -134,13 +135,15 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
               children: [
                 _stickyHeaderCell(stickyWidth),
                 Expanded(
-                  child: SingleChildScrollView(
-                    controller: _ctrl(-1),
-                    scrollDirection: Axis.horizontal,
-                    physics: const ClampingScrollPhysics(),
-                    child: SizedBox(
-                      width: restWidth,
-                      child: _scrollableHeader(),
+                  child: StickyScrollArea(
+                    child: SingleChildScrollView(
+                      controller: _ctrl(-1),
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: restWidth,
+                        child: _scrollableHeader(),
+                      ),
                     ),
                   ),
                 ),
@@ -148,29 +151,43 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
             ),
           ),
           // ── Data rows ──────────────────────────────────────────────────
-          ...rows.asMap().entries.map((entry) {
-            final i = entry.key;
-            final r = entry.value;
-            return IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          // Hover локален для каждой строки (HoverableRow) → синхронный скролл
+          // и остальные строки не перерисовываются.
+          ValueListenableBuilder<double>(
+            valueListenable: _sync.offsetNotifier,
+            builder: (context, hOffset, _) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _stickyDataCell(r, stickyWidth),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      controller: _ctrl(i),
-                      scrollDirection: Axis.horizontal,
-                      physics: const ClampingScrollPhysics(),
-                      child: SizedBox(
-                        width: restWidth,
-                        child: _scrollableDataRow(r),
+                  for (var i = 0; i < rows.length; i++)
+                    HoverableRow(
+                      builder: (hovered) => IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _stickyDataCell(rows[i], stickyWidth, hovered),
+                            Expanded(
+                              child: StickyScrollArea(
+                                child: ClipRect(
+                                  child: Transform.translate(
+                                    offset: Offset(-hOffset, 0),
+                                    child: SizedBox(
+                                      width: restWidth,
+                                      child: _scrollableDataRow(
+                                          rows[i], i, hovered),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                 ],
-              ),
-            );
-          }),
+              );
+            },
+          ),
         ],
       );
     });
@@ -179,14 +196,16 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   Widget _stickyHeaderCell(double width) {
     return Container(
       width: width,
-      decoration: const BoxDecoration(color: Color(0xFF121A2E)),
+      decoration: const BoxDecoration(
+          gradient: AnalyticsColors.tableStickyHeaderGradient),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: const Text(
         'РАБОЧЕЕ МЕСТО',
         style: TextStyle(
-          color: Color(0xFFCBD5E1),
+          color: AnalyticsColors.tableHeaderText,
           fontSize: 11,
           fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
         ),
       ),
     );
@@ -201,15 +220,17 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
             child: Text(
               s.toUpperCase(),
               style: const TextStyle(
-                color: Color(0xFFCBD5E1),
+                color: AnalyticsColors.tableHeaderText,
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
               ),
             ),
           ),
         );
     return Container(
-      decoration: const BoxDecoration(color: Color(0xFF121A2E)),
+      decoration:
+          const BoxDecoration(gradient: AnalyticsColors.tableHeaderGradient),
       child: Row(
         children: [
           cell('Ед. изм.'),
@@ -226,16 +247,19 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
     );
   }
 
-  Widget _stickyDataCell(_WpRow r, double width) {
+  Widget _stickyDataCell(_WpRow r, double width, bool hovered) {
     return InkWell(
       onTap: () => widget.onWorkplaceTap(r.workplace.id),
       child: Container(
         width: width,
         decoration: BoxDecoration(
-          color: AnalyticsColors.card2.withOpacity(0.55),
-          border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+          gradient: hovered
+              ? AnalyticsColors.tableStickyHoverGradient
+              : AnalyticsColors.tableStickyColumnGradient,
+          border:
+              const Border(bottom: BorderSide(color: AnalyticsColors.line)),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Text(
           r.workplace.name,
           style: const TextStyle(
@@ -247,7 +271,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
     );
   }
 
-  Widget _scrollableDataRow(_WpRow r) {
+  Widget _scrollableDataRow(_WpRow r, int index, bool hovered) {
     final unit = r.workplace.unit?.trim().isNotEmpty == true
         ? r.workplace.unit!
         : 'ед.';
@@ -255,13 +279,17 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
         r.usefulMinutes > 0 ? r.qty / r.usefulMinutes : 0.0;
     final avgSetupSpeed =
         r.setupMinutes > 0 ? r.setupQty / r.setupMinutes : 0.0;
+    final rowColor = hovered
+        ? AnalyticsColors.rowHover
+        : (index.isEven ? AnalyticsColors.zebraOdd : AnalyticsColors.zebraEven);
 
     return InkWell(
       onTap: () => widget.onWorkplaceTap(r.workplace.id),
       child: Container(
         decoration: BoxDecoration(
-          color: AnalyticsColors.card2.withOpacity(0.55),
-          border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+          color: rowColor,
+          border:
+              const Border(bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         child: Row(
           children: [
@@ -298,7 +326,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   Widget _cell(String v, {int flex = 1}) => Expanded(
         flex: flex,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Text(
             v,
             style:
@@ -310,7 +338,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   Widget _cellLong(String top, String sub, {int flex = 2}) => Expanded(
         flex: flex,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

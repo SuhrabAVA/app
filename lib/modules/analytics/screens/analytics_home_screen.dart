@@ -143,41 +143,71 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
   }
 
   Widget _filtersBar(AnalyticsMonth month) {
+    // filter-group: подпись сверху, контрол снизу (как в .filters-card).
+    final monthGroup = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Месяц',
+            style: TextStyle(color: AnalyticsColors.muted, fontSize: 12)),
+        const SizedBox(height: 8),
+        AnalyticsMonthPicker(
+          month: month,
+          onChanged: (m) => _service.loadMonth(m),
+        ),
+      ],
+    );
+
+    final settingsButton = widget.permission.canViewFinance
+        ? TextButton.icon(
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 42),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              foregroundColor: AnalyticsColors.text,
+              backgroundColor: const Color(0xBF0F172A),
+              side: const BorderSide(color: AnalyticsColors.line),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            icon: const Icon(Icons.tune, size: 18),
+            label: const Text('Настройки оплаты'),
+          )
+        : null;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AnalyticsColors.card,
+          color: const Color(0xB80F172A),
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: AnalyticsColors.line),
         ),
-        // Wrap не позволяет блокам выехать за край, если окно узкое.
-        child: Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 560) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  monthGroup,
+                  if (settingsButton != null) ...[
+                    const SizedBox(height: 12),
+                    settingsButton,
+                  ],
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                const Text('Месяц:',
-                    style: TextStyle(
-                        color: AnalyticsColors.muted, fontSize: 12)),
-                const SizedBox(width: 10),
-                AnalyticsMonthPicker(
-                  month: month,
-                  onChanged: (m) => _service.loadMonth(m),
-                ),
+                monthGroup,
+                const Spacer(),
+                if (settingsButton != null) settingsButton,
               ],
-            ),
-            if (widget.permission.canViewFinance)
-              FilledButton.icon(
-                icon: const Icon(Icons.tune),
-                label: const Text('Настройки оплаты'),
-                onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-              ),
-          ],
+            );
+          },
         ),
       ),
     );

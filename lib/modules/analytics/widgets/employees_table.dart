@@ -16,6 +16,7 @@ import '../utils/analytics_colors.dart';
 import '../utils/analytics_constants.dart';
 import '../utils/format_utils.dart';
 import '../utils/h_scroll_sync.dart';
+import 'analytics_table_parts.dart';
 
 class EmployeesTable extends StatefulWidget {
   const EmployeesTable({
@@ -36,7 +37,10 @@ class EmployeesTable extends StatefulWidget {
 }
 
 class _EmployeesTableState extends State<EmployeesTable> {
-  // Linked horizontal-scroll sync — ONE controller per section, all synced.
+  // Linked horizontal-scroll sync — header and footer only (2 controllers).
+  // Body rows use ValueListenableBuilder + Transform.translate to avoid
+  // creating a ScrollController per row (which caused 50+ jumpTo() calls
+  // per scroll event and severe frame-rate drops).
   final HScrollSync _sync = HScrollSync();
   final Map<int, ScrollController> _ctrlCache = {};
 
@@ -44,6 +48,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
   AnalyticsState? _lastState;
   List<_Row> _rows = const [];
 
+  // Only header (-1) and footer (10000) get real scroll controllers.
   ScrollController _ctrl(int key) =>
       _ctrlCache.putIfAbsent(key, () => _sync.acquire());
 
@@ -113,8 +118,9 @@ class _EmployeesTableState extends State<EmployeesTable> {
     final canViewFinance = widget.permission.canViewFinance;
     final rows = _rows;
 
-    // Sticky column: 200 px. Rest: min 1300 (no finance) or 2280 (finance).
-    const stickyWidth = 200.0;
+    // Sticky column: 300 px (как .sticky-employee-column в эталоне).
+    // Rest: min 1300 (no finance) or 2280 (finance).
+    const stickyWidth = 300.0;
     final restMinWidth = canViewFinance ? 2280.0 : 1300.0;
 
     return LayoutBuilder(builder: (context, constraints) {
@@ -123,12 +129,12 @@ class _EmployeesTableState extends State<EmployeesTable> {
           : restMinWidth;
 
       Widget stickyCell(Widget child,
-          {Color? bg, BoxBorder? border, EdgeInsets? padding}) {
+          {Color? bg, Gradient? gradient, BoxBorder? border, EdgeInsets? padding}) {
         return Container(
           width: stickyWidth,
-          decoration: BoxDecoration(color: bg, border: border),
+          decoration: BoxDecoration(color: bg, gradient: gradient, border: border),
           padding: padding ??
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: child,
         );
       }
@@ -138,12 +144,13 @@ class _EmployeesTableState extends State<EmployeesTable> {
         Text(
           'СОТРУДНИК',
           style: const TextStyle(
-            color: Color(0xFFCBD5E1),
+            color: AnalyticsColors.tableHeaderText,
             fontSize: 11,
             fontWeight: FontWeight.w800,
+            letterSpacing: 0.4,
           ),
         ),
-        bg: const Color(0xFF121A2E),
+        gradient: AnalyticsColors.tableStickyHeaderGradient,
       );
 
       // ── Footer aggregates ────────────────────────────────────────────────
@@ -169,10 +176,10 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
       final footerSticky = stickyCell(
         _footerCell('всего смен', '$shifts'),
-        bg: AnalyticsColors.card.withOpacity(0.95),
+        gradient: AnalyticsColors.tableFooterStickyGradient,
         border: Border(
             top: BorderSide(
-                color: AnalyticsColors.green.withOpacity(0.4), width: 1)),
+                color: AnalyticsColors.green.withOpacity(0.24), width: 1)),
         padding: EdgeInsets.zero,
       );
 
@@ -187,14 +194,17 @@ class _EmployeesTableState extends State<EmployeesTable> {
               children: [
                 headerSticky,
                 Expanded(
-                  child: SingleChildScrollView(
-                    // key -1 reserved for header
-                    controller: _ctrl(-1),
-                    scrollDirection: Axis.horizontal,
-                    physics: const ClampingScrollPhysics(),
-                    child: SizedBox(
-                      width: restWidth,
-                      child: _buildScrollableHeader(canViewFinance, restWidth),
+                  child: StickyScrollArea(
+                    child: SingleChildScrollView(
+                      // key -1 reserved for header
+                      controller: _ctrl(-1),
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: restWidth,
+                        child:
+                            _buildScrollableHeader(canViewFinance, restWidth),
+                      ),
                     ),
                   ),
                 ),
@@ -202,30 +212,47 @@ class _EmployeesTableState extends State<EmployeesTable> {
             ),
           ),
           // ── Data rows ──────────────────────────────────────────────────
-          ...rows.asMap().entries.map((entry) {
-            final i = entry.key;
-            final r = entry.value;
-            return IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          // ONE ValueListenableBuilder drives all rows via Transform.translate.
+          // This replaces the previous per-row ScrollController (N controllers
+          // + N jumpTo() calls per scroll event → severe lag with 30+ rows).
+          // Hover is local to each _HoverableRow → only the hovered row
+          // repaints, the synced scroll path is untouched.
+          ValueListenableBuilder<double>(
+            valueListenable: _sync.offsetNotifier,
+            builder: (context, hOffset, _) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildStickyDataCell(r, stickyWidth),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      controller: _ctrl(i), // per-row synced controller
-                      scrollDirection: Axis.horizontal,
-                      physics: const ClampingScrollPhysics(),
-                      child: SizedBox(
-                        width: restWidth,
-                        child: _buildScrollableDataRow(
-                            context, r, canViewFinance),
+                  for (var i = 0; i < rows.length; i++)
+                    HoverableRow(
+                      builder: (hovered) => IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _buildStickyDataCell(
+                                rows[i], stickyWidth, hovered),
+                            Expanded(
+                              child: StickyScrollArea(
+                                child: ClipRect(
+                                  child: Transform.translate(
+                                    offset: Offset(-hOffset, 0),
+                                    child: SizedBox(
+                                      width: restWidth,
+                                      child: _buildScrollableDataRow(context,
+                                          rows[i], canViewFinance, i, hovered),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                 ],
-              ),
-            );
-          }),
+              );
+            },
+          ),
           // ── Footer row ─────────────────────────────────────────────────
           IntrinsicHeight(
             child: Row(
@@ -233,17 +260,19 @@ class _EmployeesTableState extends State<EmployeesTable> {
               children: [
                 footerSticky,
                 Expanded(
-                  child: SingleChildScrollView(
-                    // key 10000 reserved for footer
-                    controller: _ctrl(10000),
-                    scrollDirection: Axis.horizontal,
-                    physics: const ClampingScrollPhysics(),
-                    child: SizedBox(
-                      width: restWidth,
-                      child: _buildScrollableFooter(
-                          canViewFinance, restWidth, days, nights,
-                          qtyAll, usefulM, pauseCount, pauseM,
-                          problemCount, problemM, salarySum),
+                  child: StickyScrollArea(
+                    child: SingleChildScrollView(
+                      // key 10000 reserved for footer
+                      controller: _ctrl(10000),
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: restWidth,
+                        child: _buildScrollableFooter(
+                            canViewFinance, restWidth, days, nights,
+                            qtyAll, usefulM, pauseCount, pauseM,
+                            problemCount, problemM, salarySum),
+                      ),
                     ),
                   ),
                 ),
@@ -279,7 +308,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
       if (finance) 'Ведомость',
     ];
     return Container(
-      decoration: const BoxDecoration(color: Color(0xFF121A2E)),
+      decoration: const BoxDecoration(gradient: AnalyticsColors.tableHeaderGradient),
       child: Row(
         children: cols.map((label) {
           final flex = label == 'Рабочие места' ? 2 : 1;
@@ -291,9 +320,10 @@ class _EmployeesTableState extends State<EmployeesTable> {
               child: Text(
                 label.toUpperCase(),
                 style: const TextStyle(
-                  color: Color(0xFFCBD5E1),
+                  color: AnalyticsColors.tableHeaderText,
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
+                  letterSpacing: 0.4,
                 ),
               ),
             ),
@@ -303,7 +333,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
     );
   }
 
-  Widget _buildStickyDataCell(_Row r, double width) {
+  Widget _buildStickyDataCell(_Row r, double width, bool hovered) {
     return InkWell(
       onTap: widget.permission.canViewEmployee(r.employee.id)
           ? () => widget.onEmployeeTap(r.employee.id)
@@ -311,17 +341,20 @@ class _EmployeesTableState extends State<EmployeesTable> {
       child: Container(
         width: width,
         decoration: BoxDecoration(
-          color: AnalyticsColors.card2.withOpacity(0.6),
-          border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+          gradient: hovered
+              ? AnalyticsColors.tableStickyHoverGradient
+              : AnalyticsColors.tableStickyColumnGradient,
+          border: const Border(
+              bottom: BorderSide(color: AnalyticsColors.line)),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: _EmployeeCell(employee: r.employee, status: r.statusName),
       ),
     );
   }
 
   Widget _buildScrollableDataRow(
-      BuildContext context, _Row r, bool finance) {
+      BuildContext context, _Row r, bool finance, int index, bool hovered) {
     final pauseMin = AnalyticsCalculator.pauseMinutes(r.events);
     final problemMin = AnalyticsCalculator.problemMinutes(r.events);
     final qty = AnalyticsCalculator.totalQty(r.events);
@@ -348,14 +381,18 @@ class _EmployeesTableState extends State<EmployeesTable> {
           '${AnalyticsFormat.decimal(speed)} $unit/мин';
     }).toList();
 
+    final rowColor = hovered
+        ? AnalyticsColors.rowHover
+        : (index.isEven ? AnalyticsColors.zebraOdd : AnalyticsColors.zebraEven);
     return InkWell(
       onTap: widget.permission.canViewEmployee(r.employee.id)
           ? () => widget.onEmployeeTap(r.employee.id)
           : null,
       child: Container(
         decoration: BoxDecoration(
-          color: AnalyticsColors.card2.withOpacity(0.6),
-          border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+          color: rowColor,
+          border: const Border(
+              bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -498,10 +535,10 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
     return Container(
       decoration: BoxDecoration(
-        color: AnalyticsColors.card.withOpacity(0.95),
+        color: AnalyticsColors.footerBg,
         border: Border(
             top: BorderSide(
-                color: AnalyticsColors.green.withOpacity(0.4), width: 1)),
+                color: AnalyticsColors.green.withOpacity(0.24), width: 1)),
       ),
       child: Row(
         children: [
@@ -551,7 +588,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
     return Expanded(
       flex: flex,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: child,
       ),
     );
@@ -609,11 +646,11 @@ class _EmployeeCell extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 36,
-          height: 36,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            gradient: AnalyticsColors.accentGradient,
+            gradient: AnalyticsColors.avatarGradient,
           ),
           alignment: Alignment.center,
           child: Text(

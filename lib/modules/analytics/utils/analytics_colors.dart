@@ -37,10 +37,60 @@ class AnalyticsColors {
     colors: [Color(0xFF38BDF8), Color(0xFF22C55E)],
   );
 
+  /// Аватар сотрудника в таблице (sky → purple, как `.avatar` в CSS-эталоне).
+  static const Gradient avatarGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFF38BDF8), Color(0xFFA78BFA)],
+  );
+
   static const Gradient appBgGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
     colors: [Color(0xFF070B16), Color(0xFF0B1020), Color(0xFF0E1726)],
     stops: [0.0, 0.44, 1.0],
   );
+
+  // ── Таблицы аналитики (1:1 из styles.css эталона) ──────────────────────────
+  /// Заголовок таблицы: linear-gradient(180deg, #18233d, #121a2e).
+  static const Gradient tableHeaderGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFF18233D), Color(0xFF121A2E)],
+  );
+
+  /// Sticky-ячейка заголовка: linear-gradient(180deg, #16213a, #121a2e).
+  static const Gradient tableStickyHeaderGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFF16213A), Color(0xFF121A2E)],
+  );
+
+  /// Sticky-колонка строки: linear-gradient(180deg, #0f172a, #101b32).
+  static const Gradient tableStickyColumnGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFF0F172A), Color(0xFF101B32)],
+  );
+
+  /// Sticky-колонка при наведении: linear-gradient(180deg, #15223b, #12213b).
+  static const Gradient tableStickyHoverGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFF15223B), Color(0xFF12213B)],
+  );
+
+  /// Sticky-колонка футера: linear-gradient(180deg, #12213b, #102033).
+  static const Gradient tableFooterStickyGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFF12213B), Color(0xFF102033)],
+  );
+
+  static const Color tableHeaderText = Color(0xFFCBD5E1);
+  static const Color zebraOdd = Color(0x940A101F); // rgba(10,16,31,0.58)
+  static const Color zebraEven = Color(0xC70F172A); // rgba(15,23,42,0.78)
+  static const Color rowHover = Color(0xF21E293B); // rgba(30,41,59,0.95)
+  static const Color footerBg = Color(0xF50F172A); // rgba(15,23,42,0.96)
+  static const Color stickyShadow = Color(0x52020617); // rgba(2,6,23,0.32)
 }

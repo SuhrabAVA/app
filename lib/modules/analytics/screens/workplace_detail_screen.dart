@@ -118,87 +118,125 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
         final ratings =
             RatingCalculator.buildForWorkplace(eventsForWorkplace: allEvents);
 
+        final setupQty = AnalyticsCalculator.totalSetupQty(allEvents);
+        final setupMin = AnalyticsCalculator.setupMinutes(allEvents);
+        final pauseCount = AnalyticsCalculator.countEventsOfType(
+            allEvents, AnalyticsEventType.pause);
+        final pauseMin = AnalyticsCalculator.pauseMinutes(allEvents);
+        final problemCount = AnalyticsCalculator.countEventsOfType(
+            allEvents, AnalyticsEventType.problem);
+        final problemMin = AnalyticsCalculator.problemMinutes(allEvents);
+        final orderIds = <String>{};
+        for (final e in allEvents) {
+          if (e.type == AnalyticsEventType.work && e.orderId.isNotEmpty) {
+            orderIds.add(e.orderId);
+          }
+        }
+        final claims = state.claims
+            .where((c) => (c.workplaceId ?? '') == _workplaceId)
+            .length;
+
+        final mainStack = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnalyticsCard(
+              title: 'График активности рабочего места',
+              child: _activityCalendar(state.month.daysCount, eventsByDay),
+            ),
+            const SizedBox(height: 18),
+            AnalyticsCard(
+              title:
+                  'Линия рабочего места: ${daySelected.toString().padLeft(2, '0')}.${state.month.month.toString().padLeft(2, '0')}.${state.month.year}',
+              subtitle:
+                  'Показывает фактическое время работы рабочего места за выбранный день. При переработке шкала автоматически удлиняется.',
+              child: TimelineWidget(
+                layout: timeline,
+                workplaceNameOf: (id) =>
+                    personnel.workplaceById(id)?.name ?? id,
+                employeeNameOf: (id) {
+                  try {
+                    final e =
+                        personnel.employees.firstWhere((x) => x.id == id);
+                    return '${e.lastName} ${e.firstName}'.trim();
+                  } catch (_) {
+                    return id;
+                  }
+                },
+              ),
+            ),
+            const SizedBox(height: 18),
+            AnalyticsCard(
+              title: 'Заказы и работы по рабочему месту',
+              child: DayEventsTable(
+                events: dayEvents,
+                timeline: timeline,
+                workplaceById: {
+                  for (final w in personnel.workplaces) w.id: w
+                },
+              ),
+            ),
+          ],
+        );
+
+        final sidePanel = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnalyticsSummaryCard(
+              title: 'Итог по рабочему месту',
+              green: true,
+              children: [
+                AnalyticsStatRow(
+                    label: 'Количество',
+                    value: '${AnalyticsFormat.decimal(qty)} $unit'),
+                AnalyticsStatRow(
+                    label: 'Время на количество',
+                    value: AnalyticsFormat.hoursMinutes(usefulM)),
+                AnalyticsStatRow(
+                    label: 'Наладки',
+                    value:
+                        '${AnalyticsFormat.decimal(setupQty)} · ${AnalyticsFormat.hoursMinutes(setupMin)}'),
+                AnalyticsStatRow(
+                    label: 'Паузы',
+                    value:
+                        '$pauseCount · ${AnalyticsFormat.hoursMinutes(pauseMin)}'),
+                AnalyticsStatRow(
+                    label: 'Проблемы',
+                    value:
+                        '$problemCount · ${AnalyticsFormat.hoursMinutes(problemMin)}'),
+                AnalyticsStatRow(
+                    label: 'Заказы / претензии',
+                    value: '${orderIds.length} / $claims'),
+                AnalyticsTotalBox(
+                  label: 'КПД',
+                  value: '${kpd.kpdPercent.round()}%',
+                  note: kpd.noBaseline
+                      ? 'нет базы — показан безопасный fallback'
+                      : 'скорость месяца / средняя прошлых месяцев',
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            AnalyticsSummaryCard(
+              title: 'Рейтинг сотрудников',
+              subtitle:
+                  'Сортировка по скорости (кол-во в минуту). Включаются только те, кто работал на этом рабочем месте и сделал > 0.',
+              children: [_ratings(personnel, ratings, unit)],
+            ),
+          ],
+        );
+
         return AnalyticsShell(
           child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 _toolbar(context, wp.name, unit),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: AnalyticsKpiCard(
-                          label: 'Сделано',
-                          value: '${AnalyticsFormat.decimal(qty)} $unit',
-                          sub:
-                              'Полезное время: ${AnalyticsFormat.hoursMinutes(usefulM)}'),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: AnalyticsKpiCard(
-                          label: 'Скорость месяца',
-                          value:
-                              '${AnalyticsFormat.decimal(speed)} $unit/мин',
-                          sub: kpd.noBaseline
-                              ? 'Нет базы для КПД'
-                              : 'Средняя предыдущих: ${AnalyticsFormat.decimal(kpd.previousAverageSpeed)} $unit/мин'),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: AnalyticsKpiCard(
-                          label: 'КПД',
-                          value: '${kpd.kpdPercent.round()}%',
-                          sub: kpd.noBaseline
-                              ? 'Нет базы — показан безопасный fallback'
-                              : 'К средней базе всех прошлых месяцев'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                AnalyticsCard(
-                  title: 'Линия дня',
-                  subtitle:
-                      'События рабочего места ${wp.name} за ${daySelected.toString().padLeft(2, '0')}.${state.month.month.toString().padLeft(2, '0')}.${state.month.year}',
-                  child: TimelineWidget(
-                    layout: timeline,
-                    workplaceNameOf: (id) =>
-                        personnel.workplaceById(id)?.name ?? id,
-                    employeeNameOf: (id) {
-                      try {
-                        final e =
-                            personnel.employees.firstWhere((x) => x.id == id);
-                        return '${e.lastName} ${e.firstName}'.trim();
-                      } catch (_) {
-                        return id;
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(height: 16),
-                AnalyticsCard(
-                  title: 'Календарь активности',
-                  child: _activityCalendar(state.month.daysCount, eventsByDay),
-                ),
-                const SizedBox(height: 16),
-                AnalyticsCard(
-                  title: 'Заказы и работы по рабочему месту',
-                  child: DayEventsTable(
-                    events: dayEvents,
-                    timeline: timeline,
-                    workplaceById: {
-                      for (final w in personnel.workplaces) w.id: w
-                    },
-                  ),
-                ),
-                const SizedBox(height: 16),
-                AnalyticsCard(
-                  title: 'Рейтинг сотрудников',
-                  subtitle:
-                      'Сортировка по скорости (кол-во в минуту). Включаются только те, кто работал на этом рабочем месте и сделал > 0.',
-                  child: _ratings(personnel, ratings, unit),
+                const SizedBox(height: 18),
+                AnalyticsDetailLayout(
+                  main: mainStack,
+                  side: sidePanel,
                 ),
                 const SizedBox(height: 24),
               ],
@@ -211,79 +249,89 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
 
   Widget _toolbar(BuildContext context, String name, String unit) {
     final personnel = context.read<PersonnelProvider>();
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AnalyticsColors.card,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AnalyticsColors.line),
-      ),
-      child: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 12,
-        runSpacing: 8,
-        children: [
-          TextButton.icon(
-            icon: const Icon(Icons.arrow_back, color: AnalyticsColors.blue),
-            label: const Text('Назад',
-                style: TextStyle(color: AnalyticsColors.blue)),
-            onPressed: () => Navigator.of(context).maybePop(),
+
+    final left = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnalyticsBackLink(
+          label: 'Назад к рабочим местам',
+          onTap: () => Navigator.of(context).maybePop(),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          name,
+          style: const TextStyle(
+            color: AnalyticsColors.text,
+            fontSize: 30,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -1,
+            height: 1.05,
           ),
-          Text(
-            name,
+        ),
+        const SizedBox(height: 8),
+        Text('единица измерения: $unit',
             style: const TextStyle(
-              color: AnalyticsColors.text,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
+                color: AnalyticsColors.muted, fontSize: 13)),
+      ],
+    );
+
+    final controls = Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.end,
+      children: [
+        AnalyticsFilterGroup(
+          label: 'Быстро сменить рабочее место',
+          child: AnalyticsInputShell(
+            child: DropdownButton<String>(
+              value: _workplaceId,
+              isExpanded: true,
+              dropdownColor: AnalyticsColors.card2,
+              style: const TextStyle(color: AnalyticsColors.text),
+              underline: const SizedBox.shrink(),
+              icon:
+                  const Icon(Icons.expand_more, color: AnalyticsColors.muted),
+              items: personnel.workplaces
+                  .map((w) => DropdownMenuItem(
+                        value: w.id,
+                        child: Text(w.name),
+                      ))
+                  .toList(),
+              onChanged: (id) {
+                if (id == null) return;
+                setState(() {
+                  _workplaceId = id;
+                  _selectedDay = null;
+                });
+              },
             ),
           ),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: const Color(0x4F38BDF8)),
-              color: const Color(0x261A8FB5),
-            ),
-            child: Text('ед.: $unit',
-                style: const TextStyle(
-                    color: Color(0xFF7DD3FC),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 11)),
-          ),
-          const SizedBox(width: 12),
-          TextButton.icon(
-            onPressed: _pdfLoading ? null : () => _exportPdf(personnel),
-            icon: _pdfLoading
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.picture_as_pdf_outlined),
-            label: Text(_pdfLoading ? 'Создаём PDF…' : 'Скачать PDF'),
-          ),
-          DropdownButton<String>(
-            value: _workplaceId,
-            dropdownColor: AnalyticsColors.card2,
-            style: const TextStyle(color: AnalyticsColors.text),
-            underline: const SizedBox.shrink(),
-            items: personnel.workplaces
-                .map((w) => DropdownMenuItem(
-                      value: w.id,
-                      child: Text(w.name),
-                    ))
-                .toList(),
-            onChanged: (id) {
-              if (id == null) return;
-              setState(() {
-                _workplaceId = id;
-                _selectedDay = null;
-              });
-            },
-          ),
-        ],
-      ),
+        ),
+        AnalyticsPdfButton(
+          loading: _pdfLoading,
+          onPressed: () => _exportPdf(personnel),
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 760) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [left, const SizedBox(height: 16), controls],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(child: left),
+            const SizedBox(width: 16),
+            controls,
+          ],
+        );
+      },
     );
   }
 
