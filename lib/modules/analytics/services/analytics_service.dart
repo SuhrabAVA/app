@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../../orders/order_model.dart';
 import '../../orders/orders_provider.dart';
 import '../../personnel/personnel_provider.dart';
 import '../../tasks/task_provider.dart';
@@ -14,10 +13,12 @@ import '../models/work_schedule_entry.dart';
 import '../repositories/analytics_repository.dart';
 import '../repositories/claims_repository.dart';
 import '../repositories/employee_status_repository.dart';
+import '../repositories/prod_stage_history_repository.dart';
 import '../repositories/salary_adjustments_repository.dart';
 import '../repositories/salary_settings_repository.dart';
 import '../repositories/work_schedule_repository.dart';
 import '../repositories/workplace_coefficient_repository.dart';
+import 'analytics_permission_service.dart';
 
 /// Состояние данных аналитики на выбранный месяц.
 class AnalyticsState {
@@ -31,7 +32,7 @@ class AnalyticsState {
   final Map<String, String> employeeStatusIds;
   final Map<String, String?> employeePayTypes;
   final List<ClaimModel> claims;
-  /// Скорости рабочих мест за каждый из предыдущих месяцев (от 1 до 12).
+  /// Помесячные скорости рабочих мест за все месяцы до выбранного.
   /// Используется для расчёта КПД.
   final Map<String, List<double>> workplacePreviousSpeeds;
   final bool loading;
@@ -105,13 +106,17 @@ class AnalyticsService extends ChangeNotifier {
     EmployeeStatusRepository? statusRepo,
     ClaimsRepository? claimsRepo,
     AnalyticsRepository? analyticsRepo,
+    ProdStageHistoryRepository? historyRepo,
+    AnalyticsPermissionService? permission,
   })  : _coefficientsRepo = coefficientsRepo ?? WorkplaceCoefficientRepository(),
         _salarySettingsRepo = salarySettingsRepo ?? SalarySettingsRepository(),
         _adjustmentsRepo = adjustmentsRepo ?? SalaryAdjustmentsRepository(),
         _scheduleRepo = scheduleRepo ?? WorkScheduleRepository(),
         _statusRepo = statusRepo ?? EmployeeStatusRepository(),
         _claimsRepo = claimsRepo ?? ClaimsRepository(),
-        _analyticsRepo = analyticsRepo ?? AnalyticsRepository();
+        _analyticsRepo = analyticsRepo ?? AnalyticsRepository(),
+        _historyRepo = historyRepo ?? ProdStageHistoryRepository(),
+        _permission = permission;
 
   final PersonnelProvider personnel;
   final OrdersProvider orders;
@@ -124,6 +129,8 @@ class AnalyticsService extends ChangeNotifier {
   final EmployeeStatusRepository _statusRepo;
   final ClaimsRepository _claimsRepo;
   final AnalyticsRepository _analyticsRepo;
+  final ProdStageHistoryRepository _historyRepo;
+  final AnalyticsPermissionService? _permission;
 
   AnalyticsState _state =
       AnalyticsState(month: AnalyticsMonth.current(), loading: true);
@@ -133,31 +140,19 @@ class AnalyticsService extends ChangeNotifier {
     _state = _state.copyWith(month: month, loading: true, clearError: true);
     notifyListeners();
     try {
-      // 1. Заказы по id для customer.
-      final ordersById = <String, OrderModel>{
-        for (final o in orders.orders) o.id: o,
-      };
-
-      // 2. События аналитики на текущий месяц.
-      final events = _analyticsRepo.buildEvents(
-        tasks: tasks.tasks,
-        ordersById: ordersById,
-        month: month,
-      );
-
-      // 3. Settings, coefficients, adjustments, schedules, claims.
+      // Fire all requests in parallel: one DB scan covers both events and
+      // previous speeds; the rest are independent lightweight queries.
+      final allDataFuture = _analyticsRepo.loadAllMonthData(month);
       final coeffsFuture = _coefficientsRepo.loadEffective(month.firstDay);
-      final settingsFuture =
-          _salarySettingsRepo.loadEffective(month.firstDay);
-      final adjustmentsFuture =
-          _adjustmentsRepo.loadForMonth(month.firstDay);
-      final schedulesFuture =
-          _scheduleRepo.loadForMonth(month.firstDay);
+      final settingsFuture = _salarySettingsRepo.loadEffective(month.firstDay);
+      final adjustmentsFuture = _adjustmentsRepo.loadForMonth(month.firstDay);
+      final schedulesFuture = _scheduleRepo.loadForMonth(month.firstDay);
       final statusesFuture = _statusRepo.listAll();
       final employeeStatusIdsFuture = _statusRepo.loadEmployeeStatusIds();
       final employeePayTypesFuture = _statusRepo.loadEmployeePayTypes();
       final claimsFuture = _claimsRepo.listForMonth(month.firstDay);
 
+      final allData = await allDataFuture;
       final coeffs = await coeffsFuture;
       final settings = await settingsFuture;
       final adjustments = await adjustmentsFuture;
@@ -167,27 +162,19 @@ class AnalyticsService extends ChangeNotifier {
       final empPayTypes = await employeePayTypesFuture;
       final claims = await claimsFuture;
 
-      // 4. Скорости предыдущих месяцев — для КПД (3 предыдущих месяца).
-      final prevMonths = month.previousMonths(3);
-      final prevSpeeds = <String, List<double>>{};
-      for (final prev in prevMonths) {
-        final prevEvents = _analyticsRepo.buildEvents(
-          tasks: tasks.tasks,
-          ordersById: ordersById,
-          month: prev,
-        );
-        final byWorkplace = <String, List<AnalyticsEvent>>{};
-        for (final e in prevEvents) {
-          if (e.type != AnalyticsEventType.work) continue;
-          byWorkplace.putIfAbsent(e.workplaceId, () => []).add(e);
+      // If the task-comment tracker produced no events for this month,
+      // fall back to prod_stage_history transitions (fills historical months).
+      List<AnalyticsEvent> events = allData.events;
+      if (events.isEmpty) {
+        try {
+          final historyEvents = await _historyRepo.loadEventsForMonth(
+            month,
+            personnel.workplaces,
+          );
+          if (historyEvents.isNotEmpty) events = historyEvents;
+        } catch (_) {
+          // Stage history is optional; ignore errors.
         }
-        byWorkplace.forEach((wpId, list) {
-          final qty = list.fold<double>(0, (s, e) => s + e.qty);
-          final minutes = list.fold<int>(0, (s, e) => s + e.durationMinutes());
-          if (minutes <= 0) return;
-          final speed = qty / minutes;
-          prevSpeeds.putIfAbsent(wpId, () => []).add(speed);
-        });
       }
 
       _state = AnalyticsState(
@@ -201,7 +188,7 @@ class AnalyticsService extends ChangeNotifier {
         employeeStatusIds: empStatusIds,
         employeePayTypes: empPayTypes,
         claims: claims,
-        workplacePreviousSpeeds: prevSpeeds,
+        workplacePreviousSpeeds: allData.prevSpeeds,
         loading: false,
       );
       notifyListeners();
@@ -219,7 +206,11 @@ class AnalyticsService extends ChangeNotifier {
     required double coefficient,
     String? actorId,
   }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     await _coefficientsRepo.upsert(
+      permission: _permission,
       workplaceId: workplaceId,
       coefficient: coefficient,
       month: _state.month.firstDay,
@@ -238,7 +229,11 @@ class AnalyticsService extends ChangeNotifier {
     required double socialDefault,
     String? actorId,
   }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     final saved = await _salarySettingsRepo.save(
+      permission: _permission,
       month: _state.month.firstDay,
       nightPercent: nightPercent,
       mealAmount: mealAmount,
@@ -252,7 +247,14 @@ class AnalyticsService extends ChangeNotifier {
   /// Сохраняет ручные корректировки зарплаты по сотруднику за месяц.
   Future<void> saveSalaryAdjustments(SalaryAdjustments adj,
       {String? actorId}) async {
-    final saved = await _adjustmentsRepo.upsert(adj, updatedBy: actorId);
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
+    final saved = await _adjustmentsRepo.upsert(
+      adj,
+      permission: _permission,
+      updatedBy: actorId,
+    );
     final next = Map<String, SalaryAdjustments>.from(_state.adjustments);
     next[saved.employeeId] = saved;
     _state = _state.copyWith(adjustments: next);

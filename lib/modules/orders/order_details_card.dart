@@ -12,6 +12,7 @@ class OrderDetailsCard extends StatelessWidget {
     required this.order,
     required this.paints,
     required this.files,
+    this.filesLoading = false,
     required this.stageTemplateName,
     this.formImageUrl,
     this.formDetails,
@@ -21,6 +22,7 @@ class OrderDetailsCard extends StatelessWidget {
   final OrderModel order;
   final List<Map<String, dynamic>> paints;
   final List<Map<String, dynamic>> files;
+  final bool filesLoading;
   final String? stageTemplateName;
   final String? formImageUrl;
   final Map<String, dynamic>? formDetails;
@@ -515,13 +517,21 @@ class OrderDetailsCard extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (files.isEmpty)
-                                Text(
-                                  'Нет приложенных файлов',
-                                ),
-                              ...files
-                                  .map((f) => _fileTile(context, f, compact: true))
-                                  .toList(),
+                              if (filesLoading)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 4),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                )
+                              else if (files.isEmpty)
+                                const Text('Нет приложенных файлов')
+                              else
+                                ...files
+                                    .map((f) => _fileTile(context, f, compact: true))
+                                    .toList(),
                             ],
                           ),
                           alignEnd: false,

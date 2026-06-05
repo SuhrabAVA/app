@@ -13,13 +13,13 @@ class WorkScheduleRepository {
   Future<Map<String, Map<int, WorkScheduleEntry>>> loadForMonth(
       DateTime month) async {
     final firstDay = DateTime(month.year, month.month, 1);
-    final lastDay = DateTime(month.year, month.month + 1, 0);
+    final nextMonthFirst = DateTime(month.year, month.month + 1, 1);
     final List<dynamic> rows = await _client
         .from('work_schedules')
         .select(
             'id, employee_id, work_date, shift_type, arrival_time, departure_time')
         .gte('work_date', _isoDate(firstDay))
-        .lte('work_date', _isoDate(lastDay));
+        .lt('work_date', _isoDate(nextMonthFirst));
 
     final result = <String, Map<int, WorkScheduleEntry>>{};
     for (final row in rows) {

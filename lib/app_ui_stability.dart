@@ -21,5 +21,30 @@ final ThemeData appTheme = ThemeData(
 bool isTransientFlutterVisualAssertion(FlutterErrorDetails details) {
   final exceptionText = details.exceptionAsString();
   return exceptionText.contains("'referenceBox.attached': is not true") ||
-      exceptionText.contains("'!_skipMarkNeedsLayout': is not true");
+      exceptionText.contains("'!_skipMarkNeedsLayout': is not true") ||
+      _isWindowsAltKeyStateAssertion(exceptionText);
 }
+
+/// Flutter on Windows can occasionally report a synthesized Alt key-down event
+/// without modifier flags (for example after focus changes or system menu
+/// shortcuts). The event is rejected before application-level keyboard handlers
+/// can see it, so treat only this narrowly identified framework assertion as a
+/// transient platform-keyboard assertion and keep all other keyboard errors
+/// visible.
+bool _isWindowsAltKeyStateAssertion(String exceptionText) {
+  return exceptionText.contains(
+        'Attempted to send a key down event when no keys are in keysPressed',
+      ) &&
+      exceptionText.contains('RawKeyEventDataWindows') &&
+      exceptionText.contains('Alt Left');
+}
+
+// NOTE: Flutter Windows logs
+//   [ERROR:accessibility_plugin.cc] Announce message 'viewId' property
+//   must be a FlutterViewId.
+// whenever SemanticsService.announce() is called without a viewId (typically
+// triggered by SnackBar or other material widgets). This is a Flutter engine
+// issue — the C++ log cannot be suppressed from Dart code. It is harmless
+// (the announcement is ignored rather than crashing). The frequency is
+// directly proportional to how many SnackBars are shown; reducing unnecessary
+// error SnackBars reduces the noise.

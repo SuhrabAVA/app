@@ -182,6 +182,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
                         order: o,
                         paints: _paints,
                         files: _files,
+                        filesLoading: _loadingFiles,
                         stageTemplateName: _stageTemplateName,
                         formImageUrl: _formImageUrl,
                         formDetails: _formDetails,

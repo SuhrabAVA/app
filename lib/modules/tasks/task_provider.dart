@@ -206,6 +206,8 @@ class TaskProvider with ChangeNotifier {
   final Set<String> _loadedStageSequenceOrderIds = <String>{};
   RealtimeChannel? _tasksChannel;
   final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
+  Future<void>? _activeRefresh;
+  bool _refreshQueued = false;
 
   TaskProvider() {
     _listenToTasks();
@@ -359,9 +361,7 @@ class TaskProvider with ChangeNotifier {
 
     List<Map<String, dynamic>> rows = const <Map<String, dynamic>>[];
     try {
-      rows = await _readRows(
-        'id, name, title, short_name, workplace_name, stage_name',
-      );
+      rows = await _readRows('id, name, description, code');
     } catch (_) {
       try {
         rows = await _readRows('id, name');
@@ -403,6 +403,8 @@ class TaskProvider with ChangeNotifier {
       final probes = [
         row['id'],
         row['name'],
+        row['description'],
+        row['code'],
         row['title'],
         row['short_name'],
         row['workplace_name'],
@@ -448,22 +450,94 @@ class TaskProvider with ChangeNotifier {
     return null;
   }
 
-  Future<void> refresh() async {
-    await _ensureAuthed();
+  Future<void> refresh() {
+    final active = _activeRefresh;
+    if (active != null) {
+      _refreshQueued = true;
+      return active;
+    }
+
+    final future = _runRefreshLoop();
+    _activeRefresh = future;
+    return future.whenComplete(() {
+      if (identical(_activeRefresh, future)) {
+        _activeRefresh = null;
+      }
+    });
+  }
+
+  Future<void> _runRefreshLoop() async {
+    do {
+      _refreshQueued = false;
+      await _refreshOnceWithRetry();
+    } while (_refreshQueued);
+  }
+
+  Future<void> _refreshOnceWithRetry() async {
+    Set<String> orderIds = {};
     try {
-      await _loadWorkplaceAliases();
-      final rows =
-          await _supabase.from('tasks').select('*').order('created_at');
-      _tasks
-        ..clear()
-        ..addAll(List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
-      final orderIds = _tasks.map((t) => t.orderId).toSet();
-      _loadedStageSequenceOrderIds.clear();
-      await _preloadStageSequences(orderIds);
-      notifyListeners();
+      await _retryTransientSupabase('refresh tasks', () async {
+        await _ensureAuthed();
+        await _loadWorkplaceAliases();
+        final rows =
+            await _supabase.from('tasks').select('*').order('created_at');
+        _tasks
+          ..clear()
+          ..addAll(
+              List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
+        orderIds = _tasks.map((t) => t.orderId).toSet();
+        _loadedStageSequenceOrderIds.clear();
+      });
     } catch (e, st) {
       debugPrint('❌ refresh tasks error: $e\n$st');
+      return;
     }
+    // Загружаем последовательности этапов вне таймаута —
+    // они медленные при большом числе заказов.
+    await _preloadStageSequences(orderIds);
+    notifyListeners();
+  }
+
+  Future<T> _retryTransientSupabase<T>(
+    String operation,
+    Future<T> Function() action,
+  ) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await action().timeout(const Duration(seconds: 45));
+      } catch (e, st) {
+        lastError = e;
+        lastStackTrace = st;
+        // Таймауты не ретраим — повтор при медленном соединении только хуже.
+        final isTimeout = e is TimeoutException;
+        if (!_isTransientSupabaseError(e) || isTimeout || attempt == 3) {
+          break;
+        }
+        debugPrint(
+          '⚠️ $operation: transient Supabase connection error, '
+          'retry $attempt/3: $e',
+        );
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+
+    Error.throwWithStackTrace(lastError!, lastStackTrace!);
+  }
+
+  bool _isTransientSupabaseError(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('handshakeexception') ||
+        text.contains('connection terminated during handshake') ||
+        text.contains('socketexception') ||
+        text.contains('connection closed') ||
+        text.contains('connection reset') ||
+        text.contains('connection refused') ||
+        text.contains('failed host lookup') ||
+        text.contains('timed out') ||
+        text.contains('timeout');
   }
 
   void _listenToTasks() {

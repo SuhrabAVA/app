@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/salary_adjustments.dart';
+import '../services/analytics_permission_service.dart';
 
 class SalaryAdjustmentsRepository {
   SalaryAdjustmentsRepository({SupabaseClient? client})
@@ -26,7 +27,14 @@ class SalaryAdjustmentsRepository {
     return result;
   }
 
-  Future<SalaryAdjustments> upsert(SalaryAdjustments adj, {String? updatedBy}) async {
+  Future<SalaryAdjustments> upsert(
+    SalaryAdjustments adj, {
+    required AnalyticsPermissionService? permission,
+    String? updatedBy,
+  }) async {
+    if (permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
     final iso = _isoDate(DateTime(adj.month.year, adj.month.month, 1));
     final result = await _client
         .from('employee_month_salary_adjustments')

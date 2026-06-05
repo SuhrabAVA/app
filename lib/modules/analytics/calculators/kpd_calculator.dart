@@ -29,35 +29,42 @@ class KpdCalculator {
     return AnalyticsCalculator.speedQtyPerMinute(eventsOfMonthForWorkplace);
   }
 
-  /// Считает КПД, имея скорость текущего месяца и скорости предыдущих.
-  /// Если предыдущих скоростей нет — возвращает 100% с пометкой noBaseline.
+  /// Считает КПД, имея скорость текущего месяца и помесячные скорости
+  /// предыдущих месяцев с ненулевым полезным временем.
+  /// Если базы нет или средняя база нулевая — возвращает безопасные 100%
+  /// с пометкой noBaseline, чтобы UI не показывал NaN/Infinity.
   static KpdResult compute({
     required double currentSpeed,
     required List<double> previousMonthsSpeeds,
   }) {
-    final filtered = previousMonthsSpeeds.where((s) => s.isFinite && s > 0).toList();
+    final safeCurrentSpeed = currentSpeed.isFinite && currentSpeed > 0
+        ? currentSpeed
+        : 0.0;
+    final filtered = previousMonthsSpeeds
+        .where((speed) => speed.isFinite && speed >= 0)
+        .toList();
     if (filtered.isEmpty) {
       return KpdResult(
-        currentSpeed: currentSpeed,
+        currentSpeed: safeCurrentSpeed,
         previousAverageSpeed: 0,
         kpdPercent: 100,
         noBaseline: true,
       );
     }
     final avg = filtered.reduce((a, b) => a + b) / filtered.length;
-    if (avg <= 0) {
+    if (!avg.isFinite || avg <= 0) {
       return KpdResult(
-        currentSpeed: currentSpeed,
+        currentSpeed: safeCurrentSpeed,
         previousAverageSpeed: 0,
         kpdPercent: 100,
         noBaseline: true,
       );
     }
-    final kpd = (currentSpeed / avg) * 100;
+    final kpd = (safeCurrentSpeed / avg) * 100;
     return KpdResult(
-      currentSpeed: currentSpeed,
+      currentSpeed: safeCurrentSpeed,
       previousAverageSpeed: avg,
-      kpdPercent: kpd.isFinite ? kpd : 0,
+      kpdPercent: kpd.isFinite ? kpd : 100,
       noBaseline: false,
     );
   }

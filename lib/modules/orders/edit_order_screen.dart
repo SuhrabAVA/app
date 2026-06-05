@@ -2462,14 +2462,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
 
     // 4) Перезаписываем таблицу order_paints
+    if (orderId.trim().isEmpty) return;
     try {
       final repo = OrdersRepository();
       await repo.saveOrderPaints(orderId: orderId, paints: rows);
-      await repo.syncPaintReservations(
-        orderId: orderId,
-        paints: rows,
-        actor: AuthHelper.currentUserName ?? '',
-      );
+      try {
+        await repo.syncPaintReservations(
+          orderId: orderId,
+          paints: rows,
+          actor: AuthHelper.currentUserName ?? '',
+        );
+      } catch (e) {
+        // Ошибки резервирования (недостаток краски, краска не найдена) не
+        // блокируют сохранение заказа — только сообщаем пользователю.
+        final message = e is PostgrestException && e.message.trim().isNotEmpty
+            ? e.message.trim()
+            : e.toString();
+        debugPrint('⚠️ syncPaintReservations error: $message');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
+      }
       // Сохраняем актуальные product.parameters даже когда красок нет:
       // в этом случае "Информация для красок" должна оставаться в заказе.
       await _sb.from('orders').update({
@@ -2484,7 +2499,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           SnackBar(content: Text(message)),
         );
       }
-      debugPrint('❌ persist paints error: ' + e.toString());
+      debugPrint('❌ persist paints error: $e');
       rethrow;
     }
   }
@@ -3202,6 +3217,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       isCreating: isCreating,
     );
     // === Конец обработки формы ===
+
+    // _processFormAssignment пишет в БД напрямую, минуя provider.
+    // Обновляем provider, чтобы карточка деталей заказа сразу показала форму.
+    await provider.refresh();
 
     if (!mounted) return;
 

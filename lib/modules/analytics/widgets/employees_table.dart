@@ -10,49 +10,71 @@ import '../models/analytics_event.dart';
 import '../models/employee_status.dart';
 import '../models/pay_type.dart';
 import '../models/salary_adjustments.dart';
+import '../services/analytics_permission_service.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
 import '../utils/analytics_constants.dart';
 import '../utils/format_utils.dart';
+import '../utils/h_scroll_sync.dart';
 
-class EmployeesTable extends StatelessWidget {
+class EmployeesTable extends StatefulWidget {
   const EmployeesTable({
     super.key,
     required this.service,
     required this.personnel,
-    required this.canViewFinance,
+    required this.permission,
     required this.onEmployeeTap,
   });
 
   final AnalyticsService service;
   final PersonnelProvider personnel;
-  final bool canViewFinance;
+  final AnalyticsPermissionService permission;
   final ValueChanged<String> onEmployeeTap;
 
   @override
-  Widget build(BuildContext context) {
-    final state = service.state;
-    final events = state.events;
+  State<EmployeesTable> createState() => _EmployeesTableState();
+}
+
+class _EmployeesTableState extends State<EmployeesTable> {
+  // Linked horizontal-scroll sync — ONE controller per section, all synced.
+  final HScrollSync _sync = HScrollSync();
+  final Map<int, ScrollController> _ctrlCache = {};
+
+  // Row computation cache — avoids running SalaryCalculator on every repaint.
+  AnalyticsState? _lastState;
+  List<_Row> _rows = const [];
+
+  ScrollController _ctrl(int key) =>
+      _ctrlCache.putIfAbsent(key, () => _sync.acquire());
+
+  void _maybeRecompute(AnalyticsState state) {
+    if (state.loading) return;
+    if (identical(state, _lastState)) return;
+    _lastState = state;
+    _rows = _buildRows(state);
+  }
+
+  List<_Row> _buildRows(AnalyticsState state) {
     final eventsByEmployee = <String, List<AnalyticsEvent>>{};
-    for (final e in events) {
+    for (final e in state.events) {
       eventsByEmployee.putIfAbsent(e.employeeId, () => []).add(e);
     }
-
     final claimsByEmployee = <String, int>{};
     for (final c in state.claims) {
-      claimsByEmployee[c.employeeId] = (claimsByEmployee[c.employeeId] ?? 0) + 1;
+      claimsByEmployee[c.employeeId] =
+          (claimsByEmployee[c.employeeId] ?? 0) + 1;
     }
-
     final statusById = <String, EmployeeStatus>{
       for (final s in state.statuses) s.id: s,
     };
 
-    final activeEmployees =
-        personnel.employees.where((e) => !e.isFired).toList()
+    final activeEmployees = widget.personnel.employees
+        .where((e) => !e.isFired && widget.permission.canViewEmployee(e.id))
+        .toList()
           ..sort((a, b) => ('${a.lastName} ${a.firstName}')
               .compareTo('${b.lastName} ${b.firstName}'));
 
-    final rows = activeEmployees.map((emp) {
+    return activeEmployees.map((emp) {
       final list = eventsByEmployee[emp.id] ?? const <AnalyticsEvent>[];
       final adj = state.adjustments[emp.id] ??
           SalaryAdjustments.zero(emp.id, state.month.firstDay);
@@ -63,9 +85,9 @@ class EmployeesTable extends StatelessWidget {
         adjustments: adj,
         halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
       );
-      final statusName = statusById[state.employeeStatusIds[emp.id] ?? '']?.name;
-      final payTypeRaw = state.employeePayTypes[emp.id];
-      final payType = parsePayType(payTypeRaw);
+      final statusName =
+          statusById[state.employeeStatusIds[emp.id] ?? '']?.name;
+      final payType = parsePayType(state.employeePayTypes[emp.id]);
       return _Row(
         employee: emp,
         events: list,
@@ -75,66 +97,199 @@ class EmployeesTable extends StatelessWidget {
         claims: claimsByEmployee[emp.id] ?? 0,
       );
     }).toList();
+  }
 
-    final columns = <_Col>[
-      _Col('Сотрудник', sticky: true),
-      const _Col('Дни'),
-      const _Col('Ночи'),
-      const _Col('Рабочие места', flex: 2),
-      const _Col('Сделано'),
-      const _Col('Приладка'),
-      const _Col('Паузы'),
-      const _Col('Проблемы'),
-      const _Col('Претензии'),
-      if (canViewFinance) const _Col('Тип оплаты'),
-      if (canViewFinance) const _Col('Средняя ЗП'),
-      if (canViewFinance) const _Col('Ночные'),
-      if (canViewFinance) const _Col('Компенсации'),
-      if (canViewFinance) const _Col('Соц. отчисл.'),
-      if (canViewFinance) const _Col('Питание'),
-      if (canViewFinance) const _Col('Аванс'),
-      if (canViewFinance) const _Col('ЗП безнал'),
-      if (canViewFinance) const _Col('Дисциплина'),
-      if (canViewFinance) const _Col('Браки'),
-      if (canViewFinance) const _Col('Итог ЗП'),
-      if (canViewFinance) const _Col('Ведомость'),
-    ];
+  @override
+  void dispose() {
+    _sync.dispose();
+    super.dispose();
+  }
 
-    final minWidth = canViewFinance ? 2480.0 : 1500.0;
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.service.state;
+    _maybeRecompute(state);
+
+    final canViewFinance = widget.permission.canViewFinance;
+    final rows = _rows;
+
+    // Sticky column: 200 px. Rest: min 1300 (no finance) or 2280 (finance).
+    const stickyWidth = 200.0;
+    final restMinWidth = canViewFinance ? 2280.0 : 1300.0;
+
     return LayoutBuilder(builder: (context, constraints) {
-      final width = constraints.maxWidth.isFinite
-          ? math.max(constraints.maxWidth, minWidth)
-          : minWidth;
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: width,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _headerRow(columns),
-              ...rows.map((r) => _dataRow(context, r, canViewFinance)),
-              _footer(rows, canViewFinance),
-            ],
+      final restWidth = constraints.maxWidth.isFinite
+          ? math.max(constraints.maxWidth - stickyWidth, restMinWidth)
+          : restMinWidth;
+
+      Widget stickyCell(Widget child,
+          {Color? bg, BoxBorder? border, EdgeInsets? padding}) {
+        return Container(
+          width: stickyWidth,
+          decoration: BoxDecoration(color: bg, border: border),
+          padding: padding ??
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: child,
+        );
+      }
+
+      // ── Header ──────────────────────────────────────────────────────────
+      final headerSticky = stickyCell(
+        Text(
+          'СОТРУДНИК',
+          style: const TextStyle(
+            color: Color(0xFFCBD5E1),
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
           ),
         ),
+        bg: const Color(0xFF121A2E),
+      );
+
+      // ── Footer aggregates ────────────────────────────────────────────────
+      int shifts = 0, days = 0, nights = 0;
+      double qtyAll = 0;
+      int pauseCount = 0, pauseM = 0, problemCount = 0, problemM = 0;
+      double salarySum = 0;
+      int usefulM = 0;
+      for (final r in rows) {
+        shifts += r.breakdown.shiftsTotal;
+        days += r.breakdown.dayShifts;
+        nights += r.breakdown.nightShifts;
+        qtyAll += AnalyticsCalculator.totalQty(r.events);
+        usefulM += AnalyticsCalculator.usefulMinutes(r.events);
+        pauseCount += AnalyticsCalculator.countEventsOfType(
+            r.events, AnalyticsEventType.pause);
+        pauseM += AnalyticsCalculator.pauseMinutes(r.events);
+        problemCount += AnalyticsCalculator.countEventsOfType(
+            r.events, AnalyticsEventType.problem);
+        problemM += AnalyticsCalculator.problemMinutes(r.events);
+        salarySum += r.breakdown.total;
+      }
+
+      final footerSticky = stickyCell(
+        _footerCell('всего смен', '$shifts'),
+        bg: AnalyticsColors.card.withOpacity(0.95),
+        border: Border(
+            top: BorderSide(
+                color: AnalyticsColors.green.withOpacity(0.4), width: 1)),
+        padding: EdgeInsets.zero,
+      );
+
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Header row ─────────────────────────────────────────────────
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                headerSticky,
+                Expanded(
+                  child: SingleChildScrollView(
+                    // key -1 reserved for header
+                    controller: _ctrl(-1),
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: SizedBox(
+                      width: restWidth,
+                      child: _buildScrollableHeader(canViewFinance, restWidth),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // ── Data rows ──────────────────────────────────────────────────
+          ...rows.asMap().entries.map((entry) {
+            final i = entry.key;
+            final r = entry.value;
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildStickyDataCell(r, stickyWidth),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: _ctrl(i), // per-row synced controller
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: restWidth,
+                        child: _buildScrollableDataRow(
+                            context, r, canViewFinance),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          // ── Footer row ─────────────────────────────────────────────────
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                footerSticky,
+                Expanded(
+                  child: SingleChildScrollView(
+                    // key 10000 reserved for footer
+                    controller: _ctrl(10000),
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: SizedBox(
+                      width: restWidth,
+                      child: _buildScrollableFooter(
+                          canViewFinance, restWidth, days, nights,
+                          qtyAll, usefulM, pauseCount, pauseM,
+                          problemCount, problemM, salarySum),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       );
     });
   }
 
-  Widget _headerRow(List<_Col> columns) {
+  Widget _buildScrollableHeader(bool finance, double width) {
+    final cols = <String>[
+      'Дни',
+      'Ночи',
+      'Рабочие места',
+      'Сделано',
+      'Приладка',
+      'Паузы',
+      'Проблемы',
+      'Претензии',
+      if (finance) 'Тип оплаты',
+      if (finance) 'Средняя ЗП',
+      if (finance) 'Ночные',
+      if (finance) 'Компенсации',
+      if (finance) 'Соц. отчисл.',
+      if (finance) 'Питание',
+      if (finance) 'Аванс',
+      if (finance) 'ЗП безнал',
+      if (finance) 'Дисциплина',
+      if (finance) 'Браки',
+      if (finance) 'Итог ЗП',
+      if (finance) 'Ведомость',
+    ];
     return Container(
       decoration: const BoxDecoration(color: Color(0xFF121A2E)),
       child: Row(
-        children: columns.map((c) {
+        children: cols.map((label) {
+          final flex = label == 'Рабочие места' ? 2 : 1;
           return Expanded(
-            flex: c.flex,
-            child: Container(
+            flex: flex,
+            child: Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               child: Text(
-                c.label.toUpperCase(),
+                label.toUpperCase(),
                 style: const TextStyle(
                   color: Color(0xFFCBD5E1),
                   fontSize: 11,
@@ -148,27 +303,45 @@ class EmployeesTable extends StatelessWidget {
     );
   }
 
-  Widget _dataRow(BuildContext context, _Row r, bool finance) {
+  Widget _buildStickyDataCell(_Row r, double width) {
+    return InkWell(
+      onTap: widget.permission.canViewEmployee(r.employee.id)
+          ? () => widget.onEmployeeTap(r.employee.id)
+          : null,
+      child: Container(
+        width: width,
+        decoration: BoxDecoration(
+          color: AnalyticsColors.card2.withOpacity(0.6),
+          border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: _EmployeeCell(employee: r.employee, status: r.statusName),
+      ),
+    );
+  }
+
+  Widget _buildScrollableDataRow(
+      BuildContext context, _Row r, bool finance) {
     final pauseMin = AnalyticsCalculator.pauseMinutes(r.events);
     final problemMin = AnalyticsCalculator.problemMinutes(r.events);
     final qty = AnalyticsCalculator.totalQty(r.events);
     final setupQty = AnalyticsCalculator.totalSetupQty(r.events);
-    final pauseCount =
-        AnalyticsCalculator.countEventsOfType(r.events, AnalyticsEventType.pause);
+    final pauseCount = AnalyticsCalculator.countEventsOfType(
+        r.events, AnalyticsEventType.pause);
     final problemCount = AnalyticsCalculator.countEventsOfType(
         r.events, AnalyticsEventType.problem);
 
-    // Группировка по workplace
     final byWp = <String, List<AnalyticsEvent>>{};
     for (final e in r.events) {
       byWp.putIfAbsent(e.workplaceId, () => []).add(e);
     }
     final wpRows = byWp.entries.map((entry) {
-      final wp = personnel.workplaceById(entry.key);
+      final wp = widget.personnel.workplaceById(entry.key);
       final useful = AnalyticsCalculator.usefulMinutes(entry.value);
       final q = AnalyticsCalculator.totalQty(entry.value);
       final speed = useful > 0 ? q / useful : 0.0;
-      final unit = wp?.unit?.trim().isNotEmpty == true ? wp!.unit!.trim() : 'ед.';
+      final unit =
+          wp?.unit?.trim().isNotEmpty == true ? wp!.unit!.trim() : 'ед.';
       return '${wp?.name ?? entry.key}: '
           '${AnalyticsFormat.decimal(q)} $unit · '
           '${AnalyticsFormat.hoursMinutes(useful)} · '
@@ -176,7 +349,9 @@ class EmployeesTable extends StatelessWidget {
     }).toList();
 
     return InkWell(
-      onTap: () => onEmployeeTap(r.employee.id),
+      onTap: widget.permission.canViewEmployee(r.employee.id)
+          ? () => widget.onEmployeeTap(r.employee.id)
+          : null,
       child: Container(
         decoration: BoxDecoration(
           color: AnalyticsColors.card2.withOpacity(0.6),
@@ -185,12 +360,10 @@ class EmployeesTable extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _cell(
-              flex: 1,
-              child: _EmployeeCell(employee: r.employee, status: r.statusName),
-            ),
             _cell(child: Text('${r.breakdown.dayShifts}', style: _cellStyle())),
-            _cell(child: Text('${r.breakdown.nightShifts}', style: _cellStyle())),
+            _cell(
+                child:
+                    Text('${r.breakdown.nightShifts}', style: _cellStyle())),
             _cell(
               flex: 2,
               child: Column(
@@ -202,22 +375,18 @@ class EmployeesTable extends StatelessWidget {
                               padding:
                                   const EdgeInsets.symmetric(vertical: 2),
                               child: Text(s,
-                                  style: _cellStyle().copyWith(
-                                      fontSize: 11)),
+                                  style:
+                                      _cellStyle().copyWith(fontSize: 11)),
                             ))
                         .toList(),
               ),
             ),
             _cell(
-                child: Text(
-              '${AnalyticsFormat.decimal(qty)}',
-              style: _cellStyle(),
-            )),
+                child: Text('${AnalyticsFormat.decimal(qty)}',
+                    style: _cellStyle())),
             _cell(
-                child: Text(
-              '${AnalyticsFormat.decimal(setupQty)}',
-              style: _cellStyle(),
-            )),
+                child: Text('${AnalyticsFormat.decimal(setupQty)}',
+                    style: _cellStyle())),
             _cell(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,18 +409,22 @@ class EmployeesTable extends StatelessWidget {
             ),
             _cell(child: Text('${r.claims}', style: _cellStyle())),
             if (finance)
-              _cell(child: Text(_payTypeText(r), style: _cellStyle())),
+              _cell(
+                  child: Text(_payTypeText(r), style: _cellStyle())),
             if (finance)
               _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.averageShiftSalary),
+                  child: Text(
+                      AnalyticsFormat.money(r.breakdown.averageShiftSalary),
                       style: _cellStyle())),
             if (finance)
               _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.nightBonus),
+                  child: Text(
+                      AnalyticsFormat.money(r.breakdown.nightBonus),
                       style: _cellStyle())),
             if (finance)
               _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.compensation),
+                  child: Text(
+                      AnalyticsFormat.money(r.breakdown.compensation),
                       style: _cellStyle())),
             if (finance)
               _cell(
@@ -262,7 +435,8 @@ class EmployeesTable extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(AnalyticsFormat.money(r.breakdown.mealDeduction),
+                      Text(
+                          AnalyticsFormat.money(r.breakdown.mealDeduction),
                           style: _cellStyle()),
                       Text(
                         '${r.breakdown.shiftsTotal} порц.',
@@ -280,7 +454,8 @@ class EmployeesTable extends StatelessWidget {
                       style: _cellStyle())),
             if (finance)
               _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.discipline),
+                  child: Text(
+                      AnalyticsFormat.money(r.breakdown.discipline),
                       style: _cellStyle())),
             if (finance)
               _cell(
@@ -294,7 +469,7 @@ class EmployeesTable extends StatelessWidget {
             if (finance)
               _cell(
                   child: TextButton(
-                onPressed: () => onEmployeeTap(r.employee.id),
+                onPressed: () => widget.onEmployeeTap(r.employee.id),
                 child: const Text(
                   'Открыть',
                   style: TextStyle(color: AnalyticsColors.blue),
@@ -306,48 +481,20 @@ class EmployeesTable extends StatelessWidget {
     );
   }
 
-  Widget _footer(List<_Row> rows, bool finance) {
-    int shifts = 0;
-    int days = 0;
-    int nights = 0;
-    double qtyAll = 0;
-    int pauseCount = 0;
-    int pauseM = 0;
-    int problemCount = 0;
-    int problemM = 0;
-    double salarySum = 0;
-    int usefulM = 0;
-    for (final r in rows) {
-      shifts += r.breakdown.shiftsTotal;
-      days += r.breakdown.dayShifts;
-      nights += r.breakdown.nightShifts;
-      qtyAll += AnalyticsCalculator.totalQty(r.events);
-      usefulM += AnalyticsCalculator.usefulMinutes(r.events);
-      pauseCount += AnalyticsCalculator.countEventsOfType(
-          r.events, AnalyticsEventType.pause);
-      pauseM += AnalyticsCalculator.pauseMinutes(r.events);
-      problemCount += AnalyticsCalculator.countEventsOfType(
-          r.events, AnalyticsEventType.problem);
-      problemM += AnalyticsCalculator.problemMinutes(r.events);
-      salarySum += r.breakdown.total;
-    }
-
-    Widget c(String label, String value) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(value,
-                  style: const TextStyle(
-                      color: AnalyticsColors.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 12)),
-              Text(label,
-                  style: const TextStyle(
-                      color: AnalyticsColors.muted, fontSize: 10)),
-            ],
-          ),
-        );
+  Widget _buildScrollableFooter(
+    bool finance,
+    double width,
+    int days,
+    int nights,
+    double qtyAll,
+    int usefulM,
+    int pauseCount,
+    int pauseM,
+    int problemCount,
+    int problemM,
+    double salarySum,
+  ) {
+    Widget c(String label, String value) => _footerCell(label, value);
 
     return Container(
       decoration: BoxDecoration(
@@ -358,13 +505,12 @@ class EmployeesTable extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(child: c('всего смен', '$shifts')),
           Expanded(child: c('дней', '$days')),
           Expanded(child: c('ночей', '$nights')),
           Expanded(
               flex: 2,
               child: c('сделано',
-                  '${AnalyticsFormat.decimal(qtyAll)} (полезное ${AnalyticsFormat.hoursMinutes(usefulM)})')),
+                  '${AnalyticsFormat.decimal(qtyAll)} (${AnalyticsFormat.hoursMinutes(usefulM)})')),
           Expanded(child: c('сделано', AnalyticsFormat.decimal(qtyAll))),
           Expanded(child: c('наладка', '—')),
           Expanded(
@@ -383,6 +529,23 @@ class EmployeesTable extends StatelessWidget {
       ),
     );
   }
+
+  static Widget _footerCell(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(value,
+                style: const TextStyle(
+                    color: AnalyticsColors.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12)),
+            Text(label,
+                style: const TextStyle(
+                    color: AnalyticsColors.muted, fontSize: 10)),
+          ],
+        ),
+      );
 
   Widget _cell({required Widget child, int flex = 1}) {
     return Expanded(
@@ -428,13 +591,6 @@ class _Row {
     required this.breakdown,
     required this.claims,
   });
-}
-
-class _Col {
-  final String label;
-  final int flex;
-  final bool sticky;
-  const _Col(this.label, {this.flex = 1, this.sticky = false});
 }
 
 class _EmployeeCell extends StatelessWidget {
@@ -488,8 +644,8 @@ class _EmployeeCell extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                   decoration: BoxDecoration(
-                    border: Border.all(
-                        color: const Color(0x4F38BDF8)),
+                    border:
+                        Border.all(color: const Color(0x4F38BDF8)),
                     borderRadius: BorderRadius.circular(999),
                     color: const Color(0x261A8FB5),
                   ),

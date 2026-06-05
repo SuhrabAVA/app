@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../utils/analytics_colors.dart';
@@ -19,69 +21,137 @@ class AnalyticsTopbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final brandBlock = Row(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        if (onBack != null) ...[
-          IconButton(
-            icon:
-                const Icon(Icons.arrow_back, color: AnalyticsColors.text),
-            onPressed: onBack,
-            tooltip: 'Назад',
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xD10B1020),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AnalyticsColors.line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x59000000),
+            blurRadius: 70,
+            offset: Offset(0, 22),
           ),
-          const SizedBox(width: 6),
         ],
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            gradient: AnalyticsColors.accentGradient,
-          ),
-          alignment: Alignment.center,
-          child: const Text(
-            'A',
-            style: TextStyle(
-              color: Color(0xFF00121C),
-              fontWeight: FontWeight.w900,
-              fontSize: 22,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tabsBlock = _TabsBlock(
+            selected: selected,
+            onTabChanged: onTabChanged,
+          );
+          final brandBlock = _BrandBlock(
+            maxWidth: constraints.maxWidth,
+            onBack: onBack,
+          );
+
+          if (constraints.maxWidth < 760) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                brandBlock,
+                const SizedBox(height: 12),
+                tabsBlock,
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              Expanded(child: brandBlock),
+              const SizedBox(width: 16),
+              tabsBlock,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _BrandBlock extends StatelessWidget {
+  const _BrandBlock({required this.maxWidth, this.onBack});
+
+  final double maxWidth;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: math.min(maxWidth, 560)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (onBack != null) ...[
+            IconButton(
+              icon: const Icon(Icons.arrow_back, color: AnalyticsColors.text),
+              onPressed: onBack,
+              tooltip: 'Назад',
+            ),
+            const SizedBox(width: 6),
+          ],
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: AnalyticsColors.accentGradient,
+            ),
+            alignment: Alignment.center,
+            child: const Text(
+              'A',
+              style: TextStyle(
+                color: Color(0xFF00121C),
+                fontWeight: FontWeight.w900,
+                fontSize: 22,
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 12),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Аналитика производства',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: AnalyticsColors.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 22,
-                  height: 1.1,
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Аналитика производства',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AnalyticsColors.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 22,
+                    height: 1.1,
+                  ),
                 ),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'сотрудники · рабочие места · графики работы · зарплата',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    TextStyle(color: AnalyticsColors.muted, fontSize: 12),
-              ),
-            ],
+                SizedBox(height: 4),
+                Text(
+                  'сотрудники · рабочие места · графики работы · зарплата',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AnalyticsColors.muted, fontSize: 12),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
+  }
+}
 
-    final tabsBlock = Wrap(
+class _TabsBlock extends StatelessWidget {
+  const _TabsBlock({required this.selected, required this.onTabChanged});
+
+  final AnalyticsTopTab selected;
+  final ValueChanged<AnalyticsTopTab> onTabChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
@@ -101,32 +171,6 @@ class AnalyticsTopbar extends StatelessWidget {
           onTap: () => onTabChanged(AnalyticsTopTab.schedule),
         ),
       ],
-    );
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xD10B1020),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AnalyticsColors.line),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x59000000),
-            blurRadius: 70,
-            offset: Offset(0, 22),
-          ),
-        ],
-      ),
-      // Внешний Wrap позволяет блокам уйти на новую строку, когда
-      // ширины не хватает (узкое окно), и убирает RenderFlex overflow.
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 16,
-        runSpacing: 12,
-        children: [brandBlock, tabsBlock],
-      ),
     );
   }
 }

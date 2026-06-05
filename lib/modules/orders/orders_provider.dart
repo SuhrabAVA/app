@@ -339,15 +339,65 @@ class OrdersProvider with ChangeNotifier {
           .maybeSingle();
       if (row == null) return null;
       final baseQty = _toDouble(row['quantity']);
-      final rows = await _supabase
+
+      // Фильтруем только активные (незакрытые) заказы, чтобы старые резервы
+      // завершённых заказов не занижали доступный остаток краски.
+      final allReserveRows = await _supabase
           .from('order_paint_reservations')
-          .select('reserved_qty')
+          .select('order_id, reserved_qty')
           .eq('paint_id', id);
-      double reservedQty = 0;
-      if (rows is List) {
-        for (final raw in rows.whereType<Map>()) {
-          reservedQty += _toDouble((raw as Map)['reserved_qty']);
+      if (allReserveRows is! List || allReserveRows.isEmpty) {
+        return baseQty;
+      }
+
+      final reserveList = allReserveRows
+          .whereType<Map>()
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .toList(growable: false);
+
+      final orderIds = reserveList
+          .map((r) => (r['order_id'] ?? '').toString().trim())
+          .where((oid) => oid.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+
+      final activeOrderIds = <String>{};
+      if (orderIds.isNotEmpty) {
+        final orderRows = await _supabase
+            .from('orders')
+            .select('id, status, shipped_at')
+            .inFilter('id', orderIds);
+        if (orderRows is List) {
+          for (final raw in orderRows.whereType<Map>()) {
+            final r = Map<String, dynamic>.from(raw as Map);
+            final oid = (r['id'] ?? '').toString().trim();
+            if (oid.isEmpty) continue;
+            final status = (r['status'] ?? '').toString().toLowerCase().trim();
+            final shippedAt = r['shipped_at'];
+            final isClosed =
+                status == 'completed' || status == 'shipped' || shippedAt != null;
+            if (!isClosed) activeOrderIds.add(oid);
+          }
         }
+        // Удаляем зависшие резервы закрытых заказов.
+        final staleIds = orderIds
+            .where((oid) => !activeOrderIds.contains(oid))
+            .toList(growable: false);
+        if (staleIds.isNotEmpty) {
+          try {
+            await _supabase
+                .from('order_paint_reservations')
+                .delete()
+                .inFilter('order_id', staleIds);
+          } catch (_) {}
+        }
+      }
+
+      double reservedQty = 0;
+      for (final r in reserveList) {
+        final oid = (r['order_id'] ?? '').toString().trim();
+        if (!activeOrderIds.contains(oid)) continue;
+        reservedQty += _toDouble(r['reserved_qty']);
       }
       return baseQty - reservedQty;
     } catch (_) {

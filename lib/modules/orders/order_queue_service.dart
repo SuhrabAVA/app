@@ -494,15 +494,24 @@ class OrderQueueService {
 
   Future<List<Map<String, dynamic>>> _selectPlanStageRows(String planId) async {
     const attempts = <({String columns, String orderColumn})>[
+      // Рабочие попытки (без stage_name, который отсутствует в схеме)
       (
-        columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status,'
-            'started_at,finished_at,completed_at,executor_id,'
-            'assigned_employee_id',
+        columns: 'stage_id,stage_group_key,name,step_no,seq,status,'
+            'started_at,finished_at,assigned_employee_id',
         orderColumn: 'seq',
       ),
       (
+        columns: 'stage_id,stage_group_key,name,step_no,seq,status',
+        orderColumn: 'seq',
+      ),
+      (
+        columns: 'stage_id,stage_group_key,name,seq,status',
+        orderColumn: 'seq',
+      ),
+      // Запасные попытки для схем со stage_name
+      (
         columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status,'
-            'started_at,finished_at,executor_id,assigned_employee_id',
+            'started_at,finished_at,assigned_employee_id',
         orderColumn: 'seq',
       ),
       (
@@ -514,16 +523,8 @@ class OrderQueueService {
         orderColumn: 'seq',
       ),
       (
-        columns: 'stage_id,stage_group_key,name,step_no,seq,status',
-        orderColumn: 'seq',
-      ),
-      (
         columns: 'stage_id,stage_group_key,stage_name,step_no,status',
         orderColumn: 'step_no',
-      ),
-      (
-        columns: 'stage_id,stage_group_key,name,seq,status',
-        orderColumn: 'seq',
       ),
     ];
 

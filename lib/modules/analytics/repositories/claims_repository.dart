@@ -11,13 +11,13 @@ class ClaimsRepository {
   /// Все претензии за месяц.
   Future<List<ClaimModel>> listForMonth(DateTime month) async {
     final firstDay = DateTime(month.year, month.month, 1);
-    final lastDay = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+    final nextMonthFirst = DateTime(month.year, month.month + 1, 1);
     final List<dynamic> rows = await _client
         .from('claims')
         .select(
             'id, order_id, comment_id, employee_id, workplace_id, description, created_by, created_at')
         .gte('created_at', firstDay.toUtc().toIso8601String())
-        .lte('created_at', lastDay.toUtc().toIso8601String());
+        .lt('created_at', nextMonthFirst.toUtc().toIso8601String());
     return rows
         .whereType<Map>()
         .map((m) => ClaimModel.fromMap(Map<String, dynamic>.from(m)))

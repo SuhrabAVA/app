@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../../personnel/personnel_provider.dart';
@@ -9,8 +7,12 @@ import '../models/day_shift_type.dart';
 import '../models/work_schedule_entry.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
+import '../utils/h_scroll_sync.dart';
 
-class ScheduleGrid extends StatelessWidget {
+const double _employeeColumnWidth = 220;
+const double _dayColumnWidth = 74;
+
+class ScheduleGrid extends StatefulWidget {
   const ScheduleGrid({
     super.key,
     required this.service,
@@ -23,12 +25,30 @@ class ScheduleGrid extends StatelessWidget {
   final bool canEdit;
 
   @override
+  State<ScheduleGrid> createState() => _ScheduleGridState();
+}
+
+class _ScheduleGridState extends State<ScheduleGrid> {
+  // One synced horizontal-scroll group for header + all rows.
+  final HScrollSync _sync = HScrollSync();
+  final Map<int, ScrollController> _ctrlCache = {};
+
+  ScrollController _ctrl(int key) =>
+      _ctrlCache.putIfAbsent(key, () => _sync.acquire());
+
+  @override
+  void dispose() {
+    _sync.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = service.state;
+    final state = widget.service.state;
     final month = state.month;
     final days = List.generate(month.daysCount, (i) => i + 1);
 
-    // events by employee+day для подсветки
+    // Events grouped by employee + day for highlight.
     final activityByEmpDay = <String, Map<int, List<AnalyticsEvent>>>{};
     for (final e in state.events) {
       activityByEmpDay
@@ -38,116 +58,149 @@ class ScheduleGrid extends StatelessWidget {
     }
 
     final activeEmployees =
-        personnel.employees.where((e) => !e.isFired).toList()
+        widget.personnel.employees.where((e) => !e.isFired).toList()
           ..sort((a, b) => ('${a.lastName} ${a.firstName}')
               .compareTo('${b.lastName} ${b.firstName}'));
 
-    return LayoutBuilder(builder: (context, constraints) {
-      final width = constraints.maxWidth.isFinite
-          ? math.max(constraints.maxWidth, 2400.0)
-          : 2400.0;
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: width,
-          child: Column(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── Header row ───────────────────────────────────────────────────
+        IntrinsicHeight(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
             children: [
-              _header(days),
-              for (final emp in activeEmployees)
-                _row(context, month, emp, days, state.schedules,
-                    activityByEmpDay),
+              // Sticky "Сотрудник" label
+              Container(
+                width: _employeeColumnWidth,
+                decoration: const BoxDecoration(color: Color(0xFF121A2E)),
+                padding: const EdgeInsets.all(12),
+                child: const Text(
+                  'Сотрудник',
+                  style: TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              // Scrollable day-number headers
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: _ctrl(-1),
+                  scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
+                  child: Row(
+                    children: days
+                        .map((d) => Container(
+                              width: _dayColumnWidth,
+                              color: const Color(0xFF121A2E),
+                              padding: const EdgeInsets.all(8),
+                              child: Text(
+                                '$d',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFCBD5E1),
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-      );
-    });
-  }
-
-  Widget _header(List<int> days) {
-    return Container(
-      decoration: const BoxDecoration(color: Color(0xFF121A2E)),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 220,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: const Text('Сотрудник',
-                  style: TextStyle(
-                      color: Color(0xFFCBD5E1),
-                      fontWeight: FontWeight.w800,
-                      fontSize: 11)),
-            ),
-          ),
-          for (final d in days)
-            SizedBox(
-              width: 74,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(
-                  '$d',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Color(0xFFCBD5E1),
-                      fontWeight: FontWeight.w800,
-                      fontSize: 11),
-                ),
-              ),
-            ),
-        ],
-      ),
+        // ── Data rows ────────────────────────────────────────────────────
+        ...activeEmployees.asMap().entries.map((entry) {
+          final i = entry.key;
+          final emp = entry.value;
+          return _buildRow(
+            context,
+            month,
+            emp,
+            days,
+            state.schedules,
+            activityByEmpDay,
+            rowIndex: i,
+          );
+        }),
+      ],
     );
   }
 
-  Widget _row(
+  Widget _buildRow(
     BuildContext context,
     AnalyticsMonth month,
-    employee,
+    dynamic employee,
     List<int> days,
     Map<String, Map<int, WorkScheduleEntry>> schedules,
-    Map<String, Map<int, List<AnalyticsEvent>>> activity,
-  ) {
+    Map<String, Map<int, List<AnalyticsEvent>>> activity, {
+    required int rowIndex,
+  }) {
     final byDay = schedules[employee.id] ?? <int, WorkScheduleEntry>{};
-    return Container(
-      decoration: BoxDecoration(
-        color: AnalyticsColors.card2.withOpacity(0.55),
-        border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
-      ),
+
+    return IntrinsicHeight(
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            width: 220,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                '${employee.lastName} ${employee.firstName}'.trim(),
-                style: const TextStyle(
-                  color: AnalyticsColors.text,
-                  fontWeight: FontWeight.w800,
+          // Sticky employee name
+          Container(
+            width: _employeeColumnWidth,
+            decoration: BoxDecoration(
+              color: AnalyticsColors.card2.withOpacity(0.55),
+              border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              '${employee.lastName} ${employee.firstName}'.trim(),
+              style: const TextStyle(
+                color: AnalyticsColors.text,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          // Scrollable day cells
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _ctrl(rowIndex),
+              scrollDirection: Axis.horizontal,
+              physics: const ClampingScrollPhysics(),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AnalyticsColors.card2.withOpacity(0.55),
+                  border:
+                      Border(bottom: BorderSide(color: AnalyticsColors.line)),
+                ),
+                child: Row(
+                  children: days
+                      .map((d) => SizedBox(
+                            width: _dayColumnWidth,
+                            child: _Cell(
+                              month: month,
+                              employeeId: employee.id,
+                              day: d,
+                              entry: byDay[d],
+                              activityForDay:
+                                  activity[employee.id]?[d] ?? const [],
+                              onCycle: widget.canEdit
+                                  ? () => _cycle(
+                                      month, employee.id, d, byDay[d])
+                                  : null,
+                              onEditTime: widget.canEdit
+                                  ? (field, value) => _editTime(month,
+                                      employee.id, d, byDay[d], field, value)
+                                  : null,
+                            ),
+                          ))
+                      .toList(),
                 ),
               ),
             ),
           ),
-          for (final d in days)
-            SizedBox(
-              width: 74,
-              child: _Cell(
-                month: month,
-                employeeId: employee.id,
-                day: d,
-                entry: byDay[d],
-                activityForDay: activity[employee.id]?[d] ?? const [],
-                onCycle: canEdit
-                    ? () => _cycle(month, employee.id, d, byDay[d])
-                    : null,
-                onEditTime: canEdit
-                    ? (field, value) =>
-                        _editTime(month, employee.id, d, byDay[d], field, value)
-                    : null,
-              ),
-            ),
         ],
       ),
     );
@@ -177,7 +230,7 @@ class ScheduleGrid extends StatelessWidget {
       arrivalTime: defaults.$1,
       departureTime: defaults.$2,
     );
-    await service.saveScheduleCell(
+    await widget.service.saveScheduleCell(
       employeeId: empId,
       date: entry.workDate,
       entry: entry,
@@ -207,7 +260,7 @@ class ScheduleGrid extends StatelessWidget {
       arrivalTime: arrival,
       departureTime: departure,
     );
-    await service.saveScheduleCell(
+    await widget.service.saveScheduleCell(
       employeeId: empId,
       date: entry.workDate,
       entry: entry,

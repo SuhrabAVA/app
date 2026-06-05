@@ -10,8 +10,9 @@ import '../models/analytics_event.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
 import '../utils/format_utils.dart';
+import '../utils/h_scroll_sync.dart';
 
-class WorkplacesTable extends StatelessWidget {
+class WorkplacesTable extends StatefulWidget {
   const WorkplacesTable({
     super.key,
     required this.service,
@@ -26,8 +27,28 @@ class WorkplacesTable extends StatelessWidget {
   final ValueChanged<String> onWorkplaceTap;
 
   @override
-  Widget build(BuildContext context) {
-    final state = service.state;
+  State<WorkplacesTable> createState() => _WorkplacesTableState();
+}
+
+class _WorkplacesTableState extends State<WorkplacesTable> {
+  final HScrollSync _sync = HScrollSync();
+  final Map<int, ScrollController> _ctrlCache = {};
+
+  // Row computation cache.
+  AnalyticsState? _lastState;
+  List<_WpRow> _rows = const [];
+
+  ScrollController _ctrl(int key) =>
+      _ctrlCache.putIfAbsent(key, () => _sync.acquire());
+
+  void _maybeRecompute(AnalyticsState state) {
+    if (state.loading) return;
+    if (identical(state, _lastState)) return;
+    _lastState = state;
+    _rows = _buildRows(state);
+  }
+
+  List<_WpRow> _buildRows(AnalyticsState state) {
     final events = state.events;
     final byWp = <String, List<AnalyticsEvent>>{};
     for (final e in events) {
@@ -40,18 +61,18 @@ class WorkplacesTable extends StatelessWidget {
       claimsByWp[wpId] = (claimsByWp[wpId] ?? 0) + 1;
     }
 
-    final rows = personnel.workplaces.map((wp) {
+    return widget.personnel.workplaces.map((wp) {
       final list = byWp[wp.id] ?? const <AnalyticsEvent>[];
       final pause =
           list.where((e) => e.type == AnalyticsEventType.pause).toList();
       final problem =
           list.where((e) => e.type == AnalyticsEventType.problem).toList();
 
-      final currentSpeed =
-          AnalyticsCalculator.speedQtyPerMinute(list);
+      final currentSpeed = AnalyticsCalculator.speedQtyPerMinute(list);
       final kpd = KpdCalculator.compute(
         currentSpeed: currentSpeed,
-        previousMonthsSpeeds: state.workplacePreviousSpeeds[wp.id] ?? const [],
+        previousMonthsSpeeds:
+            state.workplacePreviousSpeeds[wp.id] ?? const [],
       );
 
       final ordersCount = <String>{};
@@ -79,29 +100,99 @@ class WorkplacesTable extends StatelessWidget {
         coefficient: state.coefficients[wp.id] ?? 0,
       );
     }).toList();
+  }
+
+  @override
+  void dispose() {
+    _sync.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.service.state;
+    _maybeRecompute(state);
+    final rows = _rows;
+
+    // Sticky column: 220 px. Rest: min 1280 px.
+    const stickyWidth = 220.0;
+    const restMinWidth = 1280.0;
 
     return LayoutBuilder(builder: (context, constraints) {
-      final width = constraints.maxWidth.isFinite
-          ? math.max(constraints.maxWidth, 1500.0)
-          : 1500.0;
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: width,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _header(),
-              ...rows.map(_buildRow),
-            ],
+      final restWidth = constraints.maxWidth.isFinite
+          ? math.max(constraints.maxWidth - stickyWidth, restMinWidth)
+          : restMinWidth;
+
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Header row ─────────────────────────────────────────────────
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _stickyHeaderCell(stickyWidth),
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: _ctrl(-1),
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: SizedBox(
+                      width: restWidth,
+                      child: _scrollableHeader(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+          // ── Data rows ──────────────────────────────────────────────────
+          ...rows.asMap().entries.map((entry) {
+            final i = entry.key;
+            final r = entry.value;
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _stickyDataCell(r, stickyWidth),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: _ctrl(i),
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: restWidth,
+                        child: _scrollableDataRow(r),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       );
     });
   }
 
-  Widget _header() {
+  Widget _stickyHeaderCell(double width) {
+    return Container(
+      width: width,
+      decoration: const BoxDecoration(color: Color(0xFF121A2E)),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: const Text(
+        'РАБОЧЕЕ МЕСТО',
+        style: TextStyle(
+          color: Color(0xFFCBD5E1),
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  Widget _scrollableHeader() {
     Widget cell(String s, {int flex = 1}) => Expanded(
           flex: flex,
           child: Padding(
@@ -121,7 +212,6 @@ class WorkplacesTable extends StatelessWidget {
       decoration: const BoxDecoration(color: Color(0xFF121A2E)),
       child: Row(
         children: [
-          cell('Рабочее место', flex: 2),
           cell('Ед. изм.'),
           cell('Коэффициент'),
           cell('Количество / время / скорость', flex: 2),
@@ -136,16 +226,38 @@ class WorkplacesTable extends StatelessWidget {
     );
   }
 
-  Widget _buildRow(_WpRow r) {
-    final unit =
-        r.workplace.unit?.trim().isNotEmpty == true ? r.workplace.unit! : 'ед.';
+  Widget _stickyDataCell(_WpRow r, double width) {
+    return InkWell(
+      onTap: () => widget.onWorkplaceTap(r.workplace.id),
+      child: Container(
+        width: width,
+        decoration: BoxDecoration(
+          color: AnalyticsColors.card2.withOpacity(0.55),
+          border: Border(bottom: BorderSide(color: AnalyticsColors.line)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Text(
+          r.workplace.name,
+          style: const TextStyle(
+            color: AnalyticsColors.text,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _scrollableDataRow(_WpRow r) {
+    final unit = r.workplace.unit?.trim().isNotEmpty == true
+        ? r.workplace.unit!
+        : 'ед.';
     final avgQtySpeed =
         r.usefulMinutes > 0 ? r.qty / r.usefulMinutes : 0.0;
     final avgSetupSpeed =
         r.setupMinutes > 0 ? r.setupQty / r.setupMinutes : 0.0;
 
     return InkWell(
-      onTap: () => onWorkplaceTap(r.workplace.id),
+      onTap: () => widget.onWorkplaceTap(r.workplace.id),
       child: Container(
         decoration: BoxDecoration(
           color: AnalyticsColors.card2.withOpacity(0.55),
@@ -153,20 +265,6 @@ class WorkplacesTable extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                child: Text(
-                  r.workplace.name,
-                  style: const TextStyle(
-                    color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
             _cell(unit),
             _cell(AnalyticsFormat.decimal(r.coefficient)),
             _cellLong(
@@ -178,14 +276,18 @@ class WorkplacesTable extends StatelessWidget {
               '${AnalyticsFormat.hoursMinutes(r.setupMinutes)} · ${AnalyticsFormat.decimal(avgSetupSpeed)} нал/мин',
             ),
             _cell('${r.ordersCount}'),
-            _cellLong('${r.pauseCount}',
+            _cellLong(
+                '${r.pauseCount}',
                 AnalyticsFormat.hoursMinutes(r.pauseMinutes)),
-            _cellLong('${r.problemCount}',
+            _cellLong(
+                '${r.problemCount}',
                 AnalyticsFormat.hoursMinutes(r.problemMinutes)),
             _cell('${r.claims}'),
             _cellLong(
               '${r.kpd.kpdPercent.round()}%',
-              r.kpd.noBaseline ? 'нет базы' : 'к предыдущим месяцам',
+              r.kpd.noBaseline
+                  ? 'нет базы — безопасный fallback'
+                  : 'к средней базе всех прошлых месяцев',
             ),
           ],
         ),
@@ -199,7 +301,8 @@ class WorkplacesTable extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           child: Text(
             v,
-            style: const TextStyle(color: AnalyticsColors.text, fontSize: 12),
+            style:
+                const TextStyle(color: AnalyticsColors.text, fontSize: 12),
           ),
         ),
       );
