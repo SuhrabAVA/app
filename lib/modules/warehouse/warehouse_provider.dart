@@ -61,6 +61,12 @@ class WarehouseProvider with ChangeNotifier {
   RealtimeChannel? _chanPaintReservations;
   RealtimeChannel? _chanStationery;
 
+  // Guard: не допускать параллельных тяжёлых загрузок fetchTmc.
+  bool _fetchInFlight = false;
+  // Дебаунс realtime-событий: несколько подряд идущих insert/update
+  // схлопываются в один вызов fetchTmc через 350 мс.
+  Timer? _refreshDebounce;
+
   final List<TmcModel> _allTmc = [];
   List<TmcModel> get allTmc => List.unmodifiable(_allTmc);
 
@@ -373,6 +379,7 @@ class WarehouseProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _refreshDebounce?.cancel();
     if (_chanPaints != null) _sb.removeChannel(_chanPaints!);
     if (_chanMaterials != null) _sb.removeChannel(_chanMaterials!);
     if (_chanPapers != null) _sb.removeChannel(_chanPapers!);
@@ -387,6 +394,13 @@ class WarehouseProvider with ChangeNotifier {
   }
 
   // ===================== LIVE =====================
+
+  /// Дебаунс: несколько realtime-событий подряд схлопываются в один fetchTmc.
+  void _scheduleRefresh() {
+    _refreshDebounce?.cancel();
+    _refreshDebounce = Timer(const Duration(milliseconds: 350), fetchTmc);
+  }
+
   void _listen() {
     _chanPaints = _sb
         .channel('wh:paints')
@@ -394,7 +408,7 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'paints',
-          callback: (_) => fetchTmc(),
+          callback: (_) => _scheduleRefresh(),
         )
         .subscribe();
 
@@ -404,7 +418,7 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'materials',
-          callback: (_) => fetchTmc(),
+          callback: (_) => _scheduleRefresh(),
         )
         .subscribe();
 
@@ -414,7 +428,7 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'papers',
-          callback: (_) => fetchTmc(),
+          callback: (_) => _scheduleRefresh(),
         )
         .subscribe();
 
@@ -439,7 +453,7 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'order_paint_reservations',
-          callback: (_) => fetchTmc(),
+          callback: (_) => _scheduleRefresh(),
         )
         .subscribe();
 
@@ -457,19 +471,56 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'warehouse_stationery',
-          callback: (_) => fetchTmc(),
+          callback: (_) => _scheduleRefresh(),
         )
         .subscribe();
   }
 
   // ===================== LOAD =====================
+
+  // Explicit column lists for list queries — excludes image_base64 (stored
+  // inline as a text blob) to prevent statement timeouts when the table grows.
+  // image_base64 is loaded lazily via fetchImageBase64() when a single item
+  // is opened for editing and image_url is unavailable.
+  static const String _kPaintCols =
+      'id, date, supplier, description, quantity, unit, note, '
+      'low_threshold, critical_threshold, image_url, created_at, updated_at';
+  static const String _kPaperCols =
+      'id, date, supplier, description, quantity, unit, note, '
+      'low_threshold, critical_threshold, format, grammage, weight, '
+      'created_at, updated_at';
+  static const String _kMaterialCols =
+      'id, date, supplier, description, quantity, unit, note, '
+      'low_threshold, critical_threshold, created_at, updated_at';
+  static const String _kPensCols =
+      'id, date, supplier, name, color, quantity, unit, note, '
+      'low_threshold, critical_threshold, created_at, updated_at';
+  static const String _kStationeryCols =
+      'id, date, supplier, description, quantity, unit, note, '
+      'low_threshold, critical_threshold, table_key, image_url, '
+      'created_at, updated_at';
+  static const String _kFormsCols =
+      'id, series, number, title, description, size, product_type, colors, '
+      'status, is_enabled, disabled_comment, image_url, created_at';
+
   Future<void> fetchTmc({bool factual = false}) async {
+    // Guard: если уже идёт загрузка, не запускаем параллельную.
+    if (_fetchInFlight) return;
+    _fetchInFlight = true;
     try {
       await _ensureAuthed();
       final results = await Future.wait<dynamic>([
-        _sb.from('paints').select().order('description'),
-        _sb.from('materials').select().order('description'),
-        _sb.from('papers').select().order('description'),
+        // Никогда не используем select('*') для paints/materials/papers —
+        // это тянет image_base64 и вызывает statement timeout (57014).
+        _safeTableLoad(
+          () => _sb.from('paints').select(_kPaintCols).order('description'),
+        ),
+        _safeTableLoad(
+          () => _sb.from('materials').select(_kMaterialCols).order('description'),
+        ),
+        _safeTableLoad(
+          () => _sb.from('papers').select(_kPaperCols).order('description'),
+        ),
         _loadPensRows(),
         _loadStationeryRows(),
       ]);
@@ -518,13 +569,16 @@ class WarehouseProvider with ChangeNotifier {
     } catch (e) {
       debugPrint('❌ fetchTmc: $e');
       rethrow;
+    } finally {
+      _fetchInFlight = false;
     }
   }
 
   Future<List<Map<String, dynamic>>> _loadPensRows() async {
     try {
       final pensTable = await _resolvePensTable();
-      final pensRaw = await _sb.from(pensTable).select().order('created_at');
+      final pensRaw =
+          await _sb.from(pensTable).select(_kPensCols).order('created_at');
       return (pensRaw as List)
           .map((e) => Map<String, dynamic>.from(e))
           .map((row) {
@@ -542,8 +596,10 @@ class WarehouseProvider with ChangeNotifier {
       final keyLc = _stationeryKey.toLowerCase().trim();
       final isPens = keyLc == 'ручки' || keyLc == 'pens' || keyLc == 'handles';
       if (isPens) return const <Map<String, dynamic>>[];
-      final sRaw =
-          await _sb.from('warehouse_stationery').select().order('description');
+      final sRaw = await _sb
+          .from('warehouse_stationery')
+          .select(_kStationeryCols)
+          .order('description');
       final filtered = (sRaw as List)
           .where((row) =>
               ((row['table_key'] ?? '').toString().toLowerCase().trim() ==
@@ -554,6 +610,27 @@ class WarehouseProvider with ChangeNotifier {
     } catch (e) {
       debugPrint('⚠️ load stationery failed: $e');
       return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<List<dynamic>> _safeTableLoad(
+    Future<dynamic> Function() loader, [
+    Future<dynamic> Function()? fallback,
+  ]) async {
+    try {
+      final result = await loader();
+      return result is List ? result as List<dynamic> : const <dynamic>[];
+    } catch (e) {
+      debugPrint('⚠️ warehouse table load (explicit cols): $e');
+      if (fallback != null) {
+        try {
+          final result = await fallback();
+          return result is List ? result as List<dynamic> : const <dynamic>[];
+        } catch (e2) {
+          debugPrint('⚠️ warehouse table load (fallback): $e2');
+        }
+      }
+      return const <dynamic>[];
     }
   }
 
@@ -2211,6 +2288,27 @@ class WarehouseProvider with ChangeNotifier {
     return data;
   }
 
+  /// Fetches only the [image_base64] field for a single row.
+  /// Use when the list query omitted image_base64 to avoid timeouts,
+  /// but a specific item is about to be displayed/edited and has no image_url.
+  Future<String?> fetchImageBase64({
+    required String table,
+    required String id,
+  }) async {
+    try {
+      await _ensureAuthed();
+      final row = await _sb
+          .from(table)
+          .select('image_base64')
+          .eq('id', id)
+          .maybeSingle();
+      return row?['image_base64'] as String?;
+    } catch (e) {
+      debugPrint('⚠️ fetchImageBase64 ($table/$id): $e');
+      return null;
+    }
+  }
+
   String _inferType({
     required String unit,
     String? format,
@@ -2436,6 +2534,57 @@ class WarehouseProvider with ChangeNotifier {
     return _sb.storage.from('tmc').getPublicUrl(path);
   }
 
+  /// Извлекает путь объекта в bucket `tmc` из публичного URL.
+  ///
+  /// Пример URL: https://<host>/storage/v1/object/public/tmc/tmc/<id>/<ts>.jpg
+  /// Возвращаемый путь: tmc/<id>/<ts>.jpg
+  String? _storagePathFromUrl(String url) {
+    final marker = '/tmc/';
+    final idx = url.indexOf(marker);
+    if (idx == -1) return null;
+    return url.substring(idx + 1); // 'tmc/<id>/<ts>.jpg'
+  }
+
+  /// Удаляет фото формы: убирает файл из bucket `tmc` и обнуляет image_url в БД.
+  Future<void> removeFormImage(String formId, String imageUrl) async {
+    await _ensureAuthed();
+    final path = _storagePathFromUrl(imageUrl);
+    if (path != null) {
+      try {
+        await _sb.storage.from('tmc').remove([path]);
+      } catch (e) {
+        debugPrint('⚠️ removeFormImage storage: $e');
+      }
+    }
+    await _sb
+        .from('forms')
+        .update({'image_url': null}).eq('id', formId);
+    try {
+      await fetchTmc();
+    } catch (_) {}
+  }
+
+  /// Удаляет фото TMC-записи (краски, материала и т.п.):
+  /// убирает файл из bucket `tmc` и обнуляет image_url/image_base64 в таблице [table].
+  Future<void> removeTmcImage(String tmcId, String imageUrl, String table) async {
+    await _ensureAuthed();
+    final path = _storagePathFromUrl(imageUrl);
+    if (path != null) {
+      try {
+        await _sb.storage.from('tmc').remove([path]);
+      } catch (e) {
+        debugPrint('⚠️ removeTmcImage storage: $e');
+      }
+    }
+    await _sb.from(table).update({
+      'image_url': null,
+      'image_base64': null,
+    }).eq('id', tmcId);
+    try {
+      await fetchTmc();
+    } catch (_) {}
+  }
+
   Future<void> _logTmcEvent({
     required String tmcId,
     required String eventType,
@@ -2558,7 +2707,7 @@ class WarehouseProvider with ChangeNotifier {
   }) async {
     await _ensureAuthed();
 
-    dynamic sel = _sb.from('forms').select();
+    dynamic sel = _sb.from('forms').select(_kFormsCols);
 
     if (series != null && series.isNotEmpty) {
       sel = sel.eq('series', series);
@@ -2612,7 +2761,15 @@ class WarehouseProvider with ChangeNotifier {
       sel = sel.or(orFilters.join(','));
     }
 
-    final data = await sel.order('number', ascending: false).limit(limit);
+    // При просмотре без поиска загружаем все записи (без LIMIT), чтобы
+    // клиентская сортировка «с начала» начиналась с №1. С лимитом 1000 при
+    // 1784+ формах первая страница содержит лишь записи с бо́льшими номерами
+    // и «Нумерация: с начала» начинается не с №1, а с середины каталога.
+    // При поиске лимит оставляем — результаты и так небольшие.
+    final bool hasQuery = query != null && query.trim().isNotEmpty;
+    dynamic ordered = sel.order('number', ascending: !hasQuery);
+    if (hasQuery) ordered = ordered.limit(limit);
+    final data = await ordered;
     return (data as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
