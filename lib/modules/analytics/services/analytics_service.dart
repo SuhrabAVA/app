@@ -136,9 +136,42 @@ class AnalyticsService extends ChangeNotifier {
       AnalyticsState(month: AnalyticsMonth.current(), loading: true);
   AnalyticsState get state => _state;
 
+  bool _loadInProgress = false;
+  bool _hasLoadedOnce = false;
+  AnalyticsMonth? _queuedMonth;
+
   Future<void> loadMonth(AnalyticsMonth month) async {
-    _state = _state.copyWith(month: month, loading: true, clearError: true);
-    notifyListeners();
+    // Провайдеры (tasks/orders) уведомляют при каждом realtime-событии;
+    // без guard'а параллельные loadMonth гоняли таблицу через
+    // loading→data каждую секунду (пересоздание таблицы + спам overflow).
+    if (_loadInProgress) {
+      _queuedMonth = month;
+      return;
+    }
+    _loadInProgress = true;
+    try {
+      var current = month;
+      while (true) {
+        await _loadMonthOnce(current);
+        final queued = _queuedMonth;
+        _queuedMonth = null;
+        if (queued == null) break;
+        current = queued;
+      }
+    } finally {
+      _loadInProgress = false;
+    }
+  }
+
+  Future<void> _loadMonthOnce(AnalyticsMonth month) async {
+    // Фоновое обновление того же месяца выполняем «тихо»: старые данные
+    // остаются на экране, таблица не заменяется на экран загрузки.
+    final silent =
+        _hasLoadedOnce && month == _state.month && _state.error == null;
+    if (!silent) {
+      _state = _state.copyWith(month: month, loading: true, clearError: true);
+      notifyListeners();
+    }
     try {
       // Fire all requests in parallel: one DB scan covers both events and
       // previous speeds; the rest are independent lightweight queries.
@@ -191,8 +224,15 @@ class AnalyticsService extends ChangeNotifier {
         workplacePreviousSpeeds: allData.prevSpeeds,
         loading: false,
       );
+      _hasLoadedOnce = true;
       notifyListeners();
     } catch (e) {
+      // При тихом фоновом обновлении не подменяем живую таблицу экраном
+      // ошибки — оставляем прежние данные.
+      if (silent) {
+        debugPrint('⚠️ Analytics background refresh failed: $e');
+        return;
+      }
       _state = _state.copyWith(loading: false, error: e);
       notifyListeners();
     }

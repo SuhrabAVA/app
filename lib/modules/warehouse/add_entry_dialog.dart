@@ -124,6 +124,7 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   XFile? _pickedImage;
   String? _existingImageUrl;
   Uint8List? _imageBytes;
+  bool _paintPhotoDeleted = false; // пользователь явно удалил фото краски
 
   final List<String> _colors = const [
     'Красный',
@@ -227,6 +228,26 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           }
         }
       });
+
+      // Lazy-load image_base64 for records that only stored base64 and have no
+      // image_url. Needed because the list query no longer fetches image_base64
+      // (it caused statement timeouts). Skipped when image_url is available
+      // because Image.network in the UI already handles that case.
+      if (_isEdit &&
+          _imageBytes == null &&
+          (_existingImageUrl == null || _existingImageUrl!.isEmpty)) {
+        final item = widget.existing!;
+        final table = _tmcTypeToTable(item.type);
+        if (table != null) {
+          final b64 = await wh.fetchImageBase64(table: table, id: item.id);
+          if (b64 != null && mounted) {
+            try {
+              final bytes = base64Decode(b64);
+              setState(() => _imageBytes = bytes);
+            } catch (_) {}
+          }
+        }
+      }
     });
 
     if (_isEdit) {
@@ -276,6 +297,23 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
     return type;
   }
 
+  /// Maps a TmcModel.type value to the Supabase table name.
+  /// Returns null for types backed by a dynamically-named table (e.g. pens).
+  String? _tmcTypeToTable(String type) {
+    switch (type.toLowerCase()) {
+      case 'paint':
+        return 'paints';
+      case 'material':
+        return 'materials';
+      case 'paper':
+        return 'papers';
+      case 'stationery':
+        return 'warehouse_stationery';
+      default:
+        return null; // pens use a dynamic table name; skip lazy load
+    }
+  }
+
   void _populateForEdit(TmcModel item) {
     final uiType = _mapTypeToUi(item.type);
     switch (uiType) {
@@ -302,7 +340,20 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         _controllers['length']!.text = item.quantity.toString();
         break;
       case 'Краска':
-        _controllers['name']!.text = item.description;
+        String paintName = item.description;
+        for (final c in _colors) {
+          if (paintName == c) {
+            paintName = '';
+            _selectedColor = c;
+            break;
+          } else if (paintName.endsWith(' $c')) {
+            paintName =
+                paintName.substring(0, paintName.length - c.length - 1).trim();
+            _selectedColor = c;
+            break;
+          }
+        }
+        _controllers['name']!.text = paintName;
         final unitLower = item.unit.toLowerCase().trim();
         final qtyGrams = unitLower == 'кг' ? item.quantity * 1000 : item.quantity;
         _controllers['weight']!.text = qtyGrams.toString();
@@ -426,8 +477,19 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             break;
 
           case 'Краска':
-            String? imageBase64 = item.imageBase64;
-            if (_imageBytes != null) imageBase64 = base64Encode(_imageBytes!);
+            // Если пользователь удалил фото — убираем из storage и БД
+            if (_paintPhotoDeleted &&
+                _imageBytes == null &&
+                _existingImageUrl != null &&
+                _existingImageUrl!.isNotEmpty) {
+              await wh.removeTmcImage(item.id, _existingImageUrl!, 'paints');
+            }
+            String? imageBase64;
+            if (_imageBytes != null) {
+              imageBase64 = base64Encode(_imageBytes!);
+            } else if (!_paintPhotoDeleted) {
+              imageBase64 = item.imageBase64;
+            }
             final currentQtyGrams = item.unit.toLowerCase().trim() == 'кг'
                 ? item.quantity * 1000
                 : item.quantity;
@@ -436,14 +498,20 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                     .trim()
                     .replaceAll(',', '.')) ??
                 currentQtyGrams;
+            final paintName = _controllers['name']!.text.trim();
+            final paintColor = _selectedColor ?? '';
+            final paintDescription = paintName.isNotEmpty
+                ? (paintColor.isNotEmpty
+                    ? '$paintName $paintColor'
+                    : paintName)
+                : item.description;
             await wh.updateTmc(
               id: item.id,
-              description: _controllers['name']!.text.trim().isNotEmpty
-                  ? _controllers['name']!.text.trim()
-                  : item.description,
+              description: paintDescription,
               unit: 'гр',
               quantity: enteredQty,
               note: note.isNotEmpty ? note : item.note,
+              imageBytes: _imageBytes,
               imageBase64: imageBase64,
               lowThreshold: lowTh,
               criticalThreshold: critTh,
@@ -1609,17 +1677,30 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
             if (_imageBytes != null)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6.0),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    _imageBytes!,
-                    height: 120,
-                    width: 120,
-                    fit: BoxFit.cover,
-                  ),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        _imageBytes!,
+                        height: 120,
+                        width: 120,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Убрать выбранное фото',
+                      icon: const Icon(Icons.close, color: Colors.red),
+                      onPressed: () => setState(() {
+                        _pickedImage = null;
+                        _imageBytes = null;
+                      }),
+                    ),
+                  ],
                 ),
               )
-            else if (_existingImageUrl != null)
+            else if (!_paintPhotoDeleted && _existingImageUrl != null)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6.0),
                 child: ClipRRect(
@@ -1632,13 +1713,57 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                   ),
                 ),
               ),
+            // Кнопка удаления фото (только при редактировании с существующим фото)
+            if (_isEdit &&
+                !_paintPhotoDeleted &&
+                _imageBytes == null &&
+                _existingImageUrl != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4.0),
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (dCtx) => AlertDialog(
+                        title: const Text('Удалить фото?'),
+                        content:
+                            const Text('Фото будет удалено безвозвратно.'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dCtx, false),
+                            child: const Text('Отмена'),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red),
+                            onPressed: () => Navigator.pop(dCtx, true),
+                            child: const Text('Удалить'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed == true) {
+                      setState(() {
+                        _paintPhotoDeleted = true;
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  label: const Text('Удалить фото',
+                      style: TextStyle(color: Colors.red)),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: ElevatedButton.icon(
-                onPressed: _pickImage,
+                onPressed: () async {
+                  await _pickImage();
+                  setState(() => _paintPhotoDeleted = false);
+                },
                 icon: const Icon(Icons.photo_library),
                 label: Text(
-                  _pickedImage != null || _existingImageUrl != null
+                  _pickedImage != null ||
+                          (!_paintPhotoDeleted && _existingImageUrl != null)
                       ? 'Изменить фото'
                       : 'Добавить фото',
                 ),

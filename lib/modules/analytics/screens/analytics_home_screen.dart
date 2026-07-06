@@ -74,7 +74,11 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
   void _onProvidersChanged() {
     if (!mounted) return;
     _refreshDebounce?.cancel();
-    _refreshDebounce = Timer(const Duration(milliseconds: 800), () {
+    // TaskProvider/OrdersProvider уведомляют на каждое realtime-событие;
+    // 800 мс запускали полную перезагрузку почти на каждый notify.
+    // Обновление тихое (см. AnalyticsService), поэтому редкий рефреш
+    // не мешает работе с таблицей.
+    _refreshDebounce = Timer(const Duration(seconds: 5), () {
       if (mounted) _service.refresh();
     });
   }

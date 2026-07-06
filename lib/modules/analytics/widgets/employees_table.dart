@@ -425,23 +425,17 @@ class _EmployeesTableState extends State<EmployeesTable> {
                 child: Text('${AnalyticsFormat.decimal(setupQty)}',
                     style: _cellStyle())),
             _cell(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('$pauseCount', style: _cellStyle()),
-                  Text(AnalyticsFormat.hoursMinutes(pauseMin),
-                      style: _mutedStyle()),
-                ],
+              child: _twoLine(
+                Text('$pauseCount', style: _cellStyle()),
+                Text(AnalyticsFormat.hoursMinutes(pauseMin),
+                    style: _mutedStyle()),
               ),
             ),
             _cell(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('$problemCount', style: _cellStyle()),
-                  Text(AnalyticsFormat.hoursMinutes(problemMin),
-                      style: _mutedStyle()),
-                ],
+              child: _twoLine(
+                Text('$problemCount', style: _cellStyle()),
+                Text(AnalyticsFormat.hoursMinutes(problemMin),
+                    style: _mutedStyle()),
               ),
             ),
             _cell(child: Text('${r.claims}', style: _cellStyle())),
@@ -469,18 +463,14 @@ class _EmployeesTableState extends State<EmployeesTable> {
                       style: _cellStyle())),
             if (finance)
               _cell(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                          AnalyticsFormat.money(r.breakdown.mealDeduction),
-                          style: _cellStyle()),
-                      Text(
-                        '${r.breakdown.shiftsTotal} порц.',
-                        style: _mutedStyle(),
-                      ),
-                    ],
-                  )),
+                  child: _twoLine(
+                Text(AnalyticsFormat.money(r.breakdown.mealDeduction),
+                    style: _cellStyle()),
+                Text(
+                  '${r.breakdown.shiftsTotal} порц.',
+                  style: _mutedStyle(),
+                ),
+              )),
             if (finance)
               _cell(
                   child: Text(AnalyticsFormat.money(r.breakdown.advance),
@@ -569,18 +559,29 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
   static Widget _footerCell(String label, String value) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: _twoLine(
+          Text(value,
+              style: const TextStyle(
+                  color: AnalyticsColors.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12)),
+          Text(label,
+              style: const TextStyle(
+                  color: AnalyticsColors.muted, fontSize: 10)),
+        ),
+      );
+
+  /// Двухстрочная ячейка (значение + подпись). FittedBox мягко ужимает
+  /// содержимое, когда высота строки меньше суммы двух строк текста
+  /// (например, при увеличенном системном масштабе текста) — вместо
+  /// RenderFlex overflow.
+  static Widget _twoLine(Widget top, Widget bottom) => FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.topLeft,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(value,
-                style: const TextStyle(
-                    color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12)),
-            Text(label,
-                style: const TextStyle(
-                    color: AnalyticsColors.muted, fontSize: 10)),
-          ],
+          children: [top, bottom],
         ),
       );
 
