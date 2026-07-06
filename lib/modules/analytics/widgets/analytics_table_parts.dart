@@ -31,6 +31,14 @@ class _HoverableRowState extends State<HoverableRow> {
 /// Прокручиваемая область справа от sticky-колонки с фиксированной тенью у
 /// левого края — имитирует `box-shadow: 16px 0 26px` sticky-колонки, которую
 /// в Flutter иначе перекрыл бы контент строки (порядок отрисовки в Row).
+///
+/// ВАЖНО: контент — непозиционированный ребёнок Stack. Stack, у которого все
+/// дети Positioned, отдаёт нулевую intrinsic-высоту, из-за чего IntrinsicHeight
+/// в строках таблиц мерил высоту только по sticky-ячейке и сплющивал контент
+/// (RenderFlex overflow). Кроме того, Positioned.fill навязывал контенту tight-
+/// ширину видимой области, схлопывая SizedBox(width: restWidth).
+/// StackFit.passthrough пробрасывает constraints ячейки как есть, чтобы фон и
+/// нижняя граница строки растягивались на всю её высоту.
 class StickyScrollArea extends StatelessWidget {
   const StickyScrollArea({super.key, required this.child});
 
@@ -39,8 +47,9 @@ class StickyScrollArea extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Stack(
+      fit: StackFit.passthrough,
       children: [
-        Positioned.fill(child: child),
+        child,
         const Positioned(
           left: 0,
           top: 0,

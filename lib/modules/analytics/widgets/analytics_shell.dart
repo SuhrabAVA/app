@@ -59,22 +59,28 @@ class AnalyticsShell extends StatelessWidget {
 }
 
 /// Группа фильтра `.filter-group`: подпись сверху, контрол снизу.
+///
+/// maxWidth обязателен: группа живёт в Wrap внутри Row тулбара, где main-axis
+/// constraints бесконечны, а DropdownButton(isExpanded) внутри требует
+/// конечной ширины — без верхней границы это layout-краш всего экрана.
 class AnalyticsFilterGroup extends StatelessWidget {
   const AnalyticsFilterGroup({
     super.key,
     required this.label,
     required this.child,
     this.minWidth = 220,
+    this.maxWidth = 280,
   });
 
   final String label;
   final Widget child;
   final double minWidth;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: BoxConstraints(minWidth: minWidth),
+      constraints: BoxConstraints(minWidth: minWidth, maxWidth: maxWidth),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

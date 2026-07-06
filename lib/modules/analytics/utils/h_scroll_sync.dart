@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 /// Synchronizes horizontal scroll position across multiple [ScrollController]s.
@@ -13,6 +14,9 @@ import 'package:flutter/widgets.dart';
 class HScrollSync {
   final ValueNotifier<double> _offset = ValueNotifier<double>(0.0);
   bool _syncing = false;
+  bool _disposed = false;
+  bool _postFrameScheduled = false;
+  double? _pendingOffset;
   final _controllers = <ScrollController>[];
 
   /// Current synchronized horizontal offset. Updated on every scroll of any
@@ -30,17 +34,47 @@ class HScrollSync {
     if (_syncing || !source.hasClients) return;
     final newOffset = source.offset;
     if ((newOffset - _offset.value).abs() < 0.5) return;
-    _offset.value = newOffset;
+    // ScrollPosition умеет уведомлять листенеры прямо из layout-фазы
+    // (клампинг offset в applyContentDimensions при изменении ширины).
+    // Синхронная реакция в этот момент — markNeedsBuild у
+    // ValueListenableBuilder'ов и jumpTo() по соседним viewport'ам посреди
+    // layout: '!_debugDoingThisLayout' / «RenderBox was not laid out».
+    // Поэтому из layout/paint-фазы синхронизацию откладываем на конец кадра.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      _pendingOffset = newOffset;
+      if (!_postFrameScheduled) {
+        _postFrameScheduled = true;
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          _postFrameScheduled = false;
+          final pending = _pendingOffset;
+          _pendingOffset = null;
+          if (_disposed || pending == null) return;
+          _applyOffset(pending);
+        });
+      }
+      return;
+    }
+    _applyOffset(newOffset, except: source);
+  }
+
+  void _applyOffset(double offset, {ScrollController? except}) {
+    if ((offset - _offset.value).abs() < 0.5) return;
+    _offset.value = offset;
     _syncing = true;
     for (final c in _controllers) {
-      if (c == source || !c.hasClients) continue;
-      if ((c.offset - newOffset).abs() > 0.5) c.jumpTo(newOffset);
+      if (c == except || !c.hasClients) continue;
+      if ((c.offset - offset).abs() < 0.5) continue;
+      c.jumpTo(offset);
     }
     _syncing = false;
   }
 
   void dispose() {
-    for (final c in _controllers) c.dispose();
+    _disposed = true;
+    for (final c in _controllers) {
+      c.dispose();
+    }
     _controllers.clear();
     _offset.dispose();
   }

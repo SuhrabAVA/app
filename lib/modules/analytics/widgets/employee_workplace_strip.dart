@@ -190,25 +190,30 @@ class _WorkplaceCard extends StatelessWidget {
     );
   }
 
+  // Значение — в Expanded: без него длинное значение занимает всю ширину
+  // карточки, label сжимается в ноль и переносится по буквам — карточка
+  // фиксированной высоты 168 переполняется по вертикали на 100+ px.
   Widget _kv(String k, String v) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 1.5),
         child: Row(
           children: [
+            Text(
+              k,
+              style: const TextStyle(
+                  color: AnalyticsColors.muted, fontSize: 11),
+            ),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
-                k,
+                v,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
                 style: const TextStyle(
-                    color: AnalyticsColors.muted, fontSize: 11),
-              ),
-            ),
-            Text(
-              v,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AnalyticsColors.text,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+                  color: AnalyticsColors.text,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],

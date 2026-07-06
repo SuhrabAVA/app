@@ -12,7 +12,6 @@ import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
 import '../widgets/analytics_month_picker.dart';
 import '../widgets/analytics_shell.dart';
-import '../widgets/analytics_states.dart';
 import '../widgets/analytics_topbar.dart';
 import '../widgets/salary_settings_drawer.dart';
 import 'analytics_access_denied_screen.dart';
@@ -74,11 +73,11 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
   void _onProvidersChanged() {
     if (!mounted) return;
     _refreshDebounce?.cancel();
-    // TaskProvider/OrdersProvider уведомляют на каждое realtime-событие;
-    // 800 мс запускали полную перезагрузку почти на каждый notify.
-    // Обновление тихое (см. AnalyticsService), поэтому редкий рефреш
-    // не мешает работе с таблицей.
-    _refreshDebounce = Timer(const Duration(seconds: 5), () {
+    // TaskProvider/OrdersProvider уведомляют на каждое realtime-событие.
+    // Рефреш «тихий» (см. AnalyticsService) и таблицу не пересоздаёт, но
+    // каждый refresh — пакет запросов к Supabase; 2 с собирают всплеск
+    // событий в один рефреш, не задерживая данные заметно для глаза.
+    _refreshDebounce = Timer(const Duration(seconds: 2), () {
       if (mounted) _service.refresh();
     });
   }

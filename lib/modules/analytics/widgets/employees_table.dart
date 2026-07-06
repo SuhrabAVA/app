@@ -93,6 +93,27 @@ class _EmployeesTableState extends State<EmployeesTable> {
       final statusName =
           statusById[state.employeeStatusIds[emp.id] ?? '']?.name;
       final payType = parsePayType(state.employeePayTypes[emp.id]);
+
+      // Агрегаты строки считаем один раз здесь, а не в build ячеек:
+      // раньше AnalyticsCalculator гонялся по событиям каждой строки при
+      // каждой её пересборке (hover, скролл) — O(events)×строки×тик.
+      final byWp = <String, List<AnalyticsEvent>>{};
+      for (final e in list) {
+        byWp.putIfAbsent(e.workplaceId, () => []).add(e);
+      }
+      final workplaceLines = byWp.entries.map((entry) {
+        final wp = widget.personnel.workplaceById(entry.key);
+        final useful = AnalyticsCalculator.usefulMinutes(entry.value);
+        final q = AnalyticsCalculator.totalQty(entry.value);
+        final speed = useful > 0 ? q / useful : 0.0;
+        final unit =
+            wp?.unit?.trim().isNotEmpty == true ? wp!.unit!.trim() : 'ед.';
+        return '${wp?.name ?? entry.key}: '
+            '${AnalyticsFormat.decimal(q)} $unit · '
+            '${AnalyticsFormat.hoursMinutes(useful)} · '
+            '${AnalyticsFormat.decimal(speed)} $unit/мин';
+      }).toList();
+
       return _Row(
         employee: emp,
         events: list,
@@ -100,8 +121,29 @@ class _EmployeesTableState extends State<EmployeesTable> {
         payType: payType,
         breakdown: breakdown,
         claims: claimsByEmployee[emp.id] ?? 0,
+        pauseCount: AnalyticsCalculator.countEventsOfType(
+            list, AnalyticsEventType.pause),
+        pauseMinutes: AnalyticsCalculator.pauseMinutes(list),
+        problemCount: AnalyticsCalculator.countEventsOfType(
+            list, AnalyticsEventType.problem),
+        problemMinutes: AnalyticsCalculator.problemMinutes(list),
+        qty: AnalyticsCalculator.totalQty(list),
+        setupQty: AnalyticsCalculator.totalSetupQty(list),
+        workplaceLines: workplaceLines,
       );
     }).toList();
+  }
+
+  @override
+  void didUpdateWidget(covariant EmployeesTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Кэш _rows ключуется по identity AnalyticsState (сервис пересоздаёт
+    // state на каждую загрузку — realtime-обновления инвалидируют кэш сами).
+    // Если сменился сам сервис/провайдер персонала — сбрасываем явно.
+    if (!identical(oldWidget.service, widget.service) ||
+        !identical(oldWidget.personnel, widget.personnel)) {
+      _lastState = null;
+    }
   }
 
   @override
@@ -163,14 +205,12 @@ class _EmployeesTableState extends State<EmployeesTable> {
         shifts += r.breakdown.shiftsTotal;
         days += r.breakdown.dayShifts;
         nights += r.breakdown.nightShifts;
-        qtyAll += AnalyticsCalculator.totalQty(r.events);
+        qtyAll += r.qty;
         usefulM += AnalyticsCalculator.usefulMinutes(r.events);
-        pauseCount += AnalyticsCalculator.countEventsOfType(
-            r.events, AnalyticsEventType.pause);
-        pauseM += AnalyticsCalculator.pauseMinutes(r.events);
-        problemCount += AnalyticsCalculator.countEventsOfType(
-            r.events, AnalyticsEventType.problem);
-        problemM += AnalyticsCalculator.problemMinutes(r.events);
+        pauseCount += r.pauseCount;
+        pauseM += r.pauseMinutes;
+        problemCount += r.problemCount;
+        problemM += r.problemMinutes;
         salarySum += r.breakdown.total;
       }
 
@@ -212,46 +252,57 @@ class _EmployeesTableState extends State<EmployeesTable> {
             ),
           ),
           // ── Data rows ──────────────────────────────────────────────────
-          // ONE ValueListenableBuilder drives all rows via Transform.translate.
-          // This replaces the previous per-row ScrollController (N controllers
-          // + N jumpTo() calls per scroll event → severe lag with 30+ rows).
-          // Hover is local to each _HoverableRow → only the hovered row
-          // repaints, the synced scroll path is untouched.
-          ValueListenableBuilder<double>(
-            valueListenable: _sync.offsetNotifier,
-            builder: (context, hOffset, _) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < rows.length; i++)
-                    HoverableRow(
-                      builder: (hovered) => IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _buildStickyDataCell(
-                                rows[i], stickyWidth, hovered),
-                            Expanded(
-                              child: StickyScrollArea(
-                                child: ClipRect(
-                                  child: Transform.translate(
+          // Контент строки собирается один раз и передаётся через `child`
+          // per-row ValueListenableBuilder'а; на тик скролла пересоздаётся
+          // только обёртка Transform.translate (repaint матрицы, ноль
+          // пересборок контента). Hover локален для каждой HoverableRow.
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < rows.length; i++)
+                HoverableRow(
+                  builder: (hovered) => IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildStickyDataCell(rows[i], stickyWidth, hovered),
+                        Expanded(
+                          child: StickyScrollArea(
+                            child: ClipRect(
+                              // OverflowBox разрывает tight-ширину ячейки:
+                              // без него SizedBox(restWidth) схлопывался до
+                              // видимой области и все колонки утрамбовыва-
+                              // лись в экран (рассинхрон с заголовком).
+                              child: OverflowBox(
+                                alignment: Alignment.topLeft,
+                                minWidth: 0,
+                                maxWidth: double.infinity,
+                                child: ValueListenableBuilder<double>(
+                                  valueListenable: _sync.offsetNotifier,
+                                  child: SizedBox(
+                                    width: restWidth,
+                                    child: _buildScrollableDataRow(
+                                        context,
+                                        rows[i],
+                                        canViewFinance,
+                                        i,
+                                        hovered),
+                                  ),
+                                  builder: (context, hOffset, child) =>
+                                      Transform.translate(
                                     offset: Offset(-hOffset, 0),
-                                    child: SizedBox(
-                                      width: restWidth,
-                                      child: _buildScrollableDataRow(context,
-                                          rows[i], canViewFinance, i, hovered),
-                                    ),
+                                    child: child,
                                   ),
                                 ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                ],
-              );
-            },
+                  ),
+                ),
+            ],
           ),
           // ── Footer row ─────────────────────────────────────────────────
           IntrinsicHeight(
@@ -355,32 +406,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
   Widget _buildScrollableDataRow(
       BuildContext context, _Row r, bool finance, int index, bool hovered) {
-    final pauseMin = AnalyticsCalculator.pauseMinutes(r.events);
-    final problemMin = AnalyticsCalculator.problemMinutes(r.events);
-    final qty = AnalyticsCalculator.totalQty(r.events);
-    final setupQty = AnalyticsCalculator.totalSetupQty(r.events);
-    final pauseCount = AnalyticsCalculator.countEventsOfType(
-        r.events, AnalyticsEventType.pause);
-    final problemCount = AnalyticsCalculator.countEventsOfType(
-        r.events, AnalyticsEventType.problem);
-
-    final byWp = <String, List<AnalyticsEvent>>{};
-    for (final e in r.events) {
-      byWp.putIfAbsent(e.workplaceId, () => []).add(e);
-    }
-    final wpRows = byWp.entries.map((entry) {
-      final wp = widget.personnel.workplaceById(entry.key);
-      final useful = AnalyticsCalculator.usefulMinutes(entry.value);
-      final q = AnalyticsCalculator.totalQty(entry.value);
-      final speed = useful > 0 ? q / useful : 0.0;
-      final unit =
-          wp?.unit?.trim().isNotEmpty == true ? wp!.unit!.trim() : 'ед.';
-      return '${wp?.name ?? entry.key}: '
-          '${AnalyticsFormat.decimal(q)} $unit · '
-          '${AnalyticsFormat.hoursMinutes(useful)} · '
-          '${AnalyticsFormat.decimal(speed)} $unit/мин';
-    }).toList();
-
+    // Все агрегаты предвычислены в _buildRows (см. _Row) — build ячеек
+    // не должен трогать AnalyticsCalculator.
     final rowColor = hovered
         ? AnalyticsColors.rowHover
         : (index.isEven ? AnalyticsColors.zebraOdd : AnalyticsColors.zebraEven);
@@ -405,9 +432,9 @@ class _EmployeesTableState extends State<EmployeesTable> {
               flex: 2,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: wpRows.isEmpty
+                children: r.workplaceLines.isEmpty
                     ? [Text('—', style: _mutedStyle())]
-                    : wpRows
+                    : r.workplaceLines
                         .map((s) => Padding(
                               padding:
                                   const EdgeInsets.symmetric(vertical: 2),
@@ -419,22 +446,22 @@ class _EmployeesTableState extends State<EmployeesTable> {
               ),
             ),
             _cell(
-                child: Text('${AnalyticsFormat.decimal(qty)}',
+                child: Text(AnalyticsFormat.decimal(r.qty),
                     style: _cellStyle())),
             _cell(
-                child: Text('${AnalyticsFormat.decimal(setupQty)}',
+                child: Text(AnalyticsFormat.decimal(r.setupQty),
                     style: _cellStyle())),
             _cell(
               child: _twoLine(
-                Text('$pauseCount', style: _cellStyle()),
-                Text(AnalyticsFormat.hoursMinutes(pauseMin),
+                Text('${r.pauseCount}', style: _cellStyle()),
+                Text(AnalyticsFormat.hoursMinutes(r.pauseMinutes),
                     style: _mutedStyle()),
               ),
             ),
             _cell(
               child: _twoLine(
-                Text('$problemCount', style: _cellStyle()),
-                Text(AnalyticsFormat.hoursMinutes(problemMin),
+                Text('${r.problemCount}', style: _cellStyle()),
+                Text(AnalyticsFormat.hoursMinutes(r.problemMinutes),
                     style: _mutedStyle()),
               ),
             ),
@@ -571,18 +598,13 @@ class _EmployeesTableState extends State<EmployeesTable> {
         ),
       );
 
-  /// Двухстрочная ячейка (значение + подпись). FittedBox мягко ужимает
-  /// содержимое, когда высота строки меньше суммы двух строк текста
-  /// (например, при увеличенном системном масштабе текста) — вместо
-  /// RenderFlex overflow.
-  static Widget _twoLine(Widget top, Widget bottom) => FittedBox(
-        fit: BoxFit.scaleDown,
-        alignment: Alignment.topLeft,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [top, bottom],
-        ),
+  /// Двухстрочная ячейка (значение + подпись). Высоту строке обеспечивает
+  /// IntrinsicHeight по реальному контенту (см. StickyScrollArea) — ужимать
+  /// содержимое не нужно, а FittedBox лишь маскировал бы регрессии высоты.
+  static Widget _twoLine(Widget top, Widget bottom) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [top, bottom],
       );
 
   Widget _cell({required Widget child, int flex = 1}) {
@@ -621,6 +643,16 @@ class _Row {
   final SalaryBreakdown breakdown;
   final int claims;
 
+  // Предвычисленные агрегаты строки (см. _buildRows): считаются один раз
+  // на смену AnalyticsState, а не в build ячеек на каждый rebuild.
+  final int pauseCount;
+  final int pauseMinutes;
+  final int problemCount;
+  final int problemMinutes;
+  final double qty;
+  final double setupQty;
+  final List<String> workplaceLines;
+
   const _Row({
     required this.employee,
     required this.events,
@@ -628,6 +660,13 @@ class _Row {
     required this.payType,
     required this.breakdown,
     required this.claims,
+    required this.pauseCount,
+    required this.pauseMinutes,
+    required this.problemCount,
+    required this.problemMinutes,
+    required this.qty,
+    required this.setupQty,
+    required this.workplaceLines,
   });
 }
 

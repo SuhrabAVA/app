@@ -387,6 +387,8 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                       fontSize: 16,
                     )),
                 Text(list.isEmpty ? 'нет' : '${list.length} событ.',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: fg, fontSize: 9)),
               ],
             ),

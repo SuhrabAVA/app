@@ -104,6 +104,18 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   }
 
   @override
+  void didUpdateWidget(covariant WorkplacesTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Кэш _rows ключуется по identity AnalyticsState (сервис пересоздаёт
+    // state на каждую загрузку — realtime-обновления инвалидируют кэш сами).
+    // Если сменился сам сервис/провайдер персонала — сбрасываем явно.
+    if (!identical(oldWidget.service, widget.service) ||
+        !identical(oldWidget.personnel, widget.personnel)) {
+      _lastState = null;
+    }
+  }
+
+  @override
   void dispose() {
     _sync.dispose();
     super.dispose();
@@ -151,42 +163,53 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
             ),
           ),
           // ── Data rows ──────────────────────────────────────────────────
-          // Hover локален для каждой строки (HoverableRow) → синхронный скролл
-          // и остальные строки не перерисовываются.
-          ValueListenableBuilder<double>(
-            valueListenable: _sync.offsetNotifier,
-            builder: (context, hOffset, _) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < rows.length; i++)
-                    HoverableRow(
-                      builder: (hovered) => IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _stickyDataCell(rows[i], stickyWidth, hovered),
-                            Expanded(
-                              child: StickyScrollArea(
-                                child: ClipRect(
-                                  child: Transform.translate(
+          // Контент строки собирается один раз и передаётся через `child`
+          // per-row ValueListenableBuilder'а; на тик скролла пересоздаётся
+          // только обёртка Transform.translate (repaint матрицы, ноль
+          // пересборок контента). Hover локален для каждой HoverableRow.
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < rows.length; i++)
+                HoverableRow(
+                  builder: (hovered) => IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _stickyDataCell(rows[i], stickyWidth, hovered),
+                        Expanded(
+                          child: StickyScrollArea(
+                            child: ClipRect(
+                              // OverflowBox разрывает tight-ширину ячейки:
+                              // без него SizedBox(restWidth) схлопывался до
+                              // видимой области и все колонки утрамбовыва-
+                              // лись в экран (рассинхрон с заголовком).
+                              child: OverflowBox(
+                                alignment: Alignment.topLeft,
+                                minWidth: 0,
+                                maxWidth: double.infinity,
+                                child: ValueListenableBuilder<double>(
+                                  valueListenable: _sync.offsetNotifier,
+                                  child: SizedBox(
+                                    width: restWidth,
+                                    child: _scrollableDataRow(
+                                        rows[i], i, hovered),
+                                  ),
+                                  builder: (context, hOffset, child) =>
+                                      Transform.translate(
                                     offset: Offset(-hOffset, 0),
-                                    child: SizedBox(
-                                      width: restWidth,
-                                      child: _scrollableDataRow(
-                                          rows[i], i, hovered),
-                                    ),
+                                    child: child,
                                   ),
                                 ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                ],
-              );
-            },
+                  ),
+                ),
+            ],
           ),
         ],
       );
