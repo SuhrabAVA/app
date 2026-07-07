@@ -656,32 +656,52 @@ class _FormsScreenState extends State<FormsScreen> {
                       isThreeLine: !isEnabled &&
                           disabledComment.isNotEmpty &&
                           subtitleText != null,
-                      leading: imageUrl.isNotEmpty
-                          ? GestureDetector(
-                              onTap: () => showImagePreview(
-                                context,
-                                imageUrl: imageUrl,
-                                title: nameNumber,
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: Image.network(
-                                  imageUrl,
-                                  width: 40,
-                                  height: 40,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) =>
-                                      const Icon(Icons.image_not_supported),
-                                ),
-                              ),
-                            )
-                          : CircleAvatar(
-                              child: Text(
-                                series.isEmpty
-                                    ? '?'
-                                    : series.substring(0, 1),
+                      leading: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Визуальный порядковый номер строки: пересчитывается
+                          // при поиске и смене сортировки (не путать с полем
+                          // «Нумерация» самой формы).
+                          SizedBox(
+                            width: 32,
+                            child: Text(
+                              '${i + 1}',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
                               ),
                             ),
+                          ),
+                          const SizedBox(width: 8),
+                          imageUrl.isNotEmpty
+                              ? GestureDetector(
+                                  onTap: () => showImagePreview(
+                                    context,
+                                    imageUrl: imageUrl,
+                                    title: nameNumber,
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(20),
+                                    child: Image.network(
+                                      imageUrl,
+                                      width: 40,
+                                      height: 40,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.image_not_supported),
+                                    ),
+                                  ),
+                                )
+                              : CircleAvatar(
+                                  child: Text(
+                                    series.isEmpty
+                                        ? '?'
+                                        : series.substring(0, 1),
+                                  ),
+                                ),
+                        ],
+                      ),
                       title: Text(
                         nameNumber,
                         style: isEnabled

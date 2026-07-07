@@ -2707,72 +2707,95 @@ class WarehouseProvider with ChangeNotifier {
   }) async {
     await _ensureAuthed();
 
-    dynamic sel = _sb.from('forms').select(_kFormsCols);
+    // Билдер PostgREST нельзя переиспользовать между запросами, поэтому при
+    // постраничной догрузке фильтры пересобираются на каждую страницу.
+    dynamic buildSel() {
+      dynamic sel = _sb.from('forms').select(_kFormsCols);
 
-    if (series != null && series.isNotEmpty) {
-      sel = sel.eq('series', series);
-    }
-
-    if (query != null && query.trim().isNotEmpty) {
-      final q = query.trim();
-      final sanitized = q.replaceAll("'", "''");
-      final normalized = q.replaceAll(RegExp(r'\s+'), '');
-      final sanitizedNormalized = normalized.replaceAll("'", "''");
-      final List<String> orFilters = [
-        'series.ilike.%$sanitized%',
-        'code.ilike.%$sanitized%',
-        'title.ilike.%$sanitized%',
-        'description.ilike.%$sanitized%',
-      ];
-
-      final int? numericQuery = int.tryParse(normalized);
-      if (numericQuery != null) {
-        orFilters.add('number.eq.$numericQuery');
+      if (series != null && series.isNotEmpty) {
+        sel = sel.eq('series', series);
       }
 
-      if (sanitizedNormalized != sanitized) {
-        orFilters.addAll(<String>[
-          'series.ilike.%$sanitizedNormalized%',
-          'code.ilike.%$sanitizedNormalized%',
-        ]);
-        if (numericQuery == null) {
-          final maybeNumeric = int.tryParse(sanitizedNormalized);
-          if (maybeNumeric != null) {
-            orFilters.add('number.eq.$maybeNumeric');
+      if (query != null && query.trim().isNotEmpty) {
+        final q = query.trim();
+        final sanitized = q.replaceAll("'", "''");
+        final normalized = q.replaceAll(RegExp(r'\s+'), '');
+        final sanitizedNormalized = normalized.replaceAll("'", "''");
+        final List<String> orFilters = [
+          'series.ilike.%$sanitized%',
+          'code.ilike.%$sanitized%',
+          'title.ilike.%$sanitized%',
+          'description.ilike.%$sanitized%',
+        ];
+
+        final int? numericQuery = int.tryParse(normalized);
+        if (numericQuery != null) {
+          orFilters.add('number.eq.$numericQuery');
+        }
+
+        if (sanitizedNormalized != sanitized) {
+          orFilters.addAll(<String>[
+            'series.ilike.%$sanitizedNormalized%',
+            'code.ilike.%$sanitizedNormalized%',
+          ]);
+          if (numericQuery == null) {
+            final maybeNumeric = int.tryParse(sanitizedNormalized);
+            if (maybeNumeric != null) {
+              orFilters.add('number.eq.$maybeNumeric');
+            }
           }
         }
-      }
 
-      final combinationMatch =
-          RegExp(r'^([^\d]+?)(\d+)$', unicode: true).firstMatch(normalized);
-      if (combinationMatch != null) {
-        final rawSeries = combinationMatch.group(1)!.trim();
-        final rawNumber = combinationMatch.group(2)!;
-        if (rawSeries.isNotEmpty) {
-          final sanitizedSeries = rawSeries.replaceAll("'", "''");
-          final parsedNumber = int.tryParse(rawNumber);
-          if (parsedNumber != null) {
-            orFilters.add(
-              'and(series.ilike.%$sanitizedSeries%,number.eq.$parsedNumber)');
+        final combinationMatch =
+            RegExp(r'^([^\d]+?)(\d+)$', unicode: true).firstMatch(normalized);
+        if (combinationMatch != null) {
+          final rawSeries = combinationMatch.group(1)!.trim();
+          final rawNumber = combinationMatch.group(2)!;
+          if (rawSeries.isNotEmpty) {
+            final sanitizedSeries = rawSeries.replaceAll("'", "''");
+            final parsedNumber = int.tryParse(rawNumber);
+            if (parsedNumber != null) {
+              orFilters.add(
+                  'and(series.ilike.%$sanitizedSeries%,number.eq.$parsedNumber)');
+            }
           }
         }
+
+        sel = sel.or(orFilters.join(','));
       }
 
-      sel = sel.or(orFilters.join(','));
+      // Новые сверху; вторичная сортировка по id даёт детерминированный
+      // порядок страниц для .range() (номера повторяются между сериями).
+      return sel
+          .order('number', ascending: false)
+          .order('id', ascending: false);
     }
 
-    // При просмотре без поиска загружаем все записи (без LIMIT), чтобы
-    // клиентская сортировка «с начала» начиналась с №1. С лимитом 1000 при
-    // 1784+ формах первая страница содержит лишь записи с бо́льшими номерами
-    // и «Нумерация: с начала» начинается не с №1, а с середины каталога.
-    // При поиске лимит оставляем — результаты и так небольшие.
     final bool hasQuery = query != null && query.trim().isNotEmpty;
-    dynamic ordered = sel.order('number', ascending: !hasQuery);
-    if (hasQuery) ordered = ordered.limit(limit);
-    final data = await ordered;
-    return (data as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
+    if (hasQuery) {
+      // При поиске лимит оставляем — результаты и так небольшие.
+      final data = await buildSel().limit(limit);
+      return (data as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    }
+
+    // Без поиска грузим весь каталог частями: PostgREST режет ответ на 1000
+    // строк даже без .limit(), поэтому при 1784+ формах «просто без лимита»
+    // возвращалась только часть записей и скролл не доходил до №1.
+    const int batchSize = 1000;
+    final all = <Map<String, dynamic>>[];
+    var from = 0;
+    while (true) {
+      final data = await buildSel().range(from, from + batchSize - 1);
+      final page = (data as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      all.addAll(page);
+      if (page.length < batchSize) break;
+      from += batchSize;
+    }
+    return all;
   }
 
   Future<Map<String, dynamic>?> findFormBySeriesNumber({
