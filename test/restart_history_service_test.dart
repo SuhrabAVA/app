@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forma_pack_work/modules/orders/order_restart_history_repository.dart';
-import 'package:forma_pack_work/modules/orders/restart_history_service.dart';
+import 'package:sheet_clone/modules/orders/order_restart_history_repository.dart';
+import 'package:sheet_clone/modules/orders/restart_history_service.dart';
 
 class _FakeRestartHistoryRepository implements OrderRestartHistoryRepository {
   _FakeRestartHistoryRepository(this._rows, {this.rpcRows = const []});
@@ -18,6 +18,11 @@ class _FakeRestartHistoryRepository implements OrderRestartHistoryRepository {
     int limit = 200,
   }) async =>
       rpcRows.take(limit).toList(growable: false);
+
+  @override
+  Future<List<OrderGenerationEntry>> loadGenerationChain(
+          String orderId) async =>
+      const [];
 }
 
 OrderRestartHistoryEntry _entry(

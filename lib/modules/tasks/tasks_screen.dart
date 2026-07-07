@@ -14,6 +14,7 @@ import '../orders/orders_repository.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
 import '../orders/material_model.dart';
+import '../orders/order_generation_switcher.dart';
 import '../orders/order_restart_history_repository.dart';
 import '../orders/restart_history_service.dart';
 import '../personnel/employee_model.dart';
@@ -853,7 +854,7 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
   final RestartHistoryService _restartHistoryService =
       RestartHistoryService(SupabaseOrderRestartHistoryRepository());
-  final Map<String, List<OrderRestartHistoryEntry>> _restartHistoryCache = {};
+  final Map<String, List<OrderGenerationEntry>> _restartHistoryCache = {};
   final Set<String> _loadingRestartHistoryOrderIds = <String>{};
   final Set<String> _restartHistoryLoadFailedOrderIds = <String>{};
   final Map<String, String> _selectedCommentsOrderByTaskId = {};
@@ -953,14 +954,11 @@ class _TasksScreenState extends State<TasksScreen>
     }
     setState(() => _loadingRestartHistoryOrderIds.add(normalized));
     try {
-      final chain = await _restartHistoryService.loadRestartHistoryChain(
-        normalized,
-        limit: 100,
-        preferRpc: true,
-      );
+      final chain =
+          await _restartHistoryService.loadGenerationChain(normalized);
       if (!mounted) return;
       setState(() {
-        _restartHistoryCache[normalized] = chain.reversed.toList(growable: false);
+        _restartHistoryCache[normalized] = chain;
         _restartHistoryLoadFailedOrderIds.remove(normalized);
       });
     } catch (_) {
@@ -1119,16 +1117,6 @@ class _TasksScreenState extends State<TasksScreen>
     } catch (_) {
       return '';
     }
-  }
-
-  String _formatRestartChipLabel(OrderRestartHistoryEntry entry) {
-    final order = _orderById(entry.id);
-    final rawTitle = order?.product.type.trim() ?? '';
-    final title = rawTitle.isEmpty ? 'Заказ' : rawTitle;
-    final finishedAt = (entry.finishedAt ?? entry.updatedAt)?.toLocal();
-    if (finishedAt == null) return title;
-    final when = DateFormat('dd.MM.yyyy HH:mm').format(finishedAt);
-    return '$title · $when';
   }
 
   String _employeeDisplayName(PersonnelProvider personnel, String userId) {
@@ -4059,51 +4047,24 @@ class _TasksScreenState extends State<TasksScreen>
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (restartHistory.isNotEmpty || _loadingRestartHistoryOrderIds.contains(currentOrderId)) ...[
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  Padding(
-                    padding: EdgeInsets.only(right: scale * 6),
-                    child: ChoiceChip(
-                      label: const Text('Текущий заказ'),
-                      selected: !isHistoryReadOnly,
-                      onSelected: (_) => setState(
-                        () => _selectedCommentsOrderByTaskId[task.id] = currentOrderId,
-                      ),
-                    ),
-                  ),
-                  for (final ancestor in restartHistory)
-                    Padding(
-                      padding: EdgeInsets.only(right: scale * 6),
-                      child: ChoiceChip(
-                        label: ConstrainedBox(
-                          constraints: BoxConstraints(maxWidth: scale * 190),
-                          child: Text(
-                            _formatRestartChipLabel(ancestor),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        selected: selectedOrderId == ancestor.id,
-                        onSelected: (_) => setState(
-                          () => _selectedCommentsOrderByTaskId[task.id] = ancestor.id,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+          OrderGenerationSwitcher(
+            generations: restartHistory,
+            currentOrderId: currentOrderId,
+            selectedOrderId: selectedOrderId,
+            loading: _loadingRestartHistoryOrderIds.contains(currentOrderId),
+            // Пометку «только просмотр» рисуем ниже сами: тут есть особый
+            // случай недоступной истории.
+            readOnlyNotice: null,
+            bottomSpacing: scale * 6,
+            onSelected: (orderId) => setState(
+              () => _selectedCommentsOrderByTaskId[task.id] = orderId,
             ),
-            SizedBox(height: scale * 6),
-          ],
-          if (_loadingRestartHistoryOrderIds.contains(currentOrderId))
-            const LinearProgressIndicator(),
+          ),
           if (isHistoryReadOnly) ...[
             Text(
               isSelectedHistoryUnavailable
                   ? 'История предыдущего заказа недоступна'
-                  : 'Режим только чтение: история предыдущего заказа',
+                  : 'Только просмотр: история предыдущего заказа',
               style: const TextStyle(color: Colors.orange),
             ),
             SizedBox(height: scale * 4),

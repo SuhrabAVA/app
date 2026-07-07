@@ -36,7 +36,6 @@ import '../common/pdf_view_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
 import 'order_comments_timeline.dart';
-import '../tasks/task_model.dart';
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
@@ -3019,6 +3018,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
             ? null
             : currentQueueSignature,
+        // Связи возобновления обязаны переживать пересохранение:
+        // updateOrder пишет toMap(includeNulls: true), и без этих полей
+        // каждый сейв затирал бы цепочку поколений в БД.
+        restartedFromOrderId: widget.order!.restartedFromOrderId,
+        restartRootOrderId: widget.order!.restartRootOrderId,
+        restartGeneration: widget.order!.restartGeneration,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
@@ -3043,34 +3048,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _orderDate != null) {
       try {
         final humanId = await provider.generateReadableOrderId(_orderDate!);
-        final withReadable = OrderModel(
-          id: createdOrUpdatedOrder.id,
-          manager: createdOrUpdatedOrder.manager,
-          customer: createdOrUpdatedOrder.customer,
-          orderDate: createdOrUpdatedOrder.orderDate,
-          dueDate: createdOrUpdatedOrder.dueDate,
-          product: createdOrUpdatedOrder.product,
-          additionalParams: createdOrUpdatedOrder.additionalParams,
-          handle: createdOrUpdatedOrder.handle,
-          cardboard: createdOrUpdatedOrder.cardboard,
-          material: createdOrUpdatedOrder.material,
-          paperMaterials: createdOrUpdatedOrder.paperMaterials,
-          makeready: createdOrUpdatedOrder.makeready,
-          val: createdOrUpdatedOrder.val,
-          pdfUrl: createdOrUpdatedOrder.pdfUrl,
-          stageTemplateId: createdOrUpdatedOrder.stageTemplateId,
-          hasForm: createdOrUpdatedOrder.hasForm,
-          contractSigned: createdOrUpdatedOrder.contractSigned,
-          paymentDone: createdOrUpdatedOrder.paymentDone,
-          comments: createdOrUpdatedOrder.comments,
-          status: createdOrUpdatedOrder.status,
-          assignmentId: humanId,
-          assignmentCreated: createdOrUpdatedOrder.assignmentCreated,
-          queueBuildStatus: createdOrUpdatedOrder.queueBuildStatus,
-          selectedVStage: createdOrUpdatedOrder.selectedVStage,
-          selectedPStage: createdOrUpdatedOrder.selectedPStage,
-          queueSignature: createdOrUpdatedOrder.queueSignature,
-        );
+        // copyWith вместо ручной пересборки: перечисление полей теряло
+        // restart_* и поля формы, а updateOrder(includeNulls: true) затирал
+        // их в БД сразу после создания заказа.
+        final withReadable =
+            createdOrUpdatedOrder.copyWith(assignmentId: humanId);
         await provider.updateOrder(withReadable);
         createdOrUpdatedOrder = withReadable;
       } catch (_) {}
@@ -3718,18 +3700,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               tooltip: 'Комментарии',
               onPressed: () async {
                 final order = widget.order!;
-                final legacy = order.comments.trim();
-                final comments = legacy.isEmpty
-                    ? const <TaskComment>[]
-                    : [
-                        TaskComment(
-                          id: 'legacy-${order.id}',
-                          userId: '',
-                          text: legacy,
-                          timestamp: order.orderDate.millisecondsSinceEpoch,
-                          type: 'comment',
-                        )
-                      ];
                 await showModalBottomSheet<void>(
                   context: context,
                   isScrollControlled: true,
@@ -3771,34 +3741,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         content: const Text(
                             'Вы действительно хотите удалить этот заказ? Это действие невозможно отменить.'),
                         actions: [
-          if (widget.order != null)
-            IconButton(
-              icon: const Icon(Icons.comment_outlined),
-              tooltip: 'Комментарии',
-              onPressed: () async {
-                final order = widget.order!;
-                final legacy = order.comments.trim();
-                final comments = legacy.isEmpty
-                    ? const <TaskComment>[]
-                    : [
-                        TaskComment(
-                          id: 'legacy-${order.id}',
-                          userId: '',
-                          text: legacy,
-                          timestamp: order.orderDate.millisecondsSinceEpoch,
-                          type: 'comment',
-                        )
-                      ];
-                await showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (_) => SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.6,
-                    child: OrderCommentsSection(orderId: order.id, legacyText: order.comments),
-                  ),
-                );
-              },
-            ),
                           TextButton(
                             onPressed: () => Navigator.pop(ctx, false),
                             child: const Text('Отмена'),

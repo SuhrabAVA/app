@@ -34,6 +34,7 @@ import '../orders/order_comments_timeline.dart';
 import '../../services/app_auth.dart';
 import '../orders/order_details_card.dart';
 import '../orders/restart_history_service.dart';
+import '../orders/order_generation_switcher.dart';
 import '../orders/order_restart_history_repository.dart';
 
 @visibleForTesting
@@ -124,7 +125,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   String? _formImageUrl;
   Map<String, dynamic>? _formDetails;
   String _selectedCommentsOrderId = '';
-  List<OrderRestartHistoryEntry> _restartAncestors = const [];
+  List<OrderGenerationEntry> _restartAncestors = const [];
   bool _loadingRestartHistory = false;
 
   List<String> _decodeStringList(dynamic raw) {
@@ -339,10 +340,7 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       final service = RestartHistoryService(
         SupabaseOrderRestartHistoryRepository(),
       );
-      final history = await service.loadRestartHistoryChain(
-        _currentOrderId,
-        preferRpc: true,
-      );
+      final history = await service.loadGenerationChain(_currentOrderId);
       if (!mounted) return;
       setState(() => _restartAncestors = history);
     } catch (_) {
@@ -683,15 +681,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     }
   }
 
-  String _restartOrderChipLabel(OrderRestartHistoryEntry entry) {
-    final index = _restartAncestors.indexWhere((e) => e.id == entry.id);
-    final orderLabel = index == -1 ? 'Заказ' : 'Заказ ${index + 1}';
-    final finishedAt = entry.completedAt ?? entry.archivedAt ?? entry.updatedAt;
-    if (finishedAt == null) return orderLabel;
-    final when = DateFormat('dd.MM HH:mm').format(finishedAt.toLocal());
-    return '$orderLabel · завершён $when';
-  }
-
   Color _stageStatusColor(TaskStatus? status) {
     switch (status) {
       case TaskStatus.completed:
@@ -728,18 +717,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       );
     }
     comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    final selectedEntry = _restartAncestors
-        .where((e) => e.id == _selectedCommentsOrderId)
-        .cast<OrderRestartHistoryEntry?>()
-        .firstWhere((_) => true, orElse: () => null);
-    final selectedFinishedAt = selectedEntry == null
-        ? null
-        : (selectedEntry.completedAt ??
-            selectedEntry.archivedAt ??
-            selectedEntry.updatedAt);
-    final selectedDate = selectedFinishedAt == null
-        ? _selectedCommentsOrderId
-        : DateFormat('dd.MM.yyyy HH:mm').format(selectedFinishedAt.toLocal());
 
     return Card(
       margin: EdgeInsets.zero,
@@ -753,47 +730,14 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: const Text('Текущий заказ'),
-                      selected: !_isHistoryReadOnly,
-                      onSelected: (_) => setState(
-                        () => _selectedCommentsOrderId = _currentOrderId,
-                      ),
-                    ),
-                  ),
-                  for (final ancestor in _restartAncestors)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(_restartOrderChipLabel(ancestor)),
-                        selected: _selectedCommentsOrderId == ancestor.id,
-                        onSelected: (_) => setState(
-                          () => _selectedCommentsOrderId = ancestor.id,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+            OrderGenerationSwitcher(
+              generations: _restartAncestors,
+              currentOrderId: _currentOrderId,
+              selectedOrderId: _selectedCommentsOrderId,
+              loading: _loadingRestartHistory,
+              onSelected: (orderId) =>
+                  setState(() => _selectedCommentsOrderId = orderId),
             ),
-            if (_loadingRestartHistory) const LinearProgressIndicator(),
-            const SizedBox(height: 6),
-            if (_isHistoryReadOnly) ...[
-              Text(
-                'Вы смотрите архивный заказ: $selectedDate',
-                style: const TextStyle(color: Colors.orange),
-              ),
-              const Text(
-                'Комментарии доступны только для чтения',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 6),
-            ],
             SizedBox(
               height: 220,
               child: OrderCommentsTimeline(

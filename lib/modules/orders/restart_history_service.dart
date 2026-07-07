@@ -63,6 +63,51 @@ class RestartHistoryService {
     return chain;
   }
 
+  /// Полная цепочка поколений заказа (оригинал и все возобновления),
+  /// отсортированная от оригинала к последнему возобновлению.
+  /// Запрошенный заказ помечается флагом [OrderGenerationEntry.isCurrent].
+  /// Пустой список — если заказ не найден; один элемент — если у заказа
+  /// нет ни предков, ни потомков (переключатель в UI не показывается).
+  Future<List<OrderGenerationEntry>> loadGenerationChain(
+    String orderId,
+  ) async {
+    final id = orderId.trim();
+    if (id.isEmpty) return const [];
+
+    List<OrderGenerationEntry> entries;
+    try {
+      entries = await _repository.loadGenerationChain(id);
+    } catch (error, stackTrace) {
+      debugPrint('RestartHistoryService generation chain: $error\n$stackTrace');
+      return const [];
+    }
+
+    // Дедупликация по id (на случай пересечения условий выборки).
+    final seen = <String>{};
+    final unique = <OrderGenerationEntry>[
+      for (final entry in entries)
+        if (seen.add(entry.id)) entry,
+    ];
+
+    unique.sort((a, b) {
+      final byGeneration = a.generation.compareTo(b.generation);
+      if (byGeneration != 0) return byGeneration;
+      final aTs = a.createdAt;
+      final bTs = b.createdAt;
+      if (aTs != null && bTs != null) {
+        final byCreated = aTs.compareTo(bTs);
+        if (byCreated != 0) return byCreated;
+      } else if (aTs != null || bTs != null) {
+        return aTs == null ? -1 : 1;
+      }
+      return a.id.compareTo(b.id);
+    });
+
+    return [
+      for (final entry in unique) entry.copyWith(isCurrent: entry.id == id),
+    ];
+  }
+
   static int _sortByFinishTimeFromOldToNew(
     OrderRestartHistoryEntry a,
     OrderRestartHistoryEntry b,

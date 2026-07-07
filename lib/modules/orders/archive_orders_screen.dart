@@ -112,13 +112,16 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
               children: [
                 TextButton.icon(
                   onPressed: () async {
-                    final events = await context
-                        .read<OrdersProvider>()
-                        .fetchOrderHistory(o.id);
+                    final provider = context.read<OrdersProvider>();
+                    final events = await provider.fetchOrderHistory(o.id);
                     if (!context.mounted) return;
                     await showDialog<void>(
                       context: context,
-                      builder: (_) => OrderTimelineDialog(order: o, events: events),
+                      builder: (_) => OrderTimelineDialog(
+                        order: o,
+                        events: events,
+                        loadEvents: provider.fetchOrderHistory,
+                      ),
                     );
                   },
                   icon: const Icon(Icons.history),
@@ -198,14 +201,17 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
                           trailing: PopupMenuButton<String>(
                             onSelected: (value) async {
                               if (value == 'history') {
-                                final events = await context
-                                    .read<OrdersProvider>()
-                                    .fetchOrderHistory(o.id);
+                                final provider = context.read<OrdersProvider>();
+                                final events =
+                                    await provider.fetchOrderHistory(o.id);
                                 if (!context.mounted) return;
                                 await showDialog<void>(
                                   context: context,
-                                  builder: (_) =>
-                                      OrderTimelineDialog(order: o, events: events),
+                                  builder: (_) => OrderTimelineDialog(
+                                    order: o,
+                                    events: events,
+                                    loadEvents: provider.fetchOrderHistory,
+                                  ),
                                 );
                                 return;
                               }

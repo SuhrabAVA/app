@@ -7,20 +7,76 @@ import '../personnel/personnel_provider.dart';
 import '../tasks/task_model.dart';
 import '../tasks/quantity_status_service.dart';
 import 'id_format.dart';
+import 'order_generation_switcher.dart';
 import 'order_model.dart';
+import 'order_restart_history_repository.dart';
+import 'restart_history_service.dart';
 
 /// Диалог, показывающий ход выполнения заказа на основе комментариев этапов.
-class OrderTimelineDialog extends StatelessWidget {
+///
+/// Если передан [loadEvents], сверху появляется переключатель поколений
+/// цепочки возобновлений: каждая кнопка открывает историю именно того
+/// поколения (только просмотр), ничего не сливается в один список.
+class OrderTimelineDialog extends StatefulWidget {
   final OrderModel order;
   final List<Map<String, dynamic>> events;
+
+  /// Загрузка истории произвольного поколения (обычно
+  /// `OrdersProvider.fetchOrderHistory`). Если null — переключатель поколений
+  /// не показывается, поведение прежнее.
+  final Future<List<Map<String, dynamic>>> Function(String orderId)? loadEvents;
+
+  final RestartHistoryService? historyService;
 
   const OrderTimelineDialog({
     super.key,
     required this.order,
     required this.events,
+    this.loadEvents,
+    this.historyService,
   });
 
+  @override
+  State<OrderTimelineDialog> createState() => _OrderTimelineDialogState();
+}
+
+class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
+  List<OrderGenerationEntry> _generations = const [];
+  bool _loadingGenerations = false;
+  late String _selectedOrderId;
+  // Ленивая загрузка: future истории поколения создаётся при первом выборе.
+  final Map<String, Future<List<Map<String, dynamic>>>> _eventsByOrderId = {};
+
   static final DateFormat _dateTimeFormat = DateFormat('dd.MM.yyyy в HH:mm', 'ru');
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedOrderId = widget.order.id;
+    _eventsByOrderId[widget.order.id] = Future.value(widget.events);
+    if (widget.loadEvents != null) {
+      _loadGenerations();
+    }
+  }
+
+  Future<void> _loadGenerations() async {
+    setState(() => _loadingGenerations = true);
+    final service = widget.historyService ??
+        RestartHistoryService(SupabaseOrderRestartHistoryRepository());
+    final chain = await service.loadGenerationChain(widget.order.id);
+    if (!mounted) return;
+    setState(() {
+      _generations = chain;
+      _loadingGenerations = false;
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> _eventsFor(String orderId) {
+    return _eventsByOrderId.putIfAbsent(
+      orderId,
+      () => widget.loadEvents!(orderId),
+    );
+  }
 
   DateTime? _parseTimestamp(dynamic value) {
     if (value == null) return null;
@@ -320,33 +376,70 @@ class OrderTimelineDialog extends StatelessWidget {
     );
   }
 
+  Widget _buildEventsList(BuildContext context, PersonnelProvider personnel) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _eventsFor(_selectedOrderId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return Text('Ошибка загрузки истории: ${snapshot.error}');
+        }
+        final List<Map<String, dynamic>> sortedEvents =
+            List<Map<String, dynamic>>.from(snapshot.data ?? const []);
+        sortedEvents.sort((a, b) {
+          final int tsA = (a['timestamp'] as int?) ?? 0;
+          final int tsB = (b['timestamp'] as int?) ?? 0;
+          return tsA.compareTo(tsB);
+        });
+        if (sortedEvents.isEmpty) {
+          return const Text('Комментариев по выполнению пока нет');
+        }
+        return ListView.separated(
+          shrinkWrap: true,
+          itemCount: sortedEvents.length,
+          separatorBuilder: (_, __) => const Divider(height: 16),
+          itemBuilder: (_, index) =>
+              _buildEventTile(context, sortedEvents[index], personnel),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
-    final List<Map<String, dynamic>> sortedEvents =
-        List<Map<String, dynamic>>.from(events);
-    sortedEvents.sort((a, b) {
-      final int tsA = (a['timestamp'] as int?) ?? 0;
-      final int tsB = (b['timestamp'] as int?) ?? 0;
-      return tsA.compareTo(tsB);
-    });
 
-    final displayId = orderDisplayId(order);
-    final orderTitle = displayId == '—' ? order.id : displayId;
+    final displayId = orderDisplayId(widget.order);
+    final orderTitle = displayId == '—' ? widget.order.id : displayId;
 
     return AlertDialog(
       title: Text('Выполнение заказа $orderTitle'),
       content: SizedBox(
         width: double.maxFinite,
-        child: sortedEvents.isEmpty
-            ? const Text('Комментариев по выполнению пока нет')
-            : ListView.separated(
-                shrinkWrap: true,
-                itemCount: sortedEvents.length,
-                separatorBuilder: (_, __) => const Divider(height: 16),
-                itemBuilder: (_, index) =>
-                    _buildEventTile(context, sortedEvents[index], personnel),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.loadEvents != null)
+              OrderGenerationSwitcher(
+                generations: _generations,
+                currentOrderId: widget.order.id,
+                selectedOrderId: _selectedOrderId,
+                loading: _loadingGenerations,
+                currentLabel: 'Этот заказ',
+                // Диалог истории и так только для просмотра.
+                readOnlyNotice: null,
+                onSelected: (orderId) =>
+                    setState(() => _selectedOrderId = orderId),
               ),
+            Flexible(child: _buildEventsList(context, personnel)),
+          ],
+        ),
       ),
       actions: [
         TextButton(

@@ -970,10 +970,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void _showOrderTimeline(OrderModel order) async {
     final provider = context.read<OrdersProvider>();
     final events = await provider.fetchOrderHistory(order.id);
+    if (!mounted) return;
 
     showDialog(
       context: context,
-      builder: (_) => OrderTimelineDialog(order: order, events: events),
+      builder: (_) => OrderTimelineDialog(
+        order: order,
+        events: events,
+        loadEvents: provider.fetchOrderHistory,
+      ),
     );
   }
 

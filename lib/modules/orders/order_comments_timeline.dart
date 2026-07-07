@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../tasks/task_model.dart';
 import 'order_comment_attachment.dart';
 import 'order_comments_repository.dart';
+import 'order_generation_switcher.dart';
+import 'order_restart_history_repository.dart';
+import 'restart_history_service.dart';
 import '../../utils/media_viewer.dart';
 
 class OrderCommentsSection extends StatefulWidget {
@@ -11,12 +14,14 @@ class OrderCommentsSection extends StatefulWidget {
     required this.orderId,
     this.legacyText = '',
     this.repository,
+    this.historyService,
     this.commentFilter,
   });
 
   final String orderId;
   final String legacyText;
   final OrderCommentsRepository? repository;
+  final RestartHistoryService? historyService;
   final bool Function(TaskComment comment)? commentFilter;
 
   @override
@@ -25,17 +30,40 @@ class OrderCommentsSection extends StatefulWidget {
 
 class _OrderCommentsSectionState extends State<OrderCommentsSection> {
   late final OrderCommentsRepository _repository;
-  late Future<_OrderCommentsBundle> _future;
+  late final RestartHistoryService _historyService;
+  // Ленивая загрузка: future создаётся при первом выборе поколения.
+  final Map<String, Future<_OrderCommentsBundle>> _bundlesByOrderId = {};
+  List<OrderGenerationEntry> _generations = const [];
+  bool _loadingGenerations = false;
+  late String _selectedOrderId;
 
   @override
   void initState() {
     super.initState();
     _repository = widget.repository ?? OrderCommentsRepository();
-    _future = _load();
+    _historyService = widget.historyService ??
+        RestartHistoryService(SupabaseOrderRestartHistoryRepository());
+    _selectedOrderId = widget.orderId;
+    _bundlesByOrderId[widget.orderId] = _load(widget.orderId);
+    _loadGenerations();
   }
 
-  Future<_OrderCommentsBundle> _load() async {
-    final comments = await _repository.loadComments(widget.orderId);
+  Future<void> _loadGenerations() async {
+    setState(() => _loadingGenerations = true);
+    final chain = await _historyService.loadGenerationChain(widget.orderId);
+    if (!mounted) return;
+    setState(() {
+      _generations = chain;
+      _loadingGenerations = false;
+    });
+  }
+
+  Future<_OrderCommentsBundle> _bundleFor(String orderId) {
+    return _bundlesByOrderId.putIfAbsent(orderId, () => _load(orderId));
+  }
+
+  Future<_OrderCommentsBundle> _load(String orderId) async {
+    final comments = await _repository.loadComments(orderId);
     final filtered = widget.commentFilter == null
         ? comments
         : comments.where(widget.commentFilter!).toList();
@@ -48,14 +76,15 @@ class _OrderCommentsSectionState extends State<OrderCommentsSection> {
     if (filtered.isNotEmpty) {
       return _OrderCommentsBundle(filtered, byComment);
     }
-    final legacy = widget.legacyText.trim();
+    // Легаси-текст относится только к заказу, открытому в модуле.
+    final legacy = orderId == widget.orderId ? widget.legacyText.trim() : '';
     if (legacy.isEmpty) {
       return const _OrderCommentsBundle([], {});
     }
     return _OrderCommentsBundle(
       [
         TaskComment(
-          id: 'legacy-${widget.orderId}',
+          id: 'legacy-$orderId',
           userId: '',
           text: legacy,
           timestamp: 0,
@@ -68,21 +97,45 @@ class _OrderCommentsSectionState extends State<OrderCommentsSection> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<_OrderCommentsBundle>(
-      future: _future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text('Ошибка загрузки комментариев: ${snapshot.error}'));
-        }
-        final data = snapshot.data ?? const _OrderCommentsBundle([], {});
-        return OrderCommentsTimeline(
-          comments: data.comments,
-          attachmentsByComment: data.attachmentsByComment,
-        );
-      },
+    final isHistorySelected = _selectedOrderId != widget.orderId;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: OrderGenerationSwitcher(
+            generations: _generations,
+            currentOrderId: widget.orderId,
+            selectedOrderId: _selectedOrderId,
+            loading: _loadingGenerations,
+            onSelected: (orderId) =>
+                setState(() => _selectedOrderId = orderId),
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<_OrderCommentsBundle>(
+            future: _bundleFor(_selectedOrderId),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(
+                    child: Text(
+                        'Ошибка загрузки комментариев: ${snapshot.error}'));
+              }
+              final data = snapshot.data ?? const _OrderCommentsBundle([], {});
+              return OrderCommentsTimeline(
+                comments: data.comments,
+                attachmentsByComment: data.attachmentsByComment,
+                emptyLabel: isHistorySelected
+                    ? 'Комментариев по этому заказу нет'
+                    : 'Комментариев пока нет',
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
