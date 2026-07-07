@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Аналитика производства</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <h1>Аналитика производства</h1>
+          <p>сотрудники · рабочие места · графики работы · зарплата</p>
+        </div>
+      </div>
+
+      <nav class="top-tabs" aria-label="Главное меню">
+        <button class="tab-button active" data-view="employees">Сотрудники</button>
+        <button class="tab-button" data-view="machines">Рабочие места</button>
+        <button class="tab-button" data-view="schedule">Графики работы</button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="filters-card">
+        <div class="filter-group">
+          <label>Месяц</label>
+          <input id="selectedMonth" type="month" />
+        </div>
+      </section>
+
+      <section id="employeesView" class="view active"></section>
+      <section id="employeeDetailView" class="view"></section>
+      <section id="machinesView" class="view"></section>
+      <section id="machineDetailView" class="view"></section>
+      <section id="scheduleView" class="view"></section>
+    </main>
+  </div>
+
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-panel">
+      <div class="drawer-header">
+        <div>
+          <h2>Настройки оплаты</h2>
+          <p>Ночные смены, питание и удержания. Питание считается автоматически.</p>
+        </div>
+        <button id="closeDrawer" class="icon-button" aria-label="Закрыть">×</button>
+      </div>
+      <div id="drawerContent"></div>
+    </div>
+  </aside>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

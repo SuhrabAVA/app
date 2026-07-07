@@ -135,6 +135,8 @@ class PersonnelProvider extends ChangeNotifier {
               comments: r['comments'] ?? '',
               login: r['login'] ?? '',
               password: r['password'] ?? '',
+              baseDaySalary:
+                  (r['base_day_salary'] as num?)?.toDouble() ?? 0,
             )));
       _safeNotify();
     } on ClientException catch (e, st) {

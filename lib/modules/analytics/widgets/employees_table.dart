@@ -83,16 +83,20 @@ class _EmployeesTableState extends State<EmployeesTable> {
       final list = eventsByEmployee[emp.id] ?? const <AnalyticsEvent>[];
       final adj = state.adjustments[emp.id] ??
           SalaryAdjustments.zero(emp.id, state.month.firstDay);
+      final payType = parsePayType(state.employeePayTypes[emp.id]);
+      final baseDaySalary =
+          state.employeeBaseSalaries[emp.id] ?? emp.baseDaySalary;
       final breakdown = SalaryCalculator.compute(
         events: list,
         coefficients: state.coefficients,
         settings: state.settings,
         adjustments: adj,
         halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
+        baseDaySalary: baseDaySalary,
+        payType: payType,
       );
       final statusName =
           statusById[state.employeeStatusIds[emp.id] ?? '']?.name;
-      final payType = parsePayType(state.employeePayTypes[emp.id]);
 
       // Агрегаты строки считаем один раз здесь, а не в build ячеек:
       // раньше AnalyticsCalculator гонялся по событиям каждой строки при
@@ -158,12 +162,17 @@ class _EmployeesTableState extends State<EmployeesTable> {
     _maybeRecompute(state);
 
     final canViewFinance = widget.permission.canViewFinance;
+    final canEdit = widget.permission.canEdit;
     final rows = _rows;
+    final nightPercent = state.settings.nightPercent;
+    final mealAmount = state.settings.mealAmount;
 
     // Sticky column: 300 px (как .sticky-employee-column в эталоне).
-    // Rest: min 1300 (no finance) or 2280 (finance).
+    // Rest пересчитан под новое число колонок эталона (добавлена «Смены»,
+    // финансовые колонки стали редактируемыми инпутами — нужна ширина):
+    // 9 нефинансовых (flex 10) + 12 финансовых = 21 колонка (flex 22).
     const stickyWidth = 300.0;
-    final restMinWidth = canViewFinance ? 2280.0 : 1300.0;
+    final restMinWidth = canViewFinance ? 2640.0 : 1450.0;
 
     return LayoutBuilder(builder: (context, constraints) {
       final restWidth = constraints.maxWidth.isFinite
@@ -197,25 +206,74 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
       // ── Footer aggregates ────────────────────────────────────────────────
       int shifts = 0, days = 0, nights = 0;
-      double qtyAll = 0;
+      double qtyAll = 0, setupAll = 0;
       int pauseCount = 0, pauseM = 0, problemCount = 0, problemM = 0;
+      int claimsAll = 0;
       double salarySum = 0;
+      double pieceSum = 0, earnedSum = 0, nightSum = 0, compSum = 0, socialSum = 0;
+      double mealSum = 0, advSum = 0, cashSum = 0, discSum = 0, defSum = 0;
       int usefulM = 0;
       for (final r in rows) {
         shifts += r.breakdown.shiftsTotal;
         days += r.breakdown.dayShifts;
         nights += r.breakdown.nightShifts;
         qtyAll += r.qty;
+        setupAll += r.setupQty;
         usefulM += AnalyticsCalculator.usefulMinutes(r.events);
         pauseCount += r.pauseCount;
         pauseM += r.pauseMinutes;
         problemCount += r.problemCount;
         problemM += r.problemMinutes;
+        claimsAll += r.claims;
+        pieceSum += r.breakdown.pieceSalary;
+        earnedSum += r.breakdown.primaryEarned;
+        nightSum += r.breakdown.nightBonus;
+        compSum += r.breakdown.compensation;
+        socialSum += r.breakdown.social;
+        mealSum += r.breakdown.mealDeduction;
+        advSum += r.breakdown.advance;
+        cashSum += r.breakdown.cashless;
+        discSum += r.breakdown.discipline;
+        defSum += r.breakdown.defect;
         salarySum += r.breakdown.total;
       }
+      final totals = _FooterTotals(
+        shifts: shifts,
+        days: days,
+        nights: nights,
+        qtyAll: qtyAll,
+        setupAll: setupAll,
+        usefulM: usefulM,
+        pauseCount: pauseCount,
+        pauseM: pauseM,
+        problemCount: problemCount,
+        problemM: problemM,
+        claimsAll: claimsAll,
+        pieceSum: pieceSum,
+        earnedSum: earnedSum,
+        avgPiece: shifts > 0 ? pieceSum / shifts : 0.0,
+        nightSum: nightSum,
+        compSum: compSum,
+        socialSum: socialSum,
+        mealSum: mealSum,
+        advSum: advSum,
+        cashSum: cashSum,
+        discSum: discSum,
+        defSum: defSum,
+        salarySum: salarySum,
+      );
 
       final footerSticky = stickyCell(
-        _footerCell('всего смен', '$shifts'),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Text(
+            'Общий итог',
+            style: TextStyle(
+                color: AnalyticsColors.text,
+                fontWeight: FontWeight.w900,
+                fontSize: 12),
+          ),
+        ),
         gradient: AnalyticsColors.tableFooterStickyGradient,
         border: Border(
             top: BorderSide(
@@ -285,8 +343,11 @@ class _EmployeesTableState extends State<EmployeesTable> {
                                         context,
                                         rows[i],
                                         canViewFinance,
+                                        canEdit,
                                         i,
-                                        hovered),
+                                        hovered,
+                                        nightPercent,
+                                        mealAmount),
                                   ),
                                   builder: (context, hOffset, child) =>
                                       Transform.translate(
@@ -319,10 +380,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
                       physics: const ClampingScrollPhysics(),
                       child: SizedBox(
                         width: restWidth,
-                        child: _buildScrollableFooter(
-                            canViewFinance, restWidth, days, nights,
-                            qtyAll, usefulM, pauseCount, pauseM,
-                            problemCount, problemM, salarySum),
+                        child: _buildScrollableFooter(canViewFinance, totals),
                       ),
                     ),
                   ),
@@ -337,6 +395,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
   Widget _buildScrollableHeader(bool finance, double width) {
     final cols = <String>[
+      'Смены',
       'Дни',
       'Ночи',
       'Рабочие места',
@@ -345,14 +404,14 @@ class _EmployeesTableState extends State<EmployeesTable> {
       'Паузы',
       'Проблемы',
       'Претензии',
-      if (finance) 'Тип оплаты',
-      if (finance) 'Средняя ЗП',
-      if (finance) 'Ночные',
-      if (finance) 'Компенсации',
-      if (finance) 'Соц. отчисл.',
+      if (finance) 'Сдельно / оклад',
+      if (finance) 'Средняя сдельная',
+      if (finance) 'Оплата ночных',
+      if (finance) 'Компенсация',
+      if (finance) 'Соцотчисления',
       if (finance) 'Питание',
       if (finance) 'Аванс',
-      if (finance) 'ЗП безнал',
+      if (finance) 'ЗП без нал',
       if (finance) 'Дисциплина',
       if (finance) 'Браки',
       if (finance) 'Итог ЗП',
@@ -404,8 +463,9 @@ class _EmployeesTableState extends State<EmployeesTable> {
     );
   }
 
-  Widget _buildScrollableDataRow(
-      BuildContext context, _Row r, bool finance, int index, bool hovered) {
+  Widget _buildScrollableDataRow(BuildContext context, _Row r, bool finance,
+      bool canEdit, int index, bool hovered, double nightPercent,
+      double mealAmount) {
     // Все агрегаты предвычислены в _buildRows (см. _Row) — build ячеек
     // не должен трогать AnalyticsCalculator.
     final rowColor = hovered
@@ -424,6 +484,12 @@ class _EmployeesTableState extends State<EmployeesTable> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _cell(
+              child: _twoLine(
+                Text('${r.breakdown.shiftsTotal}', style: _cellStyle()),
+                Text('смен', style: _mutedStyle()),
+              ),
+            ),
             _cell(child: Text('${r.breakdown.dayShifts}', style: _cellStyle())),
             _cell(
                 child:
@@ -466,9 +532,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
               ),
             ),
             _cell(child: Text('${r.claims}', style: _cellStyle())),
-            if (finance)
-              _cell(
-                  child: Text(_payTypeText(r), style: _cellStyle())),
+            // ── Финансовые колонки ────────────────────────────────────────
+            if (finance) _cell(child: _payTypeChip(r)),
             if (finance)
               _cell(
                   child: Text(
@@ -476,45 +541,44 @@ class _EmployeesTableState extends State<EmployeesTable> {
                       style: _cellStyle())),
             if (finance)
               _cell(
-                  child: Text(
-                      AnalyticsFormat.money(r.breakdown.nightBonus),
-                      style: _cellStyle())),
+                  child: _twoLine(
+                Text(AnalyticsFormat.money(r.breakdown.nightBonus),
+                    style: _cellStyle()),
+                Text(
+                  '${r.breakdown.nightShifts} ноч. · ${nightPercent.toStringAsFixed(0)}%',
+                  style: _mutedStyle(),
+                ),
+              )),
+            // Компенсация — редактируемое поле (renderInlineMoneyInput).
             if (finance)
-              _cell(
-                  child: Text(
-                      AnalyticsFormat.money(r.breakdown.compensation),
-                      style: _cellStyle())),
+              _inputCell(r, r.breakdown.compensation, canEdit,
+                  (base, v) => base.copyWith(compensation: v)),
             if (finance)
-              _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.social),
-                      style: _cellStyle())),
+              _inputCell(r, r.breakdown.social, canEdit,
+                  (base, v) => base.copyWith(social: v)),
+            // Питание — вычисляемое: смены × цена порции.
             if (finance)
               _cell(
                   child: _twoLine(
                 Text(AnalyticsFormat.money(r.breakdown.mealDeduction),
                     style: _cellStyle()),
                 Text(
-                  '${r.breakdown.shiftsTotal} порц.',
+                  '${r.breakdown.shiftsTotal} порц. × ${AnalyticsFormat.money(mealAmount)}',
                   style: _mutedStyle(),
                 ),
               )),
             if (finance)
-              _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.advance),
-                      style: _cellStyle())),
+              _inputCell(r, r.breakdown.advance, canEdit,
+                  (base, v) => base.copyWith(advance: v)),
             if (finance)
-              _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.cashless),
-                      style: _cellStyle())),
+              _inputCell(r, r.breakdown.cashless, canEdit,
+                  (base, v) => base.copyWith(cashless: v)),
             if (finance)
-              _cell(
-                  child: Text(
-                      AnalyticsFormat.money(r.breakdown.discipline),
-                      style: _cellStyle())),
+              _inputCell(r, r.breakdown.discipline, canEdit,
+                  (base, v) => base.copyWith(discipline: v)),
             if (finance)
-              _cell(
-                  child: Text(AnalyticsFormat.money(r.breakdown.defect),
-                      style: _cellStyle())),
+              _inputCell(r, r.breakdown.defect, canEdit,
+                  (base, v) => base.copyWith(defect: v)),
             if (finance)
               _cell(
                   child: Text(AnalyticsFormat.money(r.breakdown.total),
@@ -522,11 +586,21 @@ class _EmployeesTableState extends State<EmployeesTable> {
                           .copyWith(fontWeight: FontWeight.w900))),
             if (finance)
               _cell(
-                  child: TextButton(
-                onPressed: () => widget.onEmployeeTap(r.employee.id),
-                child: const Text(
-                  'Открыть',
-                  style: TextStyle(color: AnalyticsColors.blue),
+                  child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                            'Ведомость для ${r.employee.lastName} пока в разработке'),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Ведомость',
+                    style: TextStyle(color: AnalyticsColors.blue),
+                  ),
                 ),
               )),
           ],
@@ -535,20 +609,79 @@ class _EmployeesTableState extends State<EmployeesTable> {
     );
   }
 
-  Widget _buildScrollableFooter(
-    bool finance,
-    double width,
-    int days,
-    int nights,
-    double qtyAll,
-    int usefulM,
-    int pauseCount,
-    int pauseM,
-    int problemCount,
-    int problemM,
-    double salarySum,
+  /// Ячейка с редактируемым денежным полем. Тап по инпуту (и по паддингу
+  /// вокруг него) поглощается GestureDetector'ом — клик не всплывает до
+  /// InkWell строки и не открывает деталку (аналог stopPropagation).
+  Widget _inputCell(
+    _Row r,
+    double value,
+    bool enabled,
+    SalaryAdjustments Function(SalaryAdjustments base, double v) apply,
   ) {
-    Widget c(String label, String value) => _footerCell(label, value);
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {},
+          child: _InlineMoneyField(
+            value: value,
+            enabled: enabled,
+            onSaved: (v) => _saveAdjustment(r, (base) => apply(base, v)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Оптимистичное сохранение корректировки. При ошибке сервис откатывает
+  /// состояние и пробрасывает исключение — показываем SnackBar.
+  Future<void> _saveAdjustment(
+      _Row r, SalaryAdjustments Function(SalaryAdjustments base) update) async {
+    final state = widget.service.state;
+    final base = state.adjustments[r.employee.id] ??
+        SalaryAdjustments.zero(r.employee.id, state.month.firstDay);
+    try {
+      await widget.service.saveSalaryAdjustments(update(base));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить: $e')),
+      );
+    }
+  }
+
+  Widget _payTypeChip(_Row r) {
+    // Тип и сумма — из единого расчёта (SalaryCalculator): окладник →
+    // окладная (смены × ставка), сдельщик → сдельная. primaryEarned — та же
+    // сумма, что входит в accrued/total.
+    final isSalary = r.breakdown.isSalaryType;
+    final label = isSalary ? 'Оклад' : 'Сдельно';
+    final amount = r.breakdown.primaryEarned;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0x1A38BDF8),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0x3338BDF8)),
+        ),
+        child: Text(
+          '$label: ${AnalyticsFormat.money(amount)}',
+          style: const TextStyle(
+            color: Color(0xFF7DD3FC),
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScrollableFooter(bool finance, _FooterTotals t) {
+    Widget c(String label, String value, {int flex = 1}) =>
+        Expanded(flex: flex, child: _footerCell(label, value));
 
     return Container(
       decoration: BoxDecoration(
@@ -559,26 +692,32 @@ class _EmployeesTableState extends State<EmployeesTable> {
       ),
       child: Row(
         children: [
-          Expanded(child: c('дней', '$days')),
-          Expanded(child: c('ночей', '$nights')),
-          Expanded(
-              flex: 2,
-              child: c('сделано',
-                  '${AnalyticsFormat.decimal(qtyAll)} (${AnalyticsFormat.hoursMinutes(usefulM)})')),
-          Expanded(child: c('сделано', AnalyticsFormat.decimal(qtyAll))),
-          Expanded(child: c('наладка', '—')),
-          Expanded(
-              child: c('паузы',
-                  '$pauseCount · ${AnalyticsFormat.hoursMinutes(pauseM)}')),
-          Expanded(
-              child: c('проблемы',
-                  '$problemCount · ${AnalyticsFormat.hoursMinutes(problemM)}')),
-          Expanded(child: c('претензии', '—')),
-          if (finance)
-            for (var i = 0; i < 11; i++) Expanded(child: c('—', '—')),
-          if (finance)
-            Expanded(child: c('итог ЗП', AnalyticsFormat.money(salarySum))),
-          if (finance) const Expanded(child: SizedBox.shrink()),
+          c('смен', '${t.shifts}'),
+          c('дней', '${t.days}'),
+          c('ночей', '${t.nights}'),
+          c(
+              'всего',
+              '${AnalyticsFormat.decimal(t.qtyAll)} / приладка ${AnalyticsFormat.decimal(t.setupAll)} / ${AnalyticsFormat.hoursMinutes(t.usefulM)}',
+              flex: 2),
+          c('сделано', AnalyticsFormat.decimal(t.qtyAll)),
+          c('наладка', AnalyticsFormat.decimal(t.setupAll)),
+          c('паузы',
+              '${t.pauseCount} · ${AnalyticsFormat.hoursMinutes(t.pauseM)}'),
+          c('проблемы',
+              '${t.problemCount} · ${AnalyticsFormat.hoursMinutes(t.problemM)}'),
+          c('претензии', '${t.claimsAll}'),
+          if (finance) c('сдельно/оклад', AnalyticsFormat.money(t.earnedSum)),
+          if (finance) c('средняя', AnalyticsFormat.money(t.avgPiece)),
+          if (finance) c('ночные', AnalyticsFormat.money(t.nightSum)),
+          if (finance) c('комп.', AnalyticsFormat.money(t.compSum)),
+          if (finance) c('соц.', AnalyticsFormat.money(t.socialSum)),
+          if (finance) c('питание', AnalyticsFormat.money(t.mealSum)),
+          if (finance) c('аванс', AnalyticsFormat.money(t.advSum)),
+          if (finance) c('безнал', AnalyticsFormat.money(t.cashSum)),
+          if (finance) c('дисц.', AnalyticsFormat.money(t.discSum)),
+          if (finance) c('браки', AnalyticsFormat.money(t.defSum)),
+          if (finance) c('итог ЗП', AnalyticsFormat.money(t.salarySum)),
+          if (finance) c('', '—'),
         ],
       ),
     );
@@ -625,13 +764,175 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
   TextStyle _mutedStyle() =>
       const TextStyle(color: AnalyticsColors.muted, fontSize: 11);
+}
 
-  String _payTypeText(_Row r) {
-    if (r.payType == null) return '—';
-    final amount = r.payType == PayType.salary
-        ? r.breakdown.averageShiftSalary * r.breakdown.shiftsTotal
-        : r.breakdown.pieceSalary;
-    return '${payTypeLabel(r.payType!)}: ${AnalyticsFormat.money(amount)}';
+/// Предвычисленные суммы футера (все колонки эталона суммируются).
+class _FooterTotals {
+  final int shifts;
+  final int days;
+  final int nights;
+  final double qtyAll;
+  final double setupAll;
+  final int usefulM;
+  final int pauseCount;
+  final int pauseM;
+  final int problemCount;
+  final int problemM;
+  final int claimsAll;
+  final double pieceSum;
+  final double earnedSum;
+  final double avgPiece;
+  final double nightSum;
+  final double compSum;
+  final double socialSum;
+  final double mealSum;
+  final double advSum;
+  final double cashSum;
+  final double discSum;
+  final double defSum;
+  final double salarySum;
+
+  const _FooterTotals({
+    required this.shifts,
+    required this.days,
+    required this.nights,
+    required this.qtyAll,
+    required this.setupAll,
+    required this.usefulM,
+    required this.pauseCount,
+    required this.pauseM,
+    required this.problemCount,
+    required this.problemM,
+    required this.claimsAll,
+    required this.pieceSum,
+    required this.earnedSum,
+    required this.avgPiece,
+    required this.nightSum,
+    required this.compSum,
+    required this.socialSum,
+    required this.mealSum,
+    required this.advSum,
+    required this.cashSum,
+    required this.discSum,
+    required this.defSum,
+    required this.salarySum,
+  });
+}
+
+/// Инлайн-инпут денежной корректировки.
+///
+/// Контроллер и FocusNode живут в СОСТОЯНИИ этого виджета, а не в
+/// builder'е Transform.translate строки. На тик горизонтального скролла
+/// ValueListenableBuilder переиспользует один и тот же `child` (Element
+/// поля сохраняется) — контроллер НЕ пересоздаётся, ввод/курсор не
+/// сбрасываются. Утилизация — в [dispose] этого State (автоматически, когда
+/// строка покидает дерево). Сохранение — по потере фокуса или Enter, не на
+/// каждый символ.
+class _InlineMoneyField extends StatefulWidget {
+  const _InlineMoneyField({
+    required this.value,
+    required this.enabled,
+    required this.onSaved,
+  });
+
+  final double value;
+  final bool enabled;
+  final ValueChanged<double> onSaved;
+
+  @override
+  State<_InlineMoneyField> createState() => _InlineMoneyFieldState();
+}
+
+class _InlineMoneyFieldState extends State<_InlineMoneyField> {
+  late final TextEditingController _ctrl;
+  late final FocusNode _focus;
+
+  // Последнее зафиксированное значение — чтобы Enter и следующая за ним
+  // потеря фокуса не дали двойного сохранения (onSubmitted + blur), не
+  // полагаясь на round-trip состояния.
+  late double _lastCommitted;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastCommitted = widget.value;
+    _ctrl = TextEditingController(text: _fmt(widget.value));
+    _focus = FocusNode()..addListener(_onFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineMoneyField old) {
+    super.didUpdateWidget(old);
+    // Внешнее значение изменилось (оптимистичное сохранение или откат) —
+    // синхронизируем текст ТОЛЬКО когда поле не в фокусе, чтобы не затирать
+    // то, что пользователь печатает прямо сейчас.
+    if (!_focus.hasFocus && widget.value != old.value) {
+      _lastCommitted = widget.value;
+      _ctrl.text = _fmt(widget.value);
+    }
+  }
+
+  void _onFocusChange() {
+    if (!_focus.hasFocus) _commit();
+  }
+
+  void _commit() {
+    final parsed = double.tryParse(
+          _ctrl.text.replaceAll(' ', '').replaceAll(' ', '').replaceAll(',', '.'),
+        ) ??
+        0;
+    if (parsed != _lastCommitted) {
+      _lastCommitted = parsed;
+      widget.onSaved(parsed);
+    }
+  }
+
+  static String _fmt(double v) => v.round().toString();
+
+  @override
+  void dispose() {
+    _focus.removeListener(_onFocusChange);
+    _focus.dispose();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 36,
+      child: TextField(
+        controller: _ctrl,
+        focusNode: _focus,
+        enabled: widget.enabled,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textAlign: TextAlign.right,
+        textAlignVertical: TextAlignVertical.center,
+        onSubmitted: (_) => _commit(),
+        style: const TextStyle(
+            color: AnalyticsColors.text,
+            fontSize: 12,
+            fontWeight: FontWeight.w700),
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          filled: true,
+          fillColor: const Color(0x1102061B),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: AnalyticsColors.line),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: AnalyticsColors.blue),
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
   }
 }
 

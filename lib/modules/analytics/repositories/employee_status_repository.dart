@@ -81,4 +81,29 @@ class EmployeeStatusRepository {
         .update({'pay_type': payType})
         .eq('id', employeeId);
   }
+
+  /// Оклады за смену: employeeId -> base_day_salary. Грузим напрямую из
+  /// таблицы employees (view employees_view эту колонку не отдаёт).
+  Future<Map<String, double>> loadEmployeeBaseSalaries() async {
+    final List<dynamic> rows =
+        await _client.from('employees').select('id, base_day_salary');
+    final result = <String, double>{};
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final id = (row['id'] ?? '').toString();
+      if (id.isEmpty) continue;
+      final v = row['base_day_salary'];
+      result[id] = v is num
+          ? v.toDouble()
+          : double.tryParse(v?.toString() ?? '') ?? 0;
+    }
+    return result;
+  }
+
+  Future<void> setBaseDaySalary(String employeeId, double value) async {
+    await _client
+        .from('employees')
+        .update({'base_day_salary': value})
+        .eq('id', employeeId);
+  }
 }

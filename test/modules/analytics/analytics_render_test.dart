@@ -164,6 +164,16 @@ void main() {
     // Имя встречается и в заголовке, и в дропдауне смены сотрудника.
     expect(find.text('Иванов Иван'), findsWidgets);
     expect(find.text('График работы за месяц'), findsOneWidget);
+    // Фаза C: новые строки зарплатного блока деталки.
+    expect(find.text('Начислено'), findsOneWidget);
+    expect(find.text('КПД'), findsOneWidget);
+    // Подписи «Ночные N × X%» и «Питание N порц. × цена».
+    expect(find.textContaining('Ночные '), findsWidgets);
+    expect(find.textContaining('порц. ×'), findsWidgets);
+    // Фаза D: окладная строка, тип оплаты и редактируемая ставка.
+    expect(find.text('Оклад за смены'), findsOneWidget);
+    expect(find.textContaining('Тип оплаты'), findsOneWidget);
+    expect(find.text('Ставка оклада (за смену)'), findsOneWidget);
   });
 
   testWidgets(

@@ -31,6 +31,9 @@ class AnalyticsState {
   final List<EmployeeStatus> statuses;
   final Map<String, String> employeeStatusIds;
   final Map<String, String?> employeePayTypes;
+  /// Оклад за смену по сотруднику (base_day_salary). Авторитетный источник
+  /// окладной части ЗП — грузится из таблицы employees (view её не отдаёт).
+  final Map<String, double> employeeBaseSalaries;
   final List<ClaimModel> claims;
   /// Помесячные скорости рабочих мест за все месяцы до выбранного.
   /// Используется для расчёта КПД.
@@ -48,6 +51,7 @@ class AnalyticsState {
     this.statuses = const [],
     this.employeeStatusIds = const {},
     this.employeePayTypes = const {},
+    this.employeeBaseSalaries = const {},
     this.claims = const [],
     this.workplacePreviousSpeeds = const {},
     this.loading = false,
@@ -64,6 +68,7 @@ class AnalyticsState {
     List<EmployeeStatus>? statuses,
     Map<String, String>? employeeStatusIds,
     Map<String, String?>? employeePayTypes,
+    Map<String, double>? employeeBaseSalaries,
     List<ClaimModel>? claims,
     Map<String, List<double>>? workplacePreviousSpeeds,
     bool? loading,
@@ -80,6 +85,7 @@ class AnalyticsState {
       statuses: statuses ?? this.statuses,
       employeeStatusIds: employeeStatusIds ?? this.employeeStatusIds,
       employeePayTypes: employeePayTypes ?? this.employeePayTypes,
+      employeeBaseSalaries: employeeBaseSalaries ?? this.employeeBaseSalaries,
       claims: claims ?? this.claims,
       workplacePreviousSpeeds:
           workplacePreviousSpeeds ?? this.workplacePreviousSpeeds,
@@ -183,6 +189,8 @@ class AnalyticsService extends ChangeNotifier {
       final statusesFuture = _statusRepo.listAll();
       final employeeStatusIdsFuture = _statusRepo.loadEmployeeStatusIds();
       final employeePayTypesFuture = _statusRepo.loadEmployeePayTypes();
+      final employeeBaseSalariesFuture =
+          _statusRepo.loadEmployeeBaseSalaries();
       final claimsFuture = _claimsRepo.listForMonth(month.firstDay);
 
       final allData = await allDataFuture;
@@ -193,6 +201,7 @@ class AnalyticsService extends ChangeNotifier {
       final statuses = await statusesFuture;
       final empStatusIds = await employeeStatusIdsFuture;
       final empPayTypes = await employeePayTypesFuture;
+      final empBaseSalaries = await employeeBaseSalariesFuture;
       final claims = await claimsFuture;
 
       // If the task-comment tracker produced no events for this month,
@@ -220,6 +229,7 @@ class AnalyticsService extends ChangeNotifier {
         statuses: statuses,
         employeeStatusIds: empStatusIds,
         employeePayTypes: empPayTypes,
+        employeeBaseSalaries: empBaseSalaries,
         claims: claims,
         workplacePreviousSpeeds: allData.prevSpeeds,
         loading: false,
@@ -285,20 +295,36 @@ class AnalyticsService extends ChangeNotifier {
   }
 
   /// Сохраняет ручные корректировки зарплаты по сотруднику за месяц.
+  ///
+  /// Оптимистично применяет правку сразу (ввод не «прыгает» и таблица
+  /// пересчитывает итоги без ожидания сети). Если upsert упал —
+  /// откатываемся к прежним значениям и пробрасываем исключение, чтобы
+  /// UI показал SnackBar.
   Future<void> saveSalaryAdjustments(SalaryAdjustments adj,
       {String? actorId}) async {
     if (_permission?.canEdit != true) {
       throw StateError('У вас нет прав на изменение финансовых данных.');
     }
-    final saved = await _adjustmentsRepo.upsert(
-      adj,
-      permission: _permission,
-      updatedBy: actorId,
-    );
-    final next = Map<String, SalaryAdjustments>.from(_state.adjustments);
-    next[saved.employeeId] = saved;
-    _state = _state.copyWith(adjustments: next);
+    final previous = _state.adjustments;
+    final optimistic = Map<String, SalaryAdjustments>.from(previous);
+    optimistic[adj.employeeId] = adj;
+    _state = _state.copyWith(adjustments: optimistic);
     notifyListeners();
+    try {
+      final saved = await _adjustmentsRepo.upsert(
+        adj,
+        permission: _permission,
+        updatedBy: actorId,
+      );
+      final next = Map<String, SalaryAdjustments>.from(_state.adjustments);
+      next[saved.employeeId] = saved;
+      _state = _state.copyWith(adjustments: next);
+      notifyListeners();
+    } catch (e) {
+      _state = _state.copyWith(adjustments: previous);
+      notifyListeners();
+      rethrow;
+    }
   }
 
   /// Сохраняет ячейку графика.
@@ -361,5 +387,28 @@ class AnalyticsService extends ChangeNotifier {
     next[employeeId] = payType;
     _state = _state.copyWith(employeePayTypes: next);
     notifyListeners();
+  }
+
+  /// Сохраняет оклад за смену сотрудника (employees.base_day_salary).
+  /// Оптимистично + откат при ошибке (как saveSalaryAdjustments).
+  Future<void> setEmployeeBaseSalary({
+    required String employeeId,
+    required double value,
+  }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
+    final previous = _state.employeeBaseSalaries;
+    final optimistic = Map<String, double>.from(previous);
+    optimistic[employeeId] = value;
+    _state = _state.copyWith(employeeBaseSalaries: optimistic);
+    notifyListeners();
+    try {
+      await _statusRepo.setBaseDaySalary(employeeId, value);
+    } catch (e) {
+      _state = _state.copyWith(employeeBaseSalaries: previous);
+      notifyListeners();
+      rethrow;
+    }
   }
 }

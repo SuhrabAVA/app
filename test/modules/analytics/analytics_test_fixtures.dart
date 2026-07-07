@@ -80,6 +80,9 @@ final mockWorkplaces = <WorkplaceModel>[
 /// Сотрудники: e1 работает на трёх РМ (многострочная ячейка «Рабочие места»
 /// — исходный кейс overflow 11px в employees_table) и имеет статус
 /// (двухстрочная sticky-ячейка); e3 — длинная фамилия.
+///
+/// Для Фазы D: e1 — сдельщик (payType piece, есть выработка), e2 — окладник
+/// (payType salary, base_day_salary > 0).
 final mockEmployees = <EmployeeModel>[
   EmployeeModel(
     id: 'e1',
@@ -96,6 +99,7 @@ final mockEmployees = <EmployeeModel>[
     patronymic: 'Петрович',
     iin: '000000000002',
     positionIds: const [],
+    baseDaySalary: 16000,
   ),
   EmployeeModel(
     id: 'e3',
@@ -160,6 +164,9 @@ AnalyticsState mockState() => AnalyticsState(
       coefficients: const {'wp1': 1.5, 'wp2': 2.0, 'wp3': 1.0},
       statuses: const [EmployeeStatus(id: 's1', name: 'Стажёр')],
       employeeStatusIds: const {'e1': 's1'},
+      // Фаза D: e1 — сдельщик, e2 — окладник со ставкой 16000/смена.
+      employeePayTypes: const {'e1': 'piece', 'e2': 'salary'},
+      employeeBaseSalaries: const {'e2': 16000},
       workplacePreviousSpeeds: const {
         'wp1': [4.2, 5.1],
         'wp2': [1.1],

@@ -1,10 +1,13 @@
 import '../models/analytics_event.dart';
+import '../models/pay_type.dart';
 import '../models/salary_adjustments.dart';
 import '../models/salary_settings.dart';
 
 /// Результат расчёта зарплаты сотрудника за месяц.
 class SalaryBreakdown {
   final double pieceSalary;          // сдельная начисленная сумма
+  final double baseSalaryPay;        // окладная = смены × base_day_salary
+  final bool isSalaryType;           // окладник (иначе сдельщик), см. эталон
   final int shiftsTotal;
   final int dayShifts;
   final int nightShifts;
@@ -17,12 +20,14 @@ class SalaryBreakdown {
   final double cashless;
   final double discipline;
   final double defect;
-  final double accrued;              // начислено = piece + nightBonus
+  final double accrued;              // начислено = основная часть + ночные + компенсация
   final double deductions;           // удержания = meal + social + advance + cashless + discipline + defect
   final double total;                // итоговая ЗП
 
   const SalaryBreakdown({
     required this.pieceSalary,
+    required this.baseSalaryPay,
+    required this.isSalaryType,
     required this.shiftsTotal,
     required this.dayShifts,
     required this.nightShifts,
@@ -39,6 +44,11 @@ class SalaryBreakdown {
     required this.deductions,
     required this.total,
   });
+
+  /// Основная (первичная) начисленная сумма по типу оплаты: окладная для
+  /// окладника, сдельная для сдельщика. Именно она показывается в чипе
+  /// «Сдельно/Оклад» и входит в accrued/total.
+  double get primaryEarned => isSalaryType ? baseSalaryPay : pieceSalary;
 }
 
 class SalaryCalculator {
@@ -100,13 +110,32 @@ class SalaryCalculator {
     return (days, nights);
   }
 
+  /// Определяет, окладник ли сотрудник (иначе сдельщик), по логике эталона
+  /// (app.js payTypeLabel):
+  ///   isSalary = payType == salary || (productionPay <= 0 && payType != piece)
+  static bool isSalaryType({
+    required PayType? payType,
+    required double pieceSalary,
+  }) {
+    if (payType == PayType.salary) return true;
+    if (payType == PayType.piece) return false;
+    // mixed или не задан — по факту: нет сдельной выработки → оклад.
+    return pieceSalary <= 0;
+  }
+
   /// Полный расчёт зарплаты по сотруднику.
+  ///
+  /// Окладная часть = смены × [baseDaySalary]. В accrued/total входит ОСНОВНАЯ
+  /// часть по типу оплаты ([payType]): окладная для окладника, сдельная для
+  /// сдельщика (см. [isSalaryType]). Ночные и питание считаются как в эталоне.
   static SalaryBreakdown compute({
     required List<AnalyticsEvent> events,
     required Map<String, double> coefficients,
     required SalarySettings settings,
     required SalaryAdjustments adjustments,
     required int halfShiftMinutes,
+    double baseDaySalary = 0,
+    PayType? payType,
   }) {
     final workEvents =
         events.where((e) => e.type == AnalyticsEventType.work).toList();
@@ -119,6 +148,11 @@ class SalaryCalculator {
     final avgShiftSalary =
         shiftsTotal > 0 ? pieceSalary / shiftsTotal : 0.0;
 
+    final baseSalaryPay = shiftsTotal * baseDaySalary;
+    final salaryType =
+        isSalaryType(payType: payType, pieceSalary: pieceSalary);
+    final primaryEarned = salaryType ? baseSalaryPay : pieceSalary;
+
     final nightBonus = avgShiftSalary * nights * (settings.nightPercent / 100.0);
     final mealDeduction = shiftsTotal * settings.mealAmount;
 
@@ -129,7 +163,7 @@ class SalaryCalculator {
     final discipline = adjustments.discipline;
     final defect = adjustments.defect;
 
-    final accrued = pieceSalary + nightBonus + compensation;
+    final accrued = primaryEarned + nightBonus + compensation;
     final deductions = mealDeduction + social + advance + cashless + discipline + defect;
     final total = accrued - deductions;
 
@@ -137,6 +171,8 @@ class SalaryCalculator {
 
     return SalaryBreakdown(
       pieceSalary: finite(pieceSalary),
+      baseSalaryPay: finite(baseSalaryPay),
+      isSalaryType: salaryType,
       shiftsTotal: shiftsTotal,
       dayShifts: days,
       nightShifts: nights,

@@ -7,6 +7,7 @@ import '../calculators/analytics_calculator.dart';
 import '../calculators/salary_calculator.dart';
 import '../calculators/timeline_calculator.dart';
 import '../models/analytics_event.dart';
+import '../models/pay_type.dart';
 import '../models/salary_adjustments.dart';
 import '../services/analytics_pdf_export_service.dart';
 import '../services/analytics_permission_service.dart';
@@ -168,12 +169,17 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
 
         final adj = state.adjustments[_employeeId] ??
             SalaryAdjustments.zero(_employeeId, state.month.firstDay);
+        final payType = parsePayType(state.employeePayTypes[_employeeId]);
+        final baseDaySalary =
+            state.employeeBaseSalaries[_employeeId] ?? employee.baseDaySalary;
         final breakdown = SalaryCalculator.compute(
           events: allEvents,
           coefficients: state.coefficients,
           settings: state.settings,
           adjustments: adj,
           halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
+          baseDaySalary: baseDaySalary,
+          payType: payType,
         );
 
         final usefulMin = AnalyticsCalculator.usefulMinutes(allEvents);
@@ -184,6 +190,9 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
             allEvents, AnalyticsEventType.problem);
         final problemMin = AnalyticsCalculator.problemMinutes(allEvents);
         final qty = AnalyticsCalculator.totalQty(allEvents);
+        // КПД сотрудника по эталону: полезное время / общее время всех
+        // событий (см. AnalyticsCalculator.timeKpdPercent).
+        final kpdPercent = AnalyticsCalculator.timeKpdPercent(allEvents);
 
         final mainStack = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -251,7 +260,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (widget.permission.canViewFinance) ...[
-              _salaryCard(breakdown),
+              _salaryCard(breakdown, kpdPercent, baseDaySalary),
               const SizedBox(height: 18),
             ],
             AnalyticsSummaryCard(
@@ -422,8 +431,10 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
     );
   }
 
-  Widget _salaryCard(SalaryBreakdown brk) {
+  Widget _salaryCard(SalaryBreakdown brk, int kpdPercent, double baseRate) {
     final state = widget.service.state;
+    final nightPercent = state.settings.nightPercent;
+    final mealAmount = state.settings.mealAmount;
     final adj = state.adjustments[_employeeId] ??
         SalaryAdjustments.zero(_employeeId, state.month.firstDay);
 
@@ -435,13 +446,36 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Тип оплаты и основная начисляемая сумма (как в чипе таблицы).
+          _salaryRow(
+            brk.isSalaryType ? 'Тип оплаты · Оклад' : 'Тип оплаты · Сдельно',
+            AnalyticsFormat.money(brk.primaryEarned),
+          ),
+          // Редактирование ставки оклада за смену (гейт canEdit).
+          _adjustmentField('Ставка оклада (за смену)', baseRate, (v) async {
+            try {
+              await widget.service
+                  .setEmployeeBaseSalary(employeeId: _employeeId, value: v);
+            } catch (e) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Не удалось сохранить ставку: $e')),
+              );
+            }
+          }),
+          const Divider(color: AnalyticsColors.line),
           _salaryRow('Сдельно', AnalyticsFormat.money(brk.pieceSalary)),
-          _salaryRow('Средняя ЗП за смену',
+          _salaryRow('Оклад за смены', AnalyticsFormat.money(brk.baseSalaryPay)),
+          _salaryRow('Средняя сдельная',
               AnalyticsFormat.money(brk.averageShiftSalary)),
           _salaryRow(
-              'Ночные', AnalyticsFormat.money(brk.nightBonus)),
-          _salaryRow('Питание (удержание)',
+              'Ночные ${brk.nightShifts} × ${nightPercent.toStringAsFixed(0)}%',
+              AnalyticsFormat.money(brk.nightBonus)),
+          _salaryRow(
+              'Питание ${brk.shiftsTotal} порц. × ${AnalyticsFormat.money(mealAmount)}',
               '−${AnalyticsFormat.money(brk.mealDeduction)}'),
+          _salaryRow('Начислено', AnalyticsFormat.money(brk.accrued)),
+          _salaryRow('КПД', '$kpdPercent%'),
           const Divider(color: AnalyticsColors.line),
           _adjustmentField('Компенсация', adj.compensation, (v) {
             widget.service.saveSalaryAdjustments(

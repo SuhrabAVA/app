@@ -620,14 +620,15 @@ class AnalyticsPdfExportService {
   SalaryBreakdown _salaryForEmployee(AnalyticsService service, String employeeId, List<AnalyticsEvent> events) {
     final state = service.state;
     final adj = state.adjustments[employeeId] ?? SalaryAdjustments.zero(employeeId, state.month.firstDay);
-    return SalaryCalculator.compute(events: events, coefficients: state.coefficients, settings: state.settings, adjustments: adj, halfShiftMinutes: AnalyticsConstants.halfShiftMinutes);
+    final payType = parsePayType(state.employeePayTypes[employeeId]);
+    final baseDaySalary = state.employeeBaseSalaries[employeeId] ?? 0;
+    return SalaryCalculator.compute(events: events, coefficients: state.coefficients, settings: state.settings, adjustments: adj, halfShiftMinutes: AnalyticsConstants.halfShiftMinutes, baseDaySalary: baseDaySalary, payType: payType);
   }
 
   String _payTypeText(AnalyticsService service, String employeeId, SalaryBreakdown brk) {
-    final payType = parsePayType(service.state.employeePayTypes[employeeId]);
-    if (payType == null) return '—';
-    final amount = payType == PayType.salary ? brk.averageShiftSalary * brk.shiftsTotal : brk.pieceSalary;
-    return '${payTypeLabel(payType)}: ${AnalyticsFormat.money(amount)}';
+    // Тип и сумма — из единого расчёта (как чип в таблице).
+    final label = brk.isSalaryType ? 'Оклад' : 'Сдельно';
+    return '$label: ${AnalyticsFormat.money(brk.primaryEarned)}';
   }
 
   List<List<String>> _eventRows(List<AnalyticsEvent> events, PersonnelProvider personnel, {bool includeOrder = false}) {
