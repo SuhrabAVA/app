@@ -43,3 +43,16 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secrets
+.env
+
+# Android build artifacts
+/android/build/
+
+# Claude / claude-flow tooling
+.claude/
+.claude-flow/
+.agents/
+.mcp.json
+.claude.zip
