@@ -56,9 +56,8 @@ flutter:
   assets:
     - .env
 msix_config:
-  display_name: MyApp
+  display_name: Easy Pack Pro
   publisher_display_name: MyCompany
   identity_name: com.mycompany.myapp
   publisher: CN=MyCompany
-  logo_path: assets/icon.png
   capabilities: internetClient
