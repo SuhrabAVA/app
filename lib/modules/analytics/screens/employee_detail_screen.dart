@@ -17,6 +17,7 @@ import '../utils/analytics_constants.dart';
 import '../utils/format_utils.dart';
 import '../widgets/analytics_calendar.dart';
 import '../widgets/analytics_shell.dart';
+import '../widgets/claims_list_dialog.dart';
 import '../widgets/analytics_states.dart';
 import '../widgets/day_events_table.dart';
 import '../widgets/employee_workplace_strip.dart';
@@ -207,6 +208,15 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
                 onChangeFilter: (id) =>
                     setState(() => _workplaceFilter = id),
               ),
+            ),
+            const SizedBox(height: 18),
+            AnalyticsCard(
+              title: 'Претензии',
+              subtitle:
+                  'Все претензии сотрудника за месяц: из заказов и из чата '
+                  '(чатовые не привязаны к рабочему месту, поэтому в '
+                  'карточках выше не учитываются).',
+              child: _claimsSummaryRow(state, employee),
             ),
             const SizedBox(height: 18),
             AnalyticsCard(
@@ -412,6 +422,40 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           ],
         );
       },
+    );
+  }
+
+  /// Сводка претензий за месяц: счётчик + кнопка списка (все источники,
+  /// включая чатовые без workplaceId — их нет в карточках рабочих мест).
+  Widget _claimsSummaryRow(AnalyticsState state, EmployeeModel employee) {
+    final claims = state.claims
+        .where((c) => c.employeeId == _employeeId)
+        .toList(growable: false);
+    if (claims.isEmpty) {
+      return const Text('Претензий за этот месяц нет',
+          style: TextStyle(fontSize: 13, color: AnalyticsColors.muted));
+    }
+    final month = state.month;
+    return Row(
+      children: [
+        Text(
+          'Всего: ${claims.length}',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(width: 12),
+        TextButton.icon(
+          icon: const Icon(Icons.list_alt, size: 18),
+          label: const Text('Показать список'),
+          onPressed: () => showClaimsListDialog(
+            context,
+            employeeName:
+                '${employee.lastName} ${employee.firstName}'.trim(),
+            monthLabel:
+                '${month.month.toString().padLeft(2, '0')}.${month.year}',
+            claims: claims,
+          ),
+        ),
+      ],
     );
   }
 

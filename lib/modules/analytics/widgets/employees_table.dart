@@ -17,6 +17,7 @@ import '../utils/analytics_constants.dart';
 import '../utils/format_utils.dart';
 import '../utils/h_scroll_sync.dart';
 import 'analytics_table_parts.dart';
+import 'claims_list_dialog.dart';
 
 class EmployeesTable extends StatefulWidget {
   const EmployeesTable({
@@ -531,7 +532,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
                     style: _mutedStyle()),
               ),
             ),
-            _cell(child: Text('${r.claims}', style: _cellStyle())),
+            _cell(child: _claimsCell(r)),
             // ── Финансовые колонки ────────────────────────────────────────
             if (finance) _cell(child: _payTypeChip(r)),
             if (finance)
@@ -606,6 +607,49 @@ class _EmployeesTableState extends State<EmployeesTable> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Число претензий. При count > 0 — кликабельно (подчёркнутое синее),
+  /// тап поглощается GestureDetector'ом по образцу _inputCell и открывает
+  /// диалог списка, НЕ деталку. Ноль — обычный текст, некликабелен.
+  Widget _claimsCell(_Row r) {
+    if (r.claims == 0) {
+      return Text('0',
+          key: ValueKey('claims-${r.employee.id}'), style: _cellStyle());
+    }
+    return GestureDetector(
+      key: ValueKey('claims-${r.employee.id}'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _openClaimsDialog(r),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Text(
+          '${r.claims}',
+          style: _cellStyle().copyWith(
+            color: AnalyticsColors.blue,
+            decoration: TextDecoration.underline,
+            decorationColor: AnalyticsColors.blue,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openClaimsDialog(_Row r) {
+    final state = _lastState;
+    if (state == null) return;
+    final claims = state.claims
+        .where((c) => c.employeeId == r.employee.id)
+        .toList(growable: false);
+    final month = state.month;
+    showClaimsListDialog(
+      context,
+      employeeName:
+          '${r.employee.lastName} ${r.employee.firstName}'.trim(),
+      monthLabel:
+          '${month.month.toString().padLeft(2, '0')}.${month.year}',
+      claims: claims,
     );
   }
 

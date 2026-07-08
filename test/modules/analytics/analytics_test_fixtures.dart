@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:sheet_clone/modules/analytics/models/analytics_event.dart';
 import 'package:sheet_clone/modules/analytics/models/analytics_month.dart';
+import 'package:sheet_clone/modules/analytics/models/claim_model.dart';
 import 'package:sheet_clone/modules/analytics/models/employee_status.dart';
 import 'package:sheet_clone/modules/analytics/services/analytics_service.dart';
 import 'package:sheet_clone/modules/personnel/employee_model.dart';
@@ -157,8 +158,39 @@ final mockEvents = <AnalyticsEvent>[
   _event('ev8', AnalyticsEventType.pause, 'e2', 'wp2', _d(1, 23), _d(1, 23, 20)),
 ];
 
+/// Претензии e1 за июнь-2026 — обе разновидности источника (Фаза D):
+/// из заказа (order, с workplaceId) и из чата (chat, с медиа, без РМ).
+final mockClaims = <ClaimModel>[
+  ClaimModel(
+    id: 'cl1',
+    orderId: 'order-ev1',
+    employeeId: 'e1',
+    workplaceId: 'wp1',
+    description: 'Брак приладки',
+    createdBy: 'tech_leader',
+    authorName: 'Технический лидер',
+    createdAt: DateTime(2026, 6, 2, 10, 15),
+    source: 'order',
+  ),
+  ClaimModel(
+    id: 'cl2',
+    employeeId: 'e1',
+    description: 'Криво упакованная коробка',
+    createdBy: 'mgr-1',
+    authorName: 'Менеджер Мария',
+    createdAt: DateTime(2026, 6, 3, 14, 40),
+    source: 'chat',
+    messageId: 'msg-1',
+    fileUrl: 'https://example.com/chat/msg-1.jpg',
+    fileMime: 'image/jpeg',
+  ),
+];
+
 /// Готовое состояние аналитики (loading: false, без ошибок).
-AnalyticsState mockState() => AnalyticsState(
+/// [claims] по умолчанию пуст, чтобы не менять ожидания старых тестов.
+AnalyticsState mockState({List<ClaimModel> claims = const []}) =>
+    AnalyticsState(
+      claims: claims,
       month: mockMonth,
       events: mockEvents,
       coefficients: const {'wp1': 1.5, 'wp2': 2.0, 'wp3': 1.0},
