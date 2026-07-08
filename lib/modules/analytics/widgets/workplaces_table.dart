@@ -327,18 +327,23 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
               '${AnalyticsFormat.hoursMinutes(r.setupMinutes)} · ${AnalyticsFormat.decimal(avgSetupSpeed)} нал/мин',
             ),
             _cell('${r.ordersCount}'),
+            // flex: 1 — веса ячеек данных обязаны совпадать с _scrollableHeader
+            // ([1,1,2,2,1,1,1,1,1]), иначе колонки съезжают от заголовка.
             _cellLong(
                 '${r.pauseCount}',
-                AnalyticsFormat.hoursMinutes(r.pauseMinutes)),
+                AnalyticsFormat.hoursMinutes(r.pauseMinutes),
+                flex: 1),
             _cellLong(
                 '${r.problemCount}',
-                AnalyticsFormat.hoursMinutes(r.problemMinutes)),
+                AnalyticsFormat.hoursMinutes(r.problemMinutes),
+                flex: 1),
             _cell('${r.claims}'),
             _cellLong(
               '${r.kpd.kpdPercent.round()}%',
               r.kpd.noBaseline
                   ? 'нет базы — безопасный fallback'
                   : 'к средней базе всех прошлых месяцев',
+              flex: 1,
             ),
           ],
         ),
