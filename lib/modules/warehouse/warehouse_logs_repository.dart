@@ -554,36 +554,43 @@ class WarehouseLogsRepository {
     Set<String> orderIds,
   ) async {
     if (orderIds.isEmpty) return const <String, String>{};
+    // Раньше здесь тянулись целиком JSONB-колонки `data` и `product` (в них
+    // лежат фото заказа и весь payload) плюс fallback '*' — на большом числе
+    // заказов это валило запрос по statement timeout (57014). Достаём только
+    // нужные вложенные текстовые поля через ->> и лёгкий fallback без JSON.
+    const String jsonFields =
+        'data_new_form_no:data->>new_form_no, '
+        'data_form_code:data->>form_code, '
+        'data_assignment_id:data->>assignment_id, '
+        'data_title:data->>title, '
+        'data_order_name:data->>order_name, '
+        'data_product_name:data->>product_name, '
+        'data_customer:data->>customer, '
+        'data_name:data->>name, '
+        'product_j_name:product->>name, '
+        'product_j_title:product->>title, '
+        'data_product_name_nested:data->product->>name, '
+        'data_product_title_nested:data->product->>title';
+    const String flatFields =
+        'id, assignment_id, title, name, order_name, product_name, customer, '
+        'new_form_no, form_code';
     final List<Map<String, dynamic>> rows = await _selectByIdsAny(
       tables: const <String>['orders'],
       fk: 'id',
       ids: orderIds.toList(growable: false),
-      selectFields:
-          'id, assignment_id, title, name, order_name, product_name, customer, new_form_no, form_code, data, product',
-      fallbackSelectFields: '*',
+      selectFields: '$flatFields, $jsonFields',
+      fallbackSelectFields: flatFields,
     );
     final Map<String, String> labels = <String, String>{};
     for (final Map<String, dynamic> row in rows) {
       final String orderId = (row['id'] ?? '').toString().trim();
       if (orderId.isEmpty) continue;
-      final dynamic dataRaw = row['data'];
-      final Map<String, dynamic> data = dataRaw is Map
-          ? Map<String, dynamic>.from(dataRaw as Map)
-          : <String, dynamic>{};
-      final dynamic productRaw = row['product'];
-      final Map<String, dynamic> product = productRaw is Map
-          ? Map<String, dynamic>.from(productRaw as Map)
-          : <String, dynamic>{};
-      final dynamic dataProductRaw = data['product'];
-      final Map<String, dynamic> dataProduct = dataProductRaw is Map
-          ? Map<String, dynamic>.from(dataProductRaw as Map)
-          : <String, dynamic>{};
 
       final String formNo = _firstMeaningful(<dynamic>[
         row['new_form_no'],
         row['form_code'],
-        data['new_form_no'],
-        data['form_code'],
+        row['data_new_form_no'],
+        row['data_form_code'],
       ]);
       final String title = _firstMeaningful(<dynamic>[
         row['assignment_id'],
@@ -591,17 +598,17 @@ class WarehouseLogsRepository {
         row['order_name'],
         row['product_name'],
         row['customer'],
-        data['assignment_id'],
-        data['title'],
-        data['order_name'],
-        data['product_name'],
-        data['customer'],
-        product['name'],
-        product['title'],
-        dataProduct['name'],
-        dataProduct['title'],
+        row['data_assignment_id'],
+        row['data_title'],
+        row['data_order_name'],
+        row['data_product_name'],
+        row['data_customer'],
+        row['product_j_name'],
+        row['product_j_title'],
+        row['data_product_name_nested'],
+        row['data_product_title_nested'],
         row['name'],
-        data['name'],
+        row['data_name'],
       ]);
       if (formNo.isNotEmpty && title.isNotEmpty) {
         labels[orderId] = '№$formNo / $title';
@@ -806,9 +813,12 @@ class WarehouseLogsRepository {
       return 'id, description, unit, format, grammage';
     }
     if (typeKey == 'pens') {
-      return 'id, name, color, quantity';
+      return 'id, name, color, quantity, unit';
     }
-    return 'id, description, unit, name';
+    // У paints/materials/warehouse_stationery нет колонки name: её наличие в
+    // списке роняло запрос (42703) и включало fallback '*', который тянул
+    // image_base64 и валился по statement timeout (57014).
+    return 'id, description, unit';
   }
 
   static WarehouseLogEntry _mapToEntry({
@@ -1022,13 +1032,6 @@ class WarehouseLogsRepository {
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
-    final Map<String, String> orderLabels = await _loadOrderLabelsByIds(
-      _extractOrderIdsFromWriteoffRows(rawLogs, typeKey),
-    );
-    final Map<String, String> employeeLabels = await _loadEmployeeLabelsByIds(
-      _extractEmployeeIdsFromWriteoffRows(rawLogs),
-    );
-
     return rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
       final Map<String, dynamic>? baseRow =
@@ -1098,13 +1101,6 @@ class WarehouseLogsRepository {
         <String, Map<String, dynamic>>{
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
-
-    final Map<String, String> orderLabels = await _loadOrderLabelsByIds(
-      _extractOrderIdsFromWriteoffRows(rawLogs, typeKey),
-    );
-    final Map<String, String> employeeLabels = await _loadEmployeeLabelsByIds(
-      _extractEmployeeIdsFromWriteoffRows(rawLogs),
-    );
 
     return rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
