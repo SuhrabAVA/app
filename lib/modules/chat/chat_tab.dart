@@ -12,12 +12,17 @@ class ChatTab extends StatelessWidget {
   final String roomId;
   final bool isLead;
 
+  /// Тех-лидер/менеджер: может оформлять претензии из медиа-сообщений.
+  /// Флаг вычисляется на экране-владельце (admin_panel / manager workspace).
+  final bool canCreateClaim;
+
   const ChatTab({
     super.key,
     required this.currentUserId,
     this.currentUserName,
     this.roomId = 'general',
     this.isLead = false,
+    this.canCreateClaim = false,
   });
 
   @override
@@ -29,6 +34,7 @@ class ChatTab extends StatelessWidget {
         meId: currentUserId,
         meName: currentUserName,
         isLead: isLead,
+        canCreateClaim: canCreateClaim,
       ),
     );
   }

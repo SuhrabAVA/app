@@ -44,6 +44,17 @@ class ChatProvider with ChangeNotifier {
     return matches.length > 8 ? matches.sublist(0, 8) : matches;
   }
 
+  /// Полный список сотрудников для выбора адресатов претензии
+  /// (без ограничения в 8 элементов, как у подсказок упоминаний).
+  Future<List<ChatMentionCandidate>> claimCandidates({String query = ''}) async {
+    await _ensureMentionCandidates();
+    final q = query.trim();
+    return _mentionCandidates
+        .where((c) => c.matches(q))
+        .toList(growable: false)
+      ..sort((a, b) => a.displayName.compareTo(b.displayName));
+  }
+
   Future<void> _ensureMentionCandidates() async {
     if (_mentionCandidates.isNotEmpty || _mentionLoading) return;
     _mentionLoading = true;
@@ -201,6 +212,24 @@ Future<void> unsubscribe(String roomId) async {
     });
   }
 
+  /// Новый id сообщения: генерируется клиентом заранее, чтобы претензии
+  /// могли ссылаться на сообщение ещё до его вставки.
+  String newMessageId() => _uuid.v4();
+
+  /// Путь файла в bucket 'chat' — единственное место, где он строится.
+  static String mediaPath(String roomId, String messageId, String filename) {
+    final ext = p.extension(filename).replaceAll('.', '');
+    return ext.isEmpty ? '$roomId/$messageId' : '$roomId/$messageId.$ext';
+  }
+
+  /// Публичный URL медиа БЕЗ загрузки: getPublicUrl только строит строку,
+  /// поэтому претензии могут получить ссылку до фактического upload.
+  String mediaPublicUrl(String roomId, String messageId, String filename) {
+    return _sb.storage
+        .from('chat')
+        .getPublicUrl(mediaPath(roomId, messageId, filename));
+  }
+
   /// Файл/медиа
   Future<void> sendFile({
     required String roomId,
@@ -214,10 +243,11 @@ Future<void> unsubscribe(String roomId) async {
     int? durationMs,
     int? width,
     int? height,
+    String? messageId,
+    List<ChatClaimTarget> claimTargets = const [],
   }) async {
-    final id = _uuid.v4();
-    final ext = p.extension(filename).replaceAll('.', '');
-    final path = ext.isEmpty ? '$roomId/$id' : '$roomId/$id.$ext';
+    final id = messageId ?? _uuid.v4();
+    final path = mediaPath(roomId, id, filename);
 
     final storage = _sb.storage.from('chat');
     await storage.uploadBinary(
@@ -247,6 +277,8 @@ Future<void> unsubscribe(String roomId) async {
         'width': width,
         'height': height,
         'created_at': DateTime.now().toIso8601String(),
+        if (claimTargets.isNotEmpty)
+          'claim_targets': [for (final t in claimTargets) t.toMap()],
       });
     } catch (_) {
       try {

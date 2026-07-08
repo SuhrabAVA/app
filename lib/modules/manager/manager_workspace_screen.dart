@@ -79,6 +79,8 @@ class ManagerWorkspaceScreen extends StatelessWidget {
               currentUserId: emp.id,
               currentUserName: fio.isEmpty ? 'Менеджер' : fio,
               roomId: 'general',    // общий менеджерский чат
+              // Рабочее место менеджера: претензии из чата доступны.
+              canCreateClaim: true,
             ),
           ],
         ),

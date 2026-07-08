@@ -1,5 +1,26 @@
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+
+/// Сотрудник, на которого оформлена претензия из сообщения чата.
+/// Хранится денормализованно в chat_messages.claim_targets (jsonb),
+/// чтобы бейдж рендерился из realtime-потока без запросов к claims.
+@immutable
+class ChatClaimTarget {
+  final String id; // employee_id
+  final String name; // читаемое ФИО на момент создания
+
+  const ChatClaimTarget({required this.id, required this.name});
+
+  Map<String, dynamic> toMap() => {'id': id, 'name': name};
+
+  static ChatClaimTarget? fromMap(Map<dynamic, dynamic> m) {
+    final id = (m['id'] ?? '').toString();
+    if (id.isEmpty) return null;
+    return ChatClaimTarget(id: id, name: (m['name'] ?? '').toString());
+  }
+}
 
 /// Модель сообщения в чате
 /// Поддерживаемые типы: text, image, video, audio, file
@@ -18,6 +39,9 @@ class ChatMessage {
   final int? height; // для изображений
   final DateTime createdAt;
 
+  /// Кому оформлены претензии этим сообщением (пусто — обычное сообщение).
+  final List<ChatClaimTarget> claimTargets;
+
   const ChatMessage({
     required this.id,
     required this.roomId,
@@ -31,7 +55,10 @@ class ChatMessage {
     this.durationMs,
     this.width,
     this.height,
+    this.claimTargets = const [],
   });
+
+  bool get hasClaim => claimTargets.isNotEmpty;
 
   ChatMessage copyWith({
     String? id,
@@ -46,6 +73,7 @@ class ChatMessage {
     int? width,
     int? height,
     DateTime? createdAt,
+    List<ChatClaimTarget>? claimTargets,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -60,6 +88,7 @@ class ChatMessage {
       width: width ?? this.width,
       height: height ?? this.height,
       createdAt: createdAt ?? this.createdAt,
+      claimTargets: claimTargets ?? this.claimTargets,
     );
   }
 
@@ -76,6 +105,9 @@ class ChatMessage {
         'width': width,
         'height': height,
         'created_at': createdAt.toIso8601String(),
+        'claim_targets': claimTargets.isEmpty
+            ? null
+            : [for (final t in claimTargets) t.toMap()],
       };
 
   factory ChatMessage.fromMap(Map<String, dynamic> m) {
@@ -92,6 +124,26 @@ class ChatMessage {
       width: m['width'] as int?,
       height: m['height'] as int?,
       createdAt: DateTime.tryParse('${m['created_at']}') ?? DateTime.now(),
+      claimTargets: _parseClaimTargets(m['claim_targets']),
     );
+  }
+
+  /// PostgREST отдаёт jsonb списком, realtime-payload может отдать строкой.
+  static List<ChatClaimTarget> _parseClaimTargets(dynamic raw) {
+    dynamic value = raw;
+    if (value is String) {
+      if (value.trim().isEmpty) return const [];
+      try {
+        value = jsonDecode(value);
+      } catch (_) {
+        return const [];
+      }
+    }
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map(ChatClaimTarget.fromMap)
+        .whereType<ChatClaimTarget>()
+        .toList(growable: false);
   }
 }

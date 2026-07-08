@@ -118,6 +118,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           currentUserName: _meName ?? 'Пользователь', // не-null
           roomId: 'general',
           isLead: isLead,
+          // Панель техлида: претензии из чата доступны.
+          canCreateClaim: isLead || AuthHelper.isTechLeader,
         ),
       },
       {

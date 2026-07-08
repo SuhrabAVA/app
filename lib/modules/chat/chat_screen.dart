@@ -15,12 +15,16 @@ class ChatScreen extends StatefulWidget {
   final String? meName;
   final bool isLead; // техлид?
 
+  /// Тех-лидер/менеджер: может оформлять претензии из медиа-сообщений.
+  final bool canCreateClaim;
+
   const ChatScreen({
     super.key,
     required this.roomId,
     required this.meId,
     this.meName,
     this.isLead = false,
+    this.canCreateClaim = false,
   });
 
   @override
@@ -178,6 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   senderName: widget.meName,
                   scale: scale,
                   compact: isTablet,
+                  canCreateClaim: widget.canCreateClaim,
                 ),
               ),
             ],

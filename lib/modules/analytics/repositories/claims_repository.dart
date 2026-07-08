@@ -8,14 +8,18 @@ class ClaimsRepository {
 
   final SupabaseClient _client;
 
+  static const _cols =
+      'id, order_id, comment_id, employee_id, workplace_id, description, '
+      'created_by, created_at, source, message_id, file_url, file_mime, '
+      'author_name';
+
   /// Все претензии за месяц.
   Future<List<ClaimModel>> listForMonth(DateTime month) async {
     final firstDay = DateTime(month.year, month.month, 1);
     final nextMonthFirst = DateTime(month.year, month.month + 1, 1);
     final List<dynamic> rows = await _client
         .from('claims')
-        .select(
-            'id, order_id, comment_id, employee_id, workplace_id, description, created_by, created_at')
+        .select(_cols)
         .gte('created_at', firstDay.toUtc().toIso8601String())
         .lt('created_at', nextMonthFirst.toUtc().toIso8601String());
     return rows
@@ -45,5 +49,47 @@ class ClaimsRepository {
         .select()
         .single();
     return ClaimModel.fromMap(Map<String, dynamic>.from(result));
+  }
+
+  /// Претензии из чата: по одной строке на каждого выбранного сотрудника,
+  /// одним batch-insert (либо создаются все, либо ни одной).
+  Future<List<ClaimModel>> createForChatMessage({
+    required List<String> employeeIds,
+    required String messageId,
+    String? fileUrl,
+    String? fileMime,
+    String? description,
+    String? createdBy,
+    String? authorName,
+  }) async {
+    if (employeeIds.isEmpty) return const [];
+    final createdAt = DateTime.now().toUtc().toIso8601String();
+    final rows = [
+      for (final employeeId in employeeIds)
+        {
+          'employee_id': employeeId,
+          'source': 'chat',
+          'message_id': messageId,
+          'file_url': fileUrl,
+          'file_mime': fileMime,
+          'description': description,
+          'created_by': createdBy,
+          'author_name': authorName,
+          'created_at': createdAt,
+        },
+    ];
+    final List<dynamic> result =
+        await _client.from('claims').insert(rows).select(_cols);
+    return result
+        .whereType<Map>()
+        .map((m) => ClaimModel.fromMap(Map<String, dynamic>.from(m)))
+        .toList();
+  }
+
+  /// Откат только что созданных претензий (сообщение не отправилось).
+  /// Требует delete-политику RLS; без неё молча удалит 0 строк.
+  Future<void> deleteByIds(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await _client.from('claims').delete().inFilter('id', ids);
   }
 }

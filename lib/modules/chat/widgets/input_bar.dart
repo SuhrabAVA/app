@@ -12,8 +12,12 @@ import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:mime/mime.dart';
+import '../../analytics/models/claim_model.dart';
+import '../../analytics/repositories/claims_repository.dart';
 import '../chat_mention_candidate.dart';
+import '../chat_message.dart';
 import '../chat_provider.dart';
+import 'claim_employee_picker.dart';
 
 class ChatInputBar extends StatefulWidget {
   final String roomId;
@@ -22,6 +26,10 @@ class ChatInputBar extends StatefulWidget {
   final double scale;
   final bool compact;
 
+  /// Тех-лидер/менеджер: фото и видео уходят через превью с возможностью
+  /// оформить претензию. Для остальных ролей поведение прежнее.
+  final bool canCreateClaim;
+
   const ChatInputBar({
     super.key,
     required this.roomId,
@@ -29,6 +37,7 @@ class ChatInputBar extends StatefulWidget {
     required this.senderName,
     this.scale = 1.0,
     this.compact = false,
+    this.canCreateClaim = false,
   });
 
   @override
@@ -49,6 +58,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
   int _mentionRequestId = 0;
   bool _isDisposed = false;
 
+  /// Медиа, ожидающее подтверждения отправки (только при canCreateClaim).
+  _PendingAttachment? _pending;
+
+  /// Сотрудники, выбранные для претензии к _pending.
+  final List<ChatMentionCandidate> _claimSelection = <ChatMentionCandidate>[];
+  final ClaimsRepository _claimsRepo = ClaimsRepository();
+  bool _sendingPending = false;
+
   /// Снимает фото через камеру устройства и отправляет его в чат. Если
   /// пользователь отменяет съёмку, ничего не происходит. Этот метод
   /// позволяет техническому специалисту быстро сделать снимок без выхода
@@ -56,29 +73,63 @@ class _ChatInputBarState extends State<ChatInputBar> {
   /// доступны только на мобильных платформах.
   Future<void> _takePhoto() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
       if (image == null) return;
       final bytes = await image.readAsBytes();
       final mime = lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      await _handlePickedMedia(
         bytes: bytes,
         filename: image.name.isNotEmpty ? image.name : p.basename(image.path),
         mime: mime,
-        body: caption,
-        kind: _kindFromMime(mime),
       );
-      _clearAttachmentCaption();
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить фото: $error');
     }
+  }
+
+  /// Фото/видео: при canCreateClaim показываем превью с кнопкой «Претензия»,
+  /// иначе отправляем сразу (прежнее поведение для остальных ролей).
+  Future<void> _handlePickedMedia({
+    required Uint8List bytes,
+    required String filename,
+    required String mime,
+  }) async {
+    if (widget.canCreateClaim) {
+      setState(() {
+        _pending = _PendingAttachment(
+          bytes: bytes,
+          filename: filename,
+          mime: mime,
+          kind: _kindFromMime(mime),
+        );
+      });
+      return;
+    }
+    await _sendMediaNow(bytes: bytes, filename: filename, mime: mime);
+  }
+
+  Future<void> _sendMediaNow({
+    required Uint8List bytes,
+    required String filename,
+    required String mime,
+  }) async {
+    final chat = context.read<ChatProvider>();
+    final caption = _attachmentCaption();
+    if (_isDisposed || !mounted) return;
+    await chat.sendFile(
+      roomId: widget.roomId,
+      senderId: widget.senderId,
+      senderName: widget.senderName,
+      bytes: bytes,
+      filename: filename,
+      mime: mime,
+      body: caption,
+      kind: _kindFromMime(mime),
+    );
+    _clearAttachmentCaption();
   }
 
   @override
@@ -110,8 +161,118 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
   }
 
+  /// Отмена pending-вложения: ничего никуда не пишется,
+  /// набранный текст остаётся в поле ввода.
+  void _cancelPending() {
+    if (_isDisposed || !mounted) return;
+    setState(() {
+      _pending = null;
+      _claimSelection.clear();
+    });
+  }
+
+  Future<void> _openClaimPicker() async {
+    if (_isDisposed || !mounted) return;
+    final chat = context.read<ChatProvider>();
+    final picked = await showClaimEmployeePicker(
+      context,
+      loadCandidates: chat.claimCandidates,
+      initiallySelected: _claimSelection,
+    );
+    if (picked == null || _isDisposed || !mounted) return;
+    setState(() {
+      _claimSelection
+        ..clear()
+        ..addAll(picked);
+    });
+  }
+
+  /// Отправка pending-медиа. Порядок зафиксирован:
+  /// 1) insert претензий (batch); 2) при успехе — сообщение с claim_targets;
+  /// при провале insert — сообщение БЕЗ claim_targets + SnackBar.
+  /// Если упал сам sendFile после успешного insert — best-effort откат
+  /// созданных претензий (требует delete-политику RLS, иначе no-op + лог).
+  Future<void> _sendPendingAttachment() async {
+    final pending = _pending;
+    if (pending == null || _sendingPending || _isDisposed || !mounted) return;
+    setState(() => _sendingPending = true);
+    final chat = context.read<ChatProvider>();
+    final caption = _attachmentCaption();
+    final plainCaption = _controller.text.trim();
+    final messageId = chat.newMessageId();
+
+    var targets = <ChatClaimTarget>[];
+    var createdClaims = const <ClaimModel>[];
+    if (_claimSelection.isNotEmpty) {
+      try {
+        createdClaims = await _claimsRepo.createForChatMessage(
+          employeeIds: [for (final c in _claimSelection) c.id],
+          messageId: messageId,
+          fileUrl: chat.mediaPublicUrl(
+              widget.roomId, messageId, pending.filename),
+          fileMime: pending.mime,
+          description: plainCaption.isEmpty ? null : plainCaption,
+          createdBy: widget.senderId,
+          authorName: widget.senderName,
+        );
+        targets = [
+          for (final c in _claimSelection)
+            ChatClaimTarget(id: c.id, name: c.displayName),
+        ];
+      } catch (error) {
+        debugPrint('Claims insert failed for message $messageId: $error');
+        _showErrorSnackBar('Претензии не созданы');
+      }
+    }
+
+    try {
+      await chat.sendFile(
+        roomId: widget.roomId,
+        senderId: widget.senderId,
+        senderName: widget.senderName,
+        bytes: pending.bytes,
+        filename: pending.filename,
+        mime: pending.mime,
+        body: caption,
+        kind: pending.kind,
+        messageId: messageId,
+        claimTargets: targets,
+      );
+      if (_isDisposed || !mounted) return;
+      setState(() {
+        _pending = null;
+        _claimSelection.clear();
+      });
+      _clearAttachmentCaption();
+    } catch (error) {
+      if (createdClaims.isNotEmpty) {
+        final ids = [for (final c in createdClaims) c.id];
+        debugPrint('sendFile failed after claims insert, '
+            'rolling back claims $ids: $error');
+        try {
+          await _claimsRepo.deleteByIds(ids);
+        } catch (cleanupError) {
+          debugPrint('Claims rollback failed (orphans $ids): $cleanupError');
+        }
+      }
+      _showErrorSnackBar('Не удалось отправить: $error');
+    } finally {
+      if (!_isDisposed && mounted) {
+        setState(() => _sendingPending = false);
+      } else {
+        _sendingPending = false;
+      }
+    }
+  }
+
   Future<void> _sendText() async {
     if (_isDisposed || !mounted) return;
+    if (_pending != null) {
+      // Есть неотправленное вложение: кнопка «Отправить» шлёт его
+      // (с подписью из поля ввода), а не отдельное текстовое сообщение.
+      await _sendPendingAttachment();
+      return;
+    }
     _cleanupObsoleteMentions();
     var prepared = _controller.text;
     if (prepared.trim().isEmpty) return;
@@ -436,26 +597,18 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   Future<void> _pickImage() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
       if (x == null) return;
       final bytes = await x.readAsBytes();
       final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      await _handlePickedMedia(
         bytes: bytes,
         filename: x.name.isNotEmpty ? x.name : p.basename(x.path),
         mime: mime,
-        body: caption,
-        kind: _kindFromMime(mime),
       );
-      _clearAttachmentCaption();
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить изображение: $error');
     }
@@ -463,26 +616,18 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   Future<void> _pickVideo() async {
     if (_isDisposed || !mounted) return;
-    final chat = context.read<ChatProvider>();
     final picker = ImagePicker();
     try {
       final x = await picker.pickVideo(source: ImageSource.gallery);
       if (x == null) return;
       final bytes = await x.readAsBytes();
       final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'video/mp4';
-      final caption = _attachmentCaption();
       if (_isDisposed || !mounted) return;
-      await chat.sendFile(
-        roomId: widget.roomId,
-        senderId: widget.senderId,
-        senderName: widget.senderName,
+      await _handlePickedMedia(
         bytes: bytes,
         filename: x.name.isNotEmpty ? x.name : p.basename(x.path),
         mime: mime,
-        body: caption,
-        kind: _kindFromMime(mime),
       );
-      _clearAttachmentCaption();
     } catch (error) {
       _showErrorSnackBar('Не удалось отправить видео: $error');
     }
@@ -609,74 +754,235 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
     return SafeArea(
       top: false,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            tooltip: 'Камера',
-            visualDensity: density,
-            iconSize: iconSize,
-            icon: const Icon(Icons.camera_alt_outlined),
-            onPressed: _takePhoto,
-          ),
-          IconButton(
-            tooltip: 'Фото',
-            visualDensity: density,
-            iconSize: iconSize,
-            icon: const Icon(Icons.image_outlined),
-            onPressed: _pickImage,
-          ),
-          IconButton(
-            tooltip: 'Видео',
-            visualDensity: density,
-            iconSize: iconSize,
-            icon: const Icon(Icons.videocam_outlined),
-            onPressed: _pickVideo,
-          ),
-          IconButton(
-            tooltip: 'Файл',
-            visualDensity: density,
-            iconSize: iconSize,
-            icon: const Icon(Icons.attach_file),
-            onPressed: _pickAnyFile,
-          ),
-          Expanded(
-            child: CompositedTransformTarget(
-              link: _mentionLink,
-              child: TextField(
-                key: _fieldKey,
-                focusNode: _focusNode,
-                controller: _controller,
-                textInputAction: TextInputAction.newline,
-                minLines: 1,
-                maxLines: 5,
-                decoration: InputDecoration(
-                  hintText: 'Сообщение',
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  contentPadding: inputPadding,
-                ),
-                onTap: () => unawaited(_refreshMentionSuggestions()),
+          if (_pending != null) _buildPendingPanel(context),
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Камера',
+                visualDensity: density,
+                iconSize: iconSize,
+                icon: const Icon(Icons.camera_alt_outlined),
+                onPressed: _takePhoto,
               ),
-            ),
-          ),
-          SizedBox(width: gap),
-          IconButton(
-            tooltip: _recording ? 'Стоп' : 'Голосовое',
-            visualDensity: density,
-            iconSize: iconSize,
-            icon: Icon(_recording ? Icons.stop_circle : Icons.mic_none),
-            onPressed: _toggleRecord,
-          ),
-          IconButton(
-            tooltip: 'Отправить',
-            visualDensity: density,
-            iconSize: iconSize,
-            icon: const Icon(Icons.send),
-            onPressed: _sendText,
+              IconButton(
+                tooltip: 'Фото',
+                visualDensity: density,
+                iconSize: iconSize,
+                icon: const Icon(Icons.image_outlined),
+                onPressed: _pickImage,
+              ),
+              IconButton(
+                tooltip: 'Видео',
+                visualDensity: density,
+                iconSize: iconSize,
+                icon: const Icon(Icons.videocam_outlined),
+                onPressed: _pickVideo,
+              ),
+              IconButton(
+                tooltip: 'Файл',
+                visualDensity: density,
+                iconSize: iconSize,
+                icon: const Icon(Icons.attach_file),
+                onPressed: _pickAnyFile,
+              ),
+              Expanded(
+                child: CompositedTransformTarget(
+                  link: _mentionLink,
+                  child: TextField(
+                    key: _fieldKey,
+                    focusNode: _focusNode,
+                    controller: _controller,
+                    textInputAction: TextInputAction.newline,
+                    minLines: 1,
+                    maxLines: 5,
+                    decoration: InputDecoration(
+                      hintText: 'Сообщение',
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: inputPadding,
+                    ),
+                    onTap: () => unawaited(_refreshMentionSuggestions()),
+                  ),
+                ),
+              ),
+              SizedBox(width: gap),
+              IconButton(
+                tooltip: _recording ? 'Стоп' : 'Голосовое',
+                visualDensity: density,
+                iconSize: iconSize,
+                icon: Icon(_recording ? Icons.stop_circle : Icons.mic_none),
+                onPressed: _toggleRecord,
+              ),
+              IconButton(
+                tooltip: 'Отправить',
+                visualDensity: density,
+                iconSize: iconSize,
+                icon: const Icon(Icons.send),
+                onPressed: _sendText,
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  /// Превью вложения до отправки: миниатюра, чипы претензии и кнопки
+  /// «Претензия» / «Отправить» / «Отмена». Показывается только при
+  /// canCreateClaim — остальные роли этого экрана не видят.
+  Widget _buildPendingPanel(BuildContext context) {
+    final pending = _pending!;
+    double scaled(double value) => value * widget.scale;
+    final theme = Theme.of(context);
+    final isImage = pending.kind == 'image';
+
+    return Container(
+      margin: EdgeInsets.only(bottom: scaled(6)),
+      padding: EdgeInsets.all(scaled(8)),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(.5),
+        borderRadius: BorderRadius.circular(scaled(10)),
+        border: Border.all(color: theme.dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(scaled(8)),
+                child: isImage
+                    ? Image.memory(
+                        pending.bytes,
+                        width: scaled(64),
+                        height: scaled(64),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Icon(
+                            Icons.broken_image,
+                            size: scaled(40)),
+                      )
+                    : Container(
+                        width: scaled(64),
+                        height: scaled(64),
+                        color: theme.colorScheme.primary.withOpacity(.12),
+                        child: Icon(
+                          pending.kind == 'video'
+                              ? Icons.videocam
+                              : Icons.insert_drive_file,
+                          size: scaled(32),
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+              ),
+              SizedBox(width: scaled(10)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pending.filename,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: scaled(13),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    SizedBox(height: scaled(2)),
+                    Text(
+                      pending.sizeLabel,
+                      style: TextStyle(
+                        fontSize: scaled(11),
+                        color: theme.colorScheme.onSurface.withOpacity(.6),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Отмена',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.close),
+                onPressed: _sendingPending ? null : _cancelPending,
+              ),
+            ],
+          ),
+          if (_claimSelection.isNotEmpty) ...[
+            SizedBox(height: scaled(6)),
+            Wrap(
+              spacing: scaled(6),
+              runSpacing: scaled(4),
+              children: [
+                for (final c in _claimSelection)
+                  InputChip(
+                    label: Text(c.displayName),
+                    visualDensity: VisualDensity.compact,
+                    avatar: Icon(Icons.flag_outlined, size: scaled(16)),
+                    onDeleted: _sendingPending
+                        ? null
+                        : () => setState(() => _claimSelection.remove(c)),
+                  ),
+              ],
+            ),
+          ],
+          SizedBox(height: scaled(6)),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                icon: Icon(Icons.flag_outlined, size: scaled(18)),
+                label: Text(_claimSelection.isEmpty
+                    ? 'Претензия'
+                    : 'Претензия (${_claimSelection.length})'),
+                onPressed: _sendingPending ? null : _openClaimPicker,
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: _sendingPending ? null : _cancelPending,
+                child: const Text('Отмена'),
+              ),
+              SizedBox(width: scaled(6)),
+              FilledButton.icon(
+                icon: _sendingPending
+                    ? SizedBox(
+                        width: scaled(16),
+                        height: scaled(16),
+                        child: const CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.send, size: scaled(18)),
+                label: const Text('Отправить'),
+                onPressed: _sendingPending ? null : _sendPendingAttachment,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Медиафайл, выбранный, но ещё не отправленный (превью перед отправкой).
+class _PendingAttachment {
+  final Uint8List bytes;
+  final String filename;
+  final String mime;
+  final String kind; // image | video
+
+  const _PendingAttachment({
+    required this.bytes,
+    required this.filename,
+    required this.mime,
+    required this.kind,
+  });
+
+  String get sizeLabel {
+    final kb = bytes.length / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(0)} КБ';
+    return '${(kb / 1024).toStringAsFixed(1)} МБ';
   }
 }
 

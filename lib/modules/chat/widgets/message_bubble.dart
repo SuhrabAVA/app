@@ -142,7 +142,19 @@ class _MessageBubbleState extends State<MessageBubble> {
               child: Padding(
                 padding: EdgeInsets.symmetric(
                     vertical: scaled(10), horizontal: scaled(14)),
-                child: _buildContent(context, m, scale, parsedBody),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Бейдж строится только из claim_targets самого
+                    // сообщения — от sender_id не зависит.
+                    if (m.hasClaim) ...[
+                      _ClaimBadge(targets: m.claimTargets, scale: scale),
+                      SizedBox(height: scaled(6)),
+                    ],
+                    _buildContent(context, m, scale, parsedBody),
+                  ],
+                ),
               ),
             ),
           ),
@@ -241,6 +253,49 @@ class _MessageBubbleState extends State<MessageBubble> {
           scale: scale,
         );
     }
+  }
+}
+
+/// Бейдж «Претензия» с именами адресатов (из claim_targets сообщения).
+class _ClaimBadge extends StatelessWidget {
+  final List<ChatClaimTarget> targets;
+  final double scale;
+
+  const _ClaimBadge({required this.targets, required this.scale});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final names = targets.map((t) => t.name).where((n) => n.isNotEmpty).join(', ');
+    return Container(
+      padding: EdgeInsets.symmetric(
+          horizontal: 8 * scale, vertical: 4 * scale),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer.withOpacity(.7),
+        borderRadius: BorderRadius.circular(8 * scale),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.flag,
+            size: 14 * scale,
+            color: theme.colorScheme.onErrorContainer,
+          ),
+          SizedBox(width: 4 * scale),
+          Flexible(
+            child: Text(
+              names.isEmpty ? 'Претензия' : 'Претензия: $names',
+              style: TextStyle(
+                fontSize: 12 * scale,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
