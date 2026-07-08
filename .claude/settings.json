@@ -1,0 +1,178 @@
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "supabase@claude-plugins-official": true,
+    "claude-mem@thedotmack": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs pre-bash",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs pre-edit",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs post-edit",
+            "timeout": 10000
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs post-bash",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs route",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs session-restore",
+            "timeout": 15000
+          },
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" auto-memory-hook.mjs import",
+            "timeout": 8000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs session-end",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" auto-memory-hook.mjs sync",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs compact-manual"
+          },
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs session-end",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs compact-auto"
+          },
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs session-end",
+            "timeout": 6000
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs status",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs post-task",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\run-hook.cmd\" hook-handler.cjs notify",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_FLOW_V3_ENABLED": "true",
+    "CLAUDE_FLOW_HOOKS_ENABLED": "true"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npx @claude-flow*)",
+      "Bash(npx claude-flow*)",
+      "Bash(node .claude/*)",
+      "mcp__claude-flow__:*"
+    ]
+  }
+}
