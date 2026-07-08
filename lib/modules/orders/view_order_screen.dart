@@ -20,30 +20,10 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
   final ScrollController _scrollController = ScrollController();
   bool _loadingFiles = false;
   List<Map<String, dynamic>> _files = const [];
+  List<Map<String, dynamic>> _formFiles = const [];
   List<Map<String, dynamic>> _paints = const [];
   String? _stageTemplateName;
-  String? _formImageUrl;
   Map<String, dynamic>? _formDetails;
-
-  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
-    final trimmed = rawUrl?.trim();
-    if (trimmed == null || trimmed.isEmpty) return null;
-
-    String resolvedUrl = trimmed;
-    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
-      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
-    }
-
-    final dt = DateTime.tryParse(updatedAt ?? '');
-    if (dt == null) return resolvedUrl;
-
-    final uri = Uri.tryParse(resolvedUrl);
-    if (uri == null) return resolvedUrl;
-
-    final query = Map<String, String>.from(uri.queryParameters);
-    query['v'] = dt.millisecondsSinceEpoch.toString();
-    return uri.replace(queryParameters: query).toString();
-  }
 
   @override
   void initState() {
@@ -63,7 +43,6 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       final repo = OrdersRepository();
       final paints = await repo.getPaints(widget.order.id);
       final files = await storage.listOrderFiles(widget.order.id);
-      String? formImageUrl;
       final formCode = widget.order.formCode?.trim();
       final formSeries = widget.order.formSeries?.trim();
       final formNo = widget.order.newFormNo;
@@ -92,10 +71,14 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
           form = Map<String, dynamic>.from(res);
         }
       }
-      formImageUrl = _buildFormImageUrl(
-        form?['image_url']?.toString(),
-        updatedAt: form?['updated_at']?.toString(),
-      );
+      // Загрузить PDF файлы формы (source='form' + линкованные из заказа)
+      List<Map<String, dynamic>> formFiles = const [];
+      final formId = form?['id']?.toString() ?? '';
+      if (formId.isNotEmpty) {
+        try {
+          formFiles = await storage.listFormFiles(formId);
+        } catch (_) {}
+      }
       String? stageTemplateName;
       final tplId = widget.order.stageTemplateId;
       if (tplId != null && tplId.isNotEmpty) {
@@ -110,7 +93,7 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
       setState(() {
         _paints = paints;
         _files = files;
-        _formImageUrl = formImageUrl;
+        _formFiles = formFiles;
         _formDetails = form;
         _stageTemplateName = stageTemplateName;
       });
@@ -182,9 +165,9 @@ class _ViewOrderDialogState extends State<ViewOrderDialog> {
                         order: o,
                         paints: _paints,
                         files: _files,
+                        formFiles: _formFiles,
                         filesLoading: _loadingFiles,
                         stageTemplateName: _stageTemplateName,
-                        formImageUrl: _formImageUrl,
                         formDetails: _formDetails,
                       ),
                     ),

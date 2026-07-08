@@ -12,6 +12,7 @@ class OrderDetailsCard extends StatelessWidget {
     required this.order,
     required this.paints,
     required this.files,
+    this.formFiles = const [],
     this.filesLoading = false,
     required this.stageTemplateName,
     this.formImageUrl,
@@ -22,8 +23,13 @@ class OrderDetailsCard extends StatelessWidget {
   final OrderModel order;
   final List<Map<String, dynamic>> paints;
   final List<Map<String, dynamic>> files;
+
+  /// PDF файлы, привязанные к форме (коллекция form_files):
+  /// source='form' — загружены прямо в форму; source='order' — ссылки из заказа.
+  final List<Map<String, dynamic>> formFiles;
   final bool filesLoading;
   final String? stageTemplateName;
+  // formImageUrl оставлен для обратной совместимости, но больше не отображается.
   final String? formImageUrl;
   final Map<String, dynamic>? formDetails;
   final List<Widget> extraSections;
@@ -484,36 +490,12 @@ class OrderDetailsCard extends StatelessWidget {
                             children: [
                               Text(_formDisplayText(o)),
                               ..._formDetailWidgets(compact: true),
-                              if (formImageUrl != null &&
-                                  formImageUrl!.trim().isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: InkWell(
-                                    onTap: () => _showImagePreview(
-                                      context,
-                                      formImageUrl!,
-                                      title: 'Форма ${o.newFormNo?.toString() ?? ''}'
-                                          .trim(),
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Image.network(
-                                        formImageUrl!,
-                                        height: 90,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) =>
-                                            const Text('Изображение формы недоступно'),
-                                      ),
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
                           compact: true,
                         ),
                         _buildInfoRowWidget(
-                          'Файлы',
+                          'Файлы формы',
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -526,12 +508,49 @@ class OrderDetailsCard extends StatelessWidget {
                                     child: CircularProgressIndicator(strokeWidth: 2),
                                   ),
                                 )
-                              else if (files.isEmpty)
-                                const Text('Нет приложенных файлов')
+                              else if (formFiles
+                                  .where((f) =>
+                                      (f['source'] ?? 'form').toString() == 'form')
+                                  .isEmpty)
+                                const Text('Нет файлов формы',
+                                    style: TextStyle(color: Colors.grey))
                               else
-                                ...files
-                                    .map((f) => _fileTile(context, f, compact: true))
-                                    .toList(),
+                                ...formFiles
+                                    .where((f) =>
+                                        (f['source'] ?? 'form').toString() == 'form')
+                                    .map((f) => _fileTile(context, f, compact: true)),
+                            ],
+                          ),
+                          alignEnd: false,
+                          compact: true,
+                        ),
+                        _buildInfoRowWidget(
+                          'Файлы заказа',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (filesLoading)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 4),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                )
+                              else if ([
+                                ...files,
+                                ...formFiles.where((f) =>
+                                    (f['source'] ?? 'form').toString() == 'order'),
+                              ].isEmpty)
+                                const Text('Нет приложенных файлов',
+                                    style: TextStyle(color: Colors.grey))
+                              else
+                                ...[
+                                  ...files,
+                                  ...formFiles.where((f) =>
+                                      (f['source'] ?? 'form').toString() == 'order'),
+                                ].map((f) => _fileTile(context, f, compact: true)),
                             ],
                           ),
                           alignEnd: false,

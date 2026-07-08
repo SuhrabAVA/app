@@ -223,3 +223,175 @@ Future<List<Map<String, dynamic>>> listOrderFiles(String orderId) async {
   });
   return files;
 }
+
+// =======================
+// PDF ФАЙЛЫ ФОРМ СКЛАДА
+// =======================
+// Восстановлено из сессии c96025b5 (19.06): PDF формы хранятся в том же
+// бакете [kOrderBucket] под префиксом forms/<formId>/..., метаданные — в
+// коллекции 'form_files'. Двусторонняя связь форма↔заказ: PDF заказа
+// линкуется в форму как source='order' (без физического копирования файла).
+
+const String _kFormFilesCollection = 'form_files';
+
+String _buildFormObjectPath(String formId, String safeName) {
+  final ts = DateTime.now().millisecondsSinceEpoch;
+  return 'forms/$formId/${ts}_$safeName';
+}
+
+/// Загружает один PDF в бакет [kOrderBucket] по пути forms/<formId>/...
+/// и сохраняет метаданные с source='form'. Возвращает objectPath.
+Future<String> uploadPickedFormPdf({
+  required String formId,
+  required PlatformFile file,
+}) async {
+  _ensureAuthed();
+  final safeName = _sanitizeFileName(
+    file.name.isNotEmpty ? file.name : 'document.pdf',
+  );
+  final objectPath = _buildFormObjectPath(formId, safeName);
+  try {
+    if (file.bytes != null) {
+      await supabase.storage.from(kOrderBucket).uploadBinary(
+            objectPath,
+            file.bytes!,
+            fileOptions: const FileOptions(
+              upsert: true,
+              contentType: 'application/pdf',
+            ),
+          );
+    } else if (file.path != null) {
+      await supabase.storage.from(kOrderBucket).upload(
+            objectPath,
+            File(file.path!),
+            fileOptions: const FileOptions(
+              upsert: true,
+              contentType: 'application/pdf',
+            ),
+          );
+    } else {
+      throw Exception('Не удалось прочитать файл');
+    }
+  } on StorageException {
+    rethrow;
+  }
+  try {
+    await linkFormPdf(
+      formId: formId,
+      objectPath: objectPath,
+      fileName: safeName,
+      sizeBytes: file.size,
+      source: 'form',
+    );
+  } catch (_) {
+    // метаданные можно дозаписать позже — файл уже загружен
+  }
+  return objectPath;
+}
+
+/// Сохраняет метаданные PDF файла, связанного с формой.
+/// [source]: 'form' — файл загружен напрямую к форме;
+///           'order' — ссылка на PDF заказа (физически не копируется).
+Future<Map<String, dynamic>> linkFormPdf({
+  required String formId,
+  required String objectPath,
+  required String fileName,
+  int? sizeBytes,
+  String source = 'form',
+}) async {
+  _ensureAuthed();
+  final userId = supabase.auth.currentUser!.id;
+  final row = await _docDb.insert(_kFormFilesCollection, {
+    'formId': formId,
+    'objectPath': objectPath,
+    'filename': fileName,
+    'mimeType': 'application/pdf',
+    'sizeBytes': sizeBytes,
+    'source': source,
+    'createdBy': userId,
+  });
+  final data = Map<String, dynamic>.from(row['data'] ?? {});
+  data['id'] = row['id'];
+  return data;
+}
+
+/// Возвращает список PDF файлов формы (source='form' и source='order').
+Future<List<Map<String, dynamic>>> listFormFiles(String formId) async {
+  _ensureAuthed();
+  final rows =
+      await _docDb.whereEq(_kFormFilesCollection, 'formId', formId.trim());
+  final byIdentity = <String, Map<String, dynamic>>{};
+  for (final row in rows) {
+    final data = Map<String, dynamic>.from(row['data'] ?? {});
+    final id = row['id']?.toString() ?? '';
+    final objectPath =
+        (data['objectPath'] ?? data['path'] ?? '').toString().trim();
+    final key = objectPath.isNotEmpty ? objectPath : id;
+    if (key.isEmpty) continue;
+    data['id'] = id;
+    if ((data['filename'] ?? '').toString().isEmpty) {
+      data['filename'] = (data['fileName'] ?? data['name'] ?? '').toString();
+    }
+    byIdentity[key] = data;
+  }
+  final files = byIdentity.values.toList();
+  files.sort((a, b) {
+    final at =
+        DateTime.tryParse((a['createdAt'] ?? a['created_at'] ?? '').toString());
+    final bt =
+        DateTime.tryParse((b['createdAt'] ?? b['created_at'] ?? '').toString());
+    if (at != null && bt != null) return bt.compareTo(at);
+    if (at != null) return -1;
+    if (bt != null) return 1;
+    return 0;
+  });
+  return files;
+}
+
+/// Удаляет PDF файл формы.
+/// source='form' → удаляет из Storage и из documents.
+/// source='order' → удаляет только запись (объект принадлежит заказу).
+Future<void> deleteFormFile(Map<String, dynamic> fileRow) async {
+  _ensureAuthed();
+  final source = (fileRow['source'] ?? 'form').toString();
+  final objectPath =
+      (fileRow['objectPath'] ?? fileRow['path'] ?? '').toString();
+  final id = fileRow['id']?.toString() ?? '';
+  if (source == 'form' && objectPath.isNotEmpty) {
+    try {
+      await supabase.storage.from(kOrderBucket).remove([objectPath]);
+    } catch (_) {}
+  }
+  if (id.isNotEmpty) {
+    await _docDb.deleteById(id);
+  }
+}
+
+/// Ищет id формы по реквизитам, привязанным к заказу.
+/// Возвращает null если форма не найдена.
+Future<String?> findFormIdByOrderFormRef({
+  String? formCode,
+  String? formSeries,
+  int? formNo,
+}) async {
+  if (formCode != null && formCode.trim().isNotEmpty) {
+    final res = await supabase
+        .from('forms')
+        .select('id')
+        .eq('code', formCode.trim())
+        .maybeSingle();
+    final id = res?['id']?.toString();
+    if (id != null && id.isNotEmpty) return id;
+  }
+  if (formSeries != null && formSeries.trim().isNotEmpty && formNo != null) {
+    final res = await supabase
+        .from('forms')
+        .select('id')
+        .eq('series', formSeries.trim())
+        .eq('number', formNo)
+        .maybeSingle();
+    final id = res?['id']?.toString();
+    if (id != null && id.isNotEmpty) return id;
+  }
+  return null;
+}

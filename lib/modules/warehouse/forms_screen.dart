@@ -1,13 +1,13 @@
 // lib/modules/warehouse/forms_screen.dart
 // ignore_for_file: use_build_context_synchronously
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
-import '../../utils/media_viewer.dart';
+import '../../services/storage_service.dart' as storage;
+import '../common/pdf_view_screen.dart';
 
 String _cleanSizeLabel(String size) {
   final trimmed = size.trim();
@@ -101,8 +101,6 @@ class _FormsScreenState extends State<FormsScreen> {
         text: (row?['colors'] ?? row?['description'] ?? '').toString());
     final extraInfoCtl =
         TextEditingController(text: (row?['description'] ?? '').toString());
-// Существующее изображение (для режима редактирования)
-    final String? existingImageUrl = (row?['image_url'] as String?);
     sizeCtl.text = ([
       if ((row?['size'] ?? '').toString().isNotEmpty)
         (row?['size'] ?? '').toString(),
@@ -110,7 +108,10 @@ class _FormsScreenState extends State<FormsScreen> {
         (" / " + (row?['product_type'] ?? '').toString())
     ].join('').toString());
     colorsCtl.text = (row?['colors'] ?? '').toString();
-    Uint8List? pickedImageBytes;
+    // PDF staging: выбранные, но ещё не загруженные файлы.
+    List<PlatformFile> pickedPdfs = [];
+    // Уже сохранённые PDF этой формы (режим редактирования).
+    List<Map<String, dynamic>> savedPdfs = [];
     bool numberManuallyEdited = isEditing;
 
     // Prefill default number: global max(number)+1
@@ -156,6 +157,16 @@ class _FormsScreenState extends State<FormsScreen> {
             // если вообще ничего не получилось — не трогаем поле
           }
         }
+      }
+    }
+
+    // Загружаем уже сохранённые PDF формы (режим редактирования).
+    if (isEditing) {
+      final formId = row?['id']?.toString() ?? '';
+      if (formId.isNotEmpty) {
+        try {
+          savedPdfs = await storage.listFormFiles(formId);
+        } catch (_) {}
       }
     }
 
@@ -224,29 +235,191 @@ class _FormsScreenState extends State<FormsScreen> {
                     ),
                     const SizedBox(height: 8),
 
-                    const SizedBox(height: 8),
-                    // Предпросмотр изображения: если есть выбранное — показываем его; иначе для редактирования показываем существующее
-                    if (pickedImageBytes != null)
-                      Image.memory(pickedImageBytes!, height: 100)
-                    else if (isEditing &&
-                        existingImageUrl != null &&
-                        existingImageUrl.isNotEmpty)
-                      Image.network(existingImageUrl, height: 100),
-                    const SizedBox(height: 8),
+                    // ── Уже сохранённые PDF (только в режиме редактирования) ──
+                    if (isEditing) ...[
+                      const Divider(height: 20),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Файлы формы',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      if (savedPdfs.isEmpty)
+                        const Text(
+                          'PDF не загружены',
+                          style: TextStyle(color: Colors.grey),
+                        )
+                      else
+                        ...savedPdfs.map((f) {
+                          final fname =
+                              (f['filename'] ?? f['name'] ?? 'Файл.pdf')
+                                  .toString();
+                          final source = (f['source'] ?? 'form').toString();
+                          final objectPath =
+                              (f['objectPath'] ?? '').toString();
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.picture_as_pdf,
+                                  size: 16,
+                                  color: source == 'order'
+                                      ? Colors.grey
+                                      : Colors.red,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    fname,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                if (source == 'order')
+                                  const Padding(
+                                    padding:
+                                        EdgeInsets.symmetric(horizontal: 4),
+                                    child: Text(
+                                      'из заказа',
+                                      style: TextStyle(
+                                          fontSize: 11, color: Colors.grey),
+                                    ),
+                                  ),
+                                IconButton(
+                                  tooltip: 'Открыть',
+                                  icon: const Icon(Icons.open_in_new, size: 16),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  onPressed: objectPath.isEmpty
+                                      ? null
+                                      : () async {
+                                          final url = await storage
+                                              .getSignedUrl(objectPath);
+                                          if (!context.mounted) return;
+                                          await Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => PdfViewScreen(
+                                                url: url,
+                                                title: fname,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                ),
+                                IconButton(
+                                  tooltip: 'Удалить',
+                                  icon: const Icon(Icons.delete_outline,
+                                      size: 16, color: Colors.red),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  onPressed: () async {
+                                    final confirmed = await showDialog<bool>(
+                                      context: context,
+                                      builder: (dCtx) => AlertDialog(
+                                        title: const Text('Удалить файл?'),
+                                        content: Text(
+                                          source == 'order'
+                                              ? 'Файл "$fname" будет отвязан от формы (сам файл заказа останется).'
+                                              : 'Файл "$fname" будет удалён безвозвратно.',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(dCtx, false),
+                                            child: const Text('Отмена'),
+                                          ),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                                backgroundColor: Colors.red),
+                                            onPressed: () =>
+                                                Navigator.pop(dCtx, true),
+                                            child: const Text('Удалить'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirmed != true) return;
+                                    await storage.deleteFormFile(f);
+                                    setDialogState(() {
+                                      savedPdfs.remove(f);
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      const Divider(height: 20),
+                    ],
+
+                    // ── Staging: выбранные PDF ещё не загружены ──
+                    if (pickedPdfs.isNotEmpty) ...[
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Новые PDF (будут загружены при сохранении):',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      ...pickedPdfs.asMap().entries.map((entry) {
+                        final idx = entry.key;
+                        final file = entry.value;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.picture_as_pdf,
+                                  size: 16, color: Colors.red),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  file.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Убрать',
+                                icon: const Icon(Icons.close,
+                                    size: 16, color: Colors.red),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () {
+                                  setDialogState(() {
+                                    pickedPdfs.removeAt(idx);
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 4),
+                    ],
+
+                    // ── Кнопка выбора PDF ──
                     ElevatedButton.icon(
                       onPressed: () async {
-                        final picker = ImagePicker();
-                        final XFile? file =
-                            await picker.pickImage(source: ImageSource.gallery);
-                        if (file != null) {
-                          final bytes = await file.readAsBytes();
+                        final result = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: const ['pdf'],
+                          allowMultiple: true,
+                          withData: true,
+                        );
+                        if (result != null && result.files.isNotEmpty) {
                           setDialogState(() {
-                            pickedImageBytes = bytes;
+                            pickedPdfs.addAll(result.files);
                           });
                         }
                       },
-                      icon: const Icon(Icons.photo_library),
-                      label: const Text('Выбрать фото (не обязательно)'),
+                      icon: const Icon(Icons.upload_file),
+                      label: const Text('Добавить PDF'),
                     ),
                   ],
                 ),
@@ -286,30 +459,47 @@ class _FormsScreenState extends State<FormsScreen> {
                           content: Text('Неверный формат номера')));
                       return;
                     }
+                    String formId = '';
                     if (isEditing) {
-                      final id = row!['id']?.toString();
-                      if (id != null && id.isNotEmpty) {
+                      formId = row?['id']?.toString() ?? '';
+                      if (formId.isNotEmpty) {
                         await wp.updateForm(
-                          id: id,
+                          id: formId,
                           series: name,
                           number: number,
                           formSize: size.isNotEmpty ? size : null,
                           formProductType: typeVal.isNotEmpty ? typeVal : null,
                           formColors: colors.isNotEmpty ? colors : null,
                           description: extraInfo.isNotEmpty ? extraInfo : '',
-                          imageBytes: pickedImageBytes,
                         );
                       }
                     } else {
-                      await wp.createFormAndReturn(
+                      final created = await wp.createFormAndReturn(
                         series: name,
                         number: number,
                         formSize: size.isNotEmpty ? size : null,
                         formProductType: typeVal.isNotEmpty ? typeVal : null,
                         formColors: colors.isNotEmpty ? colors : null,
                         description: extraInfo.isNotEmpty ? extraInfo : '',
-                        imageBytes: pickedImageBytes,
                       );
+                      formId = (created['id'] ?? '').toString();
+                    }
+                    // Загрузка выбранных PDF после сохранения формы.
+                    if (formId.isNotEmpty && pickedPdfs.isNotEmpty) {
+                      for (final pdf in pickedPdfs) {
+                        try {
+                          await storage.uploadPickedFormPdf(
+                              formId: formId, file: pdf);
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                  content:
+                                      Text('Ошибка загрузки ${pdf.name}: $e')),
+                            );
+                          }
+                        }
+                      }
                     }
                     if (mounted) {
                       Navigator.pop(ctx);
@@ -639,7 +829,6 @@ class _FormsScreenState extends State<FormsScreen> {
                     final subtitleText =
                         subtitleParts.isEmpty ? null : subtitleParts.join('  |  ');
 
-                    final imageUrl = (row['image_url'] ?? '').toString();
                     final status = (row['status'] ?? '').toString();
                     final bool isEnabled = row['is_enabled'] is bool
                         ? row['is_enabled'] as bool
@@ -674,32 +863,11 @@ class _FormsScreenState extends State<FormsScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          imageUrl.isNotEmpty
-                              ? GestureDetector(
-                                  onTap: () => showImagePreview(
-                                    context,
-                                    imageUrl: imageUrl,
-                                    title: nameNumber,
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(20),
-                                    child: Image.network(
-                                      imageUrl,
-                                      width: 40,
-                                      height: 40,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) =>
-                                          const Icon(Icons.image_not_supported),
-                                    ),
-                                  ),
-                                )
-                              : CircleAvatar(
-                                  child: Text(
-                                    series.isEmpty
-                                        ? '?'
-                                        : series.substring(0, 1),
-                                  ),
-                                ),
+                          CircleAvatar(
+                            child: Text(
+                              series.isEmpty ? '?' : series.substring(0, 1),
+                            ),
+                          ),
                         ],
                       ),
                       title: Text(

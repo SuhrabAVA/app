@@ -120,9 +120,9 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   bool _loadingPlan = true;
   bool _loadingFiles = false;
   List<Map<String, dynamic>> _files = const [];
+  List<Map<String, dynamic>> _formFiles = const [];
   List<Map<String, dynamic>> _paints = const [];
   String? _stageTemplateName;
-  String? _formImageUrl;
   Map<String, dynamic>? _formDetails;
   String _selectedCommentsOrderId = '';
   List<OrderGenerationEntry> _restartAncestors = const [];
@@ -352,26 +352,6 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   }
 
 
-  String? _buildFormImageUrl(String? rawUrl, {String? updatedAt}) {
-    final trimmed = rawUrl?.trim();
-    if (trimmed == null || trimmed.isEmpty) return null;
-
-    String resolvedUrl = trimmed;
-    if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
-      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
-    }
-
-    final dt = DateTime.tryParse(updatedAt ?? '');
-    if (dt == null) return resolvedUrl;
-
-    final uri = Uri.tryParse(resolvedUrl);
-    if (uri == null) return resolvedUrl;
-
-    final query = Map<String, String>.from(uri.queryParameters);
-    query['v'] = dt.millisecondsSinceEpoch.toString();
-    return uri.replace(queryParameters: query).toString();
-  }
-
   Future<Map<String, dynamic>?> _loadFormDetails() async {
     final formCode = widget.order.formCode?.trim();
     final formSeries = widget.order.formSeries?.trim();
@@ -403,10 +383,13 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       final paints = await repo.getPaints(widget.order.id);
       final files = await storage.listOrderFiles(widget.order.id);
       final formDetails = await _loadFormDetails();
-      final formImageUrl = _buildFormImageUrl(
-        formDetails?['image_url']?.toString(),
-        updatedAt: formDetails?['updated_at']?.toString(),
-      );
+      List<Map<String, dynamic>> formFiles = const [];
+      final formId = formDetails?['id']?.toString() ?? '';
+      if (formId.isNotEmpty) {
+        try {
+          formFiles = await storage.listFormFiles(formId);
+        } catch (_) {}
+      }
       String? stageTemplateName;
       final tplId = widget.order.stageTemplateId;
       if (tplId != null && tplId.isNotEmpty) {
@@ -422,8 +405,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
       setState(() {
         _paints = paints;
         _files = files;
+        _formFiles = formFiles;
         _stageTemplateName = stageTemplateName;
-        _formImageUrl = formImageUrl;
         _formDetails = formDetails;
       });
     } catch (_) {
@@ -1001,8 +984,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                             order: widget.order,
                             paints: _paints,
                             files: _files,
+                            formFiles: _formFiles,
                             stageTemplateName: _stageTemplateName,
-                            formImageUrl: _formImageUrl,
                             formDetails: _formDetails,
                           ),
                         ),

@@ -851,6 +851,8 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending = {};
   final Map<String, List<Map<String, dynamic>>> _orderFilesCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderFilesPending = {};
+  final Map<String, List<Map<String, dynamic>>> _formFilesCache = {};
+  final Map<String, Future<List<Map<String, dynamic>>>> _formFilesPending = {};
   final Map<String, Map<String, _StageComment>> _orderCommentsCache = {};
   final RestartHistoryService _restartHistoryService =
       RestartHistoryService(SupabaseOrderRestartHistoryRepository());
@@ -4278,17 +4280,16 @@ class _TasksScreenState extends State<TasksScreen>
           _getFormImageFuture(order),
           _getOrderPaintsFuture(order.id),
           _getOrderFilesFuture(order.id),
+          _getFormFilesFuture(order),
         ]),
         initialData: <dynamic>[
           cachedFormImageUrl,
           _orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[],
           _orderFilesCache[order.id] ?? const <Map<String, dynamic>>[],
+          _formFilesCache[order.id] ?? const <Map<String, dynamic>>[],
         ],
         builder: (context, snapshot) {
           final data = snapshot.data;
-          final resolvedFormImageUrl =
-              (data != null && data.isNotEmpty ? data[0] as String? : null) ??
-                  cachedFormImageUrl;
           final resolvedFormDetails = _formImageCache[order.id]?.details;
           final resolvedPaints =
               (data != null && data.length > 1
@@ -4300,6 +4301,11 @@ class _TasksScreenState extends State<TasksScreen>
                       ? data[2] as List<Map<String, dynamic>>
                       : null) ??
                   (_orderFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
+          final resolvedFormFiles =
+              (data != null && data.length > 3
+                      ? data[3] as List<Map<String, dynamic>>
+                      : null) ??
+                  (_formFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -4307,8 +4313,8 @@ class _TasksScreenState extends State<TasksScreen>
                 order: order,
                 paints: resolvedPaints,
                 files: resolvedFiles,
+                formFiles: resolvedFormFiles,
                 stageTemplateName: templateName,
-                formImageUrl: resolvedFormImageUrl,
                 formDetails: resolvedFormDetails,
                 extraSections: [
                   _buildStageList(order, scale),
@@ -4372,6 +4378,43 @@ class _TasksScreenState extends State<TasksScreen>
         });
 
     _orderFilesPending[normalizedOrderId] = future;
+    return future;
+  }
+
+  /// PDF файлы, привязанные к форме заказа (коллекция form_files).
+  /// Резолвит id формы по code/series+number и подтягивает список файлов.
+  Future<List<Map<String, dynamic>>> _getFormFilesFuture(OrderModel order) {
+    final key = order.id.trim();
+    if (key.isEmpty) {
+      return Future.value(const <Map<String, dynamic>>[]);
+    }
+    final pending = _formFilesPending[key];
+    if (pending != null) return pending;
+
+    final future = () async {
+      final formId = await findFormIdByOrderFormRef(
+        formCode: order.formCode?.trim(),
+        formSeries: order.formSeries?.trim(),
+        formNo: order.newFormNo,
+      );
+      if (formId == null || formId.isEmpty) {
+        return const <Map<String, dynamic>>[];
+      }
+      return await listFormFiles(formId);
+    }()
+        .then((files) {
+          final normalized = List<Map<String, dynamic>>.from(files);
+          _formFilesCache[key] = normalized;
+          return normalized;
+        })
+        .catchError((_) {
+          return _formFilesCache[key] ?? const <Map<String, dynamic>>[];
+        })
+        .whenComplete(() {
+          _formFilesPending.remove(key);
+        });
+
+    _formFilesPending[key] = future;
     return future;
   }
 

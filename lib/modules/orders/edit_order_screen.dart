@@ -3065,6 +3065,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       createdOrUpdatedOrder.pdfUrl = uploadedPath;
       await provider.updateOrder(createdOrUpdatedOrder);
+      // Двусторонняя связь: дублируем ссылку на этот PDF в привязанную форму
+      // (source='order') — файл не копируется, добавляется лишь запись в
+      // form_files, чтобы PDF заказа был виден в экране «Формы — склад».
+      try {
+        final linkedFormId = await findFormIdByOrderFormRef(
+          formCode: createdOrUpdatedOrder.formCode?.trim(),
+          formSeries: createdOrUpdatedOrder.formSeries?.trim(),
+          formNo: createdOrUpdatedOrder.newFormNo,
+        );
+        if (linkedFormId != null) {
+          final safeName = _pickedPdf!.name.isNotEmpty
+              ? _pickedPdf!.name
+              : uploadedPath.split('/').last;
+          await linkFormPdf(
+            formId: linkedFormId,
+            objectPath: uploadedPath,
+            fileName: safeName,
+            sizeBytes: _pickedPdf!.size,
+            source: 'order',
+          );
+        }
+      } catch (_) {}
     }
     if (willSaveBuiltStageQueue) {
       // Сохраняем фактическую очередь заказа через общий сервис.
