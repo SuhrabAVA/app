@@ -1,6 +1,53 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../utils/analytics_colors.dart';
+
+/// Отдаёт intrinsic-высоту, измеренную на реальной ширине контента
+/// ([measureWidth] = restWidth таблицы), а не на той, что передаёт снаружи
+/// IntrinsicHeight (видимая область строки). RenderConstrainedBox (SizedBox)
+/// не подставляет свою tight-ширину в intrinsic-запросы — без этой обёртки
+/// строки измерялись на ширине экрана: текст «переносился» в измерении и
+/// раздувал высоту строки, хотя рисуется он на restWidth в одну-две строки.
+/// На layout/paint не влияет (прокси) — меняется только ответ intrinsic.
+class IntrinsicHeightAtWidth extends SingleChildRenderObjectWidget {
+  const IntrinsicHeightAtWidth({
+    super.key,
+    required this.measureWidth,
+    required super.child,
+  });
+
+  final double measureWidth;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      RenderIntrinsicHeightAtWidth(measureWidth);
+
+  @override
+  void updateRenderObject(
+      BuildContext context, RenderIntrinsicHeightAtWidth renderObject) {
+    renderObject.measureWidth = measureWidth;
+  }
+}
+
+class RenderIntrinsicHeightAtWidth extends RenderProxyBox {
+  RenderIntrinsicHeightAtWidth(this._measureWidth);
+
+  double _measureWidth;
+  set measureWidth(double value) {
+    if (value == _measureWidth) return;
+    _measureWidth = value;
+    markNeedsLayout();
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) =>
+      child?.getMinIntrinsicHeight(_measureWidth) ?? 0.0;
+
+  @override
+  double computeMaxIntrinsicHeight(double width) =>
+      child?.getMaxIntrinsicHeight(_measureWidth) ?? 0.0;
+}
 
 /// Строка таблицы с локальным hover-состоянием. Только эта строка
 /// перерисовывается при наведении — синхронный горизонтальный скролл и

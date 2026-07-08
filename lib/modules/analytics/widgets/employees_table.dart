@@ -299,10 +299,13 @@ class _EmployeesTableState extends State<EmployeesTable> {
                       controller: _ctrl(-1),
                       scrollDirection: Axis.horizontal,
                       physics: const ClampingScrollPhysics(),
-                      child: SizedBox(
-                        width: restWidth,
-                        child:
-                            _buildScrollableHeader(canViewFinance, restWidth),
+                      child: IntrinsicHeightAtWidth(
+                        measureWidth: restWidth,
+                        child: SizedBox(
+                          width: restWidth,
+                          child: _buildScrollableHeader(
+                              canViewFinance, restWidth),
+                        ),
                       ),
                     ),
                   ),
@@ -338,17 +341,20 @@ class _EmployeesTableState extends State<EmployeesTable> {
                                 maxWidth: double.infinity,
                                 child: ValueListenableBuilder<double>(
                                   valueListenable: _sync.offsetNotifier,
-                                  child: SizedBox(
-                                    width: restWidth,
-                                    child: _buildScrollableDataRow(
-                                        context,
-                                        rows[i],
-                                        canViewFinance,
-                                        canEdit,
-                                        i,
-                                        hovered,
-                                        nightPercent,
-                                        mealAmount),
+                                  child: IntrinsicHeightAtWidth(
+                                    measureWidth: restWidth,
+                                    child: SizedBox(
+                                      width: restWidth,
+                                      child: _buildScrollableDataRow(
+                                          context,
+                                          rows[i],
+                                          canViewFinance,
+                                          canEdit,
+                                          i,
+                                          hovered,
+                                          nightPercent,
+                                          mealAmount),
+                                    ),
                                   ),
                                   builder: (context, hOffset, child) =>
                                       Transform.translate(
@@ -379,9 +385,13 @@ class _EmployeesTableState extends State<EmployeesTable> {
                       controller: _ctrl(10000),
                       scrollDirection: Axis.horizontal,
                       physics: const ClampingScrollPhysics(),
-                      child: SizedBox(
-                        width: restWidth,
-                        child: _buildScrollableFooter(canViewFinance, totals),
+                      child: IntrinsicHeightAtWidth(
+                        measureWidth: restWidth,
+                        child: SizedBox(
+                          width: restWidth,
+                          child:
+                              _buildScrollableFooter(canViewFinance, totals),
+                        ),
                       ),
                     ),
                   ),
