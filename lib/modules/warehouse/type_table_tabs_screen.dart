@@ -166,6 +166,31 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   late final TabController _tabs;
   RealtimeChannel? _rt;
+  // Дебаунс realtime-событий: пачка insert/update/delete по ~15 таблицам
+  // (остатки + логи + резервы) схлопывается в один _loadAll, иначе десятки
+  // параллельных тяжёлых перезагрузок спамили main thread и валили запросы
+  // по statement timeout (57014).
+  Timer? _reloadDebounce;
+  // Guard от наложения: если _loadAll уже идёт, помечаем, что нужен повтор,
+  // и запускаем его один раз по завершении текущего.
+  bool _loadInFlight = false;
+  bool _reloadRequested = false;
+
+  // Постоянные скролл-контроллеры для таблиц вкладок. Раньше _scrollableTable
+  // создавал их прямо в build на каждую перестройку — новые контроллеры
+  // каждый кадр заставляли Scrollbar переприсоединять обработку жестов, что
+  // на Windows роняло жест скролла (direct_manipulation ZoomToRect). Каждой
+  // вкладке — своя пара (нельзя шарить один контроллер между двумя
+  // SingleChildScrollView: во время свайпа TabBarView держит две страницы
+  // одновременно → иначе «attached to multiple scroll views»).
+  final ScrollController _listVCtl = ScrollController();
+  final ScrollController _listHCtl = ScrollController();
+  final ScrollController _woVCtl = ScrollController();
+  final ScrollController _woHCtl = ScrollController();
+  final ScrollController _arrVCtl = ScrollController();
+  final ScrollController _arrHCtl = ScrollController();
+  final ScrollController _invVCtl = ScrollController();
+  final ScrollController _invHCtl = ScrollController();
   // Основные позиции
   List<TmcModel> _items = [];
 
@@ -402,7 +427,37 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     _setupRealtime();
   }
 
+  /// Дебаунс: пачка realtime-событий схлопывается в один _loadAll через 350 мс.
+  void _scheduleReload() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) _loadAll();
+    });
+  }
+
+  /// Обёртка с guard: не запускаем параллельные тяжёлые перезагрузки. Если
+  /// _loadAll вызвали во время уже идущей загрузки — ставим отложенный повтор
+  /// и выполняем его один раз по завершении текущей.
   Future<void> _loadAll() async {
+    if (_loadInFlight) {
+      _reloadRequested = true;
+      return;
+    }
+    _loadInFlight = true;
+    try {
+      await _loadAllImpl();
+    } finally {
+      _loadInFlight = false;
+      if (_reloadRequested && mounted) {
+        _reloadRequested = false;
+        _scheduleReload();
+      } else {
+        _reloadRequested = false;
+      }
+    }
+  }
+
+  Future<void> _loadAllImpl() async {
     if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
     final typeKey = _normalizeType(widget.type);
@@ -523,19 +578,19 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: t,
-          callback: (payload) => _loadAll(),
+          callback: (payload) => _scheduleReload(),
         );
         ch.onPostgresChanges(
           event: PostgresChangeEvent.update,
           schema: 'public',
           table: t,
-          callback: (payload) => _loadAll(),
+          callback: (payload) => _scheduleReload(),
         );
         ch.onPostgresChanges(
           event: PostgresChangeEvent.delete,
           schema: 'public',
           table: t,
-          callback: (payload) => _loadAll(),
+          callback: (payload) => _scheduleReload(),
         );
       }
       ch.subscribe();
@@ -652,10 +707,19 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   @override
   void dispose() {
+    _reloadDebounce?.cancel();
     try {
       _rt?.unsubscribe();
     } catch (_) {}
     _tabs.dispose();
+    _listVCtl.dispose();
+    _listHCtl.dispose();
+    _woVCtl.dispose();
+    _woHCtl.dispose();
+    _arrVCtl.dispose();
+    _arrHCtl.dispose();
+    _invVCtl.dispose();
+    _invHCtl.dispose();
     super.dispose();
   }
 
@@ -1452,9 +1516,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
-  Widget _scrollableTable(Widget table) {
-    final vertical = ScrollController();
-    final horizontal = ScrollController();
+  Widget _scrollableTable(
+    Widget table, {
+    required ScrollController vertical,
+    required ScrollController horizontal,
+  }) {
     return Scrollbar(
       controller: vertical,
       thumbVisibility: true,
@@ -1663,6 +1729,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         if (widget.enablePhoto)
                           DataCell(Row(children: [
                             Builder(builder: (context) {
+                              // 1) inline base64 (если вдруг пришёл со строкой)
                               Uint8List? bytes;
                               try {
                                 if (item.imageBase64 != null &&
@@ -1670,24 +1737,44 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                                   bytes = base64Decode(item.imageBase64!);
                                 }
                               } catch (_) {}
-                              Widget preview;
                               if (bytes != null && bytes.isNotEmpty) {
-                                preview = ClipRRect(
+                                return ClipRRect(
                                   borderRadius: BorderRadius.circular(4),
+                                  // cacheWidth/Height: декодим превью в ~100px,
+                                  // а не в полном разрешении. Иначе N крупных
+                                  // фото красок в невиртуализированном DataTable
+                                  // декодятся full-res разом и топят конвейер
+                                  // растеризации (Failed to post message).
                                   child: Image.memory(bytes,
-                                      width: 50, height: 50, fit: BoxFit.cover),
+                                      width: 50,
+                                      height: 50,
+                                      cacheWidth: 100,
+                                      cacheHeight: 100,
+                                      fit: BoxFit.cover),
                                 );
-                              } else if (item.imageUrl != null &&
-                                  item.imageUrl!.isNotEmpty) {
-                                preview = ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: Image.network(item.imageUrl!,
-                                      width: 50, height: 50, fit: BoxFit.cover),
-                                );
-                              } else {
-                                preview = const Icon(Icons.image_not_supported);
                               }
-                              return preview;
+                              // 2) картинка из Storage по image_url
+                              if (item.imageUrl != null &&
+                                  item.imageUrl!.isNotEmpty) {
+                                return ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  // cacheWidth/Height: см. коммент выше —
+                                  // декод миниатюры вместо full-res.
+                                  child: Image.network(item.imageUrl!,
+                                      width: 50,
+                                      height: 50,
+                                      cacheWidth: 100,
+                                      cacheHeight: 100,
+                                      fit: BoxFit.cover),
+                                );
+                              }
+                              // 3) фото нет в списочном запросе (image_base64
+                              // исключён ради фикса 57014). Полноразмерное фото
+                              // подгружается лениво в диалоге редактирования
+                              // (add_entry_dialog), а не в списке — иначе на
+                              // невиртуализированном DataTable это порождало
+                              // шторм параллельных запросов и setState.
+                              return const Icon(Icons.image_not_supported);
                             }),
                             IconButton(
                                 icon: const Icon(Icons.add_a_photo),
@@ -1756,6 +1843,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       ]);
                     }),
                   ),
+                  vertical: _listVCtl,
+                  horizontal: _listHCtl,
                 ),
         ),
       ),
@@ -1830,6 +1919,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                     );
                   }),
                 ),
+                vertical: _woVCtl,
+                horizontal: _woHCtl,
               ),
       ),
     );
@@ -1903,6 +1994,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                     );
                   }),
                 ),
+                vertical: _arrVCtl,
+                horizontal: _arrHCtl,
               ),
       ),
     );
@@ -1968,6 +2061,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                     );
                   }),
                 ),
+                vertical: _invVCtl,
+                horizontal: _invHCtl,
               ),
       ),
     );
