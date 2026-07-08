@@ -42,6 +42,20 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   ScrollController _ctrl(int key) =>
       _ctrlCache.putIfAbsent(key, () => _sync.acquire());
 
+  /// Горизонтальный drag над строками данных. Строки — пассивные
+  /// Transform.translate без собственных Scrollable, поэтому жест двигает
+  /// контроллер header'а, а HScrollSync сам разносит offset по
+  /// header/строкам. Тапы по строкам и вертикальный скролл не
+  /// перехватываются: жест-арена отдаёт тап InkWell'у строки, а вертикальный
+  /// drag — внешнему вертикальному Scrollable.
+  void _onRowsHorizontalDrag(DragUpdateDetails details) {
+    final ctrl = _ctrl(-1);
+    if (!ctrl.hasClients) return;
+    final target = (ctrl.offset - details.delta.dx)
+        .clamp(0.0, ctrl.position.maxScrollExtent);
+    if (target != ctrl.offset) ctrl.jumpTo(target);
+  }
+
   void _maybeRecompute(AnalyticsState state) {
     if (state.loading) return;
     if (identical(state, _lastState)) return;
@@ -167,49 +181,54 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
           // per-row ValueListenableBuilder'а; на тик скролла пересоздаётся
           // только обёртка Transform.translate (repaint матрицы, ноль
           // пересборок контента). Hover локален для каждой HoverableRow.
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < rows.length; i++)
-                HoverableRow(
-                  builder: (hovered) => IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _stickyDataCell(rows[i], stickyWidth, hovered),
-                        Expanded(
-                          child: StickyScrollArea(
-                            child: ClipRect(
-                              // OverflowBox разрывает tight-ширину ячейки:
-                              // без него SizedBox(restWidth) схлопывался до
-                              // видимой области и все колонки утрамбовыва-
-                              // лись в экран (рассинхрон с заголовком).
-                              child: OverflowBox(
-                                alignment: Alignment.topLeft,
-                                minWidth: 0,
-                                maxWidth: double.infinity,
-                                child: ValueListenableBuilder<double>(
-                                  valueListenable: _sync.offsetNotifier,
-                                  child: SizedBox(
-                                    width: restWidth,
-                                    child: _scrollableDataRow(
-                                        rows[i], i, hovered),
-                                  ),
-                                  builder: (context, hOffset, child) =>
-                                      Transform.translate(
-                                    offset: Offset(-hOffset, 0),
-                                    child: child,
+          // GestureDetector — горизонтальный drag над данными (см.
+          // _onRowsHorizontalDrag); тапы и вертикальный скролл проходят.
+          GestureDetector(
+            onHorizontalDragUpdate: _onRowsHorizontalDrag,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < rows.length; i++)
+                  HoverableRow(
+                    builder: (hovered) => IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _stickyDataCell(rows[i], stickyWidth, hovered),
+                          Expanded(
+                            child: StickyScrollArea(
+                              child: ClipRect(
+                                // OverflowBox разрывает tight-ширину ячейки:
+                                // без него SizedBox(restWidth) схлопывался до
+                                // видимой области и все колонки утрамбовыва-
+                                // лись в экран (рассинхрон с заголовком).
+                                child: OverflowBox(
+                                  alignment: Alignment.topLeft,
+                                  minWidth: 0,
+                                  maxWidth: double.infinity,
+                                  child: ValueListenableBuilder<double>(
+                                    valueListenable: _sync.offsetNotifier,
+                                    child: SizedBox(
+                                      width: restWidth,
+                                      child: _scrollableDataRow(
+                                          rows[i], i, hovered),
+                                    ),
+                                    builder: (context, hOffset, child) =>
+                                        Transform.translate(
+                                      offset: Offset(-hOffset, 0),
+                                      child: child,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ],
       );
