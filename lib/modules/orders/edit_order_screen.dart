@@ -320,7 +320,52 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           }
         }
       } catch (_) {}
+
+      // Bug-2: подгружаем PDF привязанной формы для read-only сводки.
+      // Раньше файлы появлялись только при входе в режим редактирования формы,
+      // из-за чего при открытии заказа на редактирование они «пропадали».
+      if (hasForm) {
+        _loadAssignedFormPdfs(
+          formCode: code.isNotEmpty ? code : null,
+          formSeries: series.isNotEmpty ? series : null,
+          formNo: no,
+        );
+      }
     } catch (_) {}
+  }
+
+  /// Грузит PDF привязанной к заказу формы для показа в read-only сводке.
+  /// Не трогает состояние редактора формы (_oldFormSavedPdfs/_oldFormPdfsFormId),
+  /// поэтому отмена/сохранение формы не сбрасывают этот список.
+  Future<void> _loadAssignedFormPdfs({
+    String? formCode,
+    String? formSeries,
+    int? formNo,
+  }) async {
+    if (_assignedFormPdfsRequested) return;
+    _assignedFormPdfsRequested = true;
+    if (mounted) setState(() => _loadingAssignedFormPdfs = true);
+    try {
+      final formId = await findFormIdByOrderFormRef(
+        formCode: formCode,
+        formSeries: formSeries,
+        formNo: formNo,
+      );
+      if (!mounted) return;
+      if (formId == null) {
+        setState(() => _loadingAssignedFormPdfs = false);
+        return;
+      }
+      final files = await listFormFiles(formId);
+      if (!mounted) return;
+      setState(() {
+        _assignedFormPdfs = files;
+        _loadingAssignedFormPdfs = false;
+      });
+    } catch (_) {
+      _assignedFormPdfsRequested = false; // разрешим повтор при следующем заходе
+      if (mounted) setState(() => _loadingAssignedFormPdfs = false);
+    }
   }
 
   Future<void> _reloadForms({String? search}) async {
@@ -380,6 +425,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _formResults = [];
         _loadingForms = false;
         _selectedOldFormImageUrl = null;
+        _oldFormPdfsFormId = null;
+        _oldFormSavedPdfs = [];
       } else {
         final selectedValue = _selectedOldFormRow != null
             ? _oldFormInputValue(_selectedOldFormRow!)
@@ -387,6 +434,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (_selectedOldFormRow != null && selectedValue != trimmed) {
           _selectedOldFormRow = null;
           _selectedOldFormImageUrl = null;
+          _oldFormPdfsFormId = null;
+          _oldFormSavedPdfs = [];
         }
         if (_selectedOldFormRow == null) {
           _selectedOldForm = trimmed;
@@ -642,7 +691,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   final TextEditingController _stockExtraQtyController =
       TextEditingController();
 
-  PlatformFile? _pickedPdf;
+  List<PlatformFile> _pickedOrderPdfs = [];
+  List<Map<String, dynamic>> _savedOrderPdfs = [];
+  bool _loadingOrderPdfs = false;
   bool _lengthExceeded = false;
   // Краски (мультисекция)
   final List<_PaintEntry> _paints = <_PaintEntry>[];
@@ -672,8 +723,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<String> _availableForms = [];
   // Номер новой формы по умолчанию (max+1)
   int _defaultFormNumber = 1;
-  // Фото новой формы (при создании)
-  Uint8List? _newFormImageBytes;
+  // PDF новой формы (при создании) — стейджится, заливается после сохранения заказа.
+  List<PlatformFile> _newFormPdfs = [];
+  // PDF уже существующей (старой) формы — грузятся/удаляются немедленно.
+  String? _oldFormPdfsFormId;
+  List<Map<String, dynamic>> _oldFormSavedPdfs = [];
+  bool _loadingOldFormPdfs = false;
+  // PDF привязанной формы для read-only сводки заказа (Bug-2). Отдельное
+  // состояние от _oldFormSavedPdfs (редактор), чтобы отмена/сохранение формы
+  // не сбрасывали список при показе сводки.
+  List<Map<String, dynamic>> _assignedFormPdfs = [];
+  bool _loadingAssignedFormPdfs = false;
+  bool _assignedFormPdfsRequested = false;
   // Выбранный номер старой формы
   String? _selectedOldForm;
   // Фактическое количество (пока не вычисляется)
@@ -716,6 +777,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _loadOrderFormDisplay();
       }
     });
+    if (widget.order != null) {
+      _loadSavedOrderPdfs();
+    }
 
     _stageTemplateController.text = '';
     _stageTemplateController.addListener(_onStageTemplateTextChanged);
@@ -815,6 +879,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
     }
     _hasForm = template?.hasForm ?? false;
+    // Создание на основе шаблона (возобновление из архива): переносим
+    // реквизиты привязанной формы. Штатные async-загрузчики form-полей
+    // работают только при widget.order != null, и без этого сида
+    // привязка формы терялась при возобновлении.
+    if (widget.order == null && widget.initialOrder != null) {
+      final t = widget.initialOrder!;
+      final hasFormRef = t.hasForm &&
+          (t.newFormNo != null || (t.formCode?.trim().isNotEmpty ?? false));
+      if (hasFormRef) {
+        _orderFormIsOld = t.isOldForm;
+        _orderFormNo = t.newFormNo;
+        _orderFormSeries = t.formSeries;
+        _orderFormCode = t.formCode;
+        _orderFormDisplay = _buildFormDisplayValue(
+          code: t.formCode,
+          series: t.formSeries,
+          number: t.newFormNo,
+        );
+        _isOldForm = t.isOldForm;
+      }
+    }
     final initialFormResult = applyOrderFormRules(
       draft: _buildCurrentOrderDraft(),
       hasPaints: _hasAnyPaints(),
@@ -2133,21 +2218,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
-  /// Открывает галерею для выбора изображения новой формы. Выбранное фото
-  /// сохраняется в состояние [_newFormImageBytes] и отображается в UI.
-  Future<void> _pickNewFormImage() async {
-    final picker = ImagePicker();
-    final XFile? file = await picker.pickImage(source: ImageSource.gallery);
-    if (file != null) {
-      final bytes = await file.readAsBytes();
-      if (mounted) {
-        setState(() {
-          _newFormImageBytes = bytes;
-        });
-      }
-    }
-  }
-
   void _selectMaterial(TmcModel tmc) {
     _selectedMaterialTmc = tmc;
     _selectedMaterial = MaterialModel(
@@ -2561,44 +2631,152 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _restorePaintsFromParams(warehouse);
   }
 
+  Future<void> _loadSavedOrderPdfs() async {
+    if (widget.order == null) return;
+    setState(() => _loadingOrderPdfs = true);
+    try {
+      final files = await listOrderFiles(widget.order!.id);
+      if (!mounted) return;
+      setState(() {
+        _savedOrderPdfs = files;
+        _loadingOrderPdfs = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingOrderPdfs = false);
+    }
+  }
+
   Future<void> _pickPdf() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
+      allowMultiple: true,
       withData: true,
     );
     if (result != null && result.files.isNotEmpty) {
       setState(() {
-        _pickedPdf = result.files.first;
+        _pickedOrderPdfs.addAll(result.files);
       });
     }
   }
 
-  Future<void> _openPdf() async {
-    if (_pickedPdf != null) {
-      final bytes = _pickedPdf!.bytes;
-      if (bytes == null) return;
-      if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PdfViewScreen(
-            bytes: bytes,
-            title: _pickedPdf!.name.isEmpty ? 'PDF' : _pickedPdf!.name,
+  Future<bool> _confirmDeletePdf(String fileName, {String? message}) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Удалить файл?'),
+        content: Text(message ?? 'Файл "$fileName" будет удалён безвозвратно.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Отмена'),
           ),
-        ),
-      );
-    } else if (widget.order?.pdfUrl != null) {
-      final url = await getSignedUrl(widget.order!.pdfUrl!);
-      if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PdfViewScreen(
-            url: url,
-            title: widget.order!.pdfUrl!.split('/').last,
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('Удалить'),
           ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _openPdfBytes(Uint8List bytes, String title) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PdfViewScreen(
+          bytes: bytes,
+          title: title.isEmpty ? 'PDF' : title,
         ),
-      );
+      ),
+    );
+  }
+
+  Future<void> _openSavedPdf(Map<String, dynamic> file) async {
+    final objectPath = (file['objectPath'] ?? '').toString();
+    if (objectPath.isEmpty) return;
+    final fileName = (file['filename'] ?? objectPath.split('/').last).toString();
+    final url = await getSignedUrl(objectPath);
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PdfViewScreen(url: url, title: fileName),
+      ),
+    );
+  }
+
+  Future<void> _removeSavedOrderPdf(Map<String, dynamic> file) async {
+    final fileName =
+        (file['filename'] ?? file['objectPath'] ?? 'Файл.pdf').toString();
+    final confirmed = await _confirmDeletePdf(fileName);
+    if (!confirmed) return;
+    final objectPath = (file['objectPath'] ?? '').toString();
+    if (objectPath.isEmpty) return;
+    try {
+      await deleteOrderFile(objectPath);
+      if (mounted) setState(() => _savedOrderPdfs.remove(file));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось удалить файл: $e')),
+        );
+      }
     }
+  }
+
+  /// Построчный виджет вложения PDF: иконка, имя, необязательная метка
+  /// источника, кнопка "Открыть" и кнопка удаления/снятия выбора.
+  Widget _buildPdfTile({
+    required String name,
+    String? sourceTag,
+    VoidCallback? onOpen,
+    VoidCallback? onRemove,
+    IconData removeIcon = Icons.close,
+    String removeTooltip = 'Убрать',
+    Color iconColor = Colors.red,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Icon(Icons.picture_as_pdf, size: 16, color: iconColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+          if (sourceTag != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                sourceTag,
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            ),
+          if (onOpen != null)
+            IconButton(
+              tooltip: 'Открыть',
+              icon: const Icon(Icons.open_in_new, size: 16),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: onOpen,
+            ),
+          IconButton(
+            tooltip: removeTooltip,
+            icon: Icon(removeIcon, size: 16, color: Colors.red),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: onRemove,
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickOrderDate(BuildContext context) async {
@@ -2920,6 +3098,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
+        // Возобновление из архива: PDF-ссылка исходного заказа переносится
+        // в новое поколение (сам файл в Storage не копируется).
+        pdfUrl: widget.initialOrder?.pdfUrl,
         stageTemplateId: _stageTemplateId,
         hasForm: _hasForm,
         // Временно отключено в форме создания/редактирования заказа.
@@ -2946,6 +3127,34 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         return;
       }
       createdOrUpdatedOrder = _created;
+      // Возобновление из архива: переносим метаданные PDF-файлов исходного
+      // заказа на новый order id. Объекты в Storage не дублируются —
+      // используются те же objectPath (компромисс: удаление файла в одном
+      // поколении удаляет объект и для другого).
+      final restartSourceId =
+          widget.initialOrder?.restartedFromOrderId?.trim() ?? '';
+      if (restartSourceId.isNotEmpty) {
+        try {
+          final sourceFiles = await listOrderFiles(restartSourceId);
+          for (final file in sourceFiles) {
+            final objectPath = (file['objectPath'] ?? '').toString().trim();
+            if (objectPath.isEmpty) continue;
+            final fileName =
+                (file['filename'] ?? '').toString().trim().isNotEmpty
+                    ? (file['filename'] ?? '').toString().trim()
+                    : objectPath.split('/').last;
+            final sizeRaw = file['sizeBytes'];
+            await linkOrderPdf(
+              orderId: createdOrUpdatedOrder.id,
+              objectPath: objectPath,
+              fileName: fileName,
+              sizeBytes: sizeRaw is num ? sizeRaw.toInt() : null,
+            );
+          }
+        } catch (e) {
+          debugPrint('❌ resume: copy order files failed: $e');
+        }
+      }
     } else {
       final bool effectivePersistedHasForm = (_orderFormNo != null) ||
           (_orderFormCode != null && _orderFormCode!.trim().isNotEmpty) ||
@@ -3024,6 +3233,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         restartedFromOrderId: widget.order!.restartedFromOrderId,
         restartRootOrderId: widget.order!.restartRootOrderId,
         restartGeneration: widget.order!.restartGeneration,
+        // По той же причине сохраняем данные производства/отгрузки:
+        // без них пересохранение завершённого заказа обнуляло бы
+        // actual_qty/shipped_* в БД.
+        actualQty: widget.order!.actualQty,
+        shippedAt: widget.order!.shippedAt,
+        shippedBy: widget.order!.shippedBy,
+        shippedQty: widget.order!.shippedQty,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
@@ -3057,36 +3273,34 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         createdOrUpdatedOrder = withReadable;
       } catch (_) {}
     }
-    // Загружаем PDF при необходимости
-    if (_pickedPdf != null) {
-      final uploadedPath = await uploadPickedOrderPdf(
-        orderId: createdOrUpdatedOrder.id,
-        file: _pickedPdf!,
-      );
-      createdOrUpdatedOrder.pdfUrl = uploadedPath;
-      await provider.updateOrder(createdOrUpdatedOrder);
-      // Двусторонняя связь: дублируем ссылку на этот PDF в привязанную форму
-      // (source='order') — файл не копируется, добавляется лишь запись в
-      // form_files, чтобы PDF заказа был виден в экране «Формы — склад».
-      try {
-        final linkedFormId = await findFormIdByOrderFormRef(
-          formCode: createdOrUpdatedOrder.formCode?.trim(),
-          formSeries: createdOrUpdatedOrder.formSeries?.trim(),
-          formNo: createdOrUpdatedOrder.newFormNo,
-        );
-        if (linkedFormId != null) {
-          final safeName = _pickedPdf!.name.isNotEmpty
-              ? _pickedPdf!.name
-              : uploadedPath.split('/').last;
-          await linkFormPdf(
-            formId: linkedFormId,
-            objectPath: uploadedPath,
-            fileName: safeName,
-            sizeBytes: _pickedPdf!.size,
-            source: 'order',
+    // Загружаем все выбранные PDF заказа при необходимости.
+    // Привязка PDF к форме выполняется НЕ здесь, а после _processFormAssignment
+    // (см. _syncOrderPdfsToForm): при создании заказа реквизиты формы в этот
+    // момент ещё не записаны, и линковка уходила бы «в никуда».
+    final bool didUploadOrderPdfs = _pickedOrderPdfs.isNotEmpty;
+    if (_pickedOrderPdfs.isNotEmpty) {
+      String? lastUploaded;
+      for (final f in _pickedOrderPdfs) {
+        try {
+          lastUploaded = await uploadPickedOrderPdf(
+            orderId: createdOrUpdatedOrder.id,
+            file: f,
           );
+        } catch (e) {
+          debugPrint('❌ upload order pdf ${f.name}: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Ошибка загрузки ${f.name}: $e')),
+            );
+          }
         }
-      } catch (_) {}
+      }
+      if (lastUploaded != null) {
+        createdOrUpdatedOrder.pdfUrl = lastUploaded;
+        await provider.updateOrder(createdOrUpdatedOrder);
+      }
+      _pickedOrderPdfs = [];
+      await _loadSavedOrderPdfs();
     }
     if (willSaveBuiltStageQueue) {
       // Сохраняем фактическую очередь заказа через общий сервис.
@@ -3216,10 +3430,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     await _persistPaints(createdOrUpdatedOrder.id);
 
     // === Обработка формы ===
-    await _processFormAssignment(
+    // _editingForm сбрасывается внутри _processFormAssignment — запоминаем
+    // заранее, менялась ли форма в этом сохранении.
+    final bool wasEditingForm = _editingForm;
+    final String? assignedFormId = await _processFormAssignment(
       createdOrUpdatedOrder,
       isCreating: isCreating,
     );
+    // Заливаем PDF, выбранные для новой формы (стейджились в памяти, т.к.
+    // id формы был неизвестен до _processFormAssignment).
+    if (assignedFormId != null && _newFormPdfs.isNotEmpty) {
+      for (final f in _newFormPdfs) {
+        try {
+          await uploadPickedFormPdf(formId: assignedFormId, file: f);
+        } catch (e) {
+          debugPrint('❌ upload new form pdf ${f.name}: $e');
+        }
+      }
+      if (mounted) setState(() => _newFormPdfs = []);
+    }
+    // Двусторонняя связь: все PDF заказа должны быть видны у привязанной
+    // формы (source='order'). Линкуем строго ПОСЛЕ записи реквизитов формы,
+    // иначе при создании заказа форма ещё не найдена и связь терялась.
+    if (assignedFormId != null &&
+        (didUploadOrderPdfs || isCreating || wasEditingForm)) {
+      await _syncOrderPdfsToForm(createdOrUpdatedOrder.id, assignedFormId);
+    }
     // === Конец обработки формы ===
 
     // _processFormAssignment пишет в БД напрямую, минуя provider.
@@ -3421,7 +3657,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return productType.isEmpty ? null : productType;
   }
 
-  Future<void> _processFormAssignment(OrderModel order,
+  /// Записывает реквизиты привязанной формы в заказ.
+  /// Возвращает id формы на складе (для последующей линковки PDF)
+  /// или null, если форма не привязана / определить её не удалось.
+  Future<String?> _processFormAssignment(OrderModel order,
       {required bool isCreating}) async {
     bool persistedHasForm = false;
     bool? persistedIsOldForm;
@@ -3469,11 +3708,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           );
         });
       }
-      return;
+      // Форма не менялась, но id нужен вызывающему коду для линковки PDF.
+      try {
+        return await findFormIdByOrderFormRef(
+          formCode: persistedFormCode ?? _orderFormCode,
+          formSeries: persistedFormSeries ?? _orderFormSeries,
+          formNo: persistedFormNo ?? _orderFormNo,
+        );
+      } catch (e) {
+        debugPrint('❌ _processFormAssignment: resolve form id failed: $e');
+        return null;
+      }
     }
 
     final bool shouldHandle = isCreating || _editingForm || !hadFormBefore;
-    if (!shouldHandle) return;
+    if (!shouldHandle) return null;
 
     try {
       // Новое бизнес-правило: наличие формы управляется отдельной галочкой.
@@ -3489,7 +3738,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               'form_code': null,
             })
             .eq('id', order.id);
-        if (!mounted) return;
+        if (!mounted) return null;
         setState(() {
           _orderFormIsOld = null;
           _orderFormNo = null;
@@ -3507,12 +3756,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _formSearchCtl.clear();
           _loadingForms = false;
           _selectedOldFormImageUrl = null;
-          _newFormImageBytes = null;
+          _newFormPdfs = [];
+          _oldFormPdfsFormId = null;
+          _oldFormSavedPdfs = [];
         });
-        return;
+        return null;
       }
 
       WarehouseProvider? wp;
+      // id формы на складе, если он известен по ходу выбора/создания.
+      String? resolvedFormId;
       int? selectedFormNumber;
       dynamic rawSeries;
       dynamic rawCode;
@@ -3525,6 +3778,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (_isOldForm) {
         if (_selectedOldFormRow != null) {
           final form = _selectedOldFormRow!;
+          final rowId = (form['id'] ?? '').toString().trim();
+          if (rowId.isNotEmpty) resolvedFormId = rowId;
           selectedFormNumber = ((form['number'] ?? 0) as num?)?.toInt();
           rawSeries = form['series'];
           rawCode = form['code'];
@@ -3555,7 +3810,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
         final hasCode = rawCode != null && rawCode.toString().trim().isNotEmpty;
         if (selectedFormNumber == null && !hasCode) {
-          return;
+          return null;
         }
       } else {
         final formColors = _composeFormColors();
@@ -3564,9 +3819,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         final hasNewFormPayload = (formColors?.trim().isNotEmpty ?? false) ||
             (formSize?.trim().isNotEmpty ?? false) ||
             (formProductType?.trim().isNotEmpty ?? false) ||
-            (_newFormImageBytes?.isNotEmpty ?? false) ||
+            _newFormPdfs.isNotEmpty ||
             !hadFormBefore;
-        if (hasNewFormPayload) {
+        // Реюз уже привязанной формы имеет приоритет над созданием новой:
+        // при возобновлении заказа из архива payload (цвета/размер) почти
+        // всегда непуст, и без этой проверки на складе плодились бы
+        // дубликаты форм. Явное редактирование формы (_editingForm) и
+        // заказ без реквизитов формы идут по прежней ветке создания.
+        final bool reuseAssignedForm =
+            _hasAssignedForm() && !(_orderFormIsOld ?? false) && !_editingForm;
+        if (reuseAssignedForm) {
+          selectedFormNumber = _orderFormNo;
+          rawSeries = _orderFormSeries;
+          rawCode = _orderFormCode;
+          rawSize = _orderFormSize;
+          rawProductType = _orderFormProductType;
+          rawColors = _orderFormColors;
+          rawImageUrl = _orderFormImageUrl;
+        } else if (hasNewFormPayload) {
           final customer = _customerController.text.trim();
           final extraInfo = _formExtraInfoController.text.trim();
           String series = customer.isNotEmpty ? customer : 'F';
@@ -3581,8 +3851,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             formSize: formSize,
             formProductType: formProductType,
             formColors: formColors,
-            imageBytes: _newFormImageBytes,
           );
+          final createdId = (created['id'] ?? '').toString().trim();
+          if (createdId.isNotEmpty) resolvedFormId = createdId;
           selectedFormNumber = ((created['number'] ?? 0) as num?)?.toInt();
           final createdSeries = _sanitizeText(created['series']);
           if (createdSeries != null && createdSeries.isNotEmpty) {
@@ -3603,7 +3874,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           rawColors = _orderFormColors;
           rawImageUrl = _orderFormImageUrl;
         } else {
-          return;
+          return null;
         }
       }
 
@@ -3631,7 +3902,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         throw 'empty response';
       }
 
-      if (!mounted) return;
+      // Фолбэк-ветки (реюз реквизитов) не знают id формы — резолвим по
+      // только что записанным реквизитам.
+      if (resolvedFormId == null) {
+        try {
+          resolvedFormId = await findFormIdByOrderFormRef(
+            formCode: sanitizedCode,
+            formSeries: sanitizedSeries,
+            formNo: selectedFormNumber,
+          );
+        } catch (e) {
+          debugPrint('❌ _processFormAssignment: resolve form id failed: $e');
+        }
+      }
+
+      if (!mounted) return resolvedFormId;
 
       setState(() {
         _orderFormIsOld = isOldFormValue;
@@ -3655,17 +3940,52 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _formResults = [];
         _formSearchCtl.clear();
         _loadingForms = false;
-        if (!_isOldForm) {
-          _newFormImageBytes = null;
-        }
         _selectedOldFormImageUrl = null;
+        _oldFormPdfsFormId = null;
+        _oldFormSavedPdfs = [];
       });
-    } catch (_) {
+      return resolvedFormId;
+    } catch (e) {
+      debugPrint('❌ _processFormAssignment error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Не удалось сохранить форму')),
         );
       }
+      return null;
+    }
+  }
+
+  /// Линкует все PDF заказа к форме [formId] (source='order', без
+  /// физического копирования файлов). Уже существующие связи (по objectPath)
+  /// не дублируются. Ошибки не прерывают сохранение заказа, но логируются.
+  Future<void> _syncOrderPdfsToForm(String orderId, String formId) async {
+    try {
+      final orderFiles = await listOrderFiles(orderId);
+      if (orderFiles.isEmpty) return;
+      final formFiles = await listFormFiles(formId);
+      final linkedPaths = formFiles
+          .map((f) => (f['objectPath'] ?? '').toString().trim())
+          .where((p) => p.isNotEmpty)
+          .toSet();
+      for (final file in orderFiles) {
+        final objectPath = (file['objectPath'] ?? '').toString().trim();
+        if (objectPath.isEmpty || linkedPaths.contains(objectPath)) continue;
+        final fileName = (file['filename'] ?? '').toString().trim().isNotEmpty
+            ? (file['filename'] ?? '').toString().trim()
+            : objectPath.split('/').last;
+        final sizeRaw = file['sizeBytes'];
+        await linkFormPdf(
+          formId: formId,
+          objectPath: objectPath,
+          fileName: fileName,
+          sizeBytes: sizeRaw is num ? sizeRaw.toInt() : null,
+          source: 'order',
+        );
+        linkedPaths.add(objectPath);
+      }
+    } catch (e) {
+      debugPrint('❌ _syncOrderPdfsToForm($orderId -> $formId): $e');
     }
   }
 
@@ -6711,31 +7031,114 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Widget _buildPdfAttachmentRow() {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _pickPdf,
-            icon: const Icon(Icons.attach_file),
-            label: Text(
-              _pickedPdf?.name ??
-                  (widget.order?.pdfUrl != null
-                      ? widget.order!.pdfUrl!.split('/').last
-                      : 'Прикрепить PDF'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+        if (_loadingOrderPdfs)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 4),
+            child: LinearProgressIndicator(minHeight: 2),
           ),
+        for (final f in _savedOrderPdfs)
+          _buildPdfTile(
+            name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
+            onOpen: () => _openSavedPdf(f),
+            onRemove: () => _removeSavedOrderPdf(f),
+            removeIcon: Icons.delete_outline,
+            removeTooltip: 'Удалить',
+          ),
+        for (final f in _pickedOrderPdfs)
+          _buildPdfTile(
+            name: f.name,
+            onOpen: f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
+            onRemove: () => setState(() => _pickedOrderPdfs.remove(f)),
+            removeTooltip: 'Убрать',
+          ),
+        if (_savedOrderPdfs.isNotEmpty || _pickedOrderPdfs.isNotEmpty)
+          const SizedBox(height: 4),
+        ElevatedButton.icon(
+          onPressed: _pickPdf,
+          icon: const Icon(Icons.attach_file),
+          label: const Text('Прикрепить PDF'),
         ),
-        if (_pickedPdf != null || widget.order?.pdfUrl != null) ...[
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.open_in_new),
-            onPressed: _openPdf,
-          ),
-        ]
       ],
     );
+  }
+
+  Future<void> _pickNewFormPdfs() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result != null && result.files.isNotEmpty) {
+      setState(() => _newFormPdfs.addAll(result.files));
+    }
+  }
+
+  Future<void> _loadOldFormPdfsFor(String formId) async {
+    setState(() {
+      _oldFormPdfsFormId = formId;
+      _loadingOldFormPdfs = true;
+    });
+    try {
+      final files = await listFormFiles(formId);
+      if (!mounted) return;
+      setState(() {
+        _oldFormSavedPdfs = files;
+        _loadingOldFormPdfs = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingOldFormPdfs = false);
+    }
+  }
+
+  Future<void> _pickOldFormPdfs() async {
+    final formId = _oldFormPdfsFormId;
+    if (formId == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    for (final f in result.files) {
+      try {
+        await uploadPickedFormPdf(formId: formId, file: f);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка загрузки ${f.name}: $e')),
+          );
+        }
+      }
+    }
+    await _loadOldFormPdfsFor(formId);
+  }
+
+  Future<void> _removeOldFormSavedPdf(Map<String, dynamic> file) async {
+    final fileName =
+        (file['filename'] ?? file['objectPath'] ?? 'Файл.pdf').toString();
+    final source = (file['source'] ?? 'form').toString();
+    final confirmed = await _confirmDeletePdf(
+      fileName,
+      message: source == 'order'
+          ? 'Файл "$fileName" будет отвязан от формы (сам файл заказа останется).'
+          : 'Файл "$fileName" будет удалён безвозвратно.',
+    );
+    if (!confirmed) return;
+    try {
+      await deleteFormFile(file);
+      if (mounted) setState(() => _oldFormSavedPdfs.remove(file));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось удалить файл: $e')),
+        );
+      }
+    }
   }
 
   List<Widget> _buildFormEditorControls() {
@@ -6749,13 +7152,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _hasForm = val;
             _editingForm = true;
             if (!val) {
-              _newFormImageBytes = null;
+              _newFormPdfs = [];
               _selectedOldFormRow = null;
               _selectedOldForm = null;
               _formResults = [];
               _formSearchCtl.clear();
               _loadingForms = false;
               _selectedOldFormImageUrl = null;
+              _oldFormPdfsFormId = null;
+              _oldFormSavedPdfs = [];
             }
           });
         },
@@ -6783,7 +7188,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _isOldForm = val;
             _userManuallySelectedFormType = true;
             if (_isOldForm) {
-              _newFormImageBytes = null;
+              _newFormPdfs = [];
               if (_formSearchCtl.text.trim().isEmpty) {
                 _formResults = [];
               }
@@ -6796,6 +7201,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               _formSearchCtl.clear();
               _loadingForms = false;
               _selectedOldFormImageUrl = null;
+              _oldFormPdfsFormId = null;
+              _oldFormSavedPdfs = [];
             }
           });
           if (val) {
@@ -6843,29 +7250,48 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ));
       }
+      widgets.add(const SizedBox(height: 4));
+      if (_oldFormPdfsFormId != null) {
+        if (_loadingOldFormPdfs) {
+          widgets.add(const Padding(
+            padding: EdgeInsets.only(bottom: 4),
+            child: LinearProgressIndicator(minHeight: 2),
+          ));
+        }
+        for (final f in _oldFormSavedPdfs) {
+          final source = (f['source'] ?? 'form').toString();
+          widgets.add(_buildPdfTile(
+            name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
+            sourceTag: source == 'order' ? 'из заказа' : null,
+            iconColor: source == 'order' ? Colors.grey : Colors.red,
+            onOpen: () => _openSavedPdf(f),
+            onRemove: () => _removeOldFormSavedPdf(f),
+            removeIcon: Icons.delete_outline,
+            removeTooltip: 'Удалить',
+          ));
+        }
+        widgets.add(ElevatedButton.icon(
+          onPressed: _pickOldFormPdfs,
+          icon: const Icon(Icons.attach_file),
+          label: const Text('Прикрепить PDF'),
+        ));
+      }
     } else {
       widgets.add(const SizedBox(height: 4));
       widgets.add(_buildFormExtraInfoField());
       widgets.add(const SizedBox(height: 8));
-      if (_newFormImageBytes != null) {
-        widgets.add(Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: GestureDetector(
-            onTap: () => showImagePreview(
-              context,
-              bytes: _newFormImageBytes,
-              title: _formSearchCtl.text.trim().isNotEmpty
-                  ? _formSearchCtl.text.trim()
-                  : null,
-            ),
-            child: Image.memory(_newFormImageBytes!, height: 100),
-          ),
+      for (final f in _newFormPdfs) {
+        widgets.add(_buildPdfTile(
+          name: f.name,
+          onOpen: f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
+          onRemove: () => setState(() => _newFormPdfs.remove(f)),
+          removeTooltip: 'Убрать',
         ));
       }
       widgets.add(ElevatedButton.icon(
-        onPressed: _pickNewFormImage,
-        icon: const Icon(Icons.photo_library),
-        label: const Text('Выбрать фото (не обязательно)'),
+        onPressed: _pickNewFormPdfs,
+        icon: const Icon(Icons.attach_file),
+        label: const Text('Прикрепить PDF'),
       ));
     }
 
@@ -6901,6 +7327,32 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         ),
       ));
+    }
+
+    // Bug-2: файлы привязанной формы в read-only сводке. Только «Открыть» —
+    // кнопки удаления здесь нет (удаление доступно лишь в редакторе формы),
+    // чтобы случайный клик при просмотре не сносил файл.
+    if (_loadingAssignedFormPdfs) {
+      items.add(const Padding(
+        padding: EdgeInsets.only(top: 6),
+        child: LinearProgressIndicator(minHeight: 2),
+      ));
+    } else if (_assignedFormPdfs.isNotEmpty) {
+      items.add(const Padding(
+        padding: EdgeInsets.only(top: 6, bottom: 2),
+        child: Text('Файлы формы:',
+            style: TextStyle(fontSize: 12, color: Colors.grey)),
+      ));
+      for (final f in _assignedFormPdfs) {
+        final source = (f['source'] ?? 'form').toString();
+        items.add(_buildPdfTile(
+          name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
+          sourceTag: source == 'order' ? 'из заказа' : null,
+          iconColor: source == 'order' ? Colors.grey : Colors.red,
+          onOpen: () => _openSavedPdf(f),
+          // read-only: onRemove не передаём → кнопки удаления нет.
+        ));
+      }
     }
 
     if (items.isEmpty) {
@@ -6955,6 +7407,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (query.isNotEmpty) {
         _reloadForms(search: query);
       }
+      // Форма уже привязана к заказу — резолвим её id, чтобы показать/
+      // редактировать список уже загруженных PDF немедленно.
+      findFormIdByOrderFormRef(
+        formCode: _orderFormCode,
+        formSeries: _orderFormSeries,
+        formNo: _orderFormNo,
+      ).then((formId) {
+        if (mounted && formId != null && _isOldForm) {
+          _loadOldFormPdfsFor(formId);
+        }
+      }).catchError((_) {});
     }
   }
 
@@ -6968,8 +7431,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _formResults = [];
       _formSearchCtl.clear();
       _loadingForms = false;
-      _newFormImageBytes = null;
+      _newFormPdfs = [];
       _selectedOldFormImageUrl = null;
+      _oldFormPdfsFormId = null;
+      _oldFormSavedPdfs = [];
     });
     if (mounted) {
       _formSearchFocusNode.unfocus();
@@ -7046,6 +7511,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   selection: TextSelection.collapsed(offset: value.length),
                 );
                 FocusScope.of(context).unfocus();
+                final rowId = (form['id'] ?? '').toString().trim();
+                if (rowId.isNotEmpty) {
+                  _loadOldFormPdfsFor(rowId);
+                }
               },
             );
           },
