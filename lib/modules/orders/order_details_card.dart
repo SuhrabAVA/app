@@ -57,6 +57,32 @@ class OrderDetailsCard extends StatelessWidget {
     return '$trimmed г';
   }
 
+  /// «Файлы заказа» = записи из order_files + линки формы с source='order'.
+  /// Двусторонняя связь форма↔заказ линкует PDF заказа в форму под тем же
+  /// objectPath, поэтому объединённый список дедуплицируем по objectPath
+  /// (предпочитая запись из order_files), иначе один файл показывается дважды.
+  List<Map<String, dynamic>> _orderFilesDeduped() {
+    final byKey = <String, bool>{};
+    final result = <Map<String, dynamic>>[];
+    void add(Map<String, dynamic> f) {
+      final objectPath = (f['objectPath'] ?? f['path'] ?? '').toString().trim();
+      final key = objectPath.isNotEmpty
+          ? objectPath
+          : (f['id'] ?? '').toString().trim();
+      if (key.isNotEmpty && byKey.containsKey(key)) return;
+      if (key.isNotEmpty) byKey[key] = true;
+      result.add(f);
+    }
+
+    for (final f in files) {
+      add(f);
+    }
+    for (final f in formFiles) {
+      if ((f['source'] ?? 'form').toString() == 'order') add(f);
+    }
+    return result;
+  }
+
   bool _isImageFile(String fileName, String objectPath) {
     final normalized = '$fileName $objectPath'.toLowerCase();
     return normalized.endsWith('.png') ||
@@ -538,19 +564,12 @@ class OrderDetailsCard extends StatelessWidget {
                                     child: CircularProgressIndicator(strokeWidth: 2),
                                   ),
                                 )
-                              else if ([
-                                ...files,
-                                ...formFiles.where((f) =>
-                                    (f['source'] ?? 'form').toString() == 'order'),
-                              ].isEmpty)
+                              else if (_orderFilesDeduped().isEmpty)
                                 const Text('Нет приложенных файлов',
                                     style: TextStyle(color: Colors.grey))
                               else
-                                ...[
-                                  ...files,
-                                  ...formFiles.where((f) =>
-                                      (f['source'] ?? 'form').toString() == 'order'),
-                                ].map((f) => _fileTile(context, f, compact: true)),
+                                ..._orderFilesDeduped().map(
+                                    (f) => _fileTile(context, f, compact: true)),
                             ],
                           ),
                           alignEnd: false,
