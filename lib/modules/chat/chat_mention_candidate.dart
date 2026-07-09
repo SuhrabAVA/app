@@ -34,13 +34,14 @@ class ChatMentionCandidate {
         _normalizedAlt.contains(p));
   }
 
-  /// Creates a candidate from raw employee data stored in Supabase.
+  /// Creates a candidate from a flat `employees`/`employees_view` row
+  /// (snake_case columns: last_name/first_name/patronymic).
   factory ChatMentionCandidate.fromEmployeeRow(
     String id,
     Map<String, dynamic> data,
   ) {
-    final last = (data['lastName'] ?? '').toString();
-    final first = (data['firstName'] ?? '').toString();
+    final last = (data['last_name'] ?? '').toString();
+    final first = (data['first_name'] ?? '').toString();
     final patr = (data['patronymic'] ?? '').toString();
     final primary = [last, first, patr]
         .where((p) => p.trim().isNotEmpty)

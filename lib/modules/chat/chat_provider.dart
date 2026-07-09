@@ -59,20 +59,21 @@ class ChatProvider with ChangeNotifier {
     if (_mentionCandidates.isNotEmpty || _mentionLoading) return;
     _mentionLoading = true;
     try {
+      // Источник — тот же employees_view, что и PersonnelProvider/аналитика
+      // (единый id сотрудника: раньше читали давно неактуальную коллекцию
+      // documents/collection=employees, которая пуста в проде).
       final res = await _sb
-          .from('documents')
-          .select('id, data')
-          .eq('collection', 'employees');
+          .from('employees_view')
+          .select('id, last_name, first_name, patronymic, is_fired');
       if (res is List) {
         _mentionCandidates
           ..clear()
           ..addAll(res.whereType<Map>().map((raw) {
             final row = Map<String, dynamic>.from(raw as Map);
             final id = (row['id'] ?? '').toString();
-            final data = Map<String, dynamic>.from(row['data'] ?? {});
-            final isFired = (data['isFired'] as bool?) ?? false;
+            final isFired = (row['is_fired'] as bool?) ?? false;
             if (id.isEmpty || isFired) return null;
-            final candidate = ChatMentionCandidate.fromEmployeeRow(id, data);
+            final candidate = ChatMentionCandidate.fromEmployeeRow(id, row);
             if (candidate.displayName.trim().isEmpty) return null;
             return candidate;
           }).whereType<ChatMentionCandidate>());
