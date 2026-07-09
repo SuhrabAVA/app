@@ -259,9 +259,9 @@ class OrderModel {
         if (includeNulls || material != null)
           'material': material?.toMap(),
         if (includeNulls || paperMaterials.isNotEmpty)
-          'material_list': paperMaterials.isEmpty
-              ? null
-              : paperMaterials.map((m) => m.toMap()).toList(),
+          // Колонка orders.material_list — NOT NULL, поэтому при пустом списке
+          // на UPDATE (includeNulls) шлём '[]', а не null (иначе 23502).
+          'material_list': paperMaterials.map((m) => m.toMap()).toList(),
         'makeready': makeready,
         'val': val,
         'has_form': hasForm,
