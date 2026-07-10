@@ -694,6 +694,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   List<PlatformFile> _pickedOrderPdfs = [];
   List<Map<String, dynamic>> _savedOrderPdfs = [];
   bool _loadingOrderPdfs = false;
+  // Черновик возобновления: objectPath файлов, исключённых пользователем из
+  // переноса. Реальные объекты Storage/order_files архивного заказа при этом
+  // не трогаются — удаление до сохранения только локальное.
+  final Set<String> _draftRemovedOrderPdfPaths = <String>{};
   bool _lengthExceeded = false;
   // Краски (мультисекция)
   final List<_PaintEntry> _paints = <_PaintEntry>[];
@@ -777,7 +781,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _loadOrderFormDisplay();
       }
     });
-    if (widget.order != null) {
+    if (widget.order != null ||
+        (widget.initialOrder?.restartedFromOrderId?.trim().isNotEmpty ??
+            false)) {
       _loadSavedOrderPdfs();
     }
 
@@ -898,6 +904,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           number: t.newFormNo,
         );
         _isOldForm = t.isOldForm;
+        // «Доп. информация формы» не имеет своей колонки — она закодирована
+        // суффиксом «(…)» внутри form_series; штатное извлечение в
+        // _loadOrderFormDisplay работает только при widget.order != null.
+        final extraInfo = _extractFormExtraInfoFromSeries(t.formSeries);
+        if (extraInfo.isNotEmpty) {
+          _formExtraInfoController.text = extraInfo;
+        }
+        // PDF переносимой формы. Microtask — загрузчики зовут setState,
+        // что недопустимо синхронно в initState. _editingForm не трогаем:
+        // программная инициализация не должна отключать реюз-ветку.
+        Future.microtask(() {
+          if (!mounted) return;
+          if (t.isOldForm) {
+            findFormIdByOrderFormRef(
+              formCode: t.formCode,
+              formSeries: t.formSeries,
+              formNo: t.newFormNo,
+            ).then((formId) {
+              if (mounted && formId != null && _isOldForm) {
+                _loadOldFormPdfsFor(formId);
+              }
+            }).catchError((_) {});
+          } else {
+            _loadAssignedFormPdfs(
+              formCode: t.formCode,
+              formSeries: t.formSeries,
+              formNo: t.newFormNo,
+            );
+          }
+        });
       }
     }
     final initialFormResult = applyOrderFormRules(
@@ -2632,10 +2668,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   Future<void> _loadSavedOrderPdfs() async {
-    if (widget.order == null) return;
+    // При редактировании — файлы самого заказа; в черновике возобновления —
+    // файлы исходного заказа: тот же источник, из которого сохранение
+    // копирует order_files на новый id (см. restartSourceId в _saveOrder).
+    final String sourceOrderId = widget.order?.id ??
+        (widget.initialOrder?.restartedFromOrderId?.trim() ?? '');
+    if (sourceOrderId.isEmpty) return;
     setState(() => _loadingOrderPdfs = true);
     try {
-      final files = await listOrderFiles(widget.order!.id);
+      final files = await listOrderFiles(sourceOrderId);
       if (!mounted) return;
       setState(() {
         _savedOrderPdfs = files;
@@ -2710,9 +2751,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Future<void> _removeSavedOrderPdf(Map<String, dynamic> file) async {
     final fileName =
         (file['filename'] ?? file['objectPath'] ?? 'Файл.pdf').toString();
-    final confirmed = await _confirmDeletePdf(fileName);
+    // Черновик (заказ ещё не создан): файлы в списке принадлежат исходному
+    // архивному заказу. Удаление — только локальная пометка «не переносить»;
+    // этот путь физически не ходит в Storage/order_files, чтобы закрытие
+    // черновика без сохранения не могло испортить архивный заказ.
+    final bool isUnsavedDraft = widget.order == null;
+    final confirmed = await _confirmDeletePdf(
+      fileName,
+      message: isUnsavedDraft
+          ? 'Файл "$fileName" не будет перенесён в новый заказ. '
+              'В исходном (архивном) заказе он останется.'
+          : null,
+    );
     if (!confirmed) return;
     final objectPath = (file['objectPath'] ?? '').toString();
+    if (isUnsavedDraft) {
+      if (mounted) {
+        setState(() {
+          if (objectPath.trim().isNotEmpty) {
+            _draftRemovedOrderPdfPaths.add(objectPath.trim());
+          }
+          _savedOrderPdfs.remove(file);
+        });
+      }
+      return;
+    }
     if (objectPath.isEmpty) return;
     try {
       await deleteOrderFile(objectPath);
@@ -3139,6 +3202,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           for (final file in sourceFiles) {
             final objectPath = (file['objectPath'] ?? '').toString().trim();
             if (objectPath.isEmpty) continue;
+            // Пользователь исключил файл в черновике — не переносим на новый
+            // заказ. Сам файл архивного заказа остаётся нетронутым.
+            if (_draftRemovedOrderPdfPaths.contains(objectPath)) continue;
             final fileName =
                 (file['filename'] ?? '').toString().trim().isNotEmpty
                     ? (file['filename'] ?? '').toString().trim()
@@ -7280,6 +7346,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       widgets.add(const SizedBox(height: 4));
       widgets.add(_buildFormExtraInfoField());
       widgets.add(const SizedBox(height: 8));
+      // Черновик возобновления: файлы реюзаемой формы, read-only «Открыть».
+      // Гейт !_editingForm повторяет условие реюз-ветки сохранения: как только
+      // пользователь тронул тумблеры (форма будет создана заново), чужие файлы
+      // из списка убираем, чтобы не выглядели прикреплёнными к новой форме.
+      if (widget.order == null && !_editingForm) {
+        if (_loadingAssignedFormPdfs) {
+          widgets.add(const Padding(
+            padding: EdgeInsets.only(bottom: 4),
+            child: LinearProgressIndicator(minHeight: 2),
+          ));
+        } else if (_assignedFormPdfs.isNotEmpty) {
+          widgets.add(const Padding(
+            padding: EdgeInsets.only(bottom: 2),
+            child: Text('Файлы формы:',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ));
+          for (final f in _assignedFormPdfs) {
+            final source = (f['source'] ?? 'form').toString();
+            widgets.add(_buildPdfTile(
+              name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
+              sourceTag: source == 'order' ? 'из заказа' : null,
+              iconColor: source == 'order' ? Colors.grey : Colors.red,
+              onOpen: () => _openSavedPdf(f),
+            ));
+          }
+        }
+      }
       for (final f in _newFormPdfs) {
         widgets.add(_buildPdfTile(
           name: f.name,
@@ -7559,6 +7652,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final bool editableState =
         !isEditing || _editingForm || !_hasAssignedForm();
     if (editableState) {
+      // Черновик возобновления: пока активна реюз-ветка сохранения
+      // (_processFormAssignment), показываем код переносимой формы, а не
+      // «заказчик + следующий свободный номер». Порядок проверок в ветках
+      // зеркалит приоритеты сохранения: в старой форме ручной выбор из
+      // поиска важнее реюза, в новой — реюз важнее создания.
+      final String seededDisplay = (_orderFormDisplay ?? '').trim();
+      final bool draftReusesForm = !isEditing &&
+          !_editingForm &&
+          _hasAssignedForm() &&
+          seededDisplay.isNotEmpty &&
+          seededDisplay != '-';
       if (_isOldForm) {
         if (_selectedOldFormRow != null) {
           return _oldFormInputValue(_selectedOldFormRow!);
@@ -7566,8 +7670,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (_selectedOldForm != null && _selectedOldForm!.trim().isNotEmpty) {
           return _selectedOldForm!.trim();
         }
+        if (draftReusesForm && (_orderFormIsOld ?? false)) {
+          return seededDisplay;
+        }
         return '-';
       } else {
+        if (draftReusesForm && !(_orderFormIsOld ?? false)) {
+          return seededDisplay;
+        }
         final customer = _customerController.text.trim();
         final n = _defaultFormNumber;
         if (customer.isNotEmpty && n > 0) {
