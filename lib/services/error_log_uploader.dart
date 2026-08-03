@@ -147,7 +147,11 @@ class ErrorLogUploader {
   }
 
   Map<String, dynamic> _entryToMap(AppErrorEntry e) => <String, dynamic>{
-        'time': e.time.toIso8601String(),
+        // Строго UTC с суффиксом Z: значение уходит в jsonb, где часовой пояс
+        // больше ниоткуда не восстановить. Без Z читающая сторона трактовала
+        // локальное алматинское время как UTC и показывала его на 5 часов
+        // мимо created_at той же строки.
+        'time': e.time.toUtc().toIso8601String(),
         'source': e.source,
         'message': e.message,
         if (e.stack != null && e.stack!.trim().isNotEmpty) 'stack': e.stack,
@@ -167,6 +171,10 @@ class ErrorLogUploader {
         'device_model': _deviceLabel(),
         'platform': _platformLabel(),
         'session_id': _sessionId ?? 'unknown',
+        // TODO(T1): наивная локальная строка в колонку timestamptz — тот же
+        // класс ошибки, что и в остальных 16 местах. Не трогаем до решения
+        // по миграции данных, иначе старые и новые строки будут разного
+        // смысла в одной колонке.
         if (_sessionStartedAt != null)
           'session_started_at': _sessionStartedAt!.toIso8601String(),
         'reason': reason,

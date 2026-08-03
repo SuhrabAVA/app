@@ -497,7 +497,11 @@ class _DayEventsTableState extends State<DayEventsTable> {
   }
 
   String _hhmm(DateTime dt) {
-    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    // Метки комментариев приходят UTC-флагированными из
+    // TaskAnalyticsMapper.parseCommentTimestamp (isUtc: true). Без toLocal()
+    // события дня показывались на 5 часов назад (Алматы = UTC+5).
+    final local = dt.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 }
 

@@ -1158,25 +1158,9 @@ class _TasksScreenState extends State<TasksScreen>
     return Duration(milliseconds: totalMs);
   }
 
-  /// Helper to format a timestamp (milliseconds since epoch) into a
-  /// readable "dd.MM HH:mm:ss" string. Falls back gracefully if value is null.
-  String _formatTimestamp(int? ts) {
-    if (ts == null) return '';
-    try {
-      DateTime dt;
-      // normalise seconds to milliseconds if necessary
-      if (ts < 2000000000000) {
-        dt = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
-      } else {
-        dt = DateTime.fromMillisecondsSinceEpoch(ts);
-      }
-      final d = dt;
-      String two(int n) => n.toString().padLeft(2, '0');
-      return '${two(d.day)}.${two(d.month)} ${two(d.hour)}:${two(d.minute)}:${two(d.second)}';
-    } catch (_) {
-      return '';
-    }
-  }
+  // Форматирование метки комментария — единая функция
+  // formatTaskCommentTimestamp из task_comment_presentation.dart.
+  // Локальная копия удалена: она расходилась с общей (не показывала год).
 
   String _employeeDisplayName(PersonnelProvider personnel, String userId) {
     if (userId.isEmpty) return '';
@@ -4262,8 +4246,8 @@ class _TasksScreenState extends State<TasksScreen>
             Padding(
               padding: EdgeInsets.only(bottom: scale * 4),
               child: Text(
-                '${_formatTimestamp(event.startTime.millisecondsSinceEpoch)}'
-                ' — ${event.endTime != null ? _formatTimestamp(event.endTime!.millisecondsSinceEpoch) : '…'}'
+                '${formatTaskCommentTimestamp(event.startTime.millisecondsSinceEpoch)}'
+                ' — ${event.endTime != null ? formatTaskCommentTimestamp(event.endTime!.millisecondsSinceEpoch) : '…'}'
                 ' · ${_timeTypeLabel(event.type)}'
                 ' · ${_employeeDisplayName(personnel, event.subjectUserId)}',
                 style: TextStyle(fontSize: scale * 12.5),

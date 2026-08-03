@@ -25,16 +25,25 @@ const Set<String> kTaskCommentQuantityTypes = <String>{
   'quantity_share',
 };
 
-/// Формат времени комментария — как в рабочем пространстве (dd.MM HH:mm:ss,
-/// секунды нормализуются к миллисекундам).
-String formatTaskCommentTimestamp(int? ts) {
+/// Формат времени комментария — как в рабочем пространстве.
+///
+/// `dd.MM HH:mm:ss` для текущего года и `dd.MM.yyyy HH:mm:ss` для любого
+/// другого: без года задание прошлого ноября выглядело сегодняшним.
+/// Секунды нормализуются к миллисекундам.
+///
+/// [reference] задаёт «сегодня» — нужен только тестам.
+String formatTaskCommentTimestamp(int? ts, {DateTime? reference}) {
   if (ts == null || ts <= 0) return '';
   try {
     final dt = ts < 2000000000000
         ? DateTime.fromMillisecondsSinceEpoch(ts * 1000)
         : DateTime.fromMillisecondsSinceEpoch(ts);
     String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(dt.day)}.${two(dt.month)} ${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}';
+    final currentYear = (reference ?? DateTime.now()).year;
+    final date = dt.year == currentYear
+        ? '${two(dt.day)}.${two(dt.month)}'
+        : '${two(dt.day)}.${two(dt.month)}.${dt.year}';
+    return '$date ${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}';
   } catch (_) {
     return '';
   }

@@ -37,6 +37,12 @@ interface LogRow {
   entries: ErrorEntry[];
 }
 
+// Edge Functions выполняются в UTC. Без явной зоны время в письме уезжало:
+// created_at (со смещением) рендерился в UTC, а entries[].time (наивная
+// строка) — как локальное время рантайма, и два поля расходились ровно на
+// смещение Алматы.
+const TZ: Intl.DateTimeFormatOptions = { timeZone: 'Asia/Almaty' };
+
 const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, '&amp;')
@@ -55,7 +61,7 @@ function renderRow(row: LogRow): string {
 
   const entries = (row.entries ?? [])
     .map((e) => {
-      const time = e.time ? new Date(e.time).toLocaleString('ru-RU') : '';
+      const time = e.time ? new Date(e.time).toLocaleString('ru-RU', TZ) : '';
       const head = `${time} [${e.source ?? '—'}]${
         e.context ? ` (${e.context})` : ''
       }`;
@@ -77,7 +83,7 @@ function renderRow(row: LogRow): string {
   return `<section style="margin-bottom:24px">
     <h3 style="margin:0 0 4px;font-size:14px">${escapeHtml(header)}</h3>
     <div style="color:#94a3b8;font-size:11px;margin-bottom:8px">
-      ${new Date(row.created_at).toLocaleString('ru-RU')} · записей: ${
+      ${new Date(row.created_at).toLocaleString('ru-RU', TZ)} · записей: ${
     row.entries_count
   }
     </div>
