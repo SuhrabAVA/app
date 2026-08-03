@@ -5342,6 +5342,11 @@ class _TasksScreenState extends State<TasksScreen>
     TaskModel task, {
     _QuantityInput? initialQtyInput,
   }) async {
+    // Провайдер и messenger захватываем ДО первого await: экран пересобирается
+    // от realtime и поллинга очередей, и обращение к context после диалога
+    // падало с «Null check operator used on a null value».
+    final tp = context.read<TaskProvider>();
+    final messenger = ScaffoldMessenger.of(context);
     final unitLabel =
         _workplaceUnit(context.read<PersonnelProvider>(), task.stageId);
     List<Map<String, dynamic>> paints = const <Map<String, dynamic>>[];
@@ -5360,6 +5365,7 @@ class _TasksScreenState extends State<TasksScreen>
           order: _orderById(task.orderId),
           task: task,
         );
+        if (!mounted) return false;
         if (result == null) return false;
         if (!result.openPaperEditor) {
           qtyInput = result;
@@ -5367,16 +5373,15 @@ class _TasksScreenState extends State<TasksScreen>
         }
         final order = _orderById(task.orderId);
         if (order == null) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Не удалось найти заказ для редактирования бумаги.'),
-              ),
-            );
-          }
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text('Не удалось найти заказ для редактирования бумаги.'),
+            ),
+          );
           return false;
         }
         await _openPaperEditDialog(order);
+        if (!mounted) return false;
       }
     }
 
@@ -5502,11 +5507,9 @@ class _TasksScreenState extends State<TasksScreen>
           ...pendingPreviousOrderPaints,
         ];
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось загрузить краски заказа: $e')),
-          );
-        }
+        messenger.showSnackBar(
+          SnackBar(content: Text('Не удалось загрузить краски заказа: $e')),
+        );
         return false;
       }
       var mutablePaints = mergedDisplayItems;
@@ -5516,21 +5519,21 @@ class _TasksScreenState extends State<TasksScreen>
           unitLabel,
           allowPaperEdit: true,
         );
+        if (!mounted) return false;
         if (dialogResult == null) return false;
         if (dialogResult.openPaintEditor) {
           final order = _orderById(task.orderId);
           if (order == null) {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content:
-                      Text('Не удалось найти заказ для редактирования красок.'),
-                ),
-              );
-            }
+            messenger.showSnackBar(
+              const SnackBar(
+                content:
+                    Text('Не удалось найти заказ для редактирования красок.'),
+              ),
+            );
             return false;
           }
           await _openPaintEditDialog(order);
+          if (!mounted) return false;
           try {
             currentOrderPaints = await loadCurrentOrderPaints();
             pendingPreviousOrderPaints =
@@ -5546,17 +5549,16 @@ class _TasksScreenState extends State<TasksScreen>
         if (dialogResult.openPaperEditor) {
           final order = _orderById(task.orderId);
           if (order == null) {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content:
-                      Text('Не удалось найти заказ для редактирования бумаги.'),
-                ),
-              );
-            }
+            messenger.showSnackBar(
+              const SnackBar(
+                content:
+                    Text('Не удалось найти заказ для редактирования бумаги.'),
+              ),
+            );
             return false;
           }
           await _openPaperEditDialog(order);
+          if (!mounted) return false;
           continue;
         }
         mutablePaints = dialogResult.paints;
@@ -5565,7 +5567,6 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
 
-    final tp = context.read<TaskProvider>();
     if (_isInkConfirmationStage(task)) {
       final note = mounted ? await _askFinishNote() : null;
       try {
@@ -5595,12 +5596,9 @@ class _TasksScreenState extends State<TasksScreen>
           });
         }
       } catch (e) {
-        if (mounted) {
-          final message = _humanizeRpcError(e);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
-        }
+        messenger.showSnackBar(
+          SnackBar(content: Text(_humanizeRpcError(e))),
+        );
         return false;
       }
       return true;
@@ -5619,12 +5617,9 @@ class _TasksScreenState extends State<TasksScreen>
       await tp.refresh();
       await tp.recomputeOrderActualQty(task.orderId);
     } catch (e) {
-      if (mounted) {
-        final message = _humanizeRpcError(e);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
-      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(_humanizeRpcError(e))),
+      );
       return false;
     }
     return true;
@@ -6297,9 +6292,14 @@ bool _hasRealStartConflict({
                     }
 
                     Future<void> onPause() async {
+                      // tp захвачен до первого await (см. buildControlsFor):
+                      // пока открыт диалог причины, строка кнопок может быть
+                      // размонтирована, и context.read падал с
+                      // «Null check operator used on a null value».
                       final comment = await _askComment('Причина паузы');
+                      if (!mounted) return;
                       if (comment == null) return;
-                      await context.read<TaskProvider>().addCommentAutoUser(
+                      await tp.addCommentAutoUser(
                           taskId: task.id,
                           type: 'pause',
                           text: comment,
@@ -6308,19 +6308,24 @@ bool _hasRealStartConflict({
                           note: comment);
                       if (!_anyUserActive(task,
                           exceptUserId: widget.employeeId)) {
-                        await context
-                            .read<TaskProvider>()
-                            .updateStatus(task.id, TaskStatus.paused);
+                        await tp.updateStatus(task.id, TaskStatus.paused);
                       }
                     }
 
                     Future<void> onFinish() async {
+                      // messenger захватываем до диалога количества, tp — из
+                      // buildControlsFor: диалог живёт долго, и за это время
+                      // строка кнопок успевает быть размонтирована.
+                      final messenger = ScaffoldMessenger.of(context);
                       final unitLabel = _workplaceUnit(personnel, task.stageId);
                       final order = _orderById(task.orderId);
                       _QuantityInput? qtyInput;
                       while (true) {
+                        // this.context — контекст экрана: он жив, пока
+                        // mounted. Контекст строки кнопок пересобирается и
+                        // на втором витке цикла может быть уже defunct.
                         qtyInput = await _askQuantity(
-                          context,
+                          this.context,
                           unit: unitLabel,
                           allowPaperEdit: true,
                           initialQuantity:
@@ -6328,24 +6333,24 @@ bool _hasRealStartConflict({
                           order: order,
                           task: task,
                         );
+                        if (!mounted) return;
                         if (qtyInput == null) return;
                         if (!qtyInput.openPaperEditor) break;
                         if (order == null) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                    'Не удалось найти заказ для редактирования бумаги.'),
-                              ),
-                            );
-                          }
+                          messenger.showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'Не удалось найти заказ для редактирования бумаги.'),
+                            ),
+                          );
                           return;
                         }
                         await _openPaperEditDialog(order);
+                        if (!mounted) return;
                       }
                       if (qtyInput == null) return;
                       final qtyText = qtyInput.commentText;
-                      final taskProvider = context.read<TaskProvider>();
+                      final taskProvider = tp;
                       var separateAllDone = false;
                       var jointUserIds = <String>[];
                       if (jointGroup != null) {
@@ -6423,12 +6428,9 @@ bool _hasRealStartConflict({
                         if (allDone) {
                           separateAllDone = true;
                         } else {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text(
-                                        'Ожидаем завершения остальных исполнителей (отдельный режим)…')));
-                          }
+                          messenger.showSnackBar(const SnackBar(
+                              content: Text(
+                                  'Ожидаем завершения остальных исполнителей (отдельный режим)…')));
                         }
                       }
 
@@ -6459,8 +6461,9 @@ bool _hasRealStartConflict({
                             return;
                           }
                           await closeTimeEventForUser(note: 'finish');
-                          final note =
-                              context.mounted ? await _askFinishNote() : null;
+                          if (!mounted) return;
+                          final note = await _askFinishNote();
+                          if (!mounted) return;
                           try {
                             await OrdersRepository().completeTaskStage(
                               taskId: task.id,
@@ -6475,12 +6478,9 @@ bool _hasRealStartConflict({
                             await taskProvider
                                 .recomputeOrderActualQty(task.orderId);
                           } catch (e) {
-                            if (context.mounted) {
-                              final message = _humanizeRpcError(e);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(message)),
-                              );
-                            }
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(_humanizeRpcError(e))),
+                            );
                           }
                           return;
                         }
@@ -6491,8 +6491,8 @@ bool _hasRealStartConflict({
                             spentSeconds: _secs,
                             startedAt: null,
                             clearStartedAt: true);
-                        if (context.mounted && separateAllDone) {
-                          ScaffoldMessenger.of(context).showSnackBar(
+                        if (separateAllDone) {
+                          messenger.showSnackBar(
                             const SnackBar(
                               content: Text(
                                 'Все исполнители завершили работу. Нажмите «Завершить задание» для закрытия этапа.',
@@ -6717,6 +6717,9 @@ bool _hasRealStartConflict({
                     }
 
                     Future<void> onShift() async {
+                      // messenger — до диалога подтверждения; провайдер берём
+                      // из tp, захваченного в buildControlsFor.
+                      final messenger = ScaffoldMessenger.of(context);
                       final confirmed = await showDialog<bool>(
                             context: context,
                             builder: (ctx) => AlertDialog(
@@ -6739,9 +6742,10 @@ bool _hasRealStartConflict({
                             ),
                           ) ??
                           false;
+                      if (!mounted) return;
                       if (!confirmed) return;
 
-                      final taskProvider = context.read<TaskProvider>();
+                      final taskProvider = tp;
                       final analytics = AuditLogService();
 
                       if (shiftPaused &&
@@ -6755,10 +6759,9 @@ bool _hasRealStartConflict({
                             stageModeAllowsJoin: true,
                             hasAccessToTask: true,
                           )) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('Невозможно продолжить этап из-за ограничений запуска')));
-                        }
+                        messenger.showSnackBar(const SnackBar(
+                            content: Text(
+                                'Невозможно продолжить этап из-за ограничений запуска')));
                         return;
                       }
 
@@ -6771,8 +6774,9 @@ bool _hasRealStartConflict({
                             _workplaceUnit(personnel, task.stageId);
                         _QuantityInput? qtyInput;
                         while (true) {
+                          // this.context — см. комментарий в onFinish.
                           qtyInput = await _askQuantity(
-                            context,
+                            this.context,
                             unit: unitLabel,
                             allowPaperEdit: true,
                             initialQuantity:
@@ -6780,22 +6784,22 @@ bool _hasRealStartConflict({
                             order: _orderById(task.orderId),
                             task: task,
                           );
+                          if (!mounted) return;
                           if (qtyInput == null) return;
                           if (!qtyInput.openPaperEditor) break;
                           final order = _orderById(task.orderId);
                           if (order == null) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Не удалось найти заказ для редактирования бумаги.',
-                                  ),
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Не удалось найти заказ для редактирования бумаги.',
                                 ),
-                              );
-                            }
+                              ),
+                            );
                             return;
                           }
                           await _openPaperEditDialog(order);
+                          if (!mounted) return;
                         }
                         if (qtyInput == null) return;
                         final qtyText = qtyInput.commentText;

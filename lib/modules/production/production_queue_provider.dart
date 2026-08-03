@@ -301,6 +301,10 @@ class ProductionQueueProvider with ChangeNotifier {
   static const _legacyRemoteTable = 'production_queue_state';
   static const _positionsTable = 'workplace_queue_positions';
 
+  /// 25 с вместо прежних 10: цеховой Wi-Fi слабый, а после замедления
+  /// поллинга до 20 с одиночный медленный запрос уже никому не мешает.
+  static const _queueRequestTimeout = Duration(seconds: 25);
+
   final Map<String, List<String>> _orderSequences = {};
   final Map<String, Set<String>> _hiddenOrders = {};
   final Map<String, Map<String, WorkplaceQueuePosition>> _positionsByWorkplace = {};
@@ -352,7 +356,11 @@ class ProductionQueueProvider with ChangeNotifier {
 
   void _startPollingFallback() {
     _pollingTimer?.cancel();
-    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    // 20 с, а не 2: обе таблицы опубликованы в supabase_realtime и приходят
+    // подпиской, поллинг — только страховка на случай разрыва сокета.
+    // Прежние 2 с давали ~1 запрос/сек на планшет и сами создавали затор
+    // на цеховом Wi-Fi.
+    _pollingTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       unawaited(_pollRemote());
     });
   }
@@ -372,9 +380,12 @@ class ProductionQueueProvider with ChangeNotifier {
         _pollSkipTicks = 0;
       } else {
         if (_pollFailureStreak < 5) _pollFailureStreak++;
-        // 1 → 3 → 7 → 15 → 29 пропущенных тиков (4с … 60с между попытками).
+        // 1 → 3 пропущенных тика: при тике 20 с это 40 с и 80 с между
+        // попытками. Потолок опущен с 29 тиков специально: раньше при тике
+        // 2 с он давал ~60 с, а после замедления поллинга те же 29 тиков
+        // растянулись бы до 10 минут.
         _pollSkipTicks = (1 << _pollFailureStreak) - 1;
-        if (_pollSkipTicks > 29) _pollSkipTicks = 29;
+        if (_pollSkipTicks > 3) _pollSkipTicks = 3;
       }
     } finally {
       _pollInFlight = false;
@@ -521,6 +532,48 @@ class ProductionQueueProvider with ChangeNotifier {
     return true;
   }
 
+  /// Сравнение двух позиций по значению: у [WorkplaceQueuePosition] нет
+  /// переопределённого `==`, поэтому полагаться на равенство объектов и на
+  /// равенство вложенных `Map` нельзя — сравниваем поля явно.
+  @visibleForTesting
+  static bool positionsEqual(
+    WorkplaceQueuePosition left,
+    WorkplaceQueuePosition right,
+  ) {
+    return left.id == right.id &&
+        left.workplaceId == right.workplaceId &&
+        left.taskId == right.taskId &&
+        left.orderId == right.orderId &&
+        left.stageId == right.stageId &&
+        left.stageGroupKey == right.stageGroupKey &&
+        left.queuePosition == right.queuePosition &&
+        left.hasQueuePosition == right.hasQueuePosition;
+  }
+
+  /// Совпадают ли два снимка позиций рабочих мест целиком.
+  ///
+  /// Нужно, чтобы поллинг не дёргал `notifyListeners()` на каждом тике:
+  /// `TasksScreen` подписан на провайдер через `context.watch`, и безусловная
+  /// нотификация пересобирала весь экран, ломая открытые диалоги.
+  @visibleForTesting
+  static bool positionSnapshotsMatch(
+    Map<String, Map<String, WorkplaceQueuePosition>> left,
+    Map<String, Map<String, WorkplaceQueuePosition>> right,
+  ) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      final other = right[entry.key];
+      if (other == null) return false;
+      if (entry.value.length != other.length) return false;
+      for (final position in entry.value.entries) {
+        final counterpart = other[position.key];
+        if (counterpart == null) return false;
+        if (!positionsEqual(position.value, counterpart)) return false;
+      }
+    }
+    return true;
+  }
+
   bool _legacyRemoteStateMatches(
     Map<String, List<String>> nextSequences,
     Map<String, Set<String>> nextHidden,
@@ -544,7 +597,7 @@ class ProductionQueueProvider with ChangeNotifier {
       final raw = await _sb
           .from(_legacyRemoteTable)
           .select('group_id, order_sequence, hidden_order_ids')
-          .timeout(const Duration(seconds: 10));
+          .timeout(_queueRequestTimeout);
       _noteSyncSuccess();
       if (raw is! List) return true;
 
@@ -588,7 +641,7 @@ class ProductionQueueProvider with ChangeNotifier {
           .select('id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
           .order('workplace_id')
           .order('queue_position')
-          .timeout(const Duration(seconds: 10));
+          .timeout(_queueRequestTimeout);
       _noteSyncSuccess();
       if (raw is! List) return true;
       final next = <String, Map<String, WorkplaceQueuePosition>>{};
@@ -599,6 +652,7 @@ class ProductionQueueProvider with ChangeNotifier {
         if (workplaceId.isEmpty || position.orderId.trim().isEmpty || position.stageId.trim().isEmpty) continue;
         next.putIfAbsent(workplaceId, () => <String, WorkplaceQueuePosition>{})[position.queueKey] = position;
       }
+      if (positionSnapshotsMatch(_positionsByWorkplace, next)) return true;
       _positionsByWorkplace
         ..clear()
         ..addAll(next);
