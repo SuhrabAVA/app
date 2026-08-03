@@ -160,6 +160,8 @@ class PersonnelDB {
     List<String> positionIds = const [],
     String? unit,
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
+    PriladkaCalcMode? priladkaCalcMode,
+    double priladkaPrice = 0,
   }) async {
     await s.from('workplaces').insert({
       'id': id,
@@ -171,6 +173,8 @@ class PersonnelDB {
       'max_concurrent_workers': maxConcurrentWorkers,
       'unit': unit?.trim().isEmpty == true ? null : unit?.trim(),
       'execution_mode': executionMode.name,
+      'priladka_calc_mode': priladkaCalcMode?.dbValue,
+      'priladka_price': priladkaPrice,
     });
     if (positionIds.isNotEmpty) {
       final rows = positionIds
@@ -191,6 +195,11 @@ class PersonnelDB {
     List<String>? positionIds,
     String? unit,
     WorkplaceExecutionMode? executionMode,
+    // Режим приладки может быть явно сброшен в null, поэтому отдельный флаг
+    // «трогать ли колонку» вместо nullable-семантики «не передали».
+    bool setPriladkaCalcMode = false,
+    PriladkaCalcMode? priladkaCalcMode,
+    double? priladkaPrice,
   }) async {
     final patch = <String, dynamic>{};
     if (name != null) patch['name'] = name;
@@ -206,6 +215,12 @@ class PersonnelDB {
     }
     if (executionMode != null) {
       patch['execution_mode'] = executionMode.name;
+    }
+    if (setPriladkaCalcMode) {
+      patch['priladka_calc_mode'] = priladkaCalcMode?.dbValue;
+    }
+    if (priladkaPrice != null) {
+      patch['priladka_price'] = priladkaPrice;
     }
     if (patch.isNotEmpty) {
       await s.from('workplaces').update(patch).eq('id', id);

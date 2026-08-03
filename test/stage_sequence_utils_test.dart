@@ -200,7 +200,6 @@ void main() {
 
     expect(canStartPackaging, isFalse);
   });
-}
 
 test('canStartPackagingEarly allows packaging when previous stage started and access granted', () {
   final result = canStartPackagingEarly(
@@ -275,3 +274,4 @@ test('canStartPackagingEarly blocks when packaging already started/completed', (
   expect(started, isFalse);
   expect(completed, isFalse);
 });
+}

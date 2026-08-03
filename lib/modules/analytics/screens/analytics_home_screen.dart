@@ -25,10 +25,16 @@ class AnalyticsHomeScreen extends StatefulWidget {
     super.key,
     required this.permission,
     this.initialTab = AnalyticsTopTab.employees,
+    this.selfViewCanGoBack = false,
   });
 
   final AnalyticsPermissionService permission;
   final AnalyticsTopTab initialTab;
+
+  /// true, когда selfView открыт push-ем поверх рабочего пространства и
+  /// сотруднику нужна ссылка «Назад». Из админ-панели флаг не передаётся:
+  /// там экран встроен и back-ссылка попнула бы весь маршрут панели.
+  final bool selfViewCanGoBack;
 
   @override
   State<AnalyticsHomeScreen> createState() => _AnalyticsHomeScreenState();
@@ -117,7 +123,8 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
             service: _service,
             permission: permission,
             employeeId: permission.currentEmployeeId!,
-            hideBackButton: true,
+            hideBackButton: !widget.selfViewCanGoBack,
+            onMonthChanged: (m) => _service.loadMonth(m),
           );
         }
 

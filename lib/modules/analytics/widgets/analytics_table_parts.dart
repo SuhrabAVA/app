@@ -1,7 +1,83 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../utils/analytics_colors.dart';
+
+/// Горизонтальный скролл за область данных таблицы. Строки данных — пассивные
+/// Transform.translate по offsetNotifier без собственных Scrollable, поэтому
+/// жесты принимает эта обёртка и двигает [controller] (контроллер header'а),
+/// а HScrollSync дальше сам разносит offset по header/footer/строкам.
+///
+/// Покрывает: drag пальцем (Android) и мышью с кнопкой, инерцию после свайпа,
+/// колесо/наклон колеса/Shift+колесо (PointerScrollEvent.scrollDelta.dx) и
+/// горизонтальный pan тачпада (PointerPanZoomUpdateEvent). Вертикальная
+/// составляющая колеса НЕ обрабатывается и НЕ регистрируется в
+/// PointerSignalResolver — Listener не поглощает события, поэтому
+/// scrollDelta.dy доходит до внешнего вертикального скролла страницы.
+/// Тапы по строкам (InkWell, инпуты, «Претензии») не перехватываются:
+/// добавляются только drag/scroll-обработчики, tap-арена не меняется.
+class TableHScrollGestures extends StatelessWidget {
+  const TableHScrollGestures({
+    super.key,
+    required this.controller,
+    required this.child,
+  });
+
+  final ScrollController controller;
+  final Widget child;
+
+  /// Сдвиг общего оффсета на [delta] px (＋ вправо), с clamp по контенту.
+  void _shift(double delta) {
+    if (!controller.hasClients) return;
+    final target = (controller.offset + delta)
+        .clamp(0.0, controller.position.maxScrollExtent);
+    if (target != controller.offset) controller.jumpTo(target);
+  }
+
+  /// Инерция после свайпа — без неё тач-свайп на Android ощущается мёртвым.
+  /// Простая децелерация: тормозной путь пропорционален скорости отпускания.
+  void _onDragEnd(DragEndDetails details) {
+    if (!controller.hasClients) return;
+    final vx = details.velocity.pixelsPerSecond.dx;
+    if (vx.abs() < 60) return;
+    final target = (controller.offset - vx * 0.25)
+        .clamp(0.0, controller.position.maxScrollExtent);
+    if (target == controller.offset) return;
+    controller.position.animateTo(
+      target,
+      duration: Duration(
+          milliseconds: (vx.abs() * 0.25).clamp(180.0, 500.0).round()),
+      curve: Curves.decelerate,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerSignal: (event) {
+        // Только доминирующая горизонталь: диагональный скролл колесом/
+        // тачпадом отдаём вертикали страницы без дёрганья таблицы вбок.
+        if (event is PointerScrollEvent) {
+          final d = event.scrollDelta;
+          if (d.dx != 0 && d.dx.abs() > d.dy.abs()) _shift(d.dx);
+        }
+      },
+      onPointerPanZoomUpdate: (event) {
+        final d = event.panDelta;
+        if (d.dx != 0 && d.dx.abs() > d.dy.abs()) _shift(-d.dx);
+      },
+      child: GestureDetector(
+        // opaque — drag ловится и на пустых местах области данных, а не
+        // только над отрисованными ячейками (deferToChild пропускал бы их).
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) => _shift(-details.delta.dx),
+        onHorizontalDragEnd: _onDragEnd,
+        child: child,
+      ),
+    );
+  }
+}
 
 /// Отдаёт intrinsic-высоту, измеренную на реальной ширине контента
 /// ([measureWidth] = restWidth таблицы), а не на той, что передаёт снаружи

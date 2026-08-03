@@ -93,9 +93,28 @@ double? _paperLengthFromMap(Map<String, dynamic>? map) {
   return null;
 }
 
-double? _paperLengthFromMaterial(MaterialModel material) {
+/// «Длина L» одной позиции бумаги.
+///
+/// Порядок важен: план этапа в метрах — это именно длина L, а НЕ
+/// `material.quantity`. У основной бумаги длина L хранится не в самой позиции,
+/// а в `order.product.length` (в форме заказа это одно поле «Длина L»), тогда
+/// как `quantity` — сколько бумаги списывается со склада. Обычно они совпадают,
+/// но после правки длины L в существующем заказе `quantity` остаётся прежним,
+/// и подстановка из неё давала план от старого расхода.
+double? _paperLengthForMaterial(
+  MaterialModel material, {
+  required bool isPrimary,
+  required OrderModel order,
+}) {
   final extraLength = _paperLengthFromMap(material.extra);
   if (extraLength != null && extraLength > 0) return extraLength;
+
+  if (isPrimary) {
+    final productLength = order.product.length;
+    if (productLength != null && productLength > 0) return productLength;
+  }
+
+  // Позиции без явной длины L: единственный доступный ориентир — списание.
   if (material.quantity > 0) return material.quantity;
   return null;
 }
@@ -103,10 +122,16 @@ double? _paperLengthFromMaterial(MaterialModel material) {
 double taskPaperLengthTotalForOrder(OrderModel? order) {
   if (order == null) return 0;
 
-  final materialTotal = order.paperMaterials.fold<double>(0, (sum, material) {
-    final length = _paperLengthFromMaterial(material);
-    return length == null || length <= 0 ? sum : sum + length;
-  });
+  final materials = order.paperMaterials;
+  double materialTotal = 0;
+  for (var i = 0; i < materials.length; i++) {
+    final length = _paperLengthForMaterial(
+      materials[i],
+      isPrimary: i == 0,
+      order: order,
+    );
+    if (length != null && length > 0) materialTotal += length;
+  }
   if (materialTotal > 0) return materialTotal;
 
   final productMap = order.product.toMap();
@@ -164,6 +189,29 @@ double? packQuantityFromOrder(OrderModel order) {
   return (packs != null && packs > 0) ? packs : null;
 }
 
+/// Фасовка заказа — сколько штук кладётся в одну упаковку.
+///
+/// Живёт в дополнительных параметрах строкой «Упаковка: 50» (поле «Упаковка»
+/// в форме заказа, подсказка «Например: по 50 шт»), поэтому берём первое
+/// число из значения — формулировка у менеджеров свободная.
+double? packSizeFromOrder(OrderModel order) =>
+    packSizeFromParams(order.additionalParams);
+
+/// То же самое по «сырым» дополнительным параметрам заказа — нужно там, где
+/// модель заказа недоступна (пересчёт actual_qty в TaskProvider).
+double? packSizeFromParams(Iterable<String> params) {
+  for (final param in params) {
+    final normalized = param.trim();
+    if (!normalized.toLowerCase().startsWith('упаковка:')) continue;
+    final value = normalized.substring('упаковка:'.length);
+    final match = RegExp(r'\d+(?:[.,]\d+)?').firstMatch(value);
+    if (match == null) continue;
+    final parsed = _number(match.group(0));
+    if (parsed != null && parsed > 0) return parsed;
+  }
+  return null;
+}
+
 double? getExpectedQuantity({
   required OrderModel order,
   required TaskModel task,
@@ -175,8 +223,16 @@ double? getExpectedQuantity({
   }
 
   if (isQuantityPackUnit(unit)) {
-    final quantity = order.product.quantity;
-    return quantity > 0 ? quantity.toDouble() : null;
+    // Сотрудник на упаковке отчитывается в упаковках, поэтому план тоже в
+    // упаковках: тираж ÷ фасовка. Фасовку берём из параметра «Упаковка: N»
+    // (product.blQuantity для этого не годится — это параметр бумаги, из-за
+    // чего он раньше ошибочно служил множителем факта). Без фасовки плана
+    // нет: null → статус unknown, факт сохраняется как есть.
+    final packSize = packSizeFromOrder(order);
+    if (packSize == null || packSize <= 0) return null;
+    final runSize = order.product.quantity;
+    if (runSize <= 0) return null;
+    return runSize / packSize;
   }
 
   if (isQuantityPieceUnit(unit)) {

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../personnel/employee_status_model.dart';
 import '../../personnel/personnel_provider.dart';
+import '../../personnel/workplace_model.dart';
 import '../models/salary_settings.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
@@ -27,6 +29,8 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
   late TextEditingController _mealCtrl;
   late TextEditingController _socialCtrl;
   final Map<String, TextEditingController> _coeffCtrls = {};
+  final Map<String, TextEditingController> _statusRateCtrls = {};
+  final Map<String, TextEditingController> _setupPriceCtrls = {};
 
   @override
   void initState() {
@@ -46,6 +50,12 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
     for (final c in _coeffCtrls.values) {
       c.dispose();
     }
+    for (final c in _statusRateCtrls.values) {
+      c.dispose();
+    }
+    for (final c in _setupPriceCtrls.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -58,10 +68,12 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
   Widget build(BuildContext context) {
     final coeffs = widget.service.state.coefficients;
     final workplaces = widget.personnel.workplaces;
+    final statuses = widget.service.state.statuses;
+    final statusRates = widget.service.state.statusPayRates;
 
     return Drawer(
       backgroundColor: AnalyticsColors.bg2,
-      width: 720,
+      width: 1000,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -128,86 +140,292 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                'Коэффициенты рабочих мест',
-                style: TextStyle(
-                  color: AnalyticsColors.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 14,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                      child: _coefficientsColumn(coeffs, workplaces)),
+                  const SizedBox(width: 24),
+                  Expanded(child: _setupPricesColumn(workplaces)),
+                  const SizedBox(width: 24),
+                  Expanded(
+                      child: _statusRatesColumn(statusRates, statuses)),
+                ],
               ),
-              const SizedBox(height: 4),
-              const Text(
-                'Сдельная оплата = количество × коэффициент. Если коэффициент 0 — рабочее место не учитывается в сдельной зарплате.',
-                style: TextStyle(color: AnalyticsColors.muted, fontSize: 11),
-              ),
-              const SizedBox(height: 8),
-              ...workplaces.map((w) {
-                final ctrl = _coeffCtrls.putIfAbsent(
-                  w.id,
-                  () => TextEditingController(
-                    text: AnalyticsFormat.decimal(coeffs[w.id] ?? 0),
-                  ),
-                );
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              w.name,
-                              style: const TextStyle(
-                                color: AnalyticsColors.text,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            Text(
-                              'единица: ${w.unit ?? 'шт'}',
-                              style: const TextStyle(
-                                color: AnalyticsColors.muted,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(
-                        width: 110,
-                        child: TextField(
-                          controller: ctrl,
-                          enabled: widget.canEdit,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                              color: AnalyticsColors.text,
-                              fontWeight: FontWeight.w800),
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          onChanged: widget.canEdit
-                              ? (v) {
-                                  widget.service.setWorkplaceCoefficient(
-                                    workplaceId: w.id,
-                                    coefficient: _parse(v),
-                                  );
-                                }
-                              : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
               const SizedBox(height: 24),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _coefficientsColumn(
+      Map<String, double> coeffs, List<WorkplaceModel> workplaces) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Коэффициенты рабочих мест',
+          style: TextStyle(
+            color: AnalyticsColors.text,
+            fontWeight: FontWeight.w900,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Сдельная оплата = количество × коэффициент. Если коэффициент 0 — рабочее место не учитывается в сдельной зарплате.',
+          style: TextStyle(color: AnalyticsColors.muted, fontSize: 11),
+        ),
+        const SizedBox(height: 8),
+        ...workplaces.map((w) {
+          final ctrl = _coeffCtrls.putIfAbsent(
+            w.id,
+            () => TextEditingController(
+              text: AnalyticsFormat.decimal(coeffs[w.id] ?? 0),
+            ),
+          );
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        w.name,
+                        style: const TextStyle(
+                          color: AnalyticsColors.text,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        'единица: ${w.unit ?? 'шт'}',
+                        style: const TextStyle(
+                          color: AnalyticsColors.muted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: TextField(
+                    controller: ctrl,
+                    enabled: widget.canEdit,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        color: AnalyticsColors.text,
+                        fontWeight: FontWeight.w800),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: widget.canEdit
+                        ? (v) {
+                            widget.service.setWorkplaceCoefficient(
+                              workplaceId: w.id,
+                              coefficient: _parse(v),
+                            );
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  /// Колонка «Оплата приладки»: только рабочие места с включённой приладкой
+  /// (hasMachine). Цена за одну засчитанную приладку; итог в ЗП =
+  /// количество приладок × цена.
+  Widget _setupPricesColumn(List<WorkplaceModel> workplaces) {
+    final withSetup = workplaces.where((w) => w.hasMachine).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Оплата приладки',
+          style: TextStyle(
+            color: AnalyticsColors.text,
+            fontWeight: FontWeight.w900,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Цена за одну засчитанную приладку. Оплата = количество приладок × цена. Показаны только рабочие места с включённой приладкой.',
+          style: TextStyle(color: AnalyticsColors.muted, fontSize: 11),
+        ),
+        const SizedBox(height: 8),
+        if (withSetup.isEmpty)
+          const Text(
+            'Нет рабочих мест с включённой приладкой (Персонал → Рабочие места).',
+            style: TextStyle(color: AnalyticsColors.muted, fontSize: 12),
+          ),
+        ...withSetup.map((w) {
+          final ctrl = _setupPriceCtrls.putIfAbsent(
+            w.id,
+            () => TextEditingController(
+              text: AnalyticsFormat.decimal(w.priladkaPrice),
+            ),
+          );
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        w.name,
+                        style: const TextStyle(
+                          color: AnalyticsColors.text,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        w.priladkaCalcMode == null
+                            ? '₸/приладка · способ не выбран!'
+                            : '₸/приладка · ${w.priladkaCalcMode!.label.toLowerCase()}',
+                        style: TextStyle(
+                          color: w.priladkaCalcMode == null
+                              ? AnalyticsColors.red
+                              : AnalyticsColors.muted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: TextField(
+                    controller: ctrl,
+                    enabled: widget.canEdit,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        color: AnalyticsColors.text,
+                        fontWeight: FontWeight.w800),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: widget.canEdit
+                        ? (v) {
+                            widget.service.setWorkplaceSetupPrice(
+                              workplaceId: w.id,
+                              price: _parse(v),
+                            );
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _statusRatesColumn(
+      Map<String, double> statusRates, List<EmployeeStatus> statuses) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Оплата по статусам',
+          style: TextStyle(
+            color: AnalyticsColors.text,
+            fontWeight: FontWeight.w900,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Фиксированная ставка за смену вместо сдельной оплаты в дни действия статуса. Если ставка 0 или не задана — статус не влияет на оплату.',
+          style: TextStyle(color: AnalyticsColors.muted, fontSize: 11),
+        ),
+        const SizedBox(height: 8),
+        if (statuses.isEmpty)
+          const Text(
+            'Статусы ещё не созданы (Персонал → Статусы).',
+            style: TextStyle(color: AnalyticsColors.muted, fontSize: 12),
+          ),
+        ...statuses.map((s) {
+          final ctrl = _statusRateCtrls.putIfAbsent(
+            s.id,
+            () => TextEditingController(
+              text: AnalyticsFormat.decimal(statusRates[s.id] ?? 0),
+            ),
+          );
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.name,
+                        style: const TextStyle(
+                          color: AnalyticsColors.text,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const Text(
+                        '₸/смена',
+                        style: TextStyle(
+                          color: AnalyticsColors.muted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: TextField(
+                    controller: ctrl,
+                    enabled: widget.canEdit,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        color: AnalyticsColors.text,
+                        fontWeight: FontWeight.w800),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: widget.canEdit
+                        ? (v) {
+                            widget.service.setStatusPayRate(
+                              statusId: s.id,
+                              fixedDayPay: _parse(v),
+                            );
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 

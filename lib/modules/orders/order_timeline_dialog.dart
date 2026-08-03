@@ -4,9 +4,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../personnel/personnel_provider.dart';
+import '../tasks/task_comment_presentation.dart';
 import '../tasks/task_model.dart';
-import '../tasks/quantity_status_service.dart';
 import 'id_format.dart';
+import 'order_comment_attachment.dart';
+import 'order_comments_repository.dart';
+import 'order_comments_timeline.dart';
 import 'order_generation_switcher.dart';
 import 'order_model.dart';
 import 'order_restart_history_repository.dart';
@@ -46,6 +49,37 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
   late String _selectedOrderId;
   // Ленивая загрузка: future истории поколения создаётся при первом выборе.
   final Map<String, Future<List<Map<String, dynamic>>>> _eventsByOrderId = {};
+  // Вложения комментариев этапов: comment_id -> файлы.
+  final Map<String, List<OrderCommentAttachment>> _attachmentsByComment = {};
+  final Set<String> _requestedAttachmentCommentIds = <String>{};
+
+  void _ensureCommentAttachments(List<Map<String, dynamic>> events) {
+    final missing = <String>[];
+    for (final event in events) {
+      if ((event['source'] ?? '') != 'task_comment') continue;
+      final id = (event['comment_id'] ?? '').toString().trim();
+      if (id.isEmpty || _requestedAttachmentCommentIds.contains(id)) continue;
+      _requestedAttachmentCommentIds.add(id);
+      missing.add(id);
+    }
+    if (missing.isEmpty) return;
+    Future.microtask(() async {
+      try {
+        final rows =
+            await OrderCommentsRepository().loadAttachmentsByCommentIds(missing);
+        if (!mounted || rows.isEmpty) return;
+        setState(() {
+          for (final a in rows) {
+            _attachmentsByComment
+                .putIfAbsent(a.commentId, () => <OrderCommentAttachment>[])
+                .add(a);
+          }
+        });
+      } catch (_) {
+        // Вложения не критичны для истории.
+      }
+    });
+  }
 
   static final DateFormat _dateTimeFormat = DateFormat('dd.MM.yyyy в HH:mm', 'ru');
 
@@ -105,120 +139,6 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
     final dt = _parseTimestamp(value);
     if (dt == null) return '';
     return _dateTimeFormat.format(dt);
-  }
-
-  String _formatQuantity(String text, double? parsed) {
-    final payloadDisplay = quantityDisplayText(text);
-    if (payloadDisplay != text) return payloadDisplay;
-    if (parsed != null) {
-      final bool isInt = (parsed - parsed.round()).abs() < 0.0001;
-      final display = isInt ? parsed.round().toString() : parsed.toStringAsFixed(2);
-      return '$display шт.';
-    }
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return '—';
-    final normalised = trimmed.replaceAll(',', '.');
-    final numeric = double.tryParse(normalised);
-    if (numeric != null) {
-      return _formatQuantity('', numeric);
-    }
-    return trimmed;
-  }
-
-  String _executionModeLabel(String? rawMode) {
-    final mode = (rawMode ?? '').trim().toLowerCase();
-    if (mode.contains('separ') || mode.contains('single') || mode.contains('отдель')) {
-      return 'отдельный исполнитель';
-    }
-    if (mode.contains('joint') || mode.contains('team') || mode.contains('совмест')) {
-      return 'совместная работа';
-    }
-    return '';
-  }
-
-  String _timeTypeLabel(TaskTimeType type) {
-    switch (type) {
-      case TaskTimeType.production:
-        return 'Производство';
-      case TaskTimeType.pause:
-        return 'Пауза';
-      case TaskTimeType.problem:
-        return 'Проблема';
-      case TaskTimeType.shiftChange:
-        return 'Пересмена';
-      case TaskTimeType.setup:
-        return 'Наладка';
-    }
-  }
-
-  String? _describeTaskTimePayload(String text, PersonnelProvider personnel) {
-    final parsed = TaskTimeEvent.fromPayload(text, '', 0, '');
-    if (parsed == null) return null;
-
-    final started = _formatTimestamp(parsed.startTime);
-    final ended = parsed.endTime == null ? 'в процессе' : _formatTimestamp(parsed.endTime);
-    final subject = _userDisplay(personnel, parsed.subjectUserId);
-    final initiator = _userDisplay(personnel, parsed.initiatedBy);
-    final mode = _executionModeLabel(parsed.executionMode);
-    final note = (parsed.note ?? '').trim();
-
-    final List<String> details = [
-      '${_timeTypeLabel(parsed.type)}: ${started.isEmpty ? '—' : started} — $ended',
-      if (subject.isNotEmpty) 'Исполнитель: $subject',
-      if (initiator.isNotEmpty && initiator != subject) 'Инициатор: $initiator',
-      if (mode.isNotEmpty) 'Режим: $mode',
-      if (note.isNotEmpty) 'Комментарий: $note',
-    ];
-    return details.join(' · ');
-  }
-
-  String _describeComment(
-    String type,
-    String text,
-    double? quantity,
-    PersonnelProvider personnel,
-  ) {
-    final taskTimeDescription = _describeTaskTimePayload(text, personnel);
-    if (taskTimeDescription != null) return taskTimeDescription;
-
-    switch (type) {
-      case 'start':
-        return 'Начал(а) этап';
-      case 'pause':
-        return text.isEmpty ? 'Пауза' : 'Пауза: $text';
-      case 'resume':
-        return 'Возобновил(а) этап';
-      case 'user_done':
-        return 'Завершил(а) этап';
-      case 'problem':
-        return text.isEmpty ? 'Сообщил(а) о проблеме' : 'Проблема: $text';
-      case 'setup_start':
-        return 'Начал(а) настройку станка';
-      case 'setup_done':
-        return 'Завершил(а) настройку станка';
-      case 'quantity_done':
-        return 'Выполнил(а): ${_formatQuantity(text, quantity)}';
-      case 'quantity_team_total':
-        return 'Команда выполнила: ${_formatQuantity(text, quantity)}';
-      case 'quantity_share':
-        return 'Доля участника: ${_formatQuantity(text, quantity)}';
-      case 'finish_note':
-        return text.isEmpty
-            ? 'Комментарий к завершению'
-            : 'Комментарий к завершению: $text';
-      case 'joined':
-        return 'Присоединился(лась) к этапу';
-      case 'exec_mode':
-        final normalised = text.toLowerCase();
-        if (normalised.contains('separ') || normalised.contains('отдель')) {
-          return 'Режим: отдельный исполнитель';
-        }
-        return 'Режим: одиночная или совместная работа';
-      case 'msg':
-        return text.isEmpty ? 'Комментарий' : text;
-      default:
-        return text.isEmpty ? type : text;
-    }
   }
 
   String _describeOrderEvent(String type, String description) {
@@ -329,38 +249,43 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
     final dynamic timestampRaw = event['timestamp'] ?? event['created_at'];
     final String timeLabel = _formatTimestamp(timestampRaw);
     final String userLabel = _userDisplay(personnel, event['user_id'] as String?);
-    final String stageLabel =
-        isComment ? _stageDisplay(personnel, event['stage_id'] as String?) : '';
+
+    final String eventType = (event['event_type'] ?? '').toString();
+    final String description = (event['description'] ?? '').toString();
+
+    // Комментарии этапов — эталонный тайл рабочего пространства
+    // (иконка + время • автор • этап + описание + вложения).
+    if (isComment) {
+      final commentId = (event['comment_id'] ?? '').toString().trim();
+      final attachments =
+          _attachmentsByComment[commentId] ?? const <OrderCommentAttachment>[];
+      return TaskCommentTile(
+        comment: TaskComment(
+          id: commentId,
+          type: eventType,
+          text: description,
+          userId: (event['user_id'] ?? '').toString(),
+          timestamp: (event['timestamp'] as int?) ?? 0,
+        ),
+        authorName: userLabel,
+        stageName: _stageDisplay(personnel, event['stage_id'] as String?),
+        resolveUserName: (userId) => _userDisplay(personnel, userId),
+        attachments: [
+          for (final a in attachments) AttachmentPreview(attachment: a),
+        ],
+      );
+    }
 
     final List<String> metaParts = [];
     if (timeLabel.isNotEmpty) metaParts.add(timeLabel);
     if (userLabel.isNotEmpty) metaParts.add(userLabel);
     final String meta = metaParts.join(' • ');
 
-    final double? quantity =
-        (event['quantity'] is num) ? (event['quantity'] as num).toDouble() : null;
-    final String eventType = (event['event_type'] ?? '').toString();
-    final String description = (event['description'] ?? '').toString();
-
-    final String titleText = isChat
-        ? 'Чат заказа'
-        : isComment
-        ? (stageLabel.isNotEmpty ? stageLabel : 'Комментарий к этапу')
-        : _orderEventTitle(eventType);
+    final String titleText =
+        isChat ? 'Чат заказа' : _orderEventTitle(eventType);
     final String bodyText = isChat
         ? (description.isEmpty ? 'Сообщение в чате' : description)
-        : isComment
-        ? _describeComment(eventType, description, quantity, personnel)
         : _describeOrderEvent(eventType, description);
-
-    final List<Widget> subtitleWidgets = [];
-    if (meta.isNotEmpty) {
-      subtitleWidgets.add(
-        Text(meta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-      );
-      subtitleWidgets.add(const SizedBox(height: 2));
-    }
-    subtitleWidgets.add(Text(bodyText));
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -371,7 +296,15 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
       ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: subtitleWidgets,
+        children: [
+          if (meta.isNotEmpty) ...[
+            Text(meta,
+                style:
+                    const TextStyle(fontSize: 12, color: Colors.black54)),
+            const SizedBox(height: 2),
+          ],
+          Text(bodyText),
+        ],
       ),
     );
   }
@@ -396,6 +329,7 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
           final int tsB = (b['timestamp'] as int?) ?? 0;
           return tsA.compareTo(tsB);
         });
+        _ensureCommentAttachments(sortedEvents);
         if (sortedEvents.isEmpty) {
           return const Text('Комментариев по выполнению пока нет');
         }

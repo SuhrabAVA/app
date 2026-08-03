@@ -20,6 +20,7 @@ import 'modules/tasks/task_provider.dart';
 import 'modules/warehouse/supplier_provider.dart';
 import 'modules/warehouse/warehouse_provider.dart';
 import 'my_app.dart';
+import 'services/error_log_service.dart';
 import 'utils/http_overrides.dart';
 
 Future<void> main() async {
@@ -28,6 +29,11 @@ Future<void> main() async {
       WidgetsFlutterBinding.ensureInitialized();
 
       _BootLogger.log('main() started');
+
+      // Глобальный журнал ошибок: перехват debugPrint-логов ошибок
+      // и запись всех ошибок в errors_log.txt (см. ErrorLogService).
+      ErrorLogService.instance.installDebugPrintHook();
+      unawaited(ErrorLogService.instance.init());
 
       FlutterError.onError = (FlutterErrorDetails details) {
         if (isTransientFlutterVisualAssertion(details)) {
@@ -38,13 +44,26 @@ Future<void> main() async {
           return;
         }
 
-        FlutterError.presentError(details);
+        ErrorLogService.instance.record(
+          source: 'FLUTTER',
+          message: details.exceptionAsString(),
+          stack: details.stack?.toString(),
+          context: details.context?.toDescription() ?? details.library,
+        );
+        // presentError печатает через debugPrint — глушим хук от дублей.
+        ErrorLogService.instance
+            .runMuted(() => FlutterError.presentError(details));
         _BootLogger.log(
           'FLUTTER ERROR: ${details.exceptionAsString()}\n${details.stack}',
         );
       };
 
       PlatformDispatcher.instance.onError = (error, stack) {
+        ErrorLogService.instance.record(
+          source: 'PLATFORM',
+          message: '$error',
+          stack: '$stack',
+        );
         _BootLogger.log('PLATFORM ERROR: $error\n$stack');
         return true;
       };
@@ -59,6 +78,11 @@ Future<void> main() async {
       runApp(const BootstrapApp());
     },
     (error, stackTrace) {
+      ErrorLogService.instance.record(
+        source: 'ZONE',
+        message: '$error',
+        stack: '$stackTrace',
+      );
       _BootLogger.log('UNCAUGHT ZONE ERROR: $error\n$stackTrace');
     },
   );

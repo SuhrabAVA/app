@@ -1,7 +1,10 @@
-import 'dart:typed_data';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -34,6 +37,9 @@ Future<void> showImagePreview(
 ///
 /// Supports images, videos and PDF documents. Unsupported types are
 /// delegated to the platform using [url_launcher].
+///
+/// На Windows-desktop pdfx/video_player не поддерживаются — PDF и видео
+/// скачиваются во временный файл и открываются системным приложением.
 Future<void> showMediaPreview(
   BuildContext context, {
   required String url,
@@ -44,6 +50,8 @@ Future<void> showMediaPreview(
 
   final mimeLower = mime?.toLowerCase();
   final lowerUrl = url.toLowerCase();
+  final bool isWindows =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   if (mimeLower != null && mimeLower.startsWith('image/')) {
     await showImagePreview(context, imageUrl: url, title: title);
@@ -54,6 +62,10 @@ Future<void> showMediaPreview(
       lowerUrl.endsWith('.mp4') ||
       lowerUrl.endsWith('.mov') ||
       lowerUrl.endsWith('.webm')) {
+    if (isWindows) {
+      await _openWithSystemApp(url, title: title, fallbackExtension: '.mp4');
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _VideoPreviewPage(url: url, title: title),
@@ -64,6 +76,10 @@ Future<void> showMediaPreview(
   }
 
   if (mimeLower == 'application/pdf' || lowerUrl.endsWith('.pdf')) {
+    if (isWindows) {
+      await _openWithSystemApp(url, title: title, fallbackExtension: '.pdf');
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _PdfPreviewPage(url: url, title: title),
@@ -76,6 +92,48 @@ Future<void> showMediaPreview(
   final uri = Uri.tryParse(url);
   if (uri != null) {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}
+
+/// Скачивает файл во временную папку и открывает системным приложением.
+/// При любой ошибке — прежний фолбэк через url_launcher.
+Future<void> _openWithSystemApp(
+  String url, {
+  String? title,
+  required String fallbackExtension,
+}) async {
+  try {
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode != 200) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+    final tempDir = await getTemporaryDirectory();
+    final mediaDir = Directory('${tempDir.path}${Platform.pathSeparator}comment_media');
+    if (!await mediaDir.exists()) {
+      await mediaDir.create(recursive: true);
+    }
+    var fileName = (title ?? '').trim();
+    if (fileName.isEmpty) {
+      fileName = Uri.parse(url).pathSegments.isNotEmpty
+          ? Uri.parse(url).pathSegments.last
+          : 'attachment$fallbackExtension';
+    }
+    // Имя из заголовка/URL может содержать запрещённые для файла символы.
+    fileName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    if (!fileName.toLowerCase().endsWith(fallbackExtension)) {
+      fileName = '$fileName$fallbackExtension';
+    }
+    final file =
+        File('${mediaDir.path}${Platform.pathSeparator}$fileName');
+    await file.writeAsBytes(response.bodyBytes, flush: true);
+    final result = await OpenFilex.open(file.path);
+    if (result.type == ResultType.done) return;
+    throw Exception(result.message);
+  } catch (_) {
+    final uri = Uri.tryParse(url);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 }
 

@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../personnel/personnel_provider.dart';
+import '../../tasks/task_comment_presentation.dart';
 import '../calculators/analytics_calculator.dart';
 import '../calculators/kpd_calculator.dart';
 import '../calculators/rating_calculator.dart';
 import '../calculators/timeline_calculator.dart';
+import '../models/analytics_day_comment.dart';
 import '../models/analytics_event.dart';
 import '../services/analytics_pdf_export_service.dart';
 import '../services/analytics_permission_service.dart';
@@ -43,6 +45,27 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
   void initState() {
     super.initState();
     _workplaceId = widget.workplaceId;
+  }
+
+  /// Точечные маркеры комментариев/событий на линии дня (только отображение).
+  List<TimelineMarker> _commentMarkers(
+    List<AnalyticsDayComment> comments,
+    int daySelected,
+    AnalyticsState state,
+  ) {
+    final midnight =
+        DateTime(state.month.year, state.month.month, daySelected);
+    String hhmm(DateTime dt) =>
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    return [
+      for (final c in comments)
+        TimelineMarker(
+          minutes: c.timestamp.difference(midnight).inMinutes,
+          color: taskCommentColor(c.type, c.text),
+          tooltip:
+              '${hhmm(c.timestamp)} — ${describeTaskComment(c.type, c.text)}',
+        ),
+    ];
   }
 
   Future<void> _exportPdf(PersonnelProvider personnel) async {
@@ -102,6 +125,13 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
             : eventsByDay.keys.reduce((a, b) => a < b ? a : b);
         final daySelected = _selectedDay!;
         final dayEvents = eventsByDay[daySelected] ?? const [];
+        // Дополнительный слой отображения: события/комментарии этапов за
+        // выбранный день (на цифры зарплаты/КПД не влияет).
+        final dayComments = state.dayComments
+            .where((c) =>
+                c.workplaceId == _workplaceId &&
+                c.timestamp.day == daySelected)
+            .toList();
         final timeline = TimelineCalculator.build(
           day: DateTime(state.month.year, state.month.month, daySelected),
           events: dayEvents,
@@ -151,6 +181,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                   'Показывает фактическое время работы рабочего места за выбранный день. При переработке шкала автоматически удлиняется.',
               child: TimelineWidget(
                 layout: timeline,
+                markers: _commentMarkers(dayComments, daySelected, state),
                 workplaceNameOf: (id) =>
                     personnel.workplaceById(id)?.name ?? id,
                 employeeNameOf: (id) {
@@ -172,6 +203,16 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                 timeline: timeline,
                 workplaceById: {
                   for (final w in personnel.workplaces) w.id: w
+                },
+                comments: dayComments,
+                employeeNameOf: (id) {
+                  try {
+                    final e =
+                        personnel.employees.firstWhere((x) => x.id == id);
+                    return '${e.lastName} ${e.firstName}'.trim();
+                  } catch (_) {
+                    return id;
+                  }
                 },
               ),
             ),

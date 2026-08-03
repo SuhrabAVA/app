@@ -59,12 +59,43 @@ class WarehouseLogsBundle {
     required this.arrivals,
     required this.writeoffs,
     required this.inventories,
+    this.arrivalsHasMore = false,
+    this.writeoffsHasMore = false,
+    this.inventoriesHasMore = false,
   });
 
   final String typeKey;
   final List<WarehouseLogEntry> arrivals;
   final List<WarehouseLogEntry> writeoffs;
   final List<WarehouseLogEntry> inventories;
+
+  // true, если в таблице остались более старые записи, не вошедшие в
+  // загруженные порции («Показать ещё»).
+  final bool arrivalsHasMore;
+  final bool writeoffsHasMore;
+  final bool inventoriesHasMore;
+
+  List<WarehouseLogEntry> entriesFor(WarehouseLogAction action) {
+    switch (action) {
+      case WarehouseLogAction.arrival:
+        return arrivals;
+      case WarehouseLogAction.writeoff:
+        return writeoffs;
+      case WarehouseLogAction.inventory:
+        return inventories;
+    }
+  }
+
+  bool hasMoreFor(WarehouseLogAction action) {
+    switch (action) {
+      case WarehouseLogAction.arrival:
+        return arrivalsHasMore;
+      case WarehouseLogAction.writeoff:
+        return writeoffsHasMore;
+      case WarehouseLogAction.inventory:
+        return inventoriesHasMore;
+    }
+  }
 
   List<WarehouseLogEntry> allEntries() => [
         ...arrivals,
@@ -199,6 +230,9 @@ class WarehouseLogsRepository {
     },
   };
 
+  /// Размер порции логов: первая загрузка и каждый «Показать ещё».
+  static const int kLogPageSize = 200;
+
   /// Загрузить логи по всем поддерживаемым типам.
   static Future<Map<String, WarehouseLogsBundle>> fetchAllBundles() async {
     final Map<String, WarehouseLogsBundle> result =
@@ -210,20 +244,103 @@ class WarehouseLogsRepository {
     return result;
   }
 
-  /// Загрузить логи для одного типа склада.
+  /// Загрузить логи для одного типа склада: последние [kLogPageSize] записей
+  /// каждого вида (по created_at, сначала новые), не всю историю.
   static Future<WarehouseLogsBundle> fetchBundle(String rawType) async {
     await AppAuth.ensureSignedIn();
     final String typeKey = normalizeType(rawType);
-    final List<WarehouseLogEntry> arrivals = await _fetchArrivals(typeKey);
-    final List<WarehouseLogEntry> writeoffs = await _fetchWriteoffs(typeKey);
-    final List<WarehouseLogEntry> inventories =
-        await _fetchInventories(typeKey);
+    final (arrivals, arrivalsHasMore) =
+        await _fetchArrivals(typeKey, limit: kLogPageSize);
+    final (writeoffs, writeoffsHasMore) =
+        await _fetchWriteoffs(typeKey, limit: kLogPageSize);
+    final (inventories, inventoriesHasMore) =
+        await _fetchInventories(typeKey, limit: kLogPageSize);
 
     return WarehouseLogsBundle(
       typeKey: typeKey,
       arrivals: arrivals,
       writeoffs: writeoffs,
       inventories: inventories,
+      arrivalsHasMore: arrivalsHasMore,
+      writeoffsHasMore: writeoffsHasMore,
+      inventoriesHasMore: inventoriesHasMore,
+    );
+  }
+
+  /// Перечитывает вид [action] с нуля тем же объёмом, что уже загружен
+  /// (минимум одна страница): realtime-обновление лога без потери страниц,
+  /// догруженных через «Показать ещё».
+  static Future<WarehouseLogsBundle> refreshKind(
+    WarehouseLogsBundle bundle,
+    WarehouseLogAction action,
+  ) async {
+    await AppAuth.ensureSignedIn();
+    final int loaded = bundle.entriesFor(action).length;
+    final int limit = loaded > kLogPageSize ? loaded : kLogPageSize;
+    final (List<WarehouseLogEntry> page, bool hasMore) = switch (action) {
+      WarehouseLogAction.arrival =>
+        await _fetchArrivals(bundle.typeKey, limit: limit),
+      WarehouseLogAction.writeoff =>
+        await _fetchWriteoffs(bundle.typeKey, limit: limit),
+      WarehouseLogAction.inventory =>
+        await _fetchInventories(bundle.typeKey, limit: limit),
+    };
+    return WarehouseLogsBundle(
+      typeKey: bundle.typeKey,
+      arrivals:
+          action == WarehouseLogAction.arrival ? page : bundle.arrivals,
+      writeoffs:
+          action == WarehouseLogAction.writeoff ? page : bundle.writeoffs,
+      inventories:
+          action == WarehouseLogAction.inventory ? page : bundle.inventories,
+      arrivalsHasMore: action == WarehouseLogAction.arrival
+          ? hasMore
+          : bundle.arrivalsHasMore,
+      writeoffsHasMore: action == WarehouseLogAction.writeoff
+          ? hasMore
+          : bundle.writeoffsHasMore,
+      inventoriesHasMore: action == WarehouseLogAction.inventory
+          ? hasMore
+          : bundle.inventoriesHasMore,
+    );
+  }
+
+  /// Догружает следующую порцию логов вида [action] к уже загруженному
+  /// [bundle] и возвращает новый bundle с дописанными записями.
+  static Future<WarehouseLogsBundle> fetchMore(
+    WarehouseLogsBundle bundle,
+    WarehouseLogAction action,
+  ) async {
+    await AppAuth.ensureSignedIn();
+    final int offset = bundle.entriesFor(action).length;
+    final (List<WarehouseLogEntry> page, bool hasMore) = switch (action) {
+      WarehouseLogAction.arrival =>
+        await _fetchArrivals(bundle.typeKey, offset: offset, limit: kLogPageSize),
+      WarehouseLogAction.writeoff =>
+        await _fetchWriteoffs(bundle.typeKey, offset: offset, limit: kLogPageSize),
+      WarehouseLogAction.inventory =>
+        await _fetchInventories(bundle.typeKey, offset: offset, limit: kLogPageSize),
+    };
+    return WarehouseLogsBundle(
+      typeKey: bundle.typeKey,
+      arrivals: action == WarehouseLogAction.arrival
+          ? [...bundle.arrivals, ...page]
+          : bundle.arrivals,
+      writeoffs: action == WarehouseLogAction.writeoff
+          ? [...bundle.writeoffs, ...page]
+          : bundle.writeoffs,
+      inventories: action == WarehouseLogAction.inventory
+          ? [...bundle.inventories, ...page]
+          : bundle.inventories,
+      arrivalsHasMore: action == WarehouseLogAction.arrival
+          ? hasMore
+          : bundle.arrivalsHasMore,
+      writeoffsHasMore: action == WarehouseLogAction.writeoff
+          ? hasMore
+          : bundle.writeoffsHasMore,
+      inventoriesHasMore: action == WarehouseLogAction.inventory
+          ? hasMore
+          : bundle.inventoriesHasMore,
     );
   }
 
@@ -246,6 +363,8 @@ class WarehouseLogsRepository {
     required String selectFields,
     String? orderBy,
     bool ascending = true,
+    int offset = 0,
+    int? limit,
   }) async {
     for (final String table in tables) {
       final List<String?> attemptedOrders = <String?>[
@@ -265,9 +384,11 @@ class WarehouseLogsRepository {
         try {
           final PostgrestFilterBuilder<dynamic> query =
               _client.from(table).select(selectFields);
-          final dynamic data = order == null
-              ? await query
-              : await query.order(order, ascending: ascending);
+          final ordered =
+              order == null ? query : query.order(order, ascending: ascending);
+          final dynamic data = limit == null
+              ? await ordered
+              : await ordered.range(offset, offset + limit - 1);
           return (data as List).cast<Map<String, dynamic>>();
         } on PostgrestException catch (error) {
           final String code = (error.code?.toString() ?? '').toLowerCase();
@@ -881,9 +1002,14 @@ class WarehouseLogsRepository {
     );
   }
 
-  static Future<List<WarehouseLogEntry>> _fetchWriteoffs(String typeKey) async {
+  static Future<(List<WarehouseLogEntry>, bool)> _fetchWriteoffs(
+    String typeKey, {
+    int offset = 0,
+    int? limit,
+  }) async {
     final List<String> tables = _writeoffTables(typeKey);
     final List<Map<String, dynamic>> rawLogs = <Map<String, dynamic>>[];
+    bool hasMore = false;
 
     for (final String table in tables) {
       final List<Map<String, dynamic>> part = await _selectAnyTable(
@@ -891,13 +1017,16 @@ class WarehouseLogsRepository {
         selectFields: '*',
         orderBy: 'created_at',
         ascending: false,
+        offset: offset,
+        limit: limit,
       );
+      if (limit != null && part.length >= limit) hasMore = true;
       if (part.isNotEmpty)
         rawLogs.addAll(part.map((Map<String, dynamic> row) {
           return <String, dynamic>{...row, 'table_name': table};
         }));
     }
-    if (rawLogs.isEmpty) return <WarehouseLogEntry>[];
+    if (rawLogs.isEmpty) return (<WarehouseLogEntry>[], false);
 
     final List<String?> fkCandidates = <String?>[
       _woMap[typeKey]?['fk'],
@@ -935,7 +1064,8 @@ class WarehouseLogsRepository {
       _extractEmployeeIdsFromWriteoffRows(rawLogs),
     );
 
-    return rawLogs.map((Map<String, dynamic> e) {
+    final List<WarehouseLogEntry> entries =
+        rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
       final Map<String, dynamic>? baseRow =
           itemId == null ? null : baseMap[itemId];
@@ -982,12 +1112,17 @@ class WarehouseLogsRepository {
         qty: qty,
       );
     }).toList();
+    return (entries, hasMore);
   }
 
-  static Future<List<WarehouseLogEntry>> _fetchInventories(
-      String typeKey) async {
+  static Future<(List<WarehouseLogEntry>, bool)> _fetchInventories(
+    String typeKey, {
+    int offset = 0,
+    int? limit,
+  }) async {
     final List<String> tables = _inventoryTables(typeKey);
     final List<Map<String, dynamic>> rawLogs = <Map<String, dynamic>>[];
+    bool hasMore = false;
 
     for (final String table in tables) {
       final List<Map<String, dynamic>> part = await _selectAnyTable(
@@ -995,13 +1130,16 @@ class WarehouseLogsRepository {
         selectFields: '*',
         orderBy: 'created_at',
         ascending: false,
+        offset: offset,
+        limit: limit,
       );
+      if (limit != null && part.length >= limit) hasMore = true;
       if (part.isNotEmpty)
         rawLogs.addAll(part.map((Map<String, dynamic> row) {
           return <String, dynamic>{...row, 'table_name': table};
         }));
     }
-    if (rawLogs.isEmpty) return <WarehouseLogEntry>[];
+    if (rawLogs.isEmpty) return (<WarehouseLogEntry>[], false);
 
     final List<String?> fkCandidates = <String?>[
       _invMap[typeKey]?['fk'],
@@ -1032,7 +1170,8 @@ class WarehouseLogsRepository {
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
-    return rawLogs.map((Map<String, dynamic> e) {
+    final List<WarehouseLogEntry> entries =
+        rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
       final Map<String, dynamic>? baseRow =
           itemId == null ? null : baseMap[itemId];
@@ -1053,11 +1192,17 @@ class WarehouseLogsRepository {
         qty: qty,
       );
     }).toList();
+    return (entries, hasMore);
   }
 
-  static Future<List<WarehouseLogEntry>> _fetchArrivals(String typeKey) async {
+  static Future<(List<WarehouseLogEntry>, bool)> _fetchArrivals(
+    String typeKey, {
+    int offset = 0,
+    int? limit,
+  }) async {
     final List<String> tables = _arrivalTables(typeKey);
     final List<Map<String, dynamic>> rawLogs = <Map<String, dynamic>>[];
+    bool hasMore = false;
 
     for (final String table in tables) {
       final List<Map<String, dynamic>> part = await _selectAnyTable(
@@ -1065,13 +1210,16 @@ class WarehouseLogsRepository {
         selectFields: '*',
         orderBy: 'created_at',
         ascending: false,
+        offset: offset,
+        limit: limit,
       );
+      if (limit != null && part.length >= limit) hasMore = true;
       if (part.isNotEmpty)
         rawLogs.addAll(part.map((Map<String, dynamic> row) {
           return <String, dynamic>{...row, 'table_name': table};
         }));
     }
-    if (rawLogs.isEmpty) return <WarehouseLogEntry>[];
+    if (rawLogs.isEmpty) return (<WarehouseLogEntry>[], false);
 
     final List<String?> fkCandidates = <String?>[
       _arrMap[typeKey]?['fk'],
@@ -1102,7 +1250,8 @@ class WarehouseLogsRepository {
       for (final Map<String, dynamic> row in baseRows) row['id'].toString(): row
     };
 
-    return rawLogs.map((Map<String, dynamic> e) {
+    final List<WarehouseLogEntry> entries =
+        rawLogs.map((Map<String, dynamic> e) {
       final String? itemId = _pickId(e, fkCandidates);
       final Map<String, dynamic>? baseRow =
           itemId == null ? null : baseMap[itemId];
@@ -1123,5 +1272,6 @@ class WarehouseLogsRepository {
         qty: qty,
       );
     }).toList();
+    return (entries, hasMore);
   }
 }

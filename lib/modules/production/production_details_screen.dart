@@ -28,9 +28,10 @@ import '../tasks/task_model.dart';
 import '../tasks/task_provider.dart';
 import '../tasks/task_completion_rules.dart';
 // УДАЛЕНО: import '../production_planning/planned_stage_model.dart';
-import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../orders/order_comments_timeline.dart';
+import '../orders/order_comment_attachment.dart';
+import '../orders/order_comments_repository.dart';
 import '../../services/app_auth.dart';
 import '../orders/order_details_card.dart';
 import '../orders/restart_history_service.dart';
@@ -127,6 +128,36 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
   String _selectedCommentsOrderId = '';
   List<OrderGenerationEntry> _restartAncestors = const [];
   bool _loadingRestartHistory = false;
+  // Вложения комментариев: comment_id -> файлы; запрошенные id кэшируем,
+  // чтобы не дёргать запрос на каждый rebuild.
+  final Map<String, List<OrderCommentAttachment>> _attachmentsByComment = {};
+  final Set<String> _requestedAttachmentCommentIds = <String>{};
+
+  void _ensureCommentAttachments(Iterable<String> commentIds) {
+    final missing = commentIds
+        .map((id) => id.trim())
+        .where((id) =>
+            id.isNotEmpty && !_requestedAttachmentCommentIds.contains(id))
+        .toList(growable: false);
+    if (missing.isEmpty) return;
+    _requestedAttachmentCommentIds.addAll(missing);
+    Future.microtask(() async {
+      try {
+        final rows =
+            await OrderCommentsRepository().loadAttachmentsByCommentIds(missing);
+        if (!mounted || rows.isEmpty) return;
+        setState(() {
+          for (final a in rows) {
+            _attachmentsByComment
+                .putIfAbsent(a.commentId, () => <OrderCommentAttachment>[])
+                .add(a);
+          }
+        });
+      } catch (_) {
+        // Вложения не критичны для read-only просмотра.
+      }
+    });
+  }
 
   List<String> _decodeStringList(dynamic raw) {
     if (raw == null) return const [];
@@ -505,147 +536,26 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     return formatter.format(dt);
   }
 
-  String _formatCommentTimestamp(int timestamp) {
-    if (timestamp <= 0) return '';
-    try {
-      final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
-      return DateFormat('dd.MM.yyyy HH:mm').format(dt);
-    } catch (_) {
-      return '';
-    }
-  }
-
-  String _commentAuthorName(String userId, List<EmployeeModel> employees) {
-    if (userId.isEmpty) return 'Неизвестный сотрудник';
-    EmployeeModel? found;
-    for (final emp in employees) {
-      if (emp.id == userId ||
-          (emp.login.isNotEmpty && emp.login == userId) ||
-          (emp.iin.isNotEmpty && emp.iin == userId)) {
-        found = emp;
-        break;
+  /// ФИО исполнителей этапа. В tasks.assignees лежат id сотрудников —
+  /// показывать их пользователю бессмысленно. Если сотрудник не найден
+  /// (удалён из справочника), оставляем id: лучше сырой идентификатор,
+  /// чем пустая строка, по нему хотя бы можно найти запись.
+  String _assigneeNames(List<String> assignees, PersonnelProvider personnel) {
+    if (assignees.isEmpty) return '—';
+    final names = assignees.map((id) {
+      try {
+        final e = personnel.employees.firstWhere((x) => x.id == id);
+        final full = [e.lastName, e.firstName, e.patronymic]
+            .where((part) => part.trim().isNotEmpty)
+            .join(' ')
+            .trim();
+        if (full.isNotEmpty) return full;
+        return e.login.trim().isNotEmpty ? e.login.trim() : id;
+      } catch (_) {
+        return id;
       }
-    }
-    if (found == null) return userId;
-    final parts = [found.lastName, found.firstName, found.patronymic]
-        .where((s) => s.trim().isNotEmpty)
-        .toList();
-    if (parts.isEmpty) return userId;
-    return parts.join(' ');
-  }
-
-  Widget _buildCommentMeta(TaskComment comment, List<EmployeeModel> employees) {
-    final timestampText = _formatCommentTimestamp(comment.timestamp);
-    final authorText = _commentAuthorName(comment.userId, employees);
-    final meta = [timestampText, authorText]
-        .where((s) => s.trim().isNotEmpty)
-        .join(' • ');
-    if (meta.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Text(
-        meta,
-        style: const TextStyle(
-          fontSize: 12,
-          color: Colors.black54,
-        ),
-      ),
-    );
-  }
-
-  String _timeTypeLabel(TaskTimeType type) {
-    switch (type) {
-      case TaskTimeType.production:
-        return 'Производство';
-      case TaskTimeType.pause:
-        return 'Пауза';
-      case TaskTimeType.problem:
-        return 'Проблема';
-      case TaskTimeType.shiftChange:
-        return 'Пересмена';
-      case TaskTimeType.setup:
-        return 'Наладка';
-    }
-  }
-
-  String _formatQuantityDisplay(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return '0';
-    final value = double.tryParse(trimmed.replaceAll(',', '.'));
-    if (value == null) return trimmed;
-    if ((value - value.round()).abs() < 0.0001) {
-      return value.round().toString();
-    }
-    return value.toStringAsFixed(2);
-  }
-
-  String _renderCommentText(TaskComment comment, List<EmployeeModel> employees) {
-    final rawText = comment.text.trim();
-    if (rawText.isEmpty) {
-      switch (comment.type) {
-        case 'shift_pause':
-          return 'Пересмена: этап приостановлен';
-        case 'shift_resume':
-          return 'Пересмена: работа возобновлена';
-        case 'ink_writeoff':
-          return 'Зафиксировано списание краски';
-        default:
-          return 'Без комментария';
-      }
-    }
-
-    final parsed = TaskTimeEvent.fromPayload(
-      rawText,
-      comment.id,
-      comment.timestamp,
-      comment.userId,
-    );
-    if (parsed != null) {
-      final periodStart = DateFormat('dd.MM.yyyy HH:mm')
-          .format(parsed.startTime.toLocal());
-      final periodEnd = parsed.endTime == null
-          ? 'в процессе'
-          : DateFormat('dd.MM.yyyy HH:mm').format(parsed.endTime!.toLocal());
-      final subject = _commentAuthorName(parsed.subjectUserId, employees);
-      final note = parsed.note?.trim();
-      final notePart = (note != null && note.isNotEmpty) ? ' · $note' : '';
-      return '${_timeTypeLabel(parsed.type)}: $periodStart — $periodEnd · $subject$notePart';
-    }
-
-    switch (comment.type) {
-      case 'start':
-        return 'Начал(а) этап';
-      case 'pause':
-        return 'Пауза: $rawText';
-      case 'problem':
-        return 'Проблема: $rawText';
-      case 'setup_start':
-        return 'Начал(а) наладку';
-      case 'setup_resume':
-        return 'Продолжил(а) наладку';
-      case 'setup_done':
-        return 'Завершил(а) наладку';
-      case 'quantity_done':
-        return 'Выполнил(а): ${_formatQuantityDisplay(rawText)} шт.';
-      case 'quantity_team_total':
-        return 'Команда выполнила: ${_formatQuantityDisplay(rawText)} шт.';
-      case 'quantity_share':
-        return 'Личный вклад: ${_formatQuantityDisplay(rawText)} шт.';
-      case 'shift_pause':
-      case 'shift_resume':
-      case 'finish_note':
-      case 'ink_writeoff':
-        return rawText;
-      case 'shift_pause_state':
-      case 'exec_mode':
-      case 'exec_mode_stage':
-        return 'Служебная отметка этапа';
-    }
-
-    if (rawText.startsWith('{') && rawText.endsWith('}')) {
-      return 'Служебный комментарий';
-    }
-    return rawText;
+    }).toList();
+    return names.join(', ');
   }
 
   String _stageStatusLabel(TaskStatus? status) {
@@ -687,19 +597,27 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
     required PersonnelProvider personnel,
   }) {
     final comments = <TaskComment>[];
+    // time_event — интервальный дубль пауз/проблем (сырой JSON-пейлоад),
+    // в ленте не показываем, как и служебные флаги состояния.
     const hiddenTypes = <String>{
       'shift_pause_state',
       'exec_mode',
       'exec_mode_stage',
+      'time_event',
     };
+    final stageNamesByCommentId = <String, String>{};
     for (final t in commentsTasks) {
-      comments.addAll(
-        t.comments.where(
-          (comment) => !hiddenTypes.contains(comment.type.trim().toLowerCase()),
-        ),
-      );
+      final stageName = _resolveStageName(t.stageId, personnel);
+      for (final comment in t.comments) {
+        if (hiddenTypes.contains(comment.type.trim().toLowerCase())) continue;
+        comments.add(comment);
+        if (stageName.isNotEmpty) {
+          stageNamesByCommentId[comment.id] = stageName;
+        }
+      }
     }
     comments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    _ensureCommentAttachments(comments.map((c) => c.id));
 
     return Card(
       margin: EdgeInsets.zero,
@@ -725,7 +643,10 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
               height: 220,
               child: OrderCommentsTimeline(
                 comments: comments,
-                attachmentsByComment: const {},
+                attachmentsByComment: _attachmentsByComment,
+                stageNamesByCommentId: stageNamesByCommentId,
+                // Плотность как в рабочем пространстве (эталон ~0.7-0.76).
+                tileScale: 0.85,
                 emptyLabel: _isHistoryReadOnly
                     ? 'Комментариев по этому заказу нет'
                     : 'Комментариев пока нет',
@@ -830,7 +751,8 @@ class _ProductionDetailsScreenState extends State<ProductionDetailsScreen> {
                                     ),
                                     if (stageTasks.isNotEmpty)
                                       Text(
-                                        'Исполнители: ${stageTasks.first.assignees.join(', ')}',
+                                        'Исполнители: '
+                                        '${_assigneeNames(stageTasks.first.assignees, personnel)}',
                                         style: const TextStyle(
                                           fontSize: 13,
                                           color: Colors.black87,

@@ -2306,20 +2306,23 @@ class OrdersProvider with ChangeNotifier {
     return const <Map<String, dynamic>>[];
   }
 
-  double? _taskProductionQuantity(List<Map<String, dynamic>> comments) {
-    final teamTotals = comments
-        .where((comment) => comment['type'] == 'quantity_team_total')
-        .toList(growable: false);
-    if (teamTotals.isNotEmpty) {
-      final latest = teamTotals.reduce((a, b) =>
-          _commentTimestamp(a) >= _commentTimestamp(b) ? a : b);
-      return _parseProductionQuantity(latest['text']);
-    }
+  // Типы записей количества этапа: перерывы (share) + завершение
+  // (done/team_total — «сделано с последнего перерыва»). Семантика единая
+  // с аналитикой (TaskAnalyticsMapper) и recomputeOrderActualQty.
+  static const _productionQuantityCommentTypes = {
+    'quantity_share',
+    'quantity_done',
+    'quantity_team_total',
+  };
 
+  double? _taskProductionQuantity(List<Map<String, dynamic>> comments) {
     double total = 0;
     var hasQuantity = false;
     for (final comment in comments) {
-      if (comment['type'] != 'quantity_done') continue;
+      if (!_productionQuantityCommentTypes
+          .contains((comment['type'] ?? '').toString())) {
+        continue;
+      }
       total += _parseProductionQuantity(comment['text']);
       hasQuantity = true;
     }
@@ -2335,8 +2338,8 @@ class OrdersProvider with ChangeNotifier {
     if (finishedAt > timestamp) timestamp = finishedAt;
 
     for (final comment in comments) {
-      final type = comment['type'];
-      if (type != 'quantity_done' && type != 'quantity_team_total') continue;
+      final type = (comment['type'] ?? '').toString();
+      if (!_productionQuantityCommentTypes.contains(type)) continue;
       final commentTimestamp = _commentTimestamp(comment);
       if (commentTimestamp > timestamp) timestamp = commentTimestamp;
     }
@@ -2550,9 +2553,12 @@ class OrdersProvider with ChangeNotifier {
               }
             }
           } else if (commentsData is Map) {
-            commentsData.forEach((_, value) {
+            commentsData.forEach((key, value) {
               if (value is Map) {
-                commentsList.add(Map<String, dynamic>.from(value));
+                final item = Map<String, dynamic>.from(value);
+                // В map-формате id комментария — ключ узла, не поле значения.
+                item.putIfAbsent('id', () => key.toString());
+                commentsList.add(item);
               }
             });
           }
@@ -2568,6 +2574,7 @@ class OrdersProvider with ChangeNotifier {
               'description': text,
               'user_id': _stringOrNull(comment['userId']),
               'stage_id': stageId,
+              'comment_id': _stringOrNull(comment['id']),
               'quantity': _extractQuantity(type, text),
             });
           }

@@ -786,6 +786,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             false)) {
       _loadSavedOrderPdfs();
     }
+    // Свой резерв красок — чтобы при редактировании он не выглядел занятым.
+    _loadOwnPaintReservations();
 
     _stageTemplateController.text = '';
     _stageTemplateController.addListener(_onStageTemplateTextChanged);
@@ -1659,7 +1661,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         row.nameNotFound = match == null;
         if (match != null && row.qtyGrams != null) {
           row.exceeded =
-              _gramsToStockUnit(row.qtyGrams!, match) > match.quantity;
+              _gramsToStockUnit(row.qtyGrams!, match) > _paintAvailableQty(match);
         } else if (match == null) {
           row.exceeded = false;
         }
@@ -1689,6 +1691,57 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (grams == 0) return '0';
     final fixed = grams.toStringAsFixed(grams % 1 == 0 ? 0 : 2);
     return _trimTrailingFractionZeros(fixed);
+  }
+
+  /// Доступный остаток краски для этой формы: общий минус чужие резервы.
+  ///
+  /// `tmc.availableQty` уже вычтен резерв ВСЕХ активных заказов, включая
+  /// редактируемый. Свой резерв возвращаем обратно — иначе при открытии
+  /// существующего заказа его собственные 400 г выглядели бы занятыми и
+  /// поле подсвечивалось бы как «Недостаточно».
+  double _paintAvailableQty(TmcModel tmc) {
+    final own = _ownPaintReservations[tmc.id] ?? 0;
+    return tmc.availableQty + own;
+  }
+
+  /// Резерв текущего заказа по краскам: paint_id → количество в единицах
+  /// склада. Для нового заказа карта пустая.
+  final Map<String, double> _ownPaintReservations = <String, double>{};
+
+  Future<void> _loadOwnPaintReservations() async {
+    final orderId = (widget.order?.id ?? '').trim();
+    if (orderId.isEmpty) return;
+    try {
+      final rows = await Supabase.instance.client
+          .from('order_paint_reservations')
+          .select('paint_id, reserved_qty')
+          .eq('order_id', orderId);
+      final next = <String, double>{};
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw);
+        final id = (row['paint_id'] ?? '').toString().trim();
+        if (id.isEmpty) continue;
+        final value = row['reserved_qty'];
+        final qty = value is num
+            ? value.toDouble()
+            : double.tryParse('${value ?? ''}') ?? 0;
+        if (qty > 0) next[id] = (next[id] ?? 0) + qty;
+      }
+      if (!mounted || next.isEmpty) return;
+      setState(() {
+        _ownPaintReservations
+          ..clear()
+          ..addAll(next);
+      });
+    } catch (_) {
+      // Не критично: без своих резервов остаток будет чуть занижен.
+    }
+  }
+
+  /// Остаток склада без хвоста нулей: 4600, 4600.5.
+  String _formatStockQty(double value) {
+    final precision = value % 1 == 0 ? 0 : 2;
+    return _trimTrailingFractionZeros(value.toStringAsFixed(precision));
   }
 
   double _gramsToStockUnit(double grams, TmcModel tmc) {
@@ -3081,6 +3134,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             widget.order?.queueSignature, currentQueueSignature)) {
       nextQueueBuildStatus = QueueBuildStatus.outdated;
     }
+
+    // Запущенный заказ: правки применяются целиком, включая смену типа
+    // продукта. Очередь пересобираем сами — требовать ручного нажатия
+    // «Собрать очередь» здесь нельзя, иначе заказ сохранился бы с новым
+    // типом продукта, но со старым маршрутом этапов.
+    if (!isCreating &&
+        (widget.order?.assignmentCreated ?? false) &&
+        nextQueueBuildStatus != QueueBuildStatus.built) {
+      _buildStageQueue();
+      nextQueueBuildStatus = QueueBuildStatus.built;
+    }
     if (nextQueueBuildStatus == QueueBuildStatus.built) {
       _syncSwitchableStageSelectionFields(_stagePreviewStages);
     }
@@ -3382,6 +3446,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               'selected_p_stage': _selectedPStage,
             },
             currentQueueSignature,
+            // Правки запущенного заказа сохраняем всегда: уже начатые и
+            // завершённые этапы остаются как есть, обновляются ожидающие.
+            force: true,
           );
         } else {
           queueSaveResult = await _orderQueueService.saveBuiltQueue(
@@ -6960,7 +7027,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         row.nameNotFound = false;
                         if (row.qtyGrams != null) {
                           final need = _gramsToStockUnit(row.qtyGrams!, tmc);
-                          row.exceeded = need > tmc.quantity;
+                          row.exceeded = need > _paintAvailableQty(tmc);
                         } else {
                           row.exceeded = false;
                         }
@@ -6993,7 +7060,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   subtitle: Text(
-                                      'Кол-во: ${tmc.quantity.toString()}'),
+                                      'Доступно: '
+                                      '${_formatStockQty(_paintAvailableQty(tmc))} ${tmc.unit}'
+                                      '${tmc.reservedQty > 0 ? ' • в резерве ${_formatStockQty(tmc.reservedQty)}' : ''}'),
                                   onTap: () => onSelected(tmc),
                                 );
                               },
@@ -7020,7 +7089,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         row.qtyGrams = qty;
                         if (row.tmc != null && qty != null) {
                           final need = _gramsToStockUnit(qty, row.tmc!);
-                          row.exceeded = need > row.tmc!.quantity;
+                          row.exceeded = need > _paintAvailableQty(row.tmc!);
                         } else {
                           row.exceeded = false;
                         }

@@ -2,9 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:sheet_clone/modules/analytics/models/analytics_event.dart';
 import 'package:sheet_clone/modules/analytics/models/analytics_month.dart';
 import 'package:sheet_clone/modules/analytics/models/claim_model.dart';
-import 'package:sheet_clone/modules/analytics/models/employee_status.dart';
 import 'package:sheet_clone/modules/analytics/services/analytics_service.dart';
 import 'package:sheet_clone/modules/personnel/employee_model.dart';
+import 'package:sheet_clone/modules/personnel/employee_status_model.dart';
 import 'package:sheet_clone/modules/personnel/personnel_provider.dart';
 import 'package:sheet_clone/modules/personnel/workplace_model.dart';
 
@@ -27,6 +27,9 @@ class FakeAnalyticsService extends ChangeNotifier
 
   @override
   Future<void> refresh() async {}
+
+  @override
+  Map<String, double> get workplaceSetupPrices => const {};
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -57,6 +60,9 @@ class FakePersonnelProvider extends ChangeNotifier
     }
     return null;
   }
+
+  @override
+  String positionNameById(String id) => id;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

@@ -60,7 +60,10 @@ class WorkplacesScreen extends StatelessWidget {
                     final roles =
                         names.isEmpty ? w.positionIds.join(', ') : names;
                     final unit = (w.unit ?? '').isNotEmpty ? w.unit : '—';
-                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}\nРежим: ${modeLabel(w.executionMode)}";
+                    final priladka = w.hasMachine
+                        ? '\nПриладка: ${w.priladkaCalcMode?.label ?? 'способ не выбран!'}'
+                        : '';
+                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}$priladka\nРежим: ${modeLabel(w.executionMode)}";
                   }(),
                 ),
                 trailing: Row(
@@ -102,6 +105,8 @@ class WorkplacesScreen extends StatelessWidget {
     final nameC = TextEditingController();
     final unitC = TextEditingController();
     bool hasMachine = false;
+    PriladkaCalcMode? priladkaMode;
+    String? priladkaError;
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint;
 
     // Локально храним выбранные id должностей
@@ -137,6 +142,40 @@ class WorkplacesScreen extends StatelessWidget {
                           setState(() => hasMachine = val ?? false),
                       contentPadding: EdgeInsets.zero,
                     ),
+                    if (hasMachine) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Способ расчёта приладки',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      ...PriladkaCalcMode.values.map(
+                        (mode) => RadioListTile<PriladkaCalcMode>(
+                          title: Text(mode.label),
+                          value: mode,
+                          groupValue: priladkaMode,
+                          onChanged: (value) => setState(() {
+                            priladkaMode = value;
+                            priladkaError = null;
+                          }),
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                        ),
+                      ),
+                      if (priladkaError != null)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            priladkaError!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                    ],
                     const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerLeft,
@@ -223,7 +262,14 @@ class WorkplacesScreen extends StatelessWidget {
                   child: const Text('Отмена'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
+                  onPressed: () {
+                    if (hasMachine && priladkaMode == null) {
+                      setState(() => priladkaError =
+                          'Выберите способ расчёта приладки');
+                      return;
+                    }
+                    Navigator.pop(context, true);
+                  },
                   child: const Text('Добавить'),
                 ),
               ],
@@ -242,6 +288,7 @@ class WorkplacesScreen extends StatelessWidget {
           maxConcurrentWorkers: 0,
           unit: unitC.text.trim(),
           executionMode: executionMode,
+          priladkaCalcMode: hasMachine ? priladkaMode : null,
         );
       } catch (e) {
         if (context.mounted) {
@@ -314,6 +361,8 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   late final TextEditingController _unit =
       TextEditingController(text: widget.workplace.unit ?? '');
   bool _hasMachine = false;
+  PriladkaCalcMode? _priladkaMode;
+  String? _priladkaError;
   late Set<String> _selectedPositions;
   late WorkplaceExecutionMode _executionMode;
 
@@ -321,6 +370,7 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   void initState() {
     super.initState();
     _hasMachine = widget.workplace.hasMachine;
+    _priladkaMode = widget.workplace.priladkaCalcMode;
     _selectedPositions = {...widget.workplace.positionIds};
     _executionMode = widget.workplace.executionMode;
     // Если есть описание в модели — можно раскомментировать:
@@ -328,6 +378,10 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   }
 
   Future<void> _submit() async {
+    if (_hasMachine && _priladkaMode == null) {
+      setState(() => _priladkaError = 'Выберите способ расчёта приладки');
+      return;
+    }
     await context.read<PersonnelProvider>().updateWorkplace(
           id: widget.workplace.id,
           name: _name.text.trim(),
@@ -337,6 +391,8 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
           positionIds: _selectedPositions.toList(),
           unit: _unit.text.trim(),
           executionMode: _executionMode,
+          setPriladkaCalcMode: true,
+          priladkaCalcMode: _priladkaMode,
         );
     if (mounted) Navigator.pop(context);
   }
@@ -377,6 +433,40 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
               value: _hasMachine,
               onChanged: (val) => setState(() => _hasMachine = val ?? false),
             ),
+            if (_hasMachine) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Способ расчёта приладки',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              ...PriladkaCalcMode.values.map(
+                (mode) => RadioListTile<PriladkaCalcMode>(
+                  title: Text(mode.label),
+                  value: mode,
+                  groupValue: _priladkaMode,
+                  onChanged: (value) => setState(() {
+                    _priladkaMode = value;
+                    _priladkaError = null;
+                  }),
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+              ),
+              if (_priladkaError != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _priladkaError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+            ],
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,

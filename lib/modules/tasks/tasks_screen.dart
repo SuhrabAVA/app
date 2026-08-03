@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
@@ -27,15 +27,21 @@ import '../production_planning/template_model.dart';
 import '../production_planning/planned_stage_model.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
+import 'task_buttons_state.dart';
+import 'task_comment_presentation.dart';
 import 'task_model.dart';
 import 'task_completion_rules.dart';
 import 'task_provider.dart';
+import 'setup_count.dart';
+import 'workplace_setup_history_repository.dart';
+import '../../services/error_log_service.dart';
 import 'task_visibility.dart';
 import 'quantity_status_service.dart';
 import 'stage_sequence_utils.dart' as stage_sequence;
 import '../common/pdf_view_screen.dart';
 import '../../services/storage_service.dart';
 import '../../services/attachment_service.dart';
+import '../../utils/media_viewer.dart';
 // Additional helpers for time formatting and aggregated timers
 const String kCardboardCuttingStageId =
     stage_sequence.kCardboardCuttingStageId;
@@ -75,6 +81,36 @@ double? parseGramsInput(String text, {required bool checked}) {
   return parsed;
 }
 
+/// Обёртка «выключено, но объясняет причину».
+///
+/// Раньше вместо `onPressed: null` кнопке подсовывали обработчик-объяснялку,
+/// и Flutter рисовал её активной — так «Завершить» выглядела доступной на
+/// неначатом этапе. Теперь кнопка внутрь идёт по-настоящему выключенной
+/// (серый цвет, без ripple, `Semantics.enabled = false`, курсор не «рука»),
+/// а тап по ней перехватывается здесь и показывает тот же SnackBar.
+class ExplainOnTap extends StatelessWidget {
+  final bool enabled;
+  final VoidCallback? explain;
+  final Widget child;
+
+  const ExplainOnTap({
+    super.key,
+    required this.enabled,
+    required this.explain,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (enabled || explain == null) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: explain,
+      child: AbsorbPointer(child: child),
+    );
+  }
+}
+
 class TasksScreen extends StatefulWidget {
   final String employeeId;
   final bool showListOnly;
@@ -94,7 +130,8 @@ class TasksScreen extends StatefulWidget {
 }
 
 // === Execution mode per stage/assignee =======================================
-enum ExecutionMode { solo, separate, joint }
+// ExecutionMode и UserRunState объявлены в task_buttons_state.dart — там же,
+// где чистая функция доступности кнопок.
 
 ExecutionMode? _parseExecutionModeLabel(String raw) {
   final t = raw.toLowerCase();
@@ -339,8 +376,6 @@ Duration _setupElapsedFromTimeEvents(TaskModel task) {
   }
   return total;
 }
-
-enum UserRunState { idle, active, paused, finished, problem }
 
 UserRunState _userRunState(TaskModel task, String userId) {
   final timeEvents = _timeEventsForUser(task, userId);
@@ -824,6 +859,15 @@ class _TasksScreenState extends State<TasksScreen>
   final ScrollController _commentsScrollController = ScrollController();
   final List<AttachmentDraft> _pendingCommentAttachments = <AttachmentDraft>[];
   late final _TaskSelectionState _selection;
+
+  /// Общие «часы» для счётчиков времени: тикают раз в секунду и перестраивают
+  /// только подписанные ValueListenableBuilder, а не всё дерево экрана.
+  final ValueNotifier<DateTime> _clock = ValueNotifier<DateTime>(DateTime.now());
+  Timer? _clockTicker;
+
+  /// Поиск по списку заданий.
+  final TextEditingController _taskSearchController = TextEditingController();
+  String _taskSearch = '';
   bool _selectionUpdateScheduled = false;
   String? _lastQueueSyncGroupId;
   String? _lastQueueSyncIdsSignature;
@@ -881,6 +925,16 @@ class _TasksScreenState extends State<TasksScreen>
     _selection =
         _selectionCache.putIfAbsent(widget.employeeId, () => _TaskSelectionState());
     _selection.addListener(_onSelectionChanged);
+    // Один тикер на весь экран. Раньше каждый счётчик времени создавал
+    // Stream.periodic прямо в build(): на каждой пересборке рождался новый
+    // таймер, старый не закрывался, и в строках исполнителей их набегали
+    // десятки — каждый ежесекундно дёргал перестроение. Отсюда лаги.
+    _clockTicker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (mounted) _clock.value = DateTime.now();
+      },
+    );
   }
 
   void _onSelectionChanged() {
@@ -890,6 +944,9 @@ class _TasksScreenState extends State<TasksScreen>
   @override
   void dispose() {
     _selection.removeListener(_onSelectionChanged);
+    _clockTicker?.cancel();
+    _clock.dispose();
+    _taskSearchController.dispose();
     _commentsScrollController.dispose();
     _chatController.dispose();
     super.dispose();
@@ -1198,6 +1255,41 @@ class _TasksScreenState extends State<TasksScreen>
     final customer = order?.customer.trim() ?? '';
     if (customer.isNotEmpty) return customer;
     return _orderLabelForTask(task, ordersProvider);
+  }
+
+  /// Фильтр списка заданий по строке поиска.
+  ///
+  /// Ищем сразу по нескольким полям заказа — сотрудник помнит задание то по
+  /// заказчику, то по номеру, то по изделию. Запрос разбиваем на слова: все
+  /// они должны найтись, порядок не важен («тест пакет» найдёт «Пакет — Тест
+  /// Кондитерская»).
+  List<TaskModel> _filterTasksBySearch(
+    List<TaskModel> tasks,
+    OrdersProvider ordersProvider,
+  ) {
+    final query = _taskSearch.trim().toLowerCase();
+    if (query.isEmpty) return tasks;
+    final tokens = query
+        .split(RegExp(r'[\s,;]+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty) return tasks;
+
+    return tasks.where((task) {
+      final order = ordersProvider.orders.cast<OrderModel?>().firstWhere(
+            (candidate) => candidate?.id == task.orderId,
+            orElse: () => null,
+          );
+      final haystack = <String>[
+        _customerNameForTask(task, ordersProvider),
+        _orderLabelForTask(task, ordersProvider),
+        order?.assignmentId ?? '',
+        order?.product.type ?? '',
+        order?.formCode ?? '',
+        order?.manager ?? '',
+      ].join(' ').toLowerCase();
+      return tokens.every(haystack.contains);
+    }).toList(growable: false);
   }
 
   List<TaskModel> _activeTasksForEmployee(TaskProvider taskProvider) {
@@ -1630,6 +1722,11 @@ class _TasksScreenState extends State<TasksScreen>
         const ['paint_name', 'name', 'paintName'],
       );
 
+  /// Зеркало нормализации имён красок из orders_repository и
+  /// normalize_paint_name в БД — ключи сопоставления должны совпадать.
+  String _normalizePaintNameKey(String value) =>
+      value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
   double? _paintQtyKgFromRow(Map<String, dynamic> row) {
     final value = row['qty_kg'] ?? row['qtyKg'] ?? row['planned_qty_kg'];
     if (value is num) return value.toDouble();
@@ -1719,6 +1816,38 @@ class _TasksScreenState extends State<TasksScreen>
       return;
     }
 
+    // Переходящие краски: несписанные pending-строки других заказов запрещают
+    // удалять/заменять одноимённую краску (дублирует серверный триггер
+    // trg_guard_carryover_paint_removal, чтобы не доводить до ошибки COMMIT).
+    // Ключ — нормализованное имя, значение — читаемая метка заказа-источника.
+    // БИСЕКТ (временно, диагностика регрессии 2026-07-17): загрузка
+    // pending-строк отключена, карта защищённых красок пуста — кнопки и
+    // проверка при сохранении инертны, серверный триггер продолжает защищать.
+    // После проверки либо вернуть блок, либо заменить по итогам диагностики.
+    Map<String, String> protectedPaintOrderLabels = const <String, String>{};
+    // try {
+    //   final pendingRows =
+    //       await repo.getPendingPaintWriteoffs(excludeOrderId: latest.id);
+    //   final labelsById = await _loadReadableOrderLabelsByIds(
+    //     pendingRows
+    //         .map((row) => (row['order_id'] ?? '').toString().trim())
+    //         .where((id) => id.isNotEmpty)
+    //         .toSet(),
+    //   );
+    //   protectedPaintOrderLabels = {
+    //     // reversed: при нескольких pending-строках с одним именем побеждает
+    //     // самая ранняя (как в триггере — order by created_at limit 1).
+    //     for (final row in pendingRows.reversed)
+    //       _normalizePaintNameKey((row['paint_name'] ?? '').toString()):
+    //           labelsById[(row['order_id'] ?? '').toString().trim()] ??
+    //               (row['order_id'] ?? '').toString().trim(),
+    //   }..remove('');
+    //   if (!mounted) return;
+    // } catch (_) {
+    //   // Без этих данных подсказок в UI не будет, но удаление всё равно
+    //   // отклонят серверный триггер и проверка при сохранении ниже.
+    // }
+
     final selected = currentPaints.isNotEmpty
         ? currentPaints.map((row) => Map<String, dynamic>.from(row)).toList()
         : <Map<String, dynamic>>[
@@ -1777,10 +1906,16 @@ class _TasksScreenState extends State<TasksScreen>
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final compact = constraints.maxWidth < 640;
+                            final protectedOrderLabel = protectedPaintOrderLabels[
+                                _normalizePaintNameKey(
+                                    _paintNameFromRow(selected[i]))];
+                            final protectedHint = protectedOrderLabel == null
+                                ? null
+                                : 'Краска перешла из заказа «$protectedOrderLabel» и ещё не списана';
                             final deleteButton = selected.length > 1
                                 ? IconButton(
-                                    tooltip: 'Удалить краску',
-                                    onPressed: saving
+                                    tooltip: protectedHint ?? 'Удалить краску',
+                                    onPressed: (saving || protectedHint != null)
                                         ? null
                                         : () {
                                             final removedQty = qtyControllers[i];
@@ -1799,8 +1934,8 @@ class _TasksScreenState extends State<TasksScreen>
                                     icon: const Icon(Icons.delete_outline),
                                   )
                                 : const SizedBox.shrink();
-                            final paintButton = OutlinedButton(
-                              onPressed: saving
+                            Widget paintButton = OutlinedButton(
+                              onPressed: (saving || protectedHint != null)
                                   ? null
                                   : () => choosePaint(i, setDialogState),
                               child: Align(
@@ -1813,6 +1948,12 @@ class _TasksScreenState extends State<TasksScreen>
                                 ),
                               ),
                             );
+                            if (protectedHint != null) {
+                              paintButton = Tooltip(
+                                message: protectedHint,
+                                child: paintButton,
+                              );
+                            }
                             final qtyField = TextFormField(
                               controller: qtyControllers[i],
                               keyboardType:
@@ -1939,6 +2080,25 @@ class _TasksScreenState extends State<TasksScreen>
                           'info': infoControllers[i].text.trim(),
                           'qty_kg': qtyKg,
                         });
+                      }
+                      // Переходящая краска обязана остаться в итоговом списке —
+                      // иначе сохранение отклоняем ещё до запроса (серверный
+                      // триггер продублирует запрет на любом обходном пути).
+                      final nextNames = nextRows
+                          .map((row) => _normalizePaintNameKey(
+                              (row['name'] ?? '').toString()))
+                          .toSet();
+                      for (final row in currentPaints) {
+                        final key =
+                            _normalizePaintNameKey(_paintNameFromRow(row));
+                        final label = protectedPaintOrderLabels[key];
+                        if (label == null || nextNames.contains(key)) continue;
+                        setDialogState(() {
+                          saving = false;
+                          errorText =
+                              'Краска «${_paintNameFromRow(row)}» перешла из заказа «$label» и ещё не списана — удалить её из списка нельзя.';
+                        });
+                        return;
                       }
                       try {
                         await repo.saveOrderPaints(
@@ -2527,85 +2687,6 @@ class _TasksScreenState extends State<TasksScreen>
     return anyActive || anyDone;
   }
 
-  String _formatQuantityDisplay(String raw) {
-    final payloadText = quantityDisplayText(raw);
-    final trimmed = payloadText.trim();
-    if (trimmed.isEmpty) return '0';
-    final numeric = RegExp(r'^[0-9]+([.,][0-9]+)?$');
-    if (!numeric.hasMatch(trimmed)) return trimmed;
-    final normalised = trimmed.replaceAll(',', '.');
-    final value = double.tryParse(normalised);
-    if (value == null) return trimmed;
-    if ((value - value.round()).abs() < 0.0001) {
-      return '${value.round()} шт.';
-    }
-    return '${value.toStringAsFixed(2)} шт.';
-  }
-
-  String _describeComment(TaskComment comment) {
-    switch (comment.type) {
-      case 'start':
-        return 'Начал(а) этап';
-      case 'pause':
-        return comment.text.isEmpty ? 'Пауза' : 'Пауза: ${comment.text}';
-      case 'resume':
-        return 'Возобновил(а) этап';
-      case 'user_done':
-        return 'Завершил(а) этап';
-      case 'problem':
-        return comment.text.isEmpty
-            ? 'Сообщил(а) о проблеме'
-            : 'Проблема: ${comment.text}';
-      case 'setup_start':
-        return 'Начал(а) наладку';
-      case 'setup_resume':
-        return 'Продолжил(а) наладку';
-      case 'setup_done':
-        return 'Завершил(а) наладку';
-      case 'quantity_done':
-        return 'Выполнил(а): ${_formatQuantityDisplay(comment.text)}';
-      case 'quantity_team_total':
-        return 'Команда выполнила: ${_formatQuantityDisplay(comment.text)}';
-      case 'quantity_share':
-        return 'Доля участника: ${_formatQuantityDisplay(comment.text)}';
-      case 'finish_note':
-        return comment.text.isEmpty
-            ? 'Комментарий к завершению'
-            : 'Комментарий к завершению: ${comment.text}';
-      case 'joined':
-        return 'Присоединился(лась) к этапу';
-      case 'helper_removed':
-        return comment.text.isNotEmpty ? comment.text : 'Помощник удалён с этапа';
-      case 'helper_removed_qty':
-        return comment.text.isNotEmpty
-            ? 'Количество удалённого помощника: ${comment.text}'
-            : 'Количество удалённого помощника зафиксировано';
-      case 'exec_mode':
-      case 'exec_mode_stage':
-        final parsed = _parseExecutionModeLabel(comment.text);
-        if (parsed == ExecutionMode.separate) {
-          return 'Режим: отдельный исполнитель';
-        }
-        return 'Режим: одиночная или совместная работа';
-      case 'shift_pause':
-        return comment.text.isNotEmpty
-            ? comment.text
-            : 'Пересмена: этап приостановлен';
-      case 'shift_resume':
-        return comment.text.isNotEmpty
-            ? comment.text
-            : 'Пересмена: работа возобновлена';
-      case 'shift_pause_state':
-        return 'Состояние для пересмены сохранено';
-      case 'ink_writeoff':
-        return comment.text.isNotEmpty
-            ? comment.text
-            : 'Зафиксировано списание краски';
-      default:
-        return comment.text;
-    }
-  }
-
   /// Handles joining an already started task. Presents a modal to choose between
   /// separate execution (individual performer) or helper (joint). If the user
   /// chooses separate, a 'start' comment is written immediately to reflect
@@ -2911,13 +2992,19 @@ class _TasksScreenState extends State<TasksScreen>
       );
     }
 
-    final sectionedTasks = queue.getSortedByWorkplaceQueue(
+    final allSectionedTasks = queue.getSortedByWorkplaceQueue(
       tasksForWorkplace.toList(),
       (task) => _queueEntryForTask(
         task,
         ordersProvider,
         workplaceId: queueGroupId,
       ),
+    );
+    // Поиск по списку заданий: заказчик, номер задания, тип продукта.
+    // Порядок очереди сохраняется — фильтруем уже отсортированный список.
+    final sectionedTasks = _filterTasksBySearch(
+      allSectionedTasks,
+      ordersProvider,
     );
     final currentTask = _selectedTask != null
         ? taskProvider.tasks.firstWhere(
@@ -3098,11 +3185,46 @@ class _TasksScreenState extends State<TasksScreen>
             buildActiveTaskShortcuts(),
           ],
           SizedBox(height: sectionSpacing * 0.6),
+          // Поиск по заданиям: заказчик, номер задания, изделие, форма,
+          // менеджер. Список рабочего места бывает длинным, прокручивать его
+          // до нужного заказа неудобно.
+          TextField(
+            controller: _taskSearchController,
+            style: TextStyle(fontSize: scaled(12.5)),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Поиск: заказчик, номер, изделие',
+              hintStyle: TextStyle(fontSize: scaled(12)),
+              prefixIcon: Icon(Icons.search, size: scaled(18)),
+              prefixIconConstraints: BoxConstraints(
+                minWidth: scaled(34),
+                minHeight: scaled(34),
+              ),
+              suffixIcon: _taskSearch.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: Icon(Icons.close, size: scaled(16)),
+                      tooltip: 'Очистить',
+                      onPressed: () {
+                        _taskSearchController.clear();
+                        setState(() => _taskSearch = '');
+                      },
+                    ),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: scaled(8),
+                vertical: scaled(8),
+              ),
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (value) => setState(() => _taskSearch = value),
+          ),
           SizedBox(height: sectionSpacing),
           if (sectionedTasks.isEmpty)
-            const Center(
+            Center(
               child: Text(
-                'Нет доступных заданий для этого рабочего места',
+                _taskSearch.trim().isEmpty
+                    ? 'Нет доступных заданий для этого рабочего места'
+                    : 'По запросу «${_taskSearch.trim()}» ничего не найдено',
                 textAlign: TextAlign.center,
               ),
             )
@@ -3530,10 +3652,9 @@ class _TasksScreenState extends State<TasksScreen>
     }();
     return _sectionCard(
       '⏱️ Таймер и статус',
-      StreamBuilder<DateTime>(
-        stream: Stream<DateTime>.periodic(
-            const Duration(seconds: 1), (_) => DateTime.now()),
-        builder: (context, _) {
+      ValueListenableBuilder<DateTime>(
+        valueListenable: _clock,
+        builder: (context, _, __) {
           final totals = _timeTotalsForUser(task, widget.employeeId);
           final total = totals.values.fold(Duration.zero, (a, b) => a + b);
           return Column(
@@ -3603,7 +3724,8 @@ class _TasksScreenState extends State<TasksScreen>
               task: task,
               scale: scale,
               compact: isTablet,
-              currentUserId: widget.employeeId),
+              currentUserId: widget.employeeId,
+              clock: _clock),
           SizedBox(height: scale * 6),
           ...performerTiles,
         ],
@@ -3629,11 +3751,19 @@ class _TasksScreenState extends State<TasksScreen>
     return getQuantityStatus(actual: actual, expected: expected);
   }
 
+  // Количество этапа = сумма всех фиксаций: quantity_share (перерывы) +
+  // quantity_done/quantity_team_total (завершение — «сделано с последнего
+  // перерыва»). Та же семантика, что в аналитике (TaskAnalyticsMapper).
+  static const _stageQuantityCommentTypes = {
+    'quantity_share',
+    'quantity_done',
+    'quantity_team_total',
+  };
+
   double _sumQuantities(TaskModel task) {
     double total = 0;
     for (final comment in task.comments) {
-      if (comment.type == 'quantity_done' ||
-          comment.type == 'quantity_team_total') {
+      if (_stageQuantityCommentTypes.contains(comment.type)) {
         total += _parseQuantity(comment.text);
       }
     }
@@ -3642,8 +3772,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   String _latestQuantityLabel(TaskModel task) {
     final items = task.comments
-        .where((c) =>
-            c.type == 'quantity_done' || c.type == 'quantity_team_total')
+        .where((c) => _stageQuantityCommentTypes.contains(c.type))
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     if (items.isEmpty) return '—';
@@ -3659,8 +3788,7 @@ class _TasksScreenState extends State<TasksScreen>
         ? getQuantityStatus(actual: totalQty, expected: expected)
         : QuantityStatus.unknown;
     final lastComment = task.comments
-        .where((c) =>
-            c.type == 'quantity_done' || c.type == 'quantity_team_total')
+        .where((c) => _stageQuantityCommentTypes.contains(c.type))
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final lastStatus = lastComment.isEmpty
@@ -3801,7 +3929,14 @@ class _TasksScreenState extends State<TasksScreen>
       await OpenFilex.open(uri.toFilePath());
       return;
     }
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    // Просмотр внутри приложения (фото/видео/PDF); неподдерживаемые типы
+    // media_viewer сам отдаёт системе.
+    await showMediaPreview(
+      context,
+      url: url,
+      mime: attachment.mimeType,
+      title: attachment.fileName,
+    );
   }
 
   Widget _attachmentTile(TaskCommentAttachment attachment, double scale) {
@@ -3890,155 +4025,43 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (final entry in aggregated)
-            Padding(
-              padding: EdgeInsets.symmetric(vertical: scale * 3),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Builder(builder: (_) {
-                    IconData icon = Icons.info_outline;
-                    Color color = Colors.blueGrey;
-                    final c = entry.comment;
-                    final quantityComment = c.type == 'quantity_done' ||
-                        c.type == 'quantity_team_total' ||
-                        c.type == 'quantity_share';
-                    if (quantityComment) {
-                      final relatedTask = taskProvider.tasks.firstWhere(
-                        (candidate) => candidate.id == entry.taskId,
-                        orElse: () => task,
-                      );
-                      final relatedOrder = _orderById(relatedTask.orderId);
-                      final status = relatedOrder == null
-                          ? (quantityStatusFromText(c.text) ?? QuantityStatus.unknown)
-                          : _quantityStatusForComment(c, relatedOrder, relatedTask);
-                      icon = Icons.check_circle_outline;
-                      color = getQuantityStatusColor(status);
-                    }
-                    switch (c.type) {
-                      case 'problem':
-                        icon = Icons.error_outline;
-                        color = Colors.redAccent;
-                        break;
-                      case 'pause':
-                        icon = Icons.pause_circle_outline;
-                        color = Colors.orange;
-                        break;
-                      case 'user_done':
-                      case 'quantity_done':
-                      case 'quantity_team_total':
-                      case 'quantity_share':
-                        break;
-                      case 'setup_start':
-                      case 'setup_done':
-                        icon = Icons.build_outlined;
-                        color = Colors.indigo;
-                        break;
-                      case 'joined':
-                        icon = Icons.group_add_outlined;
-                        color = Colors.teal;
-                        break;
-                      case 'exec_mode':
-                      case 'exec_mode_stage':
-                        icon = Icons.settings_input_component_outlined;
-                        color = Colors.purple;
-                        break;
-                      case 'shift_pause':
-                        icon = Icons.pause_circle_outline;
-                        color = Colors.deepPurple;
-                        break;
-                      case 'shift_resume':
-                        icon = Icons.play_circle_outline;
-                        color = Colors.deepPurple;
-                        break;
-                      default:
-                        icon = Icons.info_outline;
-                        color = Colors.blueGrey;
-                    }
-                    return Icon(icon, size: scale * 16, color: color);
-                  }),
-                  SizedBox(width: scale * 3),
-                  Expanded(
-                    child: Builder(
-                      builder: (_) {
-                        final headerParts = <String>[];
-                        final c = entry.comment;
-                        final ts = _formatTimestamp(c.timestamp);
-                        if (ts.isNotEmpty) headerParts.add(ts);
-                        final author = _employeeDisplayName(personnel, c.userId);
-                        if (author.isNotEmpty) {
-                          headerParts.add(author);
-                        }
-                        final stageName =
-                            _workplaceName(personnel, entry.stageId);
-                        if (stageName.isNotEmpty) {
-                          headerParts.add('Этап: $stageName');
-                        }
-                        final header = headerParts.join(' • ');
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (header.isNotEmpty)
-                              Text(
-                                header,
-                                style: TextStyle(
-                                  fontSize: scale * 9.5,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            Builder(builder: (_) {
-                              final quantityComment = c.type == 'quantity_done' ||
-                                  c.type == 'quantity_team_total' ||
-                                  c.type == 'quantity_share';
-                              var textColor = Colors.black87;
-                              if (quantityComment) {
-                                final relatedTask = taskProvider.tasks.firstWhere(
-                                  (candidate) => candidate.id == entry.taskId,
-                                  orElse: () => task,
-                                );
-                                final relatedOrder = _orderById(relatedTask.orderId);
-                                final status = relatedOrder == null
-                                    ? (quantityStatusFromText(c.text) ?? QuantityStatus.unknown)
-                                    : _quantityStatusForComment(
-                                        c,
-                                        relatedOrder,
-                                        relatedTask,
-                                      );
-                                textColor = getQuantityStatusColor(status);
-                              }
-                              return Text(
-                                _describeComment(entry.comment),
-                                style: TextStyle(
-                                  fontSize: scale * 12.5,
-                                  color: textColor,
-                                ),
-                              );
-                            }),
-                            Builder(builder: (_) {
-                              final attachments = taskProvider
-                                  .attachmentsForComment(entry.comment.id);
-                              if (attachments.isEmpty) {
-                                return const SizedBox.shrink();
-                              }
-                              return Padding(
-                                padding: EdgeInsets.only(top: scale * 6),
-                                child: Wrap(
-                                  spacing: scale * 6,
-                                  runSpacing: scale * 6,
-                                  children: [
-                                    for (final attachment in attachments)
-                                      _attachmentTile(attachment, scale),
-                                  ],
-                                ),
-                              );
-                            }),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
+            Builder(builder: (_) {
+              final c = entry.comment;
+              // Количественная подсветка требует контекста заказа/задачи,
+              // поэтому считается здесь и передаётся в общий тайл.
+              Color? accentColor;
+              IconData? iconOverride;
+              Color? textColor;
+              if (kTaskCommentQuantityTypes.contains(c.type)) {
+                final relatedTask = taskProvider.tasks.firstWhere(
+                  (candidate) => candidate.id == entry.taskId,
+                  orElse: () => task,
+                );
+                final relatedOrder = _orderById(relatedTask.orderId);
+                final status = relatedOrder == null
+                    ? (quantityStatusFromText(c.text) ?? QuantityStatus.unknown)
+                    : _quantityStatusForComment(c, relatedOrder, relatedTask);
+                iconOverride = Icons.check_circle_outline;
+                accentColor = getQuantityStatusColor(status);
+                textColor = accentColor;
+              }
+              return TaskCommentTile(
+                comment: c,
+                scale: scale,
+                authorName: _employeeDisplayName(personnel, c.userId),
+                stageName: _workplaceName(personnel, entry.stageId),
+                accentColor: accentColor,
+                iconOverride: iconOverride,
+                textColor: textColor,
+                resolveUserName: (userId) =>
+                    _employeeDisplayName(personnel, userId),
+                attachments: [
+                  for (final attachment
+                      in taskProvider.attachmentsForComment(c.id))
+                    _attachmentTile(attachment, scale),
                 ],
-              ),
-            ),
+              );
+            }),
         ],
       );
     }
@@ -4629,15 +4652,139 @@ class _TasksScreenState extends State<TasksScreen>
         .every((uid) => _userRunState(task, uid) == UserRunState.finished);
   }
 
-  bool _canFinalizeTask(TaskModel task) {
-    if (task.status == TaskStatus.completed) return false;
-    if (!_hasProductionStartedForStage(task)) return false;
-    if (_anyUserActive(task)) return false;
-    if (_isInkConfirmationStage(task)) {
-      return true;
+  // Доступность «Завершить задание» считает computeTaskButtons
+  // (task_buttons_state.dart) по флагам productionStarted /
+  // allPerformersFinished / anyUserActive.
+
+  /// Имена сотрудников по id — для понятных сообщений.
+  String _employeeNameById(String id) {
+    final personnel = context.read<PersonnelProvider>();
+    try {
+      final e = personnel.employees.firstWhere((x) => x.id == id);
+      final name = '${e.lastName} ${e.firstName}'.trim();
+      return name.isEmpty ? id : name;
+    } catch (_) {
+      return id;
     }
-    if (!_allPerformersFinished(task)) return false;
-    return true;
+  }
+
+  /// Исполнители, которые ещё не завершили участие.
+  List<String> _unfinishedPerformerNames(TaskModel task) => task.assignees
+      .where((id) =>
+          _execModeForUser(task, id) == ExecutionMode.separate &&
+          _userRunState(task, id) != UserRunState.finished)
+      .map(_employeeNameById)
+      .toList(growable: false);
+
+  /// Почему не даёт начать/продолжить работу. Раньше кнопка просто гасла,
+  /// и понять причину было нельзя ни сотруднику, ни по логам.
+  void _explainStartBlocked({
+    required TaskModel task,
+    required WorkplaceModel stage,
+    required UserRunState state,
+    required bool shiftPaused,
+  }) {
+    final provider = context.read<TaskProvider>();
+    String message;
+    if (shiftPaused) {
+      message = 'Этап остановлен на пересмену — сначала возобновите смену.';
+    } else if (_startingTaskIds.contains(task.id)) {
+      message = 'Запуск уже выполняется, подождите.';
+    } else if (_isStageGroupLocked(provider, task)) {
+      message = 'Этап занят другим рабочим местом из этой же группы.';
+    } else if (_hasMachineForStage(stage) &&
+        !_hasPendingSetupForStage(task) &&
+        !_isSetupCompletedForStage(task) &&
+        !_hasProductionStartedForStage(task)) {
+      message = 'Сначала выполните наладку станка.';
+    } else if (state == UserRunState.problem &&
+        _hasMachineForStage(stage) &&
+        _hasPendingSetupForStage(task)) {
+      message = 'Сначала завершите наладку — она осталась незакрытой.';
+    } else if (_hasOpenStartIntentForUser(task, widget.employeeId)) {
+      message = 'Вы уже в работе на этом этапе.';
+    } else if (!_isFirstPendingStage(
+      provider,
+      context.read<PersonnelProvider>(),
+      task,
+      groupResolver: _stageGroupKey,
+    )) {
+      message = 'Сначала должен начаться предыдущий этап заказа.';
+    } else {
+      final busy = provider.tasks.where((t) =>
+          t.id != task.id &&
+          t.assignees.contains(widget.employeeId) &&
+          !_isEffectivelyCompleted(t) &&
+          _userRunState(t, widget.employeeId) == UserRunState.active);
+      message = busy.isNotEmpty
+          ? 'У вас уже есть активное задание на другом этапе — завершите или '
+              'поставьте его на паузу.'
+          : 'Начать пока нельзя.';
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Почему не даёт завершить участие.
+  void _explainFinishBlocked({
+    required TaskModel task,
+    required UserRunState state,
+    required bool shiftPaused,
+    required bool isSetupActive,
+  }) {
+    String message;
+    if (shiftPaused) {
+      message = 'Этап остановлен на пересмену — сначала возобновите смену.';
+    } else if (isSetupActive) {
+      message = 'Идёт наладка: сначала завершите её.';
+    } else if (state == UserRunState.finished) {
+      message = 'Вы уже завершили участие. Нажмите «Продолжить», если работа '
+          'ещё не закончена.';
+    } else if (!_hasProductionStartedForStage(task)) {
+      message = 'Этап ещё не начинали.';
+    } else if (!_hasUserParticipatedInStage(task, widget.employeeId)) {
+      message = 'Вы ещё не работали на этом этапе — сначала нажмите «Начать».';
+    } else if (!task.assignees.contains(widget.employeeId)) {
+      message = 'Вы не назначены на этот этап.';
+    } else if (task.status == TaskStatus.waiting) {
+      message = 'Этап в ожидании: сначала начните работу.';
+    } else if (task.status == TaskStatus.completed) {
+      message = 'Этап уже завершён.';
+    } else {
+      message = 'Завершить участие пока нельзя.';
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Объясняет, почему нельзя закрыть этап: молча неактивная кнопка
+  /// заставляла обходить правило «пропуском этапа».
+  void _explainFinalizeBlocked(TaskModel task) {
+    String message;
+    if (task.status == TaskStatus.completed) {
+      message = 'Этап уже завершён.';
+    } else if (!_hasProductionStartedForStage(task)) {
+      message = 'Этап ещё не начинали.';
+    } else {
+      final pending = _unfinishedPerformerNames(task);
+      final active = task.assignees
+          .where((id) => _userRunState(task, id) == UserRunState.active)
+          .map(_employeeNameById)
+          .toList(growable: false);
+      if (active.isNotEmpty) {
+        message = 'Ещё в работе: ${active.join(', ')}. '
+            'Дождитесь, пока они завершат участие.';
+      } else if (pending.isNotEmpty) {
+        message = 'Не завершили участие: ${pending.join(', ')}.';
+      } else {
+        message = 'Завершить задание пока нельзя.';
+      }
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   bool _isInkConfirmationStage(TaskModel task) {
@@ -5437,6 +5584,9 @@ class _TasksScreenState extends State<TasksScreen>
           comment: note,
         );
         await tp.refresh();
+        // RPC завершает этап на сервере мимо updateStatus — фактическое
+        // количество пересчитываем явно (правило «после упаковки»).
+        await tp.recomputeOrderActualQty(task.orderId);
         if (mounted) {
           setState(() {
             _orderPaintsCache[task.orderId] = paints
@@ -5467,6 +5617,7 @@ class _TasksScreenState extends State<TasksScreen>
         comment: note,
       );
       await tp.refresh();
+      await tp.recomputeOrderActualQty(task.orderId);
     } catch (e) {
       if (mounted) {
         final message = _humanizeRpcError(e);
@@ -5482,12 +5633,20 @@ class _TasksScreenState extends State<TasksScreen>
 bool _hasRealStartConflict({
     required TaskProvider provider,
     required TaskModel task,
+    required String employeeId,
     required bool shiftPaused,
     required bool stageModeAllowsJoin,
     required bool hasAccessToTask,
   }) {
     if (!hasAccessToTask || !stageModeAllowsJoin) return true;
-    if (_userRunState(task, widget.employeeId) == UserRunState.finished) {
+    // «Завершил(а)» — не всегда конец работы. В отдельном режиме кнопка
+    // «Завершить участие» фиксирует только личный итог сотрудника, а сам этап
+    // закрывается отдельной кнопкой «Завершить задание», поэтому исполнитель
+    // вправе продолжить и добрать количество. Панель управления это
+    // разрешает (см. canStartButtonRow), и без исключения здесь запрет
+    // молча гасил её кнопку «Продолжить».
+    if (_userRunState(task, employeeId) == UserRunState.finished &&
+        _execModeForUser(task, employeeId) != ExecutionMode.separate) {
       return true;
     }
     if (_isStageGroupLocked(provider, task)) return true;
@@ -5495,9 +5654,9 @@ bool _hasRealStartConflict({
 
     final employeeActiveTasks = provider.tasks.where((candidate) {
       if (candidate.id == task.id) return false;
-      if (!candidate.assignees.contains(widget.employeeId)) return false;
+      if (!candidate.assignees.contains(employeeId)) return false;
       if (_isEffectivelyCompleted(candidate)) return false;
-      return _userRunState(candidate, widget.employeeId) == UserRunState.active;
+      return _userRunState(candidate, employeeId) == UserRunState.active;
     }).toList(growable: false);
 
     if (employeeActiveTasks.isNotEmpty) {
@@ -5534,11 +5693,16 @@ bool _hasRealStartConflict({
       task: task,
       tasks: provider,
       personnel: context.read<PersonnelProvider>(),
-      employeeId: widget.employeeId,
+      employeeId: employeeId,
       groupResolver: _stageGroupKey,
     );
-    if (!isPackagingNow &&
-        !_canRunOutOfStageSequence(task) &&
+    // Упаковка НЕ исключение из последовательности этапов: её можно начать
+    // только после того, как стартовал предпоследний этап заказа. Раньше
+    // здесь стояло `!isPackagingNow`, из-за чего проверка для упаковки
+    // пропускалась целиком и её разрешалось начать в любой момент — вместе
+    // с этим оказывалась недостижимой и ветка canStartEarlyPackaging,
+    // которая как раз проверяет старт предыдущего этапа.
+    if (!_canRunOutOfStageSequence(task) &&
         !_isFirstPendingStage(
           provider,
           context.read<PersonnelProvider>(),
@@ -5704,18 +5868,8 @@ bool _hasRealStartConflict({
     final ExecutionMode? explicitStageMode = _stageExecutionMode(task);
     final ExecutionMode stageMode =
         explicitStageMode ?? _workplaceDefaultMode(stage);
-    final ExecutionMode myExecMode = _execModeForUser(task, widget.employeeId);
     final bool groupLocked = _isStageGroupLocked(provider, task);
-    // Consider a user an assignee only if they are explicitly assigned AND executing in
-    // separate mode. Helpers (joint execution) should not gain full control over the task.
-    final bool isAssignee = task.assignees.isEmpty ||
-        (task.assignees.contains(widget.employeeId) &&
-            (myExecMode == ExecutionMode.separate ||
-                (stageMode == ExecutionMode.joint &&
-                    task.assignees.isNotEmpty &&
-                    task.assignees.first == widget.employeeId)));
 
-    // Старт возможен, если задача ждёт/на паузе/с проблемой
     double scaled(double value) => value * scale;
     final double panelPadding = scaled(8);
     final double gapSmall = scaled(4);
@@ -5724,52 +5878,131 @@ bool _hasRealStartConflict({
     final double mediumSpacing = scaled(12);
     final double radius = scaled(12);
 
-    // Старт возможен, если задача ждёт/на паузе/с проблемой,
-    // или уже в работе; при этом соблюдаем последовательность этапов.
+    // === Входные флаги для computeTaskButtons ===============================
+    // Всё считается ОТНОСИТЕЛЬНО СТРОКИ (её сотрудника), а не текущего
+    // пользователя экрана: сами кнопки никаких условий больше не содержат.
 
-    bool _slotAvailable() => true;
+    /// Полноправный ли исполнитель строки. Помощники в совместном режиме
+    /// управления заданием не получают.
+    bool isAssigneeForRow(String rowUserId) {
+      if (task.assignees.isEmpty) return true;
+      if (!task.assignees.contains(rowUserId)) return false;
+      final rowMode = _execModeForUser(task, rowUserId);
+      if (rowMode == ExecutionMode.separate) return true;
+      return stageMode == ExecutionMode.joint &&
+          task.assignees.first == rowUserId;
+    }
 
-    final bool alreadyAssigned = task.assignees.contains(widget.employeeId);
-    final bool isFirstAssignee = task.assignees.isEmpty;
-    final bool canAutoAssign = !alreadyAssigned &&
-        !isFirstAssignee &&
-        _slotAvailable() &&
-        stageMode == ExecutionMode.separate;
-    final bool stageModeAllowsJoin =
-        stageMode != ExecutionMode.joint || alreadyAssigned || isFirstAssignee;
-    final bool hasAccessToTask =
-        isFirstAssignee || alreadyAssigned || canAutoAssign;
-    final bool canStart = hasAccessToTask &&
-        (task.status == TaskStatus.waiting ||
-            task.status == TaskStatus.paused ||
-            task.status == TaskStatus.problem ||
-            (task.status == TaskStatus.inProgress && _slotAvailable())) &&
-        _isUnlockedByWorkplaceQueue(
-          task,
-          provider,
-          context.read<ProductionQueueProvider>(),
-          stage,
-        ) &&
-        !groupLocked &&
-        !_hasRealStartConflict(
+    /// Внешние запреты входа в работу — всё, что считается по провайдерам и не
+    /// зависит от фазы этапа: статус задачи, доступ к заданию, очередь
+    /// рабочего места, блокировка группы этапов, конфликты активных заданий,
+    /// лок после возобновления смены и незакрытое намерение старта.
+    bool startBlockedForRow(String rowUserId, UserRunState rowState) {
+      final bool noAssignees = task.assignees.isEmpty;
+      final bool alreadyAssigned = task.assignees.contains(rowUserId);
+      final bool canAutoAssign = !alreadyAssigned &&
+          !noAssignees &&
+          stageMode == ExecutionMode.separate;
+      final bool hasAccessToTask =
+          noAssignees || alreadyAssigned || canAutoAssign;
+      final bool stageModeAllowsJoin = stageMode != ExecutionMode.joint ||
+          alreadyAssigned ||
+          noAssignees;
+      const startableStatuses = {
+        TaskStatus.waiting,
+        TaskStatus.paused,
+        TaskStatus.problem,
+        TaskStatus.inProgress,
+      };
+      if (!startableStatuses.contains(task.status)) return true;
+      if (!hasAccessToTask) return true;
+      if (groupLocked) return true;
+      if (!_isUnlockedByWorkplaceQueue(
+        task,
+        provider,
+        context.read<ProductionQueueProvider>(),
+        stage,
+      )) {
+        return true;
+      }
+      if (_hasRealStartConflict(
+        provider: provider,
+        task: task,
+        employeeId: rowUserId,
+        shiftPaused: shiftPaused,
+        stageModeAllowsJoin: stageModeAllowsJoin,
+        hasAccessToTask: hasAccessToTask,
+      )) {
+        return true;
+      }
+      // Этап уже шёл до возобновления смены — простаивающий сотрудник не
+      // подхватывает его обычной кнопкой «Начать».
+      final bool stageStartedBeforeShiftResume =
+          _hasProductionStartedForStage(task) &&
+              task.comments.any((c) => c.type == 'shift_resume');
+      if (stageStartedBeforeShiftResume && rowState == UserRunState.idle) {
+        return true;
+      }
+      // Незакрытое намерение старта: сотрудник уже в работе на этапе.
+      if (_hasOpenStartIntentForUser(task, rowUserId) &&
+          !_isSetupInProgressForUser(task, rowUserId)) {
+        return true;
+      }
+      return false;
+    }
+
+    /// «Продолжить пересмену» считается по другим правилам: продолжить может
+    /// любой сотрудник рабочего места, а не только назначенный.
+    bool shiftResumeBlockedForRow(String rowUserId) => _hasRealStartConflict(
           provider: provider,
           task: task,
-          shiftPaused: shiftPaused,
-          stageModeAllowsJoin: stageModeAllowsJoin,
-          hasAccessToTask: hasAccessToTask,
+          employeeId: rowUserId,
+          shiftPaused: false,
+          stageModeAllowsJoin: true,
+          hasAccessToTask: true,
         );
 
-    // Пауза/Завершить/Проблема доступны только своим исполнителям
-    final bool canPause =
-        task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
-    final bool canFinish = (task.status == TaskStatus.inProgress ||
-            task.status == TaskStatus.paused ||
-            task.status == TaskStatus.problem) &&
-        isAssignee &&
-        !shiftPaused;
-    final bool canProblem =
-        task.status == TaskStatus.inProgress && isAssignee && !shiftPaused;
-    final bool canFinalizeTask = _canFinalizeTask(task);
+    // Для флексо-этапов подтверждение красок закрывает этап без требования,
+    // чтобы каждый отдельный исполнитель отметил завершение участия.
+    final bool allPerformersFinished =
+        _isInkConfirmationStage(task) || _allPerformersFinished(task);
+
+    TaskButtonsState buttonsForRow(String rowUserId, {required bool isMyRow}) {
+      final rowState = _userRunState(task, rowUserId);
+      return computeTaskButtons(
+        taskStatus: task.status,
+        rowState: rowState,
+        isMyRow: isMyRow,
+        isOwner:
+            task.assignees.isNotEmpty && task.assignees.first == rowUserId,
+        isAssignee: isAssigneeForRow(rowUserId),
+        mode: stageMode,
+        hasMachine: _hasMachineForStage(stage),
+        setupCompletedForStage: _isSetupCompletedForStage(task),
+        setupPendingForStage: _hasPendingSetupForStage(task),
+        setupInProgressForRow: _isSetupInProgressForUser(task, rowUserId),
+        setupUnfinishedForRow: _hasUnfinishedSetupForUser(task, rowUserId),
+        productionStarted: _hasProductionStartedForStage(task),
+        participated: _hasUserParticipatedInStage(task, rowUserId),
+        shiftPaused: shiftPaused,
+        startBlockedExternally: startBlockedForRow(rowUserId, rowState),
+        shiftResumeBlocked: shiftResumeBlockedForRow(rowUserId),
+        startInFlight: _startingTaskIds.contains(task.id),
+        setupInFlight: _startingSetupTaskIds.contains(task.id),
+        hasAssignees: task.assignees.isNotEmpty,
+        allPerformersFinished: allPerformersFinished,
+        anyUserActive: _anyUserActive(task),
+      );
+    }
+
+    // Панельная кнопка «Завершить задание» от строки не зависит — берём набор
+    // текущего пользователя и читаем из него только finishTask.
+    final TaskButtonsState panelButtons =
+        buttonsForRow(widget.employeeId, isMyRow: true);
+    // Показывать ли строку «Вы» тому, кто ещё не назначен на этап.
+    final bool canStart = !startBlockedForRow(
+        widget.employeeId, _userRunState(task, widget.employeeId));
+
     final Widget panel = Container(
       padding: EdgeInsets.all(panelPadding),
       decoration: BoxDecoration(
@@ -5832,29 +6065,6 @@ bool _hasRealStartConflict({
                       {List<String>? jointGroup, String? userId}) {
                     final tp = context.read<TaskProvider>();
 
-                    UserRunState state;
-                    if (jointGroup != null) {
-                      if (jointGroup.any((u) =>
-                          _userRunState(task, u) == UserRunState.active)) {
-                        state = UserRunState.active;
-                      } else if (jointGroup.every((u) =>
-                              _userRunState(task, u) ==
-                              UserRunState.finished) &&
-                          jointGroup.isNotEmpty) {
-                        state = UserRunState.finished;
-                      } else if (jointGroup.any((u) =>
-                          _userRunState(task, u) == UserRunState.paused)) {
-                        state = UserRunState.paused;
-                      } else if (jointGroup.any((u) =>
-                          _userRunState(task, u) == UserRunState.problem)) {
-                        state = UserRunState.problem;
-                      } else {
-                        state = UserRunState.idle;
-                      }
-                    } else {
-                      state = _userRunState(task, userId!);
-                    }
-
                     // Determine whether this row belongs to the current user.
                     bool isMyRow;
                     String currentRowUserId;
@@ -5871,89 +6081,10 @@ bool _hasRealStartConflict({
                         _userRunState(task, currentRowUserId);
                     final bool isSetupActiveForRow =
                         _isSetupInProgressForUser(task, currentRowUserId);
-                    final bool isSetupStartPending =
-                        _startingSetupTaskIds.contains(task.id);
-                    // Disable buttons for other users' rows
-                    // Кнопка "Начать" доступна для своей строки, если
-                    // пользователь может стартовать, и он либо ещё не
-                    // запускал этап (idle), либо находится на паузе/в проблеме
-                    // (разрешаем возобновление), либо уже завершил личную
-                    // смену статуса, но этап ещё не закрыт общей кнопкой
-                    // "Завершить" снизу.
-                    final bool requiresSetupBeforeStart =
-                        _hasMachineForStage(stage) &&
-                            !_hasPendingSetupForStage(task) &&
-                            !_isSetupCompletedForStage(task) &&
-                            !_hasProductionStartedForStage(task);
-                    final bool userParticipatedInStage =
-                        _hasUserParticipatedInStage(task, currentRowUserId);
-                    final bool stageStartedBeforeShiftResume =
-                        _hasProductionStartedForStage(task) &&
-                            task.comments.any((c) => c.type == 'shift_resume');
-                    final bool blockedByShiftResumeLock =
-                        stageStartedBeforeShiftResume &&
-                            stateRowUser == UserRunState.idle;
-                    final bool hasOpenStartIntentForRowUser =
-                        _hasOpenStartIntentForUser(task, currentRowUserId);
-                    final bool startIntentBlocksRow =
-                        hasOpenStartIntentForRowUser && !isSetupActiveForRow;
-                    final bool problemRequiresSetupResume =
-                        _hasMachineForStage(stage) &&
-                            stateRowUser == UserRunState.problem &&
-                            _hasPendingSetupForStage(task) &&
-                            !isSetupActiveForRow;
-                    final bool canStartButtonRow = isMyRow &&
-                        canStart &&
-                        !_startingTaskIds.contains(task.id) &&
-                        !requiresSetupBeforeStart &&
-                        !blockedByShiftResumeLock &&
-                        !problemRequiresSetupResume &&
-                        !startIntentBlocksRow &&
-                        // Для отдельных исполнителей разрешаем возобновлять этап
-                        // после личного завершения (до финальной кнопки
-                        // "Завершить задание").
-                        // Для совместного режима после user_done повторный запуск
-                        // через эту строку недоступен.
-                        (((stateRowUser == UserRunState.idle)) ||
-                            (stateRowUser == UserRunState.paused) ||
-                            (stateRowUser == UserRunState.problem) ||
-                            (stateRowUser == UserRunState.finished &&
-                                stageExecMode == ExecutionMode.separate) ||
-                            (stateRowUser == UserRunState.active &&
-                                isSetupActiveForRow));
-                    final bool shouldShowContinueLabel =
-                        stateRowUser == UserRunState.problem ||
-                            (stateRowUser == UserRunState.finished &&
-                                stageExecMode == ExecutionMode.separate);
-                    final bool canPauseRow = isMyRow &&
-                        canPause &&
-                        stateRowUser == UserRunState.active;
-                    // allow pausing also if user resumed
-                    final bool canFinishRow = isMyRow &&
-                        canFinish &&
-                        _hasProductionStartedForStage(task) &&
-                        userParticipatedInStage &&
-                        (stateRowUser != UserRunState.idle &&
-                            stateRowUser != UserRunState.finished) &&
-                        !isSetupActiveForRow;
-                    final bool canProblemRow = isMyRow &&
-                        canProblem &&
-                        stateRowUser == UserRunState.active;
-                    final bool canShiftControl = shiftPaused
-                        ? (isMyRow &&
-                            !_hasRealStartConflict(
-                              provider: tp,
-                              task: task,
-                                                  shiftPaused: false,
-                              stageModeAllowsJoin: stageModeAllowsJoin,
-                              hasAccessToTask: isFirstAssignee ||
-                                  alreadyAssigned ||
-                                  canAutoAssign,
-                            ))
-                        : (isMyRow &&
-                            (stateRowUser == UserRunState.active ||
-                                stateRowUser == UserRunState.paused ||
-                                stateRowUser == UserRunState.problem));
+                    // Единственный источник истины по доступности кнопок этой
+                    // строки. Ниже в разметке — только чтение результата.
+                    final TaskButtonsState buttons =
+                        buttonsForRow(currentRowUserId, isMyRow: isMyRow);
                     Future<void> recordTimeEventForUser(TaskTimeType type,
                         {String? note, bool includeHelpers = true}) async {
                       final participants =
@@ -6034,16 +6165,22 @@ bool _hasRealStartConflict({
                           stageGroupKey: task.stageGroupKey,
                           stageName: _stageDisplayName(personnelProvider, task.stageId),
                         );
-                        if (!isPackagingNow &&
-                            !_canRunOutOfStageSequence(task) &&
+                        // Упаковка подчиняется последовательности этапов:
+                        // старт разрешён только после начала предпоследнего
+                        // этапа (см. _hasRealStartConflict).
+                        if (!_canRunOutOfStageSequence(task) &&
                             !_isFirstPendingStage(
                                 taskProvider, personnelProvider, task,
                                 groupResolver: _stageGroupKey) &&
                             !canStartEarlyPackaging) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                                content: Text(
-                                    'Сначала выполните предыдущий этап заказа')));
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(SnackBar(
+                              content: Text(isPackagingNow
+                                  ? 'Упаковку можно начать только после '
+                                      'старта предыдущего этапа заказа'
+                                  : 'Сначала выполните предыдущий этап заказа'),
+                            ));
                           }
                           return;
                         }
@@ -6128,8 +6265,15 @@ bool _hasRealStartConflict({
                           );
                         }
 
+                        // Наладка завершается по ЭТАПУ, а не по пользователю:
+                        // setup_done (и приладку) получает только тот, у кого
+                        // есть своя незакрытая setup_start. Сотрудник, просто
+                        // нажавший «Начать» после чужой наладки, приладку не
+                        // получает.
                         if (_hasMachineForStage(stage) &&
-                            !_isSetupCompletedForUser(task, widget.employeeId)) {
+                            !_isSetupCompletedForStage(task) &&
+                            _hasUnfinishedSetupForUser(
+                                task, widget.employeeId)) {
                           await _finishSetup(task, provider);
                         }
                         final isResumeAction = stateRowUser == UserRunState.paused ||
@@ -6232,6 +6376,19 @@ bool _hasRealStartConflict({
                             type: 'user_done',
                             text: 'done',
                             userIdOverride: widget.employeeId);
+                        // Закрываем свой интервал времени. Без этого отметка
+                        // «завершил» писалась, но открытый production-интервал
+                        // оставался — состояние исполнителя вычисляется прежде
+                        // всего по нему, поэтому человек продолжал числиться
+                        // «в работе»: кнопка визуально не срабатывала, время
+                        // тикало дальше, а «Завершить задание» не активировалось,
+                        // потому что кто-то всегда считался активным.
+                        await taskProvider.closeOpenTimeEvent(
+                          task: task,
+                          initiatedBy: widget.employeeId,
+                          subjectUserId: widget.employeeId,
+                          note: 'user_done',
+                        );
 
                         // Collect only assignees in 'separate' mode
                         final latestTask = taskProvider.tasks.firstWhere(
@@ -6315,6 +6472,8 @@ bool _hasRealStartConflict({
                               jointUserIds: jointUserIds,
                             );
                             await taskProvider.refresh();
+                            await taskProvider
+                                .recomputeOrderActualQty(task.orderId);
                           } catch (e) {
                             if (context.mounted) {
                               final message = _humanizeRpcError(e);
@@ -6589,10 +6748,12 @@ bool _hasRealStartConflict({
                           _hasRealStartConflict(
                             provider: taskProvider,
                             task: task,
+                            employeeId: widget.employeeId,
                             shiftPaused: false,
-                            stageModeAllowsJoin: stageModeAllowsJoin,
-                            hasAccessToTask:
-                                isFirstAssignee || alreadyAssigned || canAutoAssign,
+                            // При пересмене этап может продолжить любой сотрудник
+                            // рабочего места, не только текущие назначенные.
+                            stageModeAllowsJoin: true,
+                            hasAccessToTask: true,
                           )) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -6665,6 +6826,9 @@ bool _hasRealStartConflict({
                                     ? 'setup'
                                     : 'production';
 
+                        // Количество на пересмене фиксируется ОДИН раз — за
+                        // инициатором. Помощникам оно не дублируется, иначе
+                        // аналитика умножает объём на число участников.
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'quantity_share',
@@ -6672,11 +6836,6 @@ bool _hasRealStartConflict({
                             userIdOverride: widget.employeeId);
 
                         for (final helperId in helperIds) {
-                          await taskProvider.addCommentAutoUser(
-                              taskId: task.id,
-                              type: 'quantity_share',
-                              text: qtyText,
-                              userIdOverride: helperId);
                           await taskProvider.closeOpenTimeEvent(
                             task: task,
                             initiatedBy: widget.employeeId,
@@ -6895,14 +7054,9 @@ bool _hasRealStartConflict({
                                               fontWeight: FontWeight.w600,
                                               fontSize: scaled(12),
                                             ))),
-                                  if (_hasMachineForStage(stage) && isMyRow) ...[
+                                  if (buttons.setup.visible) ...[
                                     ElevatedButton.icon(
-                                      onPressed: (!shiftPaused &&
-                                              !isSetupStartPending &&
-                                              _canStartOrResumeSetupForUser(
-                                                task,
-                                                widget.employeeId,
-                                              ))
+                                      onPressed: buttons.setup.enabled
                                           ? () => _startSetup(task, provider)
                                           : null,
                                       style: ElevatedButton.styleFrom(
@@ -6920,77 +7074,92 @@ bool _hasRealStartConflict({
                                             : null,
                                       ),
                                       icon: const Icon(Icons.build),
-                                      label: Text(
-                                        _hasUnfinishedSetupForUser(
-                                          task,
-                                          widget.employeeId,
-                                        )
-                                            ? 'Продолжить наладку'
-                                            : 'Начать наладку',
-                                      ),
+                                      label: Text(buttons.setup.label),
                                     ),
                                     SizedBox(width: buttonSpacing),
                                   ],
-                                  ElevatedButton(
-                                      onPressed:
-                                          canStartButtonRow ? onStart : null,
-                                      style: ElevatedButton.styleFrom(
-                                        textStyle:
-                                            TextStyle(fontSize: scaled(11.5)),
-                                      ),
-                                      child: Text(
-                                          shouldShowContinueLabel
-                                              ? (stateRowUser == UserRunState.problem
-                                                  ? '↩ Вернуть в работу'
-                                                  : '▶ Продолжить')
-                                              : '▶ Начать')),
-                                  ElevatedButton(
-                                      onPressed: canPauseRow ? onPause : null,
-                                      style: ElevatedButton.styleFrom(
-                                        textStyle:
-                                            TextStyle(fontSize: scaled(11.5)),
-                                      ),
-                                      child: const Text('⏸ Пауза')),
-                                  ElevatedButton(
-                                      onPressed: canFinishRow ? onFinish : null,
-                                      style: ElevatedButton.styleFrom(
-                                        textStyle:
-                                            TextStyle(fontSize: scaled(11.5)),
-                                      ),
-                                      child: Text(
-                                          stageExecMode == ExecutionMode.joint
-                                              ? '✓ Завершить'
-                                              : '✓ Завершить участие')),
-                                  ElevatedButton(
-                                      onPressed:
-                                          canProblemRow ? onProblem : null,
-                                      style: ElevatedButton.styleFrom(
-                                        textStyle:
-                                            TextStyle(fontSize: scaled(11.5)),
-                                      ),
-                                      child: const Text('⚠ Проблема')),
-                                  if (stageExecMode == ExecutionMode.joint &&
-                                      task.assignees.isNotEmpty &&
-                                      task.assignees.first == widget.employeeId)
+                                  if (buttons.start.visible)
+                                    ExplainOnTap(
+                                      enabled: buttons.start.enabled,
+                                      explain: isMyRow
+                                          ? () => _explainStartBlocked(
+                                                task: task,
+                                                stage: stage,
+                                                state: stateRowUser,
+                                                shiftPaused: shiftPaused,
+                                              )
+                                          : null,
+                                      child: ElevatedButton(
+                                          onPressed: buttons.start.enabled
+                                              ? onStart
+                                              : null,
+                                          style: ElevatedButton.styleFrom(
+                                            textStyle: TextStyle(
+                                                fontSize: scaled(11.5)),
+                                          ),
+                                          child: Text(buttons.start.label)),
+                                    ),
+                                  if (buttons.pause.visible)
+                                    ElevatedButton(
+                                        onPressed: buttons.pause.enabled
+                                            ? onPause
+                                            : null,
+                                        style: ElevatedButton.styleFrom(
+                                          textStyle:
+                                              TextStyle(fontSize: scaled(11.5)),
+                                        ),
+                                        child: Text(buttons.pause.label)),
+                                  if (buttons.finish.visible)
+                                    ExplainOnTap(
+                                      enabled: buttons.finish.enabled,
+                                      explain: isMyRow
+                                          ? () => _explainFinishBlocked(
+                                                task: task,
+                                                state: stateRowUser,
+                                                shiftPaused: shiftPaused,
+                                                isSetupActive:
+                                                    isSetupActiveForRow,
+                                              )
+                                          : null,
+                                      child: ElevatedButton(
+                                          onPressed: buttons.finish.enabled
+                                              ? onFinish
+                                              : null,
+                                          style: ElevatedButton.styleFrom(
+                                            textStyle: TextStyle(
+                                                fontSize: scaled(11.5)),
+                                          ),
+                                          child: Text(buttons.finish.label)),
+                                    ),
+                                  if (buttons.problem.visible)
+                                    ElevatedButton(
+                                        onPressed: buttons.problem.enabled
+                                            ? onProblem
+                                            : null,
+                                        style: ElevatedButton.styleFrom(
+                                          textStyle:
+                                              TextStyle(fontSize: scaled(11.5)),
+                                        ),
+                                        child: Text(buttons.problem.label)),
+                                  if (buttons.helpers.visible)
                                     ElevatedButton.icon(
-                                      onPressed:
-                                          shiftPaused ? null : onAddHelper,
+                                      onPressed: buttons.helpers.enabled
+                                          ? onAddHelper
+                                          : null,
                                       style: ElevatedButton.styleFrom(
                                         textStyle:
                                             TextStyle(fontSize: scaled(11.5)),
                                       ),
                                       icon: const Icon(Icons.person_add_alt_1),
-                                      label: const Text('Добавить помощника'),
+                                      label: Text(buttons.helpers.label),
                                     ),
-                                  if (stageExecMode == ExecutionMode.joint &&
-                                      task.assignees.isNotEmpty &&
-                                      task.assignees.first == widget.employeeId)
+                                  if (buttons.helpers.visible)
                                     ...[
                                       for (final helperId in _helperIds(task))
                                         ElevatedButton.icon(
-                                          onPressed: shiftPaused
-                                              ? null
-                                              : () => onRemoveHelper(helperId),
+                                          onPressed: buttons.helpers.enabled
+                                              ? () => onRemoveHelper(helperId)
+                                              : null,
                                           style: ElevatedButton.styleFrom(
                                             textStyle: TextStyle(
                                                 fontSize: scaled(11.5)),
@@ -7003,11 +7172,9 @@ bool _hasRealStartConflict({
                                     ],
                                   SizedBox(width: gapMedium),
                                   // Обновляем отображение времени для каждой строки каждую секунду
-                                  StreamBuilder<DateTime>(
-                                    stream: Stream<DateTime>.periodic(
-                                        const Duration(seconds: 1),
-                                        (_) => DateTime.now()),
-                                    builder: (context, _) {
+                                  ValueListenableBuilder<DateTime>(
+                                    valueListenable: _clock,
+                                    builder: (context, _, __) {
                                       return Text(
                                         'Время: ' + timeText(),
                                         style: TextStyle(fontSize: scaled(12)),
@@ -7017,18 +7184,17 @@ bool _hasRealStartConflict({
                                 ],
                               ),
                             ),
-                            if (stageExecMode == ExecutionMode.joint) ...[
+                            if (buttons.shift.visible) ...[
                               SizedBox(width: buttonSpacing),
                               ElevatedButton.icon(
-                                onPressed: canShiftControl ? onShift : null,
+                                onPressed:
+                                    buttons.shift.enabled ? onShift : null,
                                 icon: const Icon(Icons.autorenew),
                                 style: ElevatedButton.styleFrom(
                                   textStyle:
                                       TextStyle(fontSize: scaled(11.5)),
                                 ),
-                                label: Text(shiftPaused
-                                    ? 'Продолжить пересмену'
-                                    : 'Пересмена'),
+                                label: Text(buttons.shift.label),
                               ),
                             ],
                           ],
@@ -7096,18 +7262,25 @@ bool _hasRealStartConflict({
                     style: TextStyle(color: Colors.red.shade700, fontSize: 14),
                   ),
                 ),
-              if (task.assignees.isNotEmpty &&
-                  stageMode == ExecutionMode.separate)
+              if (panelButtons.finishTask.visible)
                 Align(
                   alignment: Alignment.centerRight,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.shade600,
+                  // Зелёной и активной кнопка становится только когда ВСЕ
+                  // исполнители завершили участие. Пока кто-то не отметился,
+                  // кнопка выключена, а нажатие объясняет, кого ждём.
+                  child: ExplainOnTap(
+                    enabled: panelButtons.finishTask.enabled,
+                    explain: () => _explainFinalizeBlocked(task),
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade600,
+                      ),
+                      onPressed: panelButtons.finishTask.enabled
+                          ? () => _finalizeTask(task)
+                          : null,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: Text(panelButtons.finishTask.label),
                     ),
-                    onPressed:
-                        canFinalizeTask ? () => _finalizeTask(task) : null,
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('Завершить задание'),
                   ),
                 ),
             ],
@@ -7413,13 +7586,7 @@ bool _hasRealStartConflict({
     }
   }
 
-  bool _hasMachineForStage(WorkplaceModel stage) {
-    try {
-      return (stage as dynamic).hasMachine == true;
-    } catch (_) {
-      return false;
-    }
-  }
+  bool _hasMachineForStage(WorkplaceModel stage) => stage.hasMachine;
 
   bool _isSetupCompletedForUser(TaskModel task, String userId) {
     final starts = task.comments
@@ -7509,17 +7676,9 @@ bool _hasRealStartConflict({
     return lastSetupStart > 0 && lastSetupStart > lastSetupDone;
   }
 
-  bool _canStartOrResumeSetupForUser(TaskModel task, String userId) {
-    if (_hasProductionStartedForStage(task) || _isSetupCompletedForStage(task)) {
-      return false;
-    }
-    if (_openEventForUser(task, userId)?.type == TaskTimeType.setup) {
-      return false;
-    }
-    final hasPendingSetup = _hasPendingSetupForStage(task);
-    if (!hasPendingSetup) return true;
-    return _hasUnfinishedSetupForUser(task, userId);
-  }
+  // Доступность «Начать наладку» / «Продолжить наладку» считает
+  // computeTaskButtons (task_buttons_state.dart) по флагам
+  // setupCompletedForStage / setupPendingForStage / setupUnfinishedForRow.
 
   bool _isSetupCompletedForStage(TaskModel task) {
     if (_hasPendingSetupForStage(task)) return false;
@@ -7635,10 +7794,11 @@ bool _hasRealStartConflict({
   }
 
   Future<void> _finishSetup(TaskModel task, TaskProvider provider) async {
+    final setupDoneText = await _buildSetupDoneText(task);
     await provider.addCommentAutoUser(
       taskId: task.id,
       type: 'setup_done',
-      text: 'Завершил(а) настройку станка',
+      text: setupDoneText,
       userIdOverride: widget.employeeId,
     );
     await provider.closeOpenTimeEvent(
@@ -7658,6 +7818,105 @@ bool _hasRealStartConflict({
         );
       }
     }
+  }
+
+  /// Текст комментария setup_done с количеством засчитанных приладок по
+  /// режиму рабочего места (см. computeSetupCount). Любая ошибка расчёта не
+  /// должна блокировать завершение наладки — возвращаем легаси-текст без
+  /// маркера (аналитика засчитает 1 приладку, как раньше).
+  Future<String> _buildSetupDoneText(TaskModel task) async {
+    const fallback = 'Завершил(а) настройку станка';
+    try {
+      final workplace =
+          context.read<PersonnelProvider>().workplaceById(task.stageId);
+      if (workplace == null || !workplace.hasMachine) return fallback;
+
+      final order = _orderById(task.orderId);
+      final mode = workplace.priladkaCalcMode;
+
+      var paintsCount = 0;
+      if (mode == PriladkaCalcMode.byColors) {
+        paintsCount = await _paintsCountForOrder(order);
+      }
+
+      final product = order?.product;
+      final currentDims = SetupDims(
+        width: product?.width,
+        height: product?.height,
+        depth: product?.depth,
+      );
+
+      final historyRepo = WorkplaceSetupHistoryRepository();
+      WorkplaceSetupHistoryEntry? prev;
+      if (mode == PriladkaCalcMode.bySize) {
+        prev = await historyRepo.loadLast(workplace.id);
+      }
+
+      final result = computeSetupCount(
+        mode: mode,
+        paintsCount: paintsCount,
+        currentDims: currentDims,
+        previousDims: prev?.dims,
+        hasPrevious: prev != null,
+      );
+
+      if (result.dataWarning) {
+        ErrorLogService.instance.record(
+          source: 'PRILADKA',
+          message: '⚠️ Приладка: рабочее место «${workplace.name}», '
+              'заказ ${task.orderId}: ${result.note}. '
+              'Проверьте данные заказа.',
+          context: 'finishSetup',
+        );
+      }
+
+      // Журналируем наладку при любом режиме — хронология «предыдущего
+      // заказа» должна накапливаться и до переключения места на by_size.
+      try {
+        await historyRepo.insert(
+          workplaceId: workplace.id,
+          orderId: task.orderId,
+          taskId: task.id,
+          employeeId: widget.employeeId,
+          dims: currentDims,
+          countedQty: result.qty,
+          calcMode: mode?.dbValue,
+          note: result.note,
+        );
+      } catch (e) {
+        ErrorLogService.instance.record(
+          source: 'PRILADKA',
+          message: 'Не удалось записать журнал наладки '
+              '(${workplace.id}, заказ ${task.orderId}): $e',
+          context: 'finishSetup',
+        );
+      }
+
+      return setupDoneCommentText(result.qty, note: result.note);
+    } catch (e, st) {
+      ErrorLogService.instance.record(
+        source: 'PRILADKA',
+        message: 'Ошибка расчёта приладки для задачи ${task.id}: $e',
+        stack: '$st',
+        context: 'finishSetup',
+      );
+      return fallback;
+    }
+  }
+
+  /// Количество красок заказа: строки order_paints, при недоступности —
+  /// количество записей «Краска: …» в product.parameters.
+  Future<int> _paintsCountForOrder(OrderModel? order) async {
+    if (order == null) return 0;
+    try {
+      final rows = await OrdersRepository().getPaints(order.id);
+      if (rows.isNotEmpty) return rows.length;
+    } catch (_) {
+      // Ниже посчитаем по параметрам продукта.
+    }
+    return RegExp(r'(?:^|;)\s*Краска:')
+        .allMatches(order.product.parameters)
+        .length;
   }
 
   Future<String?> _askFinishNote() async {
@@ -8134,11 +8393,17 @@ class _AssignedEmployeesRow extends StatelessWidget {
   final double scale;
   final bool compact;
   final String currentUserId;
+
+  /// Общие «часы» экрана: свой Stream.periodic здесь заводить нельзя — виджет
+  /// пересобирается часто, и таймеры накапливались бы (причина лагов).
+  final ValueListenable<DateTime> clock;
+
   const _AssignedEmployeesRow(
       {required this.task,
       required this.scale,
       this.compact = false,
-      required this.currentUserId});
+      required this.currentUserId,
+      required this.clock});
 
   @override
   Widget build(BuildContext context) {
@@ -8153,8 +8418,10 @@ class _AssignedEmployeesRow extends StatelessWidget {
     final stageMode = explicitStageMode ?? _workplaceDefaultMode(stage);
     final bool isOwner =
         task.assignees.isNotEmpty && task.assignees.first == currentUserId;
+    // На завершённом этапе состав исполнителей уже не меняется.
     final bool canAddHelper = isOwner &&
-        stageMode == ExecutionMode.joint;
+        stageMode == ExecutionMode.joint &&
+        task.status != TaskStatus.completed;
 
     double scaled(double value) => value * scale;
     final double spacing = scaled(compact ? 6 : 8);
@@ -8308,10 +8575,9 @@ class _AssignedEmployeesRow extends StatelessWidget {
       children: [
         Text('Исполнители:', style: labelStyle),
         SizedBox(width: spacing),
-        StreamBuilder<DateTime>(
-          stream: Stream<DateTime>.periodic(
-              const Duration(seconds: 1), (_) => DateTime.now()),
-          builder: (context, _) {
+        ValueListenableBuilder<DateTime>(
+          valueListenable: clock,
+          builder: (context, _, __) {
             int seconds = task.spentSeconds;
             if (task.status == TaskStatus.inProgress &&
                 task.startedAt != null) {
@@ -8462,13 +8728,13 @@ Future<_QuantityInput?> _askQuantity(
                           unit: unitLabel,
                         )
                       : null;
-                  final packSize = order != null && isQuantityPackUnit(unitLabel)
-                      ? packQuantityFromOrder(order)
-                      : null;
-                  final actualForValidation =
-                      packSize != null && packSize > 0 ? (n * packSize) : n;
+                  // Для unit «упаковка» количество = число упаковок как
+                  // есть. Раньше ввод домножался на product.blQuantity
+                  // (поле «Количество» основной бумаги) — в комментарий и
+                  // аналитику уходило завышенное значение. Остальные
+                  // единицы и так сохранялись без множителей.
                   final status =
-                      getQuantityStatus(actual: actualForValidation, expected: expected);
+                      getQuantityStatus(actual: n, expected: expected);
                   if (status == QuantityStatus.warning ||
                       status == QuantityStatus.danger) {
                     final confirmed = await showDialog<bool>(
@@ -8498,7 +8764,7 @@ Future<_QuantityInput?> _askQuantity(
                       ? '$displayQuantity $unitLabel'
                       : displayQuantity;
                   final payload = quantityStatusToJson(
-                    actual: actualForValidation,
+                    actual: n,
                     unit: unitLabel,
                     expected: expected,
                     status: status,

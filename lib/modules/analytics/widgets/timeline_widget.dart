@@ -7,6 +7,21 @@ import '../models/analytics_event.dart';
 import '../utils/analytics_colors.dart';
 import '../utils/format_utils.dart';
 
+/// Точечная отметка на линии дня (комментарий/событие этапа).
+/// Отображение поверх шкалы; на сегменты и расчёты не влияет.
+class TimelineMarker {
+  const TimelineMarker({
+    required this.minutes,
+    required this.tooltip,
+    required this.color,
+  });
+
+  /// Минуты от полуночи выбранного дня (та же система, что у сегментов).
+  final int minutes;
+  final String tooltip;
+  final Color color;
+}
+
 class TimelineWidget extends StatelessWidget {
   const TimelineWidget({
     super.key,
@@ -14,12 +29,14 @@ class TimelineWidget extends StatelessWidget {
     this.onSegmentTap,
     this.workplaceNameOf,
     this.employeeNameOf,
+    this.markers = const [],
   });
 
   final TimelineLayout layout;
   final ValueChanged<TimelineSegment>? onSegmentTap;
   final String Function(String workplaceId)? workplaceNameOf;
   final String Function(String employeeId)? employeeNameOf;
+  final List<TimelineMarker> markers;
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +68,7 @@ class TimelineWidget extends StatelessWidget {
                     onSegmentTap: onSegmentTap,
                     workplaceNameOf: workplaceNameOf,
                     employeeNameOf: employeeNameOf,
+                    markers: markers,
                   ),
                   const SizedBox(height: 6),
                   _TimeScale(layout: layout),
@@ -130,12 +148,14 @@ class _TimelineBar extends StatelessWidget {
     this.onSegmentTap,
     this.workplaceNameOf,
     this.employeeNameOf,
+    this.markers = const [],
   });
 
   final TimelineLayout layout;
   final ValueChanged<TimelineSegment>? onSegmentTap;
   final String Function(String workplaceId)? workplaceNameOf;
   final String Function(String employeeId)? employeeNameOf;
+  final List<TimelineMarker> markers;
 
   @override
   Widget build(BuildContext context) {
@@ -152,24 +172,47 @@ class _TimelineBar extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(17),
           child: Stack(
-            children: layout.segments.map((seg) {
-              final left = ((seg.startMinutes - layout.startMinutes) / total) *
-                  width;
-              final segWidth =
-                  ((seg.endMinutes - seg.startMinutes) / total) * width;
-              return Positioned(
-                left: left,
-                top: 0,
-                bottom: 0,
-                width: segWidth < 2 ? 2 : segWidth,
-                child: _Segment(
-                  segment: seg,
-                  onTap: onSegmentTap,
-                  workplaceNameOf: workplaceNameOf,
-                  employeeNameOf: employeeNameOf,
-                ),
-              );
-            }).toList(),
+            children: [
+              ...layout.segments.map((seg) {
+                final left =
+                    ((seg.startMinutes - layout.startMinutes) / total) * width;
+                final segWidth =
+                    ((seg.endMinutes - seg.startMinutes) / total) * width;
+                return Positioned(
+                  left: left,
+                  top: 0,
+                  bottom: 0,
+                  width: segWidth < 2 ? 2 : segWidth,
+                  child: _Segment(
+                    segment: seg,
+                    onTap: onSegmentTap,
+                    workplaceNameOf: workplaceNameOf,
+                    employeeNameOf: employeeNameOf,
+                  ),
+                );
+              }),
+              for (final m in markers)
+                if (m.minutes >= layout.startMinutes &&
+                    m.minutes <= layout.endMinutes)
+                  Positioned(
+                    left: ((m.minutes - layout.startMinutes) / total) * width -
+                        5,
+                    top: 3,
+                    child: Tooltip(
+                      message: m.tooltip,
+                      waitDuration: const Duration(milliseconds: 250),
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: m.color,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                      ),
+                    ),
+                  ),
+            ],
           ),
         ),
       );

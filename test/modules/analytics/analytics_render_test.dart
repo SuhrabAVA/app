@@ -115,9 +115,17 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(errors, isEmpty, reason: describe(errors));
-    // Многострочная ячейка «Рабочие места» у e1 действительно отрисована.
-    expect(find.textContaining('Печать:'), findsOneWidget);
-    expect(find.textContaining('Ламинация:'), findsOneWidget);
+    // Рабочее место встречается в двух многострочных ячейках: «Рабочие
+    // места» (время/количество/приладки) и «Средняя скорость».
+    expect(find.textContaining('Печать:'), findsNWidgets(2));
+    expect(find.textContaining('Ламинация:'), findsNWidgets(2));
+    // Ячейка «Рабочие места»: общее время, сделанное количество, приладки.
+    expect(find.textContaining('Печать: 5 ч 30 мин · 1200 лист · 50 прил.'),
+        findsOneWidget);
+    // Ячейка «Средняя скорость»: сначала выработка (единиц в минуту),
+    // затем средняя длительность приладки.
+    expect(find.textContaining('лист/мин · '), findsWidgets);
+    expect(find.textContaining('мин/прил.'), findsWidgets);
   });
 
   testWidgets(

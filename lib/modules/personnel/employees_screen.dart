@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import 'personnel_provider.dart';
 import 'employee_model.dart';
+import 'employee_status_model.dart';
 import 'positions_picker.dart';
 import '../../utils/media_viewer.dart';
 
@@ -52,98 +53,131 @@ class EmployeesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<PersonnelProvider>(context);
-    final employees = provider.employees;
     final positionsById = {for (var p in provider.positions) p.id: p.name};
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Сотрудники'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _openAddDialog(context),
-          ),
-        ],
-      ),
-      body: employees.isEmpty
-          ? const Center(child: Text('Список сотрудников пуст'))
-          : ListView.separated(
-              itemCount: employees.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
-              itemBuilder: (context, index) {
-                final emp = employees[index];
-                final fullName =
-                    '${emp.lastName} ${emp.firstName} ${emp.patronymic}'.trim();
-                final positionNames = emp.positionIds
-                    .map((id) => positionsById[id] ?? '')
-                    .where((s) => s.isNotEmpty)
-                    .join(', ');
-                final initials =
-                    (emp.lastName.isNotEmpty ? emp.lastName[0] : '') +
-                        (emp.firstName.isNotEmpty ? emp.firstName[0] : '');
-                final photoUrl = emp.photoUrl ?? '';
-                final displayName = fullName.isEmpty ? 'Сотрудник' : fullName;
+    // Уволенные живут в своей вкладке, чтобы не мешать работе с действующими.
+    final active = provider.employees.where((e) => !e.isFired).toList();
+    final fired = provider.employees.where((e) => e.isFired).toList();
 
-                Widget avatar = CircleAvatar(
-                  backgroundColor: Colors.blueGrey.shade100,
-                  backgroundImage:
-                      (photoUrl.isNotEmpty) ? NetworkImage(photoUrl) : null,
-                  child: (photoUrl.isEmpty)
-                      ? Text(
-                          initials.toUpperCase(),
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 16),
-                        )
-                      : null,
-                );
-
-                if (photoUrl.isNotEmpty) {
-                  avatar = GestureDetector(
-                    onTap: () => showImagePreview(
-                      context,
-                      imageUrl: photoUrl,
-                      title: displayName,
-                    ),
-                    child: avatar,
-                  );
-                }
-
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  elevation: 1,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: emp.isFired
-                          ? Colors.red.shade200
-                          : Colors.grey.shade300,
-                    ),
-                  ),
-                  child: ListTile(
-                    onTap: () => _openEditDialog(context, emp),
-                    leading: avatar,
-                    title: Text(
-                      displayName,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: emp.isFired ? Colors.grey : Colors.black,
-                      ),
-                    ),
-                    subtitle: Text(
-                      positionNames.isEmpty ? 'Нет должностей' : positionNames,
-                      style: TextStyle(
-                        fontStyle: positionNames.isEmpty
-                            ? FontStyle.italic
-                            : FontStyle.normal,
-                        color: emp.isFired ? Colors.grey : Colors.black54,
-                      ),
-                    ),
-                    trailing: emp.isFired
-                        ? const Icon(Icons.block, color: Colors.red)
-                        : const Icon(Icons.edit, color: Colors.grey),
-                  ),
-                );
-              },
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Сотрудники'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: () => _openAddDialog(context),
             ),
+          ],
+          bottom: TabBar(
+            tabs: [
+              Tab(text: 'Работают (${active.length})'),
+              Tab(text: 'Уволены (${fired.length})'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildList(
+              context,
+              employees: active,
+              positionsById: positionsById,
+              emptyText: 'Нет действующих сотрудников',
+            ),
+            _buildList(
+              context,
+              employees: fired,
+              positionsById: positionsById,
+              emptyText: 'Уволенных сотрудников нет',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildList(
+    BuildContext context, {
+    required List<EmployeeModel> employees,
+    required Map<String, String> positionsById,
+    required String emptyText,
+  }) {
+    if (employees.isEmpty) {
+      return Center(child: Text(emptyText));
+    }
+    return ListView.separated(
+      itemCount: employees.length,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      itemBuilder: (context, index) {
+        final emp = employees[index];
+        final fullName =
+            '${emp.lastName} ${emp.firstName} ${emp.patronymic}'.trim();
+        final positionNames = emp.positionIds
+            .map((id) => positionsById[id] ?? '')
+            .where((s) => s.isNotEmpty)
+            .join(', ');
+        final initials = (emp.lastName.isNotEmpty ? emp.lastName[0] : '') +
+            (emp.firstName.isNotEmpty ? emp.firstName[0] : '');
+        final photoUrl = emp.photoUrl ?? '';
+        final displayName = fullName.isEmpty ? 'Сотрудник' : fullName;
+
+        Widget avatar = CircleAvatar(
+          backgroundColor: Colors.blueGrey.shade100,
+          backgroundImage: (photoUrl.isNotEmpty) ? NetworkImage(photoUrl) : null,
+          child: (photoUrl.isEmpty)
+              ? Text(
+                  initials.toUpperCase(),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 16),
+                )
+              : null,
+        );
+
+        if (photoUrl.isNotEmpty) {
+          avatar = GestureDetector(
+            onTap: () => showImagePreview(
+              context,
+              imageUrl: photoUrl,
+              title: displayName,
+            ),
+            child: avatar,
+          );
+        }
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12),
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: emp.isFired ? Colors.red.shade200 : Colors.grey.shade300,
+            ),
+          ),
+          child: ListTile(
+            onTap: () => _openEditDialog(context, emp),
+            leading: avatar,
+            title: Text(
+              displayName,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: emp.isFired ? Colors.grey : Colors.black,
+              ),
+            ),
+            subtitle: Text(
+              positionNames.isEmpty ? 'Нет должностей' : positionNames,
+              style: TextStyle(
+                fontStyle:
+                    positionNames.isEmpty ? FontStyle.italic : FontStyle.normal,
+                color: emp.isFired ? Colors.grey : Colors.black54,
+              ),
+            ),
+            trailing: emp.isFired
+                ? const Icon(Icons.block, color: Colors.red)
+                : const Icon(Icons.edit, color: Colors.grey),
+          ),
+        );
+      },
     );
   }
 }
@@ -170,6 +204,8 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
   bool _isFired = false;
   final Set<String> _selectedPositions = {};
   bool _isUploading = false;
+  String? _selectedStatusId;
+  String? _originalStatusId;
 
   @override
   void initState() {
@@ -186,6 +222,9 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
       _selectedPositions.addAll(emp.positionIds);
       _login.text = emp.login;
       _password.text = emp.password;
+      _originalStatusId = Provider.of<PersonnelProvider>(context, listen: false)
+          .currentStatusIdFor(emp.id);
+      _selectedStatusId = _originalStatusId;
     } else {
       _isFired = false;
     }
@@ -210,7 +249,7 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
     final photo = _photoUrl.text.trim().isEmpty ? null : _photoUrl.text.trim();
 
     if (widget.employee == null) {
-      await provider.addEmployee(
+      final id = await provider.addEmployee(
         lastName: _lastName.text.trim(),
         firstName: _firstName.text.trim(),
         patronymic: _patronymic.text.trim(),
@@ -222,6 +261,10 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
         login: _login.text.trim(),
         password: _password.text.trim(),
       );
+      if (_selectedStatusId != null) {
+        await provider.assignEmployeeStatus(
+            employeeId: id, statusId: _selectedStatusId);
+      }
     } else {
       await provider.updateEmployee(
         id: widget.employee!.id,
@@ -236,6 +279,10 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
         login: _login.text.trim(),
         password: _password.text.trim(),
       );
+      if (_selectedStatusId != _originalStatusId) {
+        await provider.assignEmployeeStatus(
+            employeeId: widget.employee!.id, statusId: _selectedStatusId);
+      }
     }
 
     if (!mounted) return;
@@ -529,6 +576,46 @@ class _EmployeeDialogState extends State<_EmployeeDialog> {
                   });
                 },
               ),
+
+              // Выбор статуса (независим от должностей — допустимы любые
+              // комбинации: только должность, только статус, оба, ни одного).
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Статус',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600, color: Colors.grey[700]),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Consumer<PersonnelProvider>(
+                builder: (context, provider, _) {
+                  final statuses = provider.statuses;
+                  final value = statuses.any((s) => s.id == _selectedStatusId)
+                      ? _selectedStatusId
+                      : null;
+                  return DropdownButtonFormField<String?>(
+                    value: value,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Без статуса'),
+                      ),
+                      ...statuses.map((EmployeeStatus s) =>
+                          DropdownMenuItem<String?>(
+                            value: s.id,
+                            child: Text(s.name),
+                          )),
+                    ],
+                    onChanged: (id) => setState(() => _selectedStatusId = id),
+                  );
+                },
+              ),
+              const SizedBox(height: 6),
 
               // Признак уволен
               SwitchListTile(

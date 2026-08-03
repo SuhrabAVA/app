@@ -578,26 +578,35 @@ class _OrderStageQueueBuilder {
       fallbackSelectedId: kAutoBigStageId,
     ));
     if (draft.hasTrimming) _add(_stage(kCuttingStageId, 'Резка'));
+
+    // Труба — другой способ сборки: дно собирают и склеивают всегда, даже
+    // без картона. Раньше эти этапы жили внутри ветки картона, поэтому
+    // переключение автомата на трубу без картона вообще не меняло маршрут.
+    final bool isTube = selectedWorkplaceId == kTubeStageId;
+
     if (draft.hasCardboard) {
       _add(_stage(kCardboardCuttingStageId, 'Резка картона'));
-      if (selectedWorkplaceId == kAutoBigStageId ||
-          selectedWorkplaceId == kAutoSmallStageId) {
+      // На автоматах картон вставляют отдельным этапом; у трубы он входит
+      // в сборку дна ниже, поэтому «Вставка картона» здесь не нужна.
+      if (!isTube) {
         _add(_stage(kCardboardInsertStageId, 'Вставка картона'));
-      } else if (selectedWorkplaceId == kTubeStageId) {
-        _add(_stage(
-          kBottomWithCardboardAssemblyStageId,
-          'Сборка дно+картон',
-        ));
-        _add(_stage(
-          kBottomGlueStageId,
-          'Склейка дна',
-          workplaceIds: const [
-            kBottomGlueWorkplaceId,
-            kBottomGlueAltWorkplaceId,
-            kBottomGlueSecondAltWorkplaceId,
-          ],
-        ));
       }
+    }
+
+    if (isTube) {
+      _add(_stage(
+        kBottomWithCardboardAssemblyStageId,
+        'Сборка дно+картон',
+      ));
+      _add(_stage(
+        kBottomGlueStageId,
+        'Склейка дна',
+        workplaceIds: const [
+          kBottomGlueWorkplaceId,
+          kBottomGlueAltWorkplaceId,
+          kBottomGlueSecondAltWorkplaceId,
+        ],
+      ));
     }
     _appendHandleStage();
   }

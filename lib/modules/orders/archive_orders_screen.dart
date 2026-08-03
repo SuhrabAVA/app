@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'orders_provider.dart';
+import 'material_model.dart';
 import 'order_model.dart';
 import 'product_model.dart';
 import 'edit_order_screen.dart';
@@ -67,10 +68,20 @@ class _ArchiveOrdersScreenState extends State<ArchiveOrdersScreen> {
       handle: order.handle,
       cardboard: order.cardboard,
       material: order.material,
+      // Полный список бумаг: без него многобумажный заказ при возобновлении
+      // сводился бы к одной бумаге (fallback конструктора по material).
+      paperMaterials: List<MaterialModel>.from(order.paperMaterials),
       makeready: order.makeready,
       val: order.val,
       pdfUrl: order.pdfUrl,
       stageTemplateId: null, // очередь очищаем
+      // Привязка формы переживает возобновление — реквизиты переносятся
+      // в новый заказ (EditOrderScreen сидирует ими своё состояние).
+      hasForm: order.hasForm,
+      isOldForm: order.isOldForm,
+      newFormNo: order.newFormNo,
+      formSeries: order.formSeries,
+      formCode: order.formCode,
       contractSigned: order.contractSigned,
       paymentDone: order.paymentDone,
       comments: '',

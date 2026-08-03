@@ -310,6 +310,13 @@ class ProductionQueueProvider with ChangeNotifier {
   Future<void>? _remoteBootstrap;
   Timer? _pollingTimer;
 
+  // Защита поллинга: не запускаем новый цикл, пока висит предыдущий,
+  // а при ошибках сети пропускаем тики с экспоненциальным backoff (до 60 с).
+  bool _pollInFlight = false;
+  int _pollFailureStreak = 0;
+  int _pollSkipTicks = 0;
+  bool _syncErrorLogged = false;
+
   bool _loaded = false;
   bool _isSyncingOrders = false;
 
@@ -346,9 +353,44 @@ class ProductionQueueProvider with ChangeNotifier {
   void _startPollingFallback() {
     _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      unawaited(_loadLegacyRemote());
-      unawaited(_loadAllWorkplacePositions());
+      unawaited(_pollRemote());
     });
+  }
+
+  Future<void> _pollRemote() async {
+    if (_pollInFlight) return;
+    if (_pollSkipTicks > 0) {
+      _pollSkipTicks--;
+      return;
+    }
+    _pollInFlight = true;
+    try {
+      final legacyOk = await _loadLegacyRemote();
+      final positionsOk = await _loadAllWorkplacePositions();
+      if (legacyOk && positionsOk) {
+        _pollFailureStreak = 0;
+        _pollSkipTicks = 0;
+      } else {
+        if (_pollFailureStreak < 5) _pollFailureStreak++;
+        // 1 → 3 → 7 → 15 → 29 пропущенных тиков (4с … 60с между попытками).
+        _pollSkipTicks = (1 << _pollFailureStreak) - 1;
+        if (_pollSkipTicks > 29) _pollSkipTicks = 29;
+      }
+    } finally {
+      _pollInFlight = false;
+    }
+  }
+
+  void _logSyncError(String message) {
+    if (_syncErrorLogged) return;
+    _syncErrorLogged = true;
+    debugPrint('$message (повторные ошибки скрыты до восстановления связи)');
+  }
+
+  void _noteSyncSuccess() {
+    if (!_syncErrorLogged) return;
+    _syncErrorLogged = false;
+    debugPrint('✅ Связь с Supabase восстановлена, синхронизация очереди продолжается');
   }
 
   Future<void> _init() async {
@@ -496,13 +538,15 @@ class ProductionQueueProvider with ChangeNotifier {
     return true;
   }
 
-  Future<void> _loadLegacyRemote() async {
+  Future<bool> _loadLegacyRemote() async {
     try {
       await _ensureAuthed();
       final raw = await _sb
           .from(_legacyRemoteTable)
-          .select('group_id, order_sequence, hidden_order_ids');
-      if (raw is! List) return;
+          .select('group_id, order_sequence, hidden_order_ids')
+          .timeout(const Duration(seconds: 10));
+      _noteSyncSuccess();
+      if (raw is! List) return true;
 
       final nextSequences = <String, List<String>>{};
       final nextHidden = <String, Set<String>>{};
@@ -516,9 +560,9 @@ class ProductionQueueProvider with ChangeNotifier {
 
       if (nextSequences.isEmpty && nextHidden.isEmpty) {
         await _pushLocalStateToLegacyRemote();
-        return;
+        return true;
       }
-      if (_legacyRemoteStateMatches(nextSequences, nextHidden)) return;
+      if (_legacyRemoteStateMatches(nextSequences, nextHidden)) return true;
 
       _orderSequences
         ..clear()
@@ -529,20 +573,24 @@ class ProductionQueueProvider with ChangeNotifier {
 
       await _persist();
       notifyListeners();
+      return true;
     } catch (e) {
-      debugPrint('⚠️ Failed to load legacy production queue from Supabase: $e');
+      _logSyncError('⚠️ Failed to load legacy production queue from Supabase: $e');
+      return false;
     }
   }
 
-  Future<void> _loadAllWorkplacePositions() async {
+  Future<bool> _loadAllWorkplacePositions() async {
     try {
       await _ensureAuthed();
       final raw = await _sb
           .from(_positionsTable)
           .select('id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
           .order('workplace_id')
-          .order('queue_position');
-      if (raw is! List) return;
+          .order('queue_position')
+          .timeout(const Duration(seconds: 10));
+      _noteSyncSuccess();
+      if (raw is! List) return true;
       final next = <String, Map<String, WorkplaceQueuePosition>>{};
       for (final row in raw) {
         if (row is! Map) continue;
@@ -555,8 +603,10 @@ class ProductionQueueProvider with ChangeNotifier {
         ..clear()
         ..addAll(next);
       notifyListeners();
+      return true;
     } catch (e) {
-      debugPrint('⚠️ Failed to load workplace queue positions from Supabase: $e');
+      _logSyncError('⚠️ Failed to load workplace queue positions from Supabase: $e');
+      return false;
     }
   }
 

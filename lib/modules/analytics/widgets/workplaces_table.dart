@@ -20,12 +20,18 @@ class WorkplacesTable extends StatefulWidget {
     required this.personnel,
     required this.canEditCoefficient,
     required this.onWorkplaceTap,
+    this.verticalController,
   });
 
   final AnalyticsService service;
   final PersonnelProvider personnel;
   final bool canEditCoefficient;
   final ValueChanged<String> onWorkplaceTap;
+
+  /// Вертикальный скролл извне: при ограниченной высоте шапка столбцов
+  /// закрепляется сверху, а строки прокручиваются под ней (как в таблице
+  /// сотрудников).
+  final ScrollController? verticalController;
 
   @override
   State<WorkplacesTable> createState() => _WorkplacesTableState();
@@ -41,6 +47,12 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
 
   ScrollController _ctrl(int key) =>
       _ctrlCache.putIfAbsent(key, () => _sync.acquire());
+
+  // Собственный вертикальный контроллер — только если снаружи не передан.
+  ScrollController? _ownedVerticalCtrl;
+
+  ScrollController get _verticalCtrl =>
+      widget.verticalController ?? (_ownedVerticalCtrl ??= ScrollController());
 
   /// Горизонтальный drag над строками данных. Строки — пассивные
   /// Transform.translate без собственных Scrollable, поэтому жест двигает
@@ -132,6 +144,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   @override
   void dispose() {
     _sync.dispose();
+    _ownedVerticalCtrl?.dispose();
     super.dispose();
   }
 
@@ -150,32 +163,33 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
           ? math.max(constraints.maxWidth - stickyWidth, restMinWidth)
           : restMinWidth;
 
-      return Column(
+      // ── Header row ───────────────────────────────────────────────────
+      final headerRow = IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _stickyHeaderCell(stickyWidth),
+            Expanded(
+              child: StickyScrollArea(
+                child: SingleChildScrollView(
+                  controller: _ctrl(-1),
+                  scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
+                  child: SizedBox(
+                    width: restWidth,
+                    child: _scrollableHeader(),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final content = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── Header row ─────────────────────────────────────────────────
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _stickyHeaderCell(stickyWidth),
-                Expanded(
-                  child: StickyScrollArea(
-                    child: SingleChildScrollView(
-                      controller: _ctrl(-1),
-                      scrollDirection: Axis.horizontal,
-                      physics: const ClampingScrollPhysics(),
-                      child: SizedBox(
-                        width: restWidth,
-                        child: _scrollableHeader(),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           // ── Data rows ──────────────────────────────────────────────────
           // Контент строки собирается один раз и передаётся через `child`
           // per-row ValueListenableBuilder'а; на тик скролла пересоздаётся
@@ -228,6 +242,30 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
                     ),
                   ),
               ],
+            ),
+          ),
+        ],
+      );
+
+      // Высота не ограничена (таблица внутри внешнего скролла) — отдаём как
+      // есть; иначе закрепляем шапку сверху и прокручиваем строки под ней.
+      if (!constraints.maxHeight.isFinite) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [headerRow, content],
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          headerRow,
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _verticalCtrl,
+              primary: false,
+              child: content,
             ),
           ),
         ],
@@ -319,8 +357,11 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
         : 'ед.';
     final avgQtySpeed =
         r.usefulMinutes > 0 ? r.qty / r.usefulMinutes : 0.0;
-    final avgSetupSpeed =
-        r.setupMinutes > 0 ? r.setupQty / r.setupMinutes : 0.0;
+    // Скорость наладки — сколько минут уходит на одну наладку (время ÷
+    // количество), а не наладок в минуту: наладка длится минуты, и обратная
+    // величина получалась неинформативной дробью.
+    final avgSetupMinutes =
+        r.setupQty > 0 ? r.setupMinutes / r.setupQty : null;
     final rowColor = hovered
         ? AnalyticsColors.rowHover
         : (index.isEven ? AnalyticsColors.zebraOdd : AnalyticsColors.zebraEven);
@@ -342,8 +383,9 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
               '${AnalyticsFormat.hoursMinutes(r.usefulMinutes)} · ${AnalyticsFormat.decimal(avgQtySpeed)} $unit/мин',
             ),
             _cellLong(
-              '${AnalyticsFormat.decimal(r.setupQty)}',
-              '${AnalyticsFormat.hoursMinutes(r.setupMinutes)} · ${AnalyticsFormat.decimal(avgSetupSpeed)} нал/мин',
+              '${AnalyticsFormat.decimal(r.setupQty)} нал.',
+              '${AnalyticsFormat.hoursMinutes(r.setupMinutes)} · '
+              '${avgSetupMinutes == null ? '—' : AnalyticsFormat.decimal(avgSetupMinutes, precision: 1)} мин/нал.',
             ),
             _cell('${r.ordersCount}'),
             // flex: 1 — веса ячеек данных обязаны совпадать с _scrollableHeader

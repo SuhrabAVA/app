@@ -224,6 +224,9 @@ class OrderQueueService {
     Map<String, dynamic>? signature, {
     bool completeBobbin = false,
     String? bobbinStageId,
+    // Правка уже запущенного заказа: начатые/завершённые этапы не отменяют
+    // сохранение, а остаются как есть (см. OrderQueueSyncService.sync).
+    bool force = false,
   }) async {
     final id = orderId.trim();
     if (id.isEmpty) {
@@ -245,6 +248,7 @@ class OrderQueueService {
         rows,
         completeBobbin: completeBobbin,
         bobbinStageId: bobbinStageId,
+        force: force,
       );
       return const SaveBuiltQueueResult(productionTasksCreated: true);
     } on OrderQueueSyncBlockedException {
@@ -360,12 +364,14 @@ class OrderQueueService {
     List<Map<String, dynamic>> newQueue, {
     bool completeBobbin = false,
     String? bobbinStageId,
+    bool force = false,
   }) {
     return OrderQueueSyncService(_client).sync(
       orderId: orderId,
       nextQueue: OrderQueueMapper.toSyncEntries(newQueue),
       completeBobbin: completeBobbin,
       bobbinStageId: bobbinStageId,
+      force: force,
     );
   }
 
@@ -382,6 +388,9 @@ class OrderQueueService {
     Map<String, dynamic>? signature, {
     bool completeBobbin = false,
     String? bobbinStageId,
+    // Правки запущенного заказа применяются всегда: начатые/завершённые
+    // этапы не отменяют сохранение, а остаются нетронутыми.
+    bool force = false,
   }) async {
     final id = orderId.trim();
     if (id.isEmpty) {
@@ -395,6 +404,7 @@ class OrderQueueService {
         rows,
         completeBobbin: completeBobbin,
         bobbinStageId: bobbinStageId,
+        force: force,
       );
     } on OrderQueueSyncBlockedException {
       rethrow;

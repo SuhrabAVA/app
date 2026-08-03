@@ -342,4 +342,63 @@ void main() {
     expect(blocked.first.reason, contains('Автомат большой'));
   });
 
+  group('правка запущенного заказа (force)', () {
+    // Смена типа продукта у запущенного заказа: маршрут меняется целиком,
+    // при этом отработанный этап обязан уцелеть — в нём зафиксированы время
+    // и количество, которые идут в аналитику и зарплату.
+    const startedPrint = OrderQueueSyncEntry(
+      stageId: 'print',
+      stageGroupKey: 'print',
+      step: 1,
+      status: 'in_progress',
+      row: {'name': 'Флексопечать'},
+    );
+    const pendingPack = OrderQueueSyncEntry(
+      stageId: 'pack',
+      stageGroupKey: 'pack',
+      step: 2,
+      status: 'waiting',
+      row: {'name': 'Упаковка'},
+    );
+    const newCut = OrderQueueSyncEntry(
+      stageId: 'cut',
+      stageGroupKey: 'cut',
+      step: 1,
+      row: {'stageName': 'Резка'},
+    );
+
+    test('начатый этап помечается block, ожидающий — удаляется', () {
+      final operations = OrderQueueSyncService.diff(
+        currentStages: const [startedPrint, pendingPack],
+        currentTasks: const [startedPrint, pendingPack],
+        nextQueue: const [newCut],
+      );
+
+      final blocked = operations
+          .where((op) => op.type == OrderQueueSyncOperationType.block)
+          .toList();
+      expect(blocked, isNotEmpty,
+          reason: 'начатая Флексопечать не должна молча исчезнуть');
+      expect(blocked.first.current?.stageId, 'print');
+
+      final removed = operations
+          .where((op) =>
+              op.type == OrderQueueSyncOperationType.cancelOrDeletePending)
+          .toList();
+      expect(removed.map((op) => op.current?.stageId), contains('pack'));
+    });
+
+    test('новый этап маршрута добавляется', () {
+      final operations = OrderQueueSyncService.diff(
+        currentStages: const [startedPrint],
+        currentTasks: const [startedPrint],
+        nextQueue: const [startedPrint, newCut],
+      );
+
+      final inserted = operations
+          .where((op) => op.type == OrderQueueSyncOperationType.insert)
+          .toList();
+      expect(inserted.map((op) => op.next?.stageId), contains('cut'));
+    });
+  });
 }

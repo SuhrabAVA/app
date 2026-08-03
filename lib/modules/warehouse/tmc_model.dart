@@ -24,6 +24,19 @@ class TmcModel {
   /// необходимости загружать их из интернета (например, в веб-версии).
   final String? imageBase64;
 
+  /// URL миниатюры (~200px), лежащей в Storage рядом с оригиналом как
+  /// `<имя>_thumb.jpg`. Отдельной колонки в БД нет — путь детерминированно
+  /// выводится из [imageUrl]; если файла миниатюры нет, UI откатывается на
+  /// оригинал через errorWidget.
+  String? get thumbUrl {
+    final url = imageUrl;
+    if (url == null || url.isEmpty) return null;
+    final dot = url.lastIndexOf('.');
+    final slash = url.lastIndexOf('/');
+    if (dot <= slash) return '${url}_thumb.jpg';
+    return '${url.substring(0, dot)}_thumb.jpg';
+  }
+
   /// Пороговое значение для предупреждения о низком остатке (желтый индикатор).
   final double? lowThreshold;
 

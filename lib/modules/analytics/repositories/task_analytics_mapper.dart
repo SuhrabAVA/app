@@ -115,9 +115,15 @@ class TaskAnalyticsMapper {
 
         final groupKey = '$taskId::${row.userId}';
         if (type == 'setup_done') {
-          setupRecordsByGroup
-              .putIfAbsent(groupKey, () => [])
-              .add(_QtyRecord(key: qtyKey, timestamp: row.timestamp, qty: qty > 0 ? qty : 1.0));
+          // Явный маркер «приладок: N» (пишется при завершении наладки по
+          // режиму рабочего места) имеет приоритет и принимает 0 — «размеры
+          // совпали, переналадка не потребовалась». Старые комментарии без
+          // маркера — легаси-поведение: 1 приладка.
+          final explicit = _parseSetupCount(row.text);
+          setupRecordsByGroup.putIfAbsent(groupKey, () => []).add(_QtyRecord(
+              key: qtyKey,
+              timestamp: row.timestamp,
+              qty: explicit ?? (qty > 0 ? qty : 1.0)));
         } else if ((type == 'quantity_done' ||
                 type == 'quantity_team_total' ||
                 type == 'quantity_share') &&
@@ -397,6 +403,17 @@ class TaskAnalyticsMapper {
     if (id.isNotEmpty) return '$taskId|$id|${row.type}|${row.userId}';
     return '$taskId|${row.type}|${row.userId}'
         '|${row.timestamp.millisecondsSinceEpoch}|${row.text}';
+  }
+
+  static final _setupCountRe =
+      RegExp(r'приладок:\s*([0-9]+(?:[.,][0-9]+)?)', caseSensitive: false);
+
+  /// Явное количество приладок из текста setup_done («приладок: N»).
+  /// null — маркера нет (старый формат комментария).
+  static double? _parseSetupCount(String raw) {
+    final match = _setupCountRe.firstMatch(raw);
+    if (match == null) return null;
+    return double.tryParse(match.group(1)!.replaceAll(',', '.'));
   }
 
   static double _parseQty(String raw) {

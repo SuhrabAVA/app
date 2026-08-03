@@ -112,6 +112,7 @@ class _EmployeesAnalyticsScreenState extends State<EmployeesAnalyticsScreen> {
             service: widget.service,
             personnel: personnel,
             permission: widget.permission,
+            verticalController: _scrollController,
             onEmployeeTap: (id) {
               Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => EmployeeDetailScreen(
@@ -170,15 +171,14 @@ class _AnalyticsTableCard extends StatelessWidget {
               trailing: trailing,
             ),
             const Divider(height: 1, color: AnalyticsColors.line),
+            // Вертикальный скролл теперь внутри EmployeesTable (строки и
+            // футер под закреплённой шапкой столбцов); Scrollbar остаётся
+            // здесь и привязан к тому же контроллеру.
             Expanded(
               child: Scrollbar(
                 controller: controller,
                 thumbVisibility: true,
-                child: SingleChildScrollView(
-                  controller: controller,
-                  primary: false,
-                  child: child,
-                ),
+                child: child,
               ),
             ),
           ],

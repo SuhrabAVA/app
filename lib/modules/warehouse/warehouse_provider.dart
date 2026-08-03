@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
@@ -10,6 +12,54 @@ import '../../utils/auth_helper.dart';
 import '../../services/app_auth.dart';
 import '../../utils/kostanay_time.dart';
 import 'warehouse_logs_repository.dart';
+
+/// Кодирует миниатюру фото ТМЦ: ширина 200px, JPEG q80 (итог ~10–20 КБ).
+/// Top-level функция — вызывается через compute() в отдельном изоляте,
+/// чтобы декод/ресайз 2-МБ оригинала не блокировал UI-поток.
+Uint8List? encodeTmcThumb(Uint8List original) {
+  var decoded = img.decodeImage(original);
+  if (decoded == null) return null;
+  // Ориентация из EXIF запекается в пиксели, дальше метаданные не нужны.
+  decoded = img.bakeOrientation(decoded);
+  final resized = decoded.width <= 200
+      ? decoded
+      : img.copyResize(decoded, width: 200, interpolation: img.Interpolation.average);
+  // EXIF и ICC-профиль не переносим: encodeJpg копирует их из оригинала,
+  // а один только ICC телефонных фото весит ~47 КБ — больше самой миниатюры.
+  resized.exif = img.ExifData();
+  resized.iccProfile = null;
+  return Uint8List.fromList(img.encodeJpg(resized, quality: 80));
+}
+
+/// Пережимает оригинал фото ТМЦ для полноразмерного просмотра: длинная
+/// сторона ≤1600px, JPEG q85. Ориентация запекается в пиксели, EXIF
+/// отбрасывается, ICC-профиль сохраняется (точность цвета краски важна при
+/// полноразмерном просмотре). Если пережатие не даёт выигрыша, возвращает
+/// оригинал как есть. Top-level — вызывается через compute() в изоляте.
+Uint8List compressTmcOriginal(Uint8List original) {
+  const int maxSide = 1600;
+  try {
+    var decoded = img.decodeImage(original);
+    if (decoded == null) return original;
+    final icc = decoded.iccProfile;
+    decoded = img.bakeOrientation(decoded);
+    final int longest =
+        decoded.width > decoded.height ? decoded.width : decoded.height;
+    final resized = longest <= maxSide
+        ? decoded
+        : (decoded.width >= decoded.height
+            ? img.copyResize(decoded,
+                width: maxSide, interpolation: img.Interpolation.average)
+            : img.copyResize(decoded,
+                height: maxSide, interpolation: img.Interpolation.average));
+    resized.exif = img.ExifData();
+    resized.iccProfile = icc;
+    final encoded = Uint8List.fromList(img.encodeJpg(resized, quality: 85));
+    return encoded.length < original.length ? encoded : original;
+  } catch (_) {
+    return original;
+  }
+}
 
 class WarehouseProvider with ChangeNotifier {
   static const String canceledMarker = '[ОТМЕНЕНО]';
@@ -57,9 +107,16 @@ class WarehouseProvider with ChangeNotifier {
   RealtimeChannel? _chanPaints;
   RealtimeChannel? _chanMaterials;
   RealtimeChannel? _chanPapers;
+  RealtimeChannel? _chanPens;
   RealtimeChannel? _chanPaperReservations;
   RealtimeChannel? _chanPaintReservations;
   RealtimeChannel? _chanStationery;
+  // Ленивая подписка на лог-таблицы типа (создаётся при первой загрузке
+  // bundle этого типа) — единственный realtime-источник обновления логов.
+  final Map<String, RealtimeChannel> _logChannels = {};
+  final Map<String, Set<WarehouseLogAction>> _dirtyLogKinds = {};
+  Timer? _logsRefreshDebounce;
+  Timer? _paintResRefreshDebounce;
 
   // Guard: не допускать параллельных тяжёлых загрузок fetchTmc.
   bool _fetchInFlight = false;
@@ -70,6 +127,11 @@ class WarehouseProvider with ChangeNotifier {
   final List<TmcModel> _allTmc = [];
   List<TmcModel> get allTmc => List.unmodifiable(_allTmc);
 
+  // true после первой успешной загрузки остатков: экраны используют это,
+  // чтобы не дублировать fetchTmc при открытии (cache-first).
+  bool _tmcLoaded = false;
+  bool get hasLoadedTmc => _tmcLoaded;
+
   final Map<String, WarehouseLogsBundle> _logBundles = {};
   WarehouseLogsBundle? logsBundle(String type) {
     final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
@@ -79,6 +141,7 @@ class WarehouseProvider with ChangeNotifier {
   Future<WarehouseLogsBundle> fetchLogsBundle(String type,
       {bool forceRefresh = false}) async {
     final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    _ensureLogsSubscribed(normalized);
     if (!forceRefresh && _logBundles.containsKey(normalized)) {
       return _logBundles[normalized]!;
     }
@@ -94,6 +157,19 @@ class WarehouseProvider with ChangeNotifier {
     _logBundles.remove(normalized);
   }
 
+  /// Догружает следующую порцию (kLogPageSize) логов вида [action] для типа
+  /// [type] и дописывает её в кэшированный bundle («Показать ещё»).
+  Future<WarehouseLogsBundle?> loadMoreLogs(
+      String type, WarehouseLogAction action) async {
+    final normalized = _normalizeType(type) ?? type.toLowerCase().trim();
+    final bundle = _logBundles[normalized];
+    if (bundle == null) return null;
+    final updated = await WarehouseLogsRepository.fetchMore(bundle, action);
+    _logBundles[normalized] = updated;
+    notifyListeners();
+    return updated;
+  }
+
   final Map<String, List<Map<String, dynamic>>> _writeoffsByItem = {};
   final Map<String, List<Map<String, dynamic>>> _inventoriesByItem = {};
   List<Map<String, dynamic>> writeoffs(String itemId) =>
@@ -101,21 +177,61 @@ class WarehouseProvider with ChangeNotifier {
   List<Map<String, dynamic>> inventories(String itemId) =>
       List.unmodifiable(_inventoriesByItem[itemId] ?? const []);
 
+  // Кэш суммарного резерва бумаги по paper_id: таблица склада строит ячейку
+  // на каждую строку, и без кэша это давало 2N параллельных запросов
+  // к order_paper_reservations на каждую перерисовку.
+  Map<String, double> _paperReservedCache = {};
+  DateTime? _paperReservedLoadedAt;
+  Future<void>? _paperReservedInFlight;
+  static const Duration _paperReservedTtl = Duration(seconds: 30);
+
   Future<double> paperReservedQty(String paperId) async {
     final id = paperId.trim();
     if (id.isEmpty) return 0;
-    final rows = await _activePaperReservationRows(paperId: id);
-    if (rows.isEmpty) return 0;
-    double total = 0;
-    for (final raw in rows) {
-      final value = raw['qty'];
-      if (value is num) {
-        total += value.toDouble();
-      } else {
-        total += double.tryParse('$value') ?? 0;
-      }
+    await _ensurePaperReservedCache();
+    return _paperReservedCache[id] ?? 0;
+  }
+
+  void invalidatePaperReservedCache() {
+    _paperReservedLoadedAt = null;
+  }
+
+  Future<void> _ensurePaperReservedCache() {
+    final loadedAt = _paperReservedLoadedAt;
+    if (loadedAt != null &&
+        DateTime.now().difference(loadedAt) < _paperReservedTtl) {
+      return Future.value();
     }
-    return total;
+    final inFlight = _paperReservedInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _reloadPaperReservedCache().whenComplete(() {
+      _paperReservedInFlight = null;
+    });
+    _paperReservedInFlight = future;
+    return future;
+  }
+
+  Future<void> _reloadPaperReservedCache() async {
+    try {
+      final rows = await _activePaperReservationRows();
+      final next = <String, double>{};
+      for (final row in rows) {
+        final paperId = (row['paper_id'] ?? '').toString().trim();
+        if (paperId.isEmpty) continue;
+        final value = row['qty'];
+        final qty =
+            value is num ? value.toDouble() : (double.tryParse('$value') ?? 0);
+        next[paperId] = (next[paperId] ?? 0) + qty;
+      }
+      _paperReservedCache = next;
+      _paperReservedLoadedAt = DateTime.now();
+    } catch (e) {
+      // При ошибке сети оставляем прежние значения и не ретраим чаще,
+      // чем раз в 5 секунд, чтобы таблица не устраивала шторм запросов.
+      _paperReservedLoadedAt =
+          DateTime.now().subtract(_paperReservedTtl - const Duration(seconds: 5));
+      debugPrint('⚠️ Failed to load paper reservations: $e');
+    }
   }
 
   Future<List<Map<String, dynamic>>> paperReserveDetails(String paperId) async {
@@ -260,22 +376,67 @@ class WarehouseProvider with ChangeNotifier {
       return parsedRows;
     }
 
-    final staleOrderIds = orderIds
-        .where((orderId) => !activeOrderIds.contains(orderId))
-        .toList(growable: false);
-    if (staleOrderIds.isNotEmpty) {
-      try {
-        await _sb
-            .from('order_paper_reservations')
-            .delete()
-            .inFilter('order_id', staleOrderIds);
-      } catch (_) {}
-    }
-
+    // Ф4: раньше здесь же удалялись устаревшие резервы (DELETE в пути
+    // чтения) — это порождало realtime-событие и каскад перезагрузок при
+    // каждом рендере. Теперь чтение только фильтрует; очистка — отдельная
+    // операция cleanupStalePaperReservations().
     return parsedRows
         .where(
             (row) => activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
         .toList(growable: false);
+  }
+
+  /// Удаляет резервы бумаги, чьи заказы уже закрыты/отгружены. Вынесено из
+  /// пути чтения (Ф4): вызывается один раз при инициализации провайдера;
+  /// постоянный механизм (pg_cron / чистка при записи) — по решению владельца.
+  Future<int> cleanupStalePaperReservations() async {
+    try {
+      final rows = await _sb
+          .from('order_paper_reservations')
+          .select('order_id');
+      if (rows is! List || rows.isEmpty) return 0;
+      final orderIds = rows
+          .whereType<Map>()
+          .map((row) => (row['order_id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (orderIds.isEmpty) return 0;
+
+      final orderRows = await _sb
+          .from('orders')
+          .select('id, status, shipped_at')
+          .inFilter('id', orderIds);
+      if (orderRows is! List) return 0;
+      final activeOrderIds = <String>{};
+      final knownOrderIds = <String>{};
+      for (final raw in orderRows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final orderId = (row['id'] ?? '').toString().trim();
+        if (orderId.isEmpty) continue;
+        knownOrderIds.add(orderId);
+        final status = (row['status'] ?? '').toString().toLowerCase().trim();
+        final isClosed = status == 'completed' ||
+            status == 'shipped' ||
+            row['shipped_at'] != null;
+        if (!isClosed) activeOrderIds.add(orderId);
+      }
+
+      // Устаревшие: заказ закрыт либо вообще не существует (резерв-сирота).
+      final staleOrderIds = orderIds
+          .where((id) => !activeOrderIds.contains(id))
+          .toList(growable: false);
+      if (staleOrderIds.isEmpty) return 0;
+      await _sb
+          .from('order_paper_reservations')
+          .delete()
+          .inFilter('order_id', staleOrderIds);
+      invalidatePaperReservedCache();
+      return staleOrderIds.length;
+    } catch (e) {
+      debugPrint('⚠️ cleanupStalePaperReservations: $e');
+      return 0;
+    }
   }
 
   static const Map<String, Map<String, String>> _arrMap = {
@@ -351,25 +512,16 @@ class WarehouseProvider with ChangeNotifier {
     try {
       await _ensureAuthed();
       _listen();
-      await Future.wait([
-        fetchTmc(),
-        _preloadLogs(),
-      ]);
+      // Логи типов НЕ прогреваются здесь: раньше fetchAllBundles выкачивал
+      // 15 лог-таблиц целиком до открытия первого экрана (~15–25 с каскада).
+      // Теперь логи типа грузятся лениво в fetchLogsBundle при открытии
+      // соответствующего экрана, порциями по kLogPageSize.
+      await fetchTmc();
+      // Гигиена (Ф4): разовая чистка устаревших резервов бумаги — fire and
+      // forget, раз за сессию, вместо DELETE при каждом чтении.
+      unawaited(cleanupStalePaperReservations());
     } catch (e) {
       debugPrint('❌ init warehouse: $e');
-    }
-  }
-
-  Future<void> _preloadLogs() async {
-    try {
-      final bundles = await WarehouseLogsRepository.fetchAllBundles();
-      _logBundles
-        ..clear()
-        ..addAll(bundles);
-      notifyListeners();
-    } catch (e, st) {
-      debugPrint('⚠️ preload warehouse logs failed: $e');
-      debugPrintStack(stackTrace: st);
     }
   }
 
@@ -380,9 +532,12 @@ class WarehouseProvider with ChangeNotifier {
   @override
   void dispose() {
     _refreshDebounce?.cancel();
+    _logsRefreshDebounce?.cancel();
+    _paintResRefreshDebounce?.cancel();
     if (_chanPaints != null) _sb.removeChannel(_chanPaints!);
     if (_chanMaterials != null) _sb.removeChannel(_chanMaterials!);
     if (_chanPapers != null) _sb.removeChannel(_chanPapers!);
+    if (_chanPens != null) _sb.removeChannel(_chanPens!);
     if (_chanPaperReservations != null) {
       _sb.removeChannel(_chanPaperReservations!);
     }
@@ -390,6 +545,10 @@ class WarehouseProvider with ChangeNotifier {
       _sb.removeChannel(_chanPaintReservations!);
     }
     if (_chanStationery != null) _sb.removeChannel(_chanStationery!);
+    for (final ch in _logChannels.values) {
+      _sb.removeChannel(ch);
+    }
+    _logChannels.clear();
     super.dispose();
   }
 
@@ -402,35 +561,23 @@ class WarehouseProvider with ChangeNotifier {
   }
 
   void _listen() {
-    _chanPaints = _sb
-        .channel('wh:paints')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'paints',
-          callback: (_) => _scheduleRefresh(),
-        )
-        .subscribe();
+    RealtimeChannel subscribeBase(
+        String channelName, String table, String typeKey) {
+      return _sb
+          .channel(channelName)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: table,
+            callback: (payload) => _onBaseRowChange(typeKey, payload),
+          )
+          .subscribe();
+    }
 
-    _chanMaterials = _sb
-        .channel('wh:materials')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'materials',
-          callback: (_) => _scheduleRefresh(),
-        )
-        .subscribe();
-
-    _chanPapers = _sb
-        .channel('wh:papers')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'papers',
-          callback: (_) => _scheduleRefresh(),
-        )
-        .subscribe();
+    _chanPaints = subscribeBase('wh:paints', 'paints', 'paint');
+    _chanMaterials = subscribeBase('wh:materials', 'materials', 'material');
+    _chanPapers = subscribeBase('wh:papers', 'papers', 'paper');
+    _chanPens = subscribeBase('wh:pens', 'warehouse_pens', 'pens');
 
     _chanPaperReservations = _sb
         .channel('wh:paper_reservations')
@@ -442,6 +589,7 @@ class WarehouseProvider with ChangeNotifier {
             // Бизнес-логика резерва бумаги:
             // при любом изменении резервов обновляем UI склада,
             // чтобы колонка "Резерв" показывала актуальные значения.
+            invalidatePaperReservedCache();
             notifyListeners();
           },
         )
@@ -453,7 +601,9 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'order_paint_reservations',
-          callback: (_) => _scheduleRefresh(),
+          // Пересчитываем только резервы красок лёгким запросом,
+          // а не весь склад целиком.
+          callback: (_) => _schedulePaintReservationsRefresh(),
         )
         .subscribe();
 
@@ -471,9 +621,159 @@ class WarehouseProvider with ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'warehouse_stationery',
-          callback: (_) => _scheduleRefresh(),
+          callback: (payload) => _onBaseRowChange('stationery', payload),
         )
         .subscribe();
+  }
+
+  /// Точечный апдейт остатков из realtime-payload вместо полного fetchTmc.
+  /// Fallback на debounced fetchTmc, если payload неполный: Realtime режет
+  /// строки крупнее ~1 МБ (paints с image_base64 → Error 413, пустой record).
+  void _onBaseRowChange(String typeKey, PostgresChangePayload payload) {
+    try {
+      switch (payload.eventType) {
+        case PostgresChangeEvent.insert:
+        case PostgresChangeEvent.update:
+          final row = Map<String, dynamic>.from(payload.newRecord);
+          final id = (row['id'] ?? '').toString().trim();
+          if (id.isEmpty) {
+            _scheduleRefresh();
+            return;
+          }
+          if (typeKey == 'stationery') {
+            final key =
+                (row['table_key'] ?? '').toString().toLowerCase().trim();
+            if (key != _stationeryKey.toLowerCase().trim()) {
+              // Строка другой подтаблицы канцелярии: если она была у нас
+              // (сменили table_key) — убираем, иначе просто игнорируем.
+              final before = _allTmc.length;
+              _allTmc.removeWhere(
+                  (e) => e.type == 'stationery' && e.id == id);
+              if (_allTmc.length != before) notifyListeners();
+              return;
+            }
+          }
+          // payload может нести image_base64 — не тащим мегабайты в память.
+          row.remove('image_base64');
+          final existingIndex =
+              _allTmc.indexWhere((e) => e.id == id && e.type == typeKey);
+          if (typeKey == 'paint') {
+            // Резерв в payload paints отсутствует — сохраняем текущий.
+            final reserved =
+                existingIndex >= 0 ? _allTmc[existingIndex].reservedQty : 0.0;
+            row['reserved_qty'] = reserved;
+            row['available_qty'] = _toDouble(row['quantity']) - reserved;
+          }
+          final model = _fromRow(type: typeKey, row: row);
+          if (existingIndex >= 0) {
+            _allTmc[existingIndex] = model;
+          } else {
+            _allTmc.add(model);
+          }
+          _resortAllTmc();
+          notifyListeners();
+          return;
+        case PostgresChangeEvent.delete:
+          final id = (payload.oldRecord['id'] ?? '').toString().trim();
+          if (id.isEmpty) {
+            _scheduleRefresh();
+            return;
+          }
+          _allTmc.removeWhere((e) => e.id == id && e.type == typeKey);
+          notifyListeners();
+          return;
+        default:
+          _scheduleRefresh();
+      }
+    } catch (e) {
+      debugPrint('⚠️ realtime row apply failed ($typeKey): $e');
+      _scheduleRefresh();
+    }
+  }
+
+  void _resortAllTmc() {
+    _allTmc.sort((a, b) =>
+        a.description.toLowerCase().compareTo(b.description.toLowerCase()));
+  }
+
+  /// Пересчёт резервов красок по событию reservations: одна маленькая
+  /// таблица вместо полного fetchTmc.
+  void _schedulePaintReservationsRefresh() {
+    _paintResRefreshDebounce?.cancel();
+    _paintResRefreshDebounce =
+        Timer(const Duration(milliseconds: 350), () async {
+      try {
+        final reservedByPaint = await _loadPaintReservedQty();
+        var changed = false;
+        for (var i = 0; i < _allTmc.length; i++) {
+          final item = _allTmc[i];
+          if (item.type != 'paint') continue;
+          final reserved = reservedByPaint[item.id] ?? 0.0;
+          if ((item.reservedQty - reserved).abs() < 1e-9) continue;
+          _allTmc[i] = item.copyWith(
+            reservedQty: reserved,
+            availableQty: item.quantity - reserved,
+          );
+          changed = true;
+        }
+        if (changed) notifyListeners();
+      } catch (e) {
+        debugPrint('⚠️ paint reservations refresh failed: $e');
+      }
+    });
+  }
+
+  /// Ленивая realtime-подписка на 3 лог-таблицы типа [typeKey]; событие
+  /// помечает вид лога «грязным», debounce перечитывает только его.
+  void _ensureLogsSubscribed(String typeKey) {
+    if (_logChannels.containsKey(typeKey)) return;
+    final tables = <WarehouseLogAction, String?>{
+      WarehouseLogAction.arrival: _arrMap[typeKey]?['table'],
+      WarehouseLogAction.writeoff: _woMap[typeKey]?['table'],
+      WarehouseLogAction.inventory: _invMap[typeKey]?['table'],
+    };
+    if (tables.values.every((t) => t == null)) return;
+    final ch = _sb.channel('wh:logs:$typeKey');
+    tables.forEach((action, table) {
+      if (table == null) return;
+      ch.onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: table,
+        callback: (_) => _markLogsDirty(typeKey, action),
+      );
+    });
+    ch.subscribe();
+    _logChannels[typeKey] = ch;
+  }
+
+  void _markLogsDirty(String typeKey, WarehouseLogAction action) {
+    _dirtyLogKinds
+        .putIfAbsent(typeKey, () => <WarehouseLogAction>{})
+        .add(action);
+    _logsRefreshDebounce?.cancel();
+    _logsRefreshDebounce =
+        Timer(const Duration(milliseconds: 350), _refreshDirtyLogKinds);
+  }
+
+  Future<void> _refreshDirtyLogKinds() async {
+    final dirty = Map<String, Set<WarehouseLogAction>>.of(_dirtyLogKinds);
+    _dirtyLogKinds.clear();
+    var changed = false;
+    for (final entry in dirty.entries) {
+      var bundle = _logBundles[entry.key];
+      if (bundle == null) continue;
+      for (final action in entry.value) {
+        try {
+          bundle = await WarehouseLogsRepository.refreshKind(bundle!, action);
+          changed = true;
+        } catch (e) {
+          debugPrint('⚠️ refresh logs ${entry.key}/$action failed: $e');
+        }
+      }
+      _logBundles[entry.key] = bundle!;
+    }
+    if (changed) notifyListeners();
   }
 
   // ===================== LOAD =====================
@@ -482,8 +782,11 @@ class WarehouseProvider with ChangeNotifier {
   // inline as a text blob) to prevent statement timeouts when the table grows.
   // image_base64 is loaded lazily via fetchImageBase64() when a single item
   // is opened for editing and image_url is unavailable.
+  // reserved_qty обязателен: без него TmcModel.availableQty вырождается в
+  // общий остаток, и форма заказа показывала бы краску, уже разобранную
+  // под другие заказы, как доступную.
   static const String _kPaintCols =
-      'id, date, supplier, description, quantity, unit, note, '
+      'id, date, supplier, description, quantity, reserved_qty, unit, note, '
       'low_threshold, critical_threshold, image_url, created_at, updated_at';
   static const String _kPaperCols =
       'id, date, supplier, description, quantity, unit, note, '
@@ -565,6 +868,7 @@ class WarehouseProvider with ChangeNotifier {
       _allTmc
         ..clear()
         ..addAll(merged);
+      _tmcLoaded = true;
       notifyListeners();
     } catch (e) {
       debugPrint('❌ fetchTmc: $e');
@@ -676,17 +980,21 @@ class WarehouseProvider with ChangeNotifier {
 
     Future<void> prepareImage(String targetId) async {
       if (imageBytes != null && imageBytes.isNotEmpty) {
-        resolvedImageUrl =
-            await _uploadImage(targetId, imageBytes, imageContentType);
-        resolvedBase64 ??= base64Encode(imageBytes);
+        final (bytes, contentType) =
+            await _prepareUploadBytes(imageBytes, imageContentType);
+        resolvedImageUrl = await _uploadImage(targetId, bytes, contentType);
+        resolvedBase64 ??= base64Encode(bytes);
         return;
       }
       if (resolvedImageUrl == null && resolvedBase64 != null) {
         try {
-          final bytes = base64Decode(resolvedBase64!);
-          if (bytes.isNotEmpty) {
+          final raw = base64Decode(resolvedBase64!);
+          if (raw.isNotEmpty) {
+            final (bytes, contentType) =
+                await _prepareUploadBytes(raw, imageContentType);
             resolvedImageUrl =
-                await _uploadImage(targetId, bytes, imageContentType);
+                await _uploadImage(targetId, bytes, contentType);
+            resolvedBase64 = base64Encode(bytes);
           }
         } catch (_) {}
       }
@@ -996,8 +1304,10 @@ class WarehouseProvider with ChangeNotifier {
     String? finalImageUrl = imageUrl;
     String? finalBase64 = imageBase64;
     if (imageBytes != null && imageBytes.isNotEmpty) {
-      finalImageUrl = await _uploadImage(id, imageBytes, imageContentType);
-      finalBase64 ??= base64Encode(imageBytes);
+      final (bytes, contentType) =
+          await _prepareUploadBytes(imageBytes, imageContentType);
+      finalImageUrl = await _uploadImage(id, bytes, contentType);
+      finalBase64 ??= base64Encode(bytes);
     }
 
     final patch = <String, dynamic>{
@@ -2522,6 +2832,21 @@ class WarehouseProvider with ChangeNotifier {
     }
   }
 
+  /// Сжимает байты фото перед загрузкой (Ф4). Если сжатие дало выигрыш,
+  /// результат — всегда JPEG, поэтому contentType меняется соответственно.
+  Future<(Uint8List, String)> _prepareUploadBytes(
+      Uint8List bytes, String contentType) async {
+    try {
+      final compressed = await compute(compressTmcOriginal, bytes);
+      if (compressed.length < bytes.length) {
+        return (compressed, 'image/jpeg');
+      }
+    } catch (e) {
+      debugPrint('⚠️ compress original failed: $e');
+    }
+    return (bytes, contentType);
+  }
+
   Future<String> _uploadImage(
       String id, Uint8List bytes, String contentType) async {
     final ext = contentType.split('/').last;
@@ -2531,6 +2856,22 @@ class WarehouseProvider with ChangeNotifier {
           bytes,
           fileOptions: FileOptions(contentType: contentType, upsert: true),
         );
+    // Миниатюра ~200px рядом с оригиналом: `<имя>_thumb.jpg`. Списки грузят
+    // её вместо 2-МБ оригинала; TmcModel.thumbUrl выводит URL из image_url.
+    try {
+      final thumb = await compute(encodeTmcThumb, bytes);
+      if (thumb != null && thumb.isNotEmpty) {
+        final basePath = path.substring(0, path.lastIndexOf('.'));
+        await _sb.storage.from('tmc').uploadBinary(
+              '${basePath}_thumb.jpg',
+              thumb,
+              fileOptions:
+                  const FileOptions(contentType: 'image/jpeg', upsert: true),
+            );
+      }
+    } catch (e) {
+      debugPrint('⚠️ thumb upload failed: $e');
+    }
     return _sb.storage.from('tmc').getPublicUrl(path);
   }
 
@@ -2571,7 +2912,12 @@ class WarehouseProvider with ChangeNotifier {
     final path = _storagePathFromUrl(imageUrl);
     if (path != null) {
       try {
-        await _sb.storage.from('tmc').remove([path]);
+        final dot = path.lastIndexOf('.');
+        await _sb.storage.from('tmc').remove([
+          path,
+          if (dot > path.lastIndexOf('/'))
+            '${path.substring(0, dot)}_thumb.jpg',
+        ]);
       } catch (e) {
         debugPrint('⚠️ removeTmcImage storage: $e');
       }
@@ -2646,6 +2992,10 @@ class WarehouseProvider with ChangeNotifier {
     final Map<String, dynamic> insertData = {
       'series': series,
       'number': next,
+      // Формат кода совпадает с каноническим писателем
+      // forms_provider.createOrGetForm ('SERIES-NNN'), по code идёт поиск
+      // формы из заказа (findFormIdByOrderFormRef).
+      'code': '$series-${next.toString().padLeft(3, '0')}',
       if (title != null) 'title': title,
       if (description != null) 'description': description,
       if (formSize != null) 'size': formSize,

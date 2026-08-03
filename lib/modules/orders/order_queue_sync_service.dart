@@ -258,11 +258,14 @@ class OrderQueueSyncService {
     return operations;
   }
 
+  /// [force] — применить правки к уже запущенному заказу: начатые и
+  /// завершённые этапы не блокируют сохранение, а просто остаются нетронутыми.
   Future<List<OrderQueueSyncOperation>> sync({
     required String orderId,
     required List<OrderQueueSyncEntry> nextQueue,
     bool completeBobbin = false,
     String? bobbinStageId,
+    bool force = false,
   }) async {
     final planId = await _runTableStep(
       orderId: orderId,
@@ -293,11 +296,15 @@ class OrderQueueSyncService {
     final blocked = operations.where(
       (op) => op.type == OrderQueueSyncOperationType.block,
     );
-    if (blocked.isNotEmpty) {
+    if (blocked.isNotEmpty && !force) {
       throw OrderQueueSyncBlockedException(
         blocked.first.reason ?? kStartedStageQueueChangeMessage,
       );
     }
+    // force: правки заказа применяются, даже если часть этапов уже начата или
+    // завершена. Такие этапы НЕ трогаем — иначе потерялись бы зафиксированные
+    // время и количество (они идут в аналитику и зарплату). Обновляются только
+    // ожидающие этапы, а фактически отработанные остаются в плане как есть.
 
     for (final op in operations.where(
       (op) => op.type == OrderQueueSyncOperationType.cancelOrDeletePending,

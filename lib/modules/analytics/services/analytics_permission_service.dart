@@ -34,6 +34,9 @@ class AnalyticsPermissionService {
   /// Может ли редактировать графики, коэффициенты, удержания.
   bool get canEdit => isTechLeader;
 
+  /// Может ли выгружать PDF (содержит финансовый блок).
+  bool get canExportPdf => isTechLeader;
+
   /// Может ли видеть детальную страницу конкретного сотрудника.
   bool canViewEmployee(String employeeId) {
     if (isTechLeader) return true;

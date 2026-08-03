@@ -3,13 +3,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../personnel/employee_model.dart';
+import '../../personnel/employee_status_model.dart';
 import '../../personnel/personnel_provider.dart';
 import '../calculators/analytics_calculator.dart';
 import '../calculators/salary_calculator.dart';
 import '../models/analytics_event.dart';
-import '../models/employee_status.dart';
 import '../models/pay_type.dart';
 import '../models/salary_adjustments.dart';
+import '../services/analytics_pdf_export_service.dart';
 import '../services/analytics_permission_service.dart';
 import '../services/analytics_service.dart';
 import '../utils/analytics_colors.dart';
@@ -26,12 +27,19 @@ class EmployeesTable extends StatefulWidget {
     required this.personnel,
     required this.permission,
     required this.onEmployeeTap,
+    this.verticalController,
   });
 
   final AnalyticsService service;
   final PersonnelProvider personnel;
   final AnalyticsPermissionService permission;
   final ValueChanged<String> onEmployeeTap;
+
+  /// Контроллер внутреннего вертикального скролла строк (для Scrollbar
+  /// снаружи). Используется только при ограниченной высоте — когда таблица
+  /// сама прокручивает строки под закреплённой шапкой. Если null — таблица
+  /// создаёт собственный контроллер.
+  final ScrollController? verticalController;
 
   @override
   State<EmployeesTable> createState() => _EmployeesTableState();
@@ -45,9 +53,22 @@ class _EmployeesTableState extends State<EmployeesTable> {
   final HScrollSync _sync = HScrollSync();
   final Map<int, ScrollController> _ctrlCache = {};
 
+  // Собственный вертикальный контроллер — только если снаружи не передан
+  // widget.verticalController (создаётся лениво, утилизируется в dispose).
+  ScrollController? _ownedVerticalCtrl;
+
+  ScrollController get _verticalCtrl =>
+      widget.verticalController ?? (_ownedVerticalCtrl ??= ScrollController());
+
   // Row computation cache — avoids running SalaryCalculator on every repaint.
   AnalyticsState? _lastState;
   List<_Row> _rows = const [];
+
+  // Экспорт ведомости из колонки «Ведомость»: id сотрудника, для которого
+  // идёт генерация (кнопки остальных строк остаются активными, повторный
+  // клик по той же строке игнорируется).
+  final _pdfService = AnalyticsPdfExportService();
+  String? _statementExportingFor;
 
   // Only header (-1) and footer (10000) get real scroll controllers.
   ScrollController _ctrl(int key) =>
@@ -87,6 +108,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
     final statusById = <String, EmployeeStatus>{
       for (final s in state.statuses) s.id: s,
     };
+    // Цены за приладку (workplaces.priladka_price, только места с приладкой).
+    final setupPrices = widget.service.workplaceSetupPrices;
 
     final activeEmployees = widget.personnel.employees
         .where((e) => !e.isFired && widget.permission.canViewEmployee(e.id))
@@ -109,9 +132,18 @@ class _EmployeesTableState extends State<EmployeesTable> {
         halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
         baseDaySalary: baseDaySalary,
         payType: payType,
+        month: state.month,
+        statusPeriods: state.employeeStatusHistory[emp.id] ?? const [],
+        statusPayRates: state.statusPayRates,
+        statusNames: {for (final s in state.statuses) s.id: s.name},
+        setupPrices: setupPrices,
       );
       final statusName =
           statusById[state.employeeStatusIds[emp.id] ?? '']?.name;
+      final positionNames = emp.positionIds
+          .map((id) => widget.personnel.positionNameById(id))
+          .where((s) => s.isNotEmpty)
+          .join(', ');
 
       // Агрегаты строки считаем один раз здесь, а не в build ячеек:
       // раньше AnalyticsCalculator гонялся по событиям каждой строки при
@@ -120,23 +152,26 @@ class _EmployeesTableState extends State<EmployeesTable> {
       for (final e in list) {
         byWp.putIfAbsent(e.workplaceId, () => []).add(e);
       }
-      final workplaceLines = byWp.entries.map((entry) {
+      final workplaceStats = byWp.entries.map((entry) {
         final wp = widget.personnel.workplaceById(entry.key);
-        final useful = AnalyticsCalculator.usefulMinutes(entry.value);
-        final q = AnalyticsCalculator.totalQty(entry.value);
-        final speed = useful > 0 ? q / useful : 0.0;
-        final unit =
-            wp?.unit?.trim().isNotEmpty == true ? wp!.unit!.trim() : 'ед.';
-        return '${wp?.name ?? entry.key}: '
-            '${AnalyticsFormat.decimal(q)} $unit · '
-            '${AnalyticsFormat.hoursMinutes(useful)} · '
-            '${AnalyticsFormat.decimal(speed)} $unit/мин';
+        return _WorkplaceStat(
+          name: wp?.name ?? entry.key,
+          unit: wp?.unit?.trim().isNotEmpty == true ? wp!.unit!.trim() : 'ед.',
+          // «Общее время» — всё время на рабочем месте (работа, наладка,
+          // паузы, проблемы), а не только производственное.
+          totalMinutes: AnalyticsCalculator.totalMinutes(entry.value),
+          productionMinutes: AnalyticsCalculator.usefulMinutes(entry.value),
+          setupMinutes: AnalyticsCalculator.setupMinutes(entry.value),
+          qty: AnalyticsCalculator.totalQty(entry.value),
+          setupQty: AnalyticsCalculator.totalSetupQty(entry.value),
+        );
       }).toList();
 
       return _Row(
         employee: emp,
         events: list,
         statusName: statusName,
+        positionNames: positionNames,
         payType: payType,
         breakdown: breakdown,
         claims: claimsByEmployee[emp.id] ?? 0,
@@ -146,9 +181,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
         problemCount: AnalyticsCalculator.countEventsOfType(
             list, AnalyticsEventType.problem),
         problemMinutes: AnalyticsCalculator.problemMinutes(list),
-        qty: AnalyticsCalculator.totalQty(list),
         setupQty: AnalyticsCalculator.totalSetupQty(list),
-        workplaceLines: workplaceLines,
+        workplaceStats: workplaceStats,
       );
     }).toList();
   }
@@ -167,6 +201,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
   @override
   void dispose() {
+    _ownedVerticalCtrl?.dispose();
     _sync.dispose();
     super.dispose();
   }
@@ -183,11 +218,14 @@ class _EmployeesTableState extends State<EmployeesTable> {
     final mealAmount = state.settings.mealAmount;
 
     // Sticky column: 300 px (как .sticky-employee-column в эталоне).
-    // Rest пересчитан под новое число колонок эталона (добавлена «Смены»,
-    // финансовые колонки стали редактируемыми инпутами — нужна ширина):
-    // 9 нефинансовых (flex 10) + 12 финансовых = 21 колонка (flex 22).
+    // Rest пересчитан под текущее число колонок (агрегированная «Сделано»
+    // убрана — количество по каждому месту в своей единице выводится
+    // в «Рабочие места»; вместо «Приладки» — «Средняя скорость», тоже
+    // двойной ширины): 8 нефинансовых (flex 10, две колонки по 2) +
+    // 13 финансовых = 21 колонка (flex 23); ширина на flex прежняя
+    // (~120/145 px).
     const stickyWidth = 300.0;
-    final restMinWidth = canViewFinance ? 2640.0 : 1450.0;
+    final restMinWidth = canViewFinance ? 2760.0 : 1450.0;
 
     return LayoutBuilder(builder: (context, constraints) {
       final restWidth = constraints.maxWidth.isFinite
@@ -221,18 +259,18 @@ class _EmployeesTableState extends State<EmployeesTable> {
 
       // ── Footer aggregates ────────────────────────────────────────────────
       int shifts = 0, days = 0, nights = 0;
-      double qtyAll = 0, setupAll = 0;
+      double setupAll = 0;
       int pauseCount = 0, pauseM = 0, problemCount = 0, problemM = 0;
       int claimsAll = 0;
       double salarySum = 0;
       double pieceSum = 0, earnedSum = 0, nightSum = 0, compSum = 0, socialSum = 0;
       double mealSum = 0, advSum = 0, cashSum = 0, discSum = 0, defSum = 0;
+      double setupPaySum = 0;
       int usefulM = 0;
       for (final r in rows) {
         shifts += r.breakdown.shiftsTotal;
         days += r.breakdown.dayShifts;
         nights += r.breakdown.nightShifts;
-        qtyAll += r.qty;
         setupAll += r.setupQty;
         usefulM += AnalyticsCalculator.usefulMinutes(r.events);
         pauseCount += r.pauseCount;
@@ -242,6 +280,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
         claimsAll += r.claims;
         pieceSum += r.breakdown.pieceSalary;
         earnedSum += r.breakdown.primaryEarned;
+        setupPaySum += r.breakdown.setupPay;
         nightSum += r.breakdown.nightBonus;
         compSum += r.breakdown.compensation;
         socialSum += r.breakdown.social;
@@ -256,7 +295,6 @@ class _EmployeesTableState extends State<EmployeesTable> {
         shifts: shifts,
         days: days,
         nights: nights,
-        qtyAll: qtyAll,
         setupAll: setupAll,
         usefulM: usefulM,
         pauseCount: pauseCount,
@@ -276,6 +314,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
         discSum: discSum,
         defSum: defSum,
         salarySum: salarySum,
+        setupPaySum: setupPaySum,
       );
 
       final footerSticky = stickyCell(
@@ -296,126 +335,155 @@ class _EmployeesTableState extends State<EmployeesTable> {
         padding: EdgeInsets.zero,
       );
 
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ── Header row ─────────────────────────────────────────────────
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                headerSticky,
-                Expanded(
-                  child: StickyScrollArea(
-                    child: SingleChildScrollView(
-                      // key -1 reserved for header
-                      controller: _ctrl(-1),
-                      scrollDirection: Axis.horizontal,
-                      physics: const ClampingScrollPhysics(),
-                      child: IntrinsicHeightAtWidth(
-                        measureWidth: restWidth,
-                        child: SizedBox(
-                          width: restWidth,
-                          child: _buildScrollableHeader(
-                              canViewFinance, restWidth),
-                        ),
-                      ),
+      // ── Header row ───────────────────────────────────────────────────
+      final headerRow = IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            headerSticky,
+            Expanded(
+              child: StickyScrollArea(
+                child: SingleChildScrollView(
+                  // key -1 reserved for header
+                  controller: _ctrl(-1),
+                  scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
+                  child: IntrinsicHeightAtWidth(
+                    measureWidth: restWidth,
+                    child: SizedBox(
+                      width: restWidth,
+                      child: _buildScrollableHeader(
+                          canViewFinance, restWidth),
                     ),
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-          // ── Data rows ──────────────────────────────────────────────────
-          // Контент строки собирается один раз и передаётся через `child`
-          // per-row ValueListenableBuilder'а; на тик скролла пересоздаётся
-          // только обёртка Transform.translate (repaint матрицы, ноль
-          // пересборок контента). Hover локален для каждой HoverableRow.
-          // GestureDetector — горизонтальный drag над данными (см.
-          // _onRowsHorizontalDrag); тапы и вертикальный скролл проходят.
-          GestureDetector(
-            onHorizontalDragUpdate: _onRowsHorizontalDrag,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < rows.length; i++)
-                  HoverableRow(
-                    builder: (hovered) => IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildStickyDataCell(rows[i], stickyWidth, hovered),
-                          Expanded(
-                            child: StickyScrollArea(
-                              child: ClipRect(
-                                // OverflowBox разрывает tight-ширину ячейки:
-                                // без него SizedBox(restWidth) схлопывался до
-                                // видимой области и все колонки утрамбовыва-
-                                // лись в экран (рассинхрон с заголовком).
-                                child: OverflowBox(
-                                  alignment: Alignment.topLeft,
-                                  minWidth: 0,
-                                  maxWidth: double.infinity,
-                                  child: ValueListenableBuilder<double>(
-                                    valueListenable: _sync.offsetNotifier,
-                                    child: IntrinsicHeightAtWidth(
-                                      measureWidth: restWidth,
-                                      child: SizedBox(
-                                        width: restWidth,
-                                        child: _buildScrollableDataRow(
-                                            context,
-                                            rows[i],
-                                            canViewFinance,
-                                            canEdit,
-                                            i,
-                                            hovered,
-                                            nightPercent,
-                                            mealAmount),
-                                      ),
-                                    ),
-                                    builder: (context, hOffset, child) =>
-                                        Transform.translate(
-                                      offset: Offset(-hOffset, 0),
-                                      child: child,
-                                    ),
+          ],
+        ),
+      );
+
+      // ── Data rows ──────────────────────────────────────────────────────
+      // Контент строки собирается один раз и передаётся через `child`
+      // per-row ValueListenableBuilder'а; на тик скролла пересоздаётся
+      // только обёртка Transform.translate (repaint матрицы, ноль
+      // пересборок контента). Hover локален для каждой HoverableRow.
+      // GestureDetector — горизонтальный drag над данными (см.
+      // _onRowsHorizontalDrag); тапы и вертикальный скролл проходят.
+      final dataRows = GestureDetector(
+        onHorizontalDragUpdate: _onRowsHorizontalDrag,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < rows.length; i++)
+              HoverableRow(
+                builder: (hovered) => IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildStickyDataCell(rows[i], stickyWidth, hovered),
+                      Expanded(
+                        child: StickyScrollArea(
+                          child: ClipRect(
+                            // OverflowBox разрывает tight-ширину ячейки:
+                            // без него SizedBox(restWidth) схлопывался до
+                            // видимой области и все колонки утрамбовыва-
+                            // лись в экран (рассинхрон с заголовком).
+                            child: OverflowBox(
+                              alignment: Alignment.topLeft,
+                              minWidth: 0,
+                              maxWidth: double.infinity,
+                              child: ValueListenableBuilder<double>(
+                                valueListenable: _sync.offsetNotifier,
+                                child: IntrinsicHeightAtWidth(
+                                  measureWidth: restWidth,
+                                  child: SizedBox(
+                                    width: restWidth,
+                                    child: _buildScrollableDataRow(
+                                        context,
+                                        rows[i],
+                                        canViewFinance,
+                                        canEdit,
+                                        i,
+                                        hovered,
+                                        nightPercent,
+                                        mealAmount),
                                   ),
+                                ),
+                                builder: (context, hOffset, child) =>
+                                    Transform.translate(
+                                  offset: Offset(-hOffset, 0),
+                                  child: child,
                                 ),
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          // ── Footer row ─────────────────────────────────────────────────
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                footerSticky,
-                Expanded(
-                  child: StickyScrollArea(
-                    child: SingleChildScrollView(
-                      // key 10000 reserved for footer
-                      controller: _ctrl(10000),
-                      scrollDirection: Axis.horizontal,
-                      physics: const ClampingScrollPhysics(),
-                      child: IntrinsicHeightAtWidth(
-                        measureWidth: restWidth,
-                        child: SizedBox(
-                          width: restWidth,
-                          child:
-                              _buildScrollableFooter(canViewFinance, totals),
                         ),
                       ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+
+      // ── Footer row ───────────────────────────────────────────────────
+      final footerRow = IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            footerSticky,
+            Expanded(
+              child: StickyScrollArea(
+                child: SingleChildScrollView(
+                  // key 10000 reserved for footer
+                  controller: _ctrl(10000),
+                  scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
+                  child: IntrinsicHeightAtWidth(
+                    measureWidth: restWidth,
+                    child: SizedBox(
+                      width: restWidth,
+                      child:
+                          _buildScrollableFooter(canViewFinance, totals),
                     ),
                   ),
                 ),
-              ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+      // Высота не ограничена — таблица лежит во внешнем вертикальном
+      // скролле (прежняя схема, так же собирают виджет тесты): цельная
+      // колонка без закрепления, скроллит родитель.
+      if (!constraints.maxHeight.isFinite) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [headerRow, dataRows, footerRow],
+        );
+      }
+
+      // Ограниченная высота: шапка столбцов закреплена сверху и всегда
+      // видима, строки и футер прокручиваются вертикально под ней.
+      // Горизонтальная синхронизация шапки со строками не меняется —
+      // шапка остаётся в той же группе HScrollSync (_ctrl(-1)).
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          headerRow,
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _verticalCtrl,
+              primary: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [dataRows, footerRow],
+              ),
             ),
           ),
         ],
@@ -429,12 +497,12 @@ class _EmployeesTableState extends State<EmployeesTable> {
       'Дни',
       'Ночи',
       'Рабочие места',
-      'Сделано',
-      'Приладка',
+      'Средняя скорость',
       'Паузы',
       'Проблемы',
       'Претензии',
       if (finance) 'Сдельно / оклад',
+      if (finance) 'Оплата приладки',
       if (finance) 'Средняя сдельная',
       if (finance) 'Оплата ночных',
       if (finance) 'Компенсация',
@@ -451,7 +519,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
       decoration: const BoxDecoration(gradient: AnalyticsColors.tableHeaderGradient),
       child: Row(
         children: cols.map((label) {
-          final flex = label == 'Рабочие места' ? 2 : 1;
+          final flex =
+              (label == 'Рабочие места' || label == 'Средняя скорость') ? 2 : 1;
           return Expanded(
             flex: flex,
             child: Padding(
@@ -488,7 +557,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
               bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: _EmployeeCell(employee: r.employee, status: r.statusName),
+        child: _EmployeeCell(
+            employee: r.employee, status: r.statusName, position: r.positionNames),
       ),
     );
   }
@@ -524,29 +594,48 @@ class _EmployeesTableState extends State<EmployeesTable> {
             _cell(
                 child:
                     Text('${r.breakdown.nightShifts}', style: _cellStyle())),
+            // Рабочие места: общее время, сделанное количество, приладки.
             _cell(
               flex: 2,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: r.workplaceLines.isEmpty
+                children: r.workplaceStats.isEmpty
                     ? [Text('—', style: _mutedStyle())]
-                    : r.workplaceLines
+                    : r.workplaceStats
                         .map((s) => Padding(
                               padding:
                                   const EdgeInsets.symmetric(vertical: 2),
-                              child: Text(s,
-                                  style:
-                                      _cellStyle().copyWith(fontSize: 11)),
+                              child: Text(
+                                '${s.name}: '
+                                '${AnalyticsFormat.hoursMinutes(s.totalMinutes)} · '
+                                '${AnalyticsFormat.decimal(s.qty)} ${s.unit} · '
+                                '${AnalyticsFormat.decimal(s.setupQty)} прил.',
+                                style: _cellStyle().copyWith(fontSize: 11),
+                              ),
                             ))
                         .toList(),
               ),
             ),
+            // Средняя скорость: минуты на приладку и минуты на единицу.
             _cell(
-                child: Text(AnalyticsFormat.decimal(r.qty),
-                    style: _cellStyle())),
-            _cell(
-                child: Text(AnalyticsFormat.decimal(r.setupQty),
-                    style: _cellStyle())),
+              flex: 2,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: r.workplaceStats.isEmpty
+                    ? [Text('—', style: _mutedStyle())]
+                    : r.workplaceStats
+                        .map((s) => Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 2),
+                              child: Text(
+                                '${s.name}: '
+                                '${_perUnit(s)} · ${_perSetup(s)}',
+                                style: _cellStyle().copyWith(fontSize: 11),
+                              ),
+                            ))
+                        .toList(),
+              ),
+            ),
             _cell(
               child: _twoLine(
                 Text('${r.pauseCount}', style: _cellStyle()),
@@ -564,6 +653,16 @@ class _EmployeesTableState extends State<EmployeesTable> {
             _cell(child: _claimsCell(r)),
             // ── Финансовые колонки ────────────────────────────────────────
             if (finance) _cell(child: _payTypeChip(r)),
+            if (finance)
+              _cell(
+                  child: _twoLine(
+                Text(AnalyticsFormat.money(r.breakdown.setupPay),
+                    style: _cellStyle()),
+                Text(
+                  '${AnalyticsFormat.decimal(r.breakdown.setupPayQty)} прил.',
+                  style: _mutedStyle(),
+                ),
+              )),
             if (finance)
               _cell(
                   child: Text(
@@ -619,17 +718,14 @@ class _EmployeesTableState extends State<EmployeesTable> {
                   child: Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                            'Ведомость для ${r.employee.lastName} пока в разработке'),
-                      ),
-                    );
-                  },
-                  child: const Text(
-                    'Ведомость',
-                    style: TextStyle(color: AnalyticsColors.blue),
+                  onPressed: _statementExportingFor == r.employee.id
+                      ? null
+                      : () => _exportStatement(r),
+                  child: Text(
+                    _statementExportingFor == r.employee.id
+                        ? 'Создаём…'
+                        : 'Ведомость',
+                    style: const TextStyle(color: AnalyticsColors.blue),
                   ),
                 ),
               )),
@@ -637,6 +733,39 @@ class _EmployeesTableState extends State<EmployeesTable> {
         ),
       ),
     );
+  }
+
+  /// Ведомость сотрудника за месяц — PDF на один А4 (Фаза 6). Документ
+  /// финансовый, гейт canExportPdf; колонка и так видна только при
+  /// canViewFinance.
+  Future<void> _exportStatement(_Row r) async {
+    if (!widget.permission.canExportPdf) return;
+    if (_statementExportingFor != null) return;
+    setState(() => _statementExportingFor = r.employee.id);
+    try {
+      final path = await _pdfService.exportEmployeeSalaryStatementPdf(
+        service: widget.service,
+        personnel: widget.personnel,
+        employeeId: r.employee.id,
+      );
+      if (!mounted || path == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ведомость сохранена: $path'),
+          action: SnackBarAction(
+            label: 'Открыть',
+            onPressed: () => _pdfService.openPdfFile(path),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось создать ведомость: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _statementExportingFor = null);
+    }
   }
 
   /// Число претензий. При count > 0 — кликабельно (подчёркнутое синее),
@@ -768,18 +897,23 @@ class _EmployeesTableState extends State<EmployeesTable> {
           c('смен', '${t.shifts}'),
           c('дней', '${t.days}'),
           c('ночей', '${t.nights}'),
+          // Суммарное qty здесь не показываем — рабочие места считают в
+          // разных единицах измерения, их сумма не имеет смысла (та же
+          // причина, по которой убрана колонка «Сделано»).
           c(
               'всего',
-              '${AnalyticsFormat.decimal(t.qtyAll)} / приладка ${AnalyticsFormat.decimal(t.setupAll)} / ${AnalyticsFormat.hoursMinutes(t.usefulM)}',
+              'приладка ${AnalyticsFormat.decimal(t.setupAll)} / ${AnalyticsFormat.hoursMinutes(t.usefulM)}',
               flex: 2),
-          c('сделано', AnalyticsFormat.decimal(t.qtyAll)),
-          c('наладка', AnalyticsFormat.decimal(t.setupAll)),
+          // Средние скорости считаются по рабочим местам в разных единицах,
+          // поэтому общий итог по колонке смысла не имеет.
+          c('средняя скорость', '—', flex: 2),
           c('паузы',
               '${t.pauseCount} · ${AnalyticsFormat.hoursMinutes(t.pauseM)}'),
           c('проблемы',
               '${t.problemCount} · ${AnalyticsFormat.hoursMinutes(t.problemM)}'),
           c('претензии', '${t.claimsAll}'),
           if (finance) c('сдельно/оклад', AnalyticsFormat.money(t.earnedSum)),
+          if (finance) c('приладка', AnalyticsFormat.money(t.setupPaySum)),
           if (finance) c('средняя', AnalyticsFormat.money(t.avgPiece)),
           if (finance) c('ночные', AnalyticsFormat.money(t.nightSum)),
           if (finance) c('комп.', AnalyticsFormat.money(t.compSum)),
@@ -794,6 +928,22 @@ class _EmployeesTableState extends State<EmployeesTable> {
         ],
       ),
     );
+  }
+
+  /// «12,5 мин/прил.» либо «—», если приладок не было.
+  static String _perSetup(_WorkplaceStat s) {
+    final value = s.minutesPerSetup;
+    return value == null
+        ? '— мин/прил.'
+        : '${AnalyticsFormat.decimal(value, precision: 1)} мин/прил.';
+  }
+
+  /// «12,50 шт/мин» либо «—», если производственного времени не было.
+  static String _perUnit(_WorkplaceStat s) {
+    final value = s.qtyPerMinute;
+    return value == null
+        ? '— ${s.unit}/мин'
+        : '${AnalyticsFormat.decimal(value)} ${s.unit}/мин';
   }
 
   static Widget _footerCell(String label, String value) => Padding(
@@ -844,7 +994,6 @@ class _FooterTotals {
   final int shifts;
   final int days;
   final int nights;
-  final double qtyAll;
   final double setupAll;
   final int usefulM;
   final int pauseCount;
@@ -864,12 +1013,12 @@ class _FooterTotals {
   final double discSum;
   final double defSum;
   final double salarySum;
+  final double setupPaySum;
 
   const _FooterTotals({
     required this.shifts,
     required this.days,
     required this.nights,
-    required this.qtyAll,
     required this.setupAll,
     required this.usefulM,
     required this.pauseCount,
@@ -889,6 +1038,7 @@ class _FooterTotals {
     required this.discSum,
     required this.defSum,
     required this.salarySum,
+    required this.setupPaySum,
   });
 }
 
@@ -1013,6 +1163,7 @@ class _Row {
   final EmployeeModel employee;
   final List<AnalyticsEvent> events;
   final String? statusName;
+  final String positionNames;
   final PayType? payType;
   final SalaryBreakdown breakdown;
   final int claims;
@@ -1023,14 +1174,14 @@ class _Row {
   final int pauseMinutes;
   final int problemCount;
   final int problemMinutes;
-  final double qty;
   final double setupQty;
-  final List<String> workplaceLines;
+  final List<_WorkplaceStat> workplaceStats;
 
   const _Row({
     required this.employee,
     required this.events,
     required this.statusName,
+    required this.positionNames,
     required this.payType,
     required this.breakdown,
     required this.claims,
@@ -1038,16 +1189,48 @@ class _Row {
     required this.pauseMinutes,
     required this.problemCount,
     required this.problemMinutes,
-    required this.qty,
     required this.setupQty,
-    required this.workplaceLines,
+    required this.workplaceStats,
   });
 }
 
+/// Показатели сотрудника на одном рабочем месте за период.
+class _WorkplaceStat {
+  final String name;
+  final String unit;
+  final int totalMinutes;
+  final int productionMinutes;
+  final int setupMinutes;
+  final double qty;
+  final double setupQty;
+
+  const _WorkplaceStat({
+    required this.name,
+    required this.unit,
+    required this.totalMinutes,
+    required this.productionMinutes,
+    required this.setupMinutes,
+    required this.qty,
+    required this.setupQty,
+  });
+
+  /// Средняя длительность одной приладки: время наладки ÷ количество приладок.
+  /// null — приладок не было, делить не на что.
+  double? get minutesPerSetup =>
+      setupQty > 0 ? setupMinutes / setupQty : null;
+
+  /// Средняя выработка: количество ÷ время производства (единиц в минуту).
+  /// null — производственного времени не было, делить не на что.
+  double? get qtyPerMinute =>
+      productionMinutes > 0 ? qty / productionMinutes : null;
+}
+
 class _EmployeeCell extends StatelessWidget {
-  const _EmployeeCell({required this.employee, required this.status});
+  const _EmployeeCell(
+      {required this.employee, required this.status, this.position});
   final EmployeeModel employee;
   final String? status;
+  final String? position;
 
   @override
   Widget build(BuildContext context) {
@@ -1089,6 +1272,17 @@ class _EmployeeCell extends StatelessWidget {
                   fontWeight: FontWeight.w800,
                 ),
               ),
+              if (position != null && position!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    position!,
+                    style: const TextStyle(
+                      color: AnalyticsColors.muted,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
               if (status != null && status!.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(top: 4),

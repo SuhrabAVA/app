@@ -156,6 +156,13 @@ Future<void> deleteOrderFile(String objectPath) async {
   for (final r in rows) {
     await _docDb.deleteById(r['id'] as String);
   }
+  // Файл мог быть залинкован в форму (source='order') — без этой чистки
+  // в форме остаётся битая ссылка на уже удалённый объект Storage.
+  final formLinks =
+      await _docDb.whereEq(_kFormFilesCollection, 'objectPath', objectPath);
+  for (final r in formLinks) {
+    await _docDb.deleteById(r['id'] as String);
+  }
 }
 
 /// Список файлов заказа по метаданным

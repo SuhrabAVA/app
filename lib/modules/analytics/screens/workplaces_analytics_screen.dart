@@ -111,6 +111,7 @@ class _WorkplacesAnalyticsScreenState extends State<WorkplacesAnalyticsScreen> {
             service: widget.service,
             personnel: personnel,
             canEditCoefficient: widget.permission.canEdit,
+            verticalController: _scrollController,
             onWorkplaceTap: (id) {
               Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => WorkplaceDetailScreen(
@@ -169,15 +170,16 @@ class _AnalyticsTableCard extends StatelessWidget {
               trailing: trailing,
             ),
             const Divider(height: 1, color: AnalyticsColors.line),
+            // Вертикальный скролл внутри WorkplacesTable (строки под
+            // закреплённой шапкой столбцов) — как в таблице сотрудников.
+            // Внешний SingleChildScrollView здесь недопустим: он снимает
+            // ограничение высоты, таблица уходит в цельную колонку, и шапка
+            // уезжает вместе со строками.
             Expanded(
               child: Scrollbar(
                 controller: controller,
                 thumbVisibility: true,
-                child: SingleChildScrollView(
-                  controller: controller,
-                  primary: false,
-                  child: child,
-                ),
+                child: child,
               ),
             ),
           ],

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'personnel_provider.dart';
 import 'positions_screen.dart';
 import 'employees_screen.dart';
+import 'statuses_screen.dart';
 import 'workplaces_screen.dart';
 import 'terminals_screen.dart';
 
@@ -18,9 +19,9 @@ class PersonnelScreen extends StatelessWidget {
         padding: const EdgeInsets.all(12.0),
         child: GridView.count(
           crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 1.1,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: 1.3,
           children: [
             _buildModuleCard(
               context,
@@ -35,6 +36,13 @@ class PersonnelScreen extends StatelessWidget {
               page: const PositionsScreen(),
               color: const Color(0xFFC5E1A5),
               icon: Icons.badge,
+            ),
+            _buildModuleCard(
+              context,
+              title: 'Статусы',
+              page: const StatusesScreen(),
+              color: const Color(0xFFFFAB91),
+              icon: Icons.workspace_premium_outlined,
             ),
             _buildModuleCard(
               context,
@@ -91,17 +99,17 @@ class PersonnelScreen extends StatelessWidget {
               ),
             ],
           ),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(8),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 40, color: color.darken(0.3)),
-              const SizedBox(height: 8),
+              Icon(icon, size: 28, color: color.darken(0.3)),
+              const SizedBox(height: 6),
               Text(
                 title,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontSize: 14,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
               ),

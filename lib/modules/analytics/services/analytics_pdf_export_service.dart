@@ -55,7 +55,6 @@ class AnalyticsPdfExportService {
                 'Дни',
                 'Ночи',
                 'Рабочие места',
-                'Сделано',
                 'Приладка',
                 'Паузы',
                 'Проблемы',
@@ -410,6 +409,247 @@ class AnalyticsPdfExportService {
     return _savePdfFile(await doc.save(), _fileName('analytics_salary', state.month));
   }
 
+  /// Ведомость сотрудника за месяц — один лист А4 (портрет).
+  ///
+  /// Вёрстка по эталону: шапка (ФИО, должность, период), таблица «Рабочие
+  /// места» (ед. изм. / кол-во / приладки / цена за ед. / цена за приладку /
+  /// сумма за сдельную работу), блок «Виды начисления» с колонками
+  /// начисления/удержания, строка «Итог». Одна страница гарантируется
+  /// одиночным pw.Page + автоподбором размера шрифта по числу строк.
+  Future<String?> exportEmployeeSalaryStatementPdf({
+    required AnalyticsService service,
+    required PersonnelProvider personnel,
+    required String employeeId,
+  }) async {
+    final state = service.state;
+    final employee = _employeeById(personnel, employeeId);
+    if (employee == null) {
+      return _saveSimplePdf(
+        title: 'Ведомость',
+        month: state.month,
+        fileName: _fileName('vedomost_unknown', state.month),
+        message: 'Сотрудник не найден.',
+      );
+    }
+
+    final events = state.events.where((e) => e.employeeId == employeeId).toList();
+    final brk = _salaryForEmployee(service, employeeId, events);
+    final coefficients = state.coefficients;
+    final setupPrices = service.workplaceSetupPrices;
+    final settings = state.settings;
+    final baseDaySalary = state.employeeBaseSalaries[employeeId] ?? 0.0;
+    final positions = employee.positionIds
+        .map((id) => personnel.positionNameById(id))
+        .where((s) => s.isNotEmpty)
+        .join(', ');
+
+    final byWp = <String, List<AnalyticsEvent>>{};
+    for (final e in events) {
+      byWp.putIfAbsent(e.workplaceId, () => []).add(e);
+    }
+
+    // Строки рабочих мест: полный прайс (места с ценой за ед. или за
+    // приладку — как в эталоне, нулевые строки видимы) + места с фактической
+    // активностью сотрудника.
+    final workplaces = personnel.workplaces.where((w) {
+      final hasPrice =
+          (coefficients[w.id] ?? 0) > 0 || (setupPrices[w.id] ?? 0) > 0;
+      return hasPrice || byWp.containsKey(w.id);
+    }).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
+    final wpRows = workplaces.map((w) {
+      final list = byWp[w.id] ?? const <AnalyticsEvent>[];
+      final qty = AnalyticsCalculator.totalQty(list);
+      final setups = AnalyticsCalculator.totalSetupQty(list);
+      final price = coefficients[w.id] ?? 0.0;
+      final setupPrice = setupPrices[w.id] ?? 0.0;
+      final hasSetup = setupPrice > 0;
+      final sum = qty * price + setups * setupPrice;
+      return [
+        w.name,
+        _unit(w),
+        AnalyticsFormat.decimal(qty),
+        hasSetup ? AnalyticsFormat.decimal(setups) : '',
+        price > 0 ? AnalyticsFormat.decimal(price) : '',
+        hasSetup ? AnalyticsFormat.decimal(setupPrice) : '',
+        AnalyticsFormat.decimal(sum),
+      ];
+    }).toList();
+
+    // Пустая ячейка = статья не применялась (нулевые суммы не печатаем,
+    // чтобы лист читался, как эталон).
+    String m(double v) => v == 0 ? '' : AnalyticsFormat.money(v);
+
+    final accrualRows = <List<String>>[
+      [
+        brk.isSalaryType ? 'Оклад' : 'Сдельная',
+        'смена',
+        '${brk.shiftsTotal}',
+        brk.isSalaryType ? m(baseDaySalary) : m(brk.averageShiftSalary),
+        m(brk.primaryEarned),
+        '',
+      ],
+      if (brk.setupPay > 0)
+        [
+          'Приладка',
+          'шт',
+          AnalyticsFormat.decimal(brk.setupPayQty),
+          '',
+          m(brk.setupPay),
+          '',
+        ],
+      // Статусные начисления (обучение и т.п.) — по строке на статус.
+      for (final line in brk.statusPayBreakdown)
+        [
+          line.statusName,
+          'смена',
+          '${line.shifts}',
+          m(line.rate),
+          m(line.amount),
+          '',
+        ],
+      [
+        'Ночные смены',
+        'смена',
+        '${brk.nightShifts}',
+        settings.nightPercent > 0
+            ? '${settings.nightPercent.toStringAsFixed(0)}%'
+            : '',
+        m(brk.nightBonus),
+        '',
+      ],
+      ['Компенсация', '', '', '', m(brk.compensation), ''],
+      ['Дисциплина', '', '', '', '', m(brk.discipline)],
+      [
+        'Питание',
+        'порция',
+        '${brk.shiftsTotal}',
+        m(settings.mealAmount),
+        '',
+        m(brk.mealDeduction),
+      ],
+      ['Соц. отчисления (налоги)', '', '', '', '', m(brk.social)],
+      ['Аванс', '', '', '', '', m(brk.advance)],
+      ['ЗП безнал', '', '', '', '', m(brk.cashless)],
+      ['Брак', '', '', '', '', m(brk.defect)],
+      [
+        'Итого',
+        '',
+        '',
+        '',
+        AnalyticsFormat.money(brk.accrued),
+        AnalyticsFormat.money(brk.deductions),
+      ],
+    ];
+
+    // Автоподбор шрифта под один лист: при 15–20 строках рабочих мест
+    // хватает 8pt, дальше ужимаемся.
+    final rowsCount = wpRows.length + accrualRows.length;
+    final fontSize = rowsCount <= 32 ? 8.0 : (rowsCount <= 42 ? 7.0 : 6.0);
+
+    final period =
+        'с ${_date(state.month, 1)} по ${_date(state.month, state.month.daysCount)}';
+
+    final doc = await _createDocument();
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(24),
+        theme: _theme(),
+        build: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Expanded(
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text('Ведомость',
+                          style: pw.TextStyle(
+                              fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                      pw.SizedBox(height: 6),
+                      _kvLine('Имя сотрудника:', _employeeName(employee)),
+                      _kvLine('Должность:',
+                          positions.isEmpty ? '—' : positions),
+                    ],
+                  ),
+                ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    _kvLine('Период:', period),
+                    _kvLine('Месяц:', _monthText(state.month)),
+                    _kvLine('Дата формирования:', _dateTime(DateTime.now())),
+                  ],
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 10),
+            _buildTable(
+              headers: const [
+                'Рабочие места',
+                'ед. измерения',
+                'кол-во',
+                'приладки',
+                'цена за ед.',
+                'цена за приладку',
+                'сумма за сдельную работу',
+              ],
+              data: wpRows,
+              fontSize: fontSize,
+            ),
+            pw.SizedBox(height: 8),
+            _buildTable(
+              headers: const [
+                'Виды начисления',
+                'ед.',
+                'кол-во',
+                'ставка',
+                'Сумма начисления',
+                'Сумма удержания',
+              ],
+              data: accrualRows,
+              fontSize: fontSize,
+            ),
+            pw.SizedBox(height: 8),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                'Итог: ${AnalyticsFormat.money(brk.total)}',
+                style: pw.TextStyle(
+                    fontSize: 11, fontWeight: pw.FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return _savePdfFile(
+      await doc.save(),
+      _fileName('vedomost_${_safeName(_employeeName(employee))}', state.month),
+    );
+  }
+
+  pw.Widget _kvLine(String label, String value) => pw.Padding(
+        padding: const pw.EdgeInsets.only(bottom: 2),
+        child: pw.Row(
+          mainAxisSize: pw.MainAxisSize.min,
+          children: [
+            pw.Text(label,
+                style:
+                    const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+            pw.SizedBox(width: 4),
+            pw.Text(value,
+                style: pw.TextStyle(
+                    fontSize: 9, fontWeight: pw.FontWeight.bold)),
+          ],
+        ),
+      );
+
   Future<void> openPdfFile(String path) async {
     await OpenFilex.open(path);
   }
@@ -622,7 +862,20 @@ class AnalyticsPdfExportService {
     final adj = state.adjustments[employeeId] ?? SalaryAdjustments.zero(employeeId, state.month.firstDay);
     final payType = parsePayType(state.employeePayTypes[employeeId]);
     final baseDaySalary = state.employeeBaseSalaries[employeeId] ?? 0;
-    return SalaryCalculator.compute(events: events, coefficients: state.coefficients, settings: state.settings, adjustments: adj, halfShiftMinutes: AnalyticsConstants.halfShiftMinutes, baseDaySalary: baseDaySalary, payType: payType);
+    return SalaryCalculator.compute(
+      events: events,
+      coefficients: state.coefficients,
+      settings: state.settings,
+      adjustments: adj,
+      halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
+      baseDaySalary: baseDaySalary,
+      payType: payType,
+      month: state.month,
+      statusPeriods: state.employeeStatusHistory[employeeId] ?? const [],
+      statusPayRates: state.statusPayRates,
+      statusNames: {for (final s in state.statuses) s.id: s.name},
+      setupPrices: service.workplaceSetupPrices,
+    );
   }
 
   String _payTypeText(AnalyticsService service, String employeeId, SalaryBreakdown brk) {
@@ -656,7 +909,6 @@ class AnalyticsPdfExportService {
         'Всего сотрудников': '${rows.length}',
         'Всего дневных смен': '${rows.fold<int>(0, (s, r) => s + r.breakdown.dayShifts)}',
         'Всего ночных смен': '${rows.fold<int>(0, (s, r) => s + r.breakdown.nightShifts)}',
-        'Всего сделано': AnalyticsFormat.decimal(rows.fold<double>(0, (s, r) => s + AnalyticsCalculator.totalQty(r.events))),
         'Всего пауз': '${rows.fold<int>(0, (s, r) => s + AnalyticsCalculator.countEventsOfType(r.events, AnalyticsEventType.pause))}',
         'Всего проблем': '${rows.fold<int>(0, (s, r) => s + AnalyticsCalculator.countEventsOfType(r.events, AnalyticsEventType.problem))}',
         'Общий итог ЗП': AnalyticsFormat.money(rows.fold<double>(0, (s, r) => s + r.breakdown.total)),
@@ -775,7 +1027,6 @@ class _EmployeePdfRow {
         '${breakdown.dayShifts}',
         '${breakdown.nightShifts}',
         workplaces,
-        AnalyticsFormat.decimal(AnalyticsCalculator.totalQty(events)),
         AnalyticsFormat.decimal(AnalyticsCalculator.totalSetupQty(events)),
         '${AnalyticsCalculator.countEventsOfType(events, AnalyticsEventType.pause)} / ${AnalyticsFormat.hoursMinutes(AnalyticsCalculator.pauseMinutes(events))}',
         '${AnalyticsCalculator.countEventsOfType(events, AnalyticsEventType.problem)} / ${AnalyticsFormat.hoursMinutes(AnalyticsCalculator.problemMinutes(events))}',

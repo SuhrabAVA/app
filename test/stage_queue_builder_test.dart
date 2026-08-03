@@ -1656,7 +1656,10 @@ void main() {
       );
     });
 
-    test('П-образный пакет: cardboard branch is optional for switches', () {
+    // Правило изменено 31.07.2026: труба собирает и склеивает дно всегда,
+    // картон лишь добавляет перед этим «Резку картона». Раньше без картона
+    // выбор трубы вообще не менял маршрут.
+    test('П-образный пакет: труба без картона всё равно даёт сборку дна', () {
       final result = buildOrderStages(
         const OrderStageQueueDraft(
           productTypeId: kPTypePackageProduct,
@@ -1672,7 +1675,13 @@ void main() {
 
       expectBuiltStages(
         result,
-        [kPMainSwitchStageKey, kFlatHandleGroupStageId, kPackagingStageId],
+        [
+          kPMainSwitchStageKey,
+          kBottomWithCardboardAssemblyStageId,
+          kBottomGlueStageId,
+          kFlatHandleGroupStageId,
+          kPackagingStageId,
+        ],
         workplaceIdsByStageKey: const {
           kPMainSwitchStageKey: [
             kAutoBigStageId,
@@ -1695,4 +1704,104 @@ void main() {
     });
   });
 
+  group('П-образный пакет: выбор трубы меняет маршрут', () {
+    // Труба — другой способ сборки: дно собирают и склеивают всегда.
+    // Картон лишь добавляет перед этим «Резку картона».
+    test('труба без картона добавляет сборку дна и склейку', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kPTypePackageProduct,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          handleType: OrderHandleType.none,
+          selectedSwitchableStageId: kTubeStageId,
+        ),
+      );
+
+      expect(
+        result.map((stage) => stage.stageKey),
+        [
+          kPMainSwitchStageKey,
+          kBottomWithCardboardAssemblyStageId,
+          kBottomGlueStageId,
+          kPackagingStageId,
+        ],
+      );
+    });
+
+    test('труба с картоном: резка картона идёт перед сборкой дна', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kPTypePackageProduct,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: true,
+          handleType: OrderHandleType.none,
+          selectedSwitchableStageId: kTubeStageId,
+        ),
+      );
+
+      expect(
+        result.map((stage) => stage.stageKey),
+        [
+          kPMainSwitchStageKey,
+          kCardboardCuttingStageId,
+          kBottomWithCardboardAssemblyStageId,
+          kBottomGlueStageId,
+          kPackagingStageId,
+        ],
+        reason: 'у трубы картон входит в сборку дна, отдельной вставки нет',
+      );
+    });
+
+    test('автомат сохраняет прежний маршрут со вставкой картона', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kPTypePackageProduct,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: true,
+          handleType: OrderHandleType.none,
+          selectedSwitchableStageId: kAutoBigStageId,
+        ),
+      );
+
+      expect(
+        result.map((stage) => stage.stageKey),
+        [
+          kPMainSwitchStageKey,
+          kCardboardCuttingStageId,
+          kCardboardInsertStageId,
+          kPackagingStageId,
+        ],
+      );
+    });
+
+    test('автомат без картона: сборка дна не появляется', () {
+      final result = buildOrderStages(
+        const OrderStageQueueDraft(
+          productTypeId: kPTypePackageProduct,
+          orderWidthB: 600,
+          materialWidth: 600,
+          hasPaint: false,
+          hasTrimming: false,
+          hasCardboard: false,
+          handleType: OrderHandleType.none,
+          selectedSwitchableStageId: kAutoBigStageId,
+        ),
+      );
+
+      expect(
+        result.map((stage) => stage.stageKey),
+        [kPMainSwitchStageKey, kPackagingStageId],
+      );
+    });
+  });
 }

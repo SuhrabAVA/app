@@ -1,18 +1,22 @@
 import 'package:flutter/foundation.dart';
 
 import '../../orders/orders_provider.dart';
+import '../../personnel/employee_status_model.dart';
+import '../../personnel/employee_status_repository.dart';
 import '../../personnel/personnel_provider.dart';
 import '../../tasks/task_provider.dart';
+import '../models/analytics_day_comment.dart';
 import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
 import '../models/claim_model.dart';
-import '../models/employee_status.dart';
+import '../models/employee_status_period.dart';
 import '../models/salary_adjustments.dart';
 import '../models/salary_settings.dart';
 import '../models/work_schedule_entry.dart';
 import '../repositories/analytics_repository.dart';
 import '../repositories/claims_repository.dart';
-import '../repositories/employee_status_repository.dart';
+import '../repositories/employee_pay_settings_repository.dart';
+import '../repositories/employee_status_pay_rate_repository.dart';
 import '../repositories/prod_stage_history_repository.dart';
 import '../repositories/salary_adjustments_repository.dart';
 import '../repositories/salary_settings_repository.dart';
@@ -24,12 +28,22 @@ import 'analytics_permission_service.dart';
 class AnalyticsState {
   final AnalyticsMonth month;
   final List<AnalyticsEvent> events;
+  /// Отображаемые события/комментарии этапов для лент дня. Аддитивный слой:
+  /// не участвует в расчётах зарплаты/КПД.
+  final List<AnalyticsDayComment> dayComments;
   final Map<String, double> coefficients;
   final SalarySettings settings;
   final Map<String, SalaryAdjustments> adjustments;
   final Map<String, Map<int, WorkScheduleEntry>> schedules;
   final List<EmployeeStatus> statuses;
   final Map<String, String> employeeStatusIds;
+  /// Периоды действия статусов по сотрудникам, пересекающие выбранный
+  /// месяц (для расчёта ЗП по дням под статусом). Не финансовые данные —
+  /// грузятся всегда, в т.ч. в selfView.
+  final Map<String, List<EmployeeStatusPeriod>> employeeStatusHistory;
+  /// Фиксированные ставки за смену по статусам (statusId -> ₸/смена).
+  /// Финансовые данные — грузятся только при canViewFinance.
+  final Map<String, double> statusPayRates;
   final Map<String, String?> employeePayTypes;
   /// Оклад за смену по сотруднику (base_day_salary). Авторитетный источник
   /// окладной части ЗП — грузится из таблицы employees (view её не отдаёт).
@@ -44,12 +58,15 @@ class AnalyticsState {
   AnalyticsState({
     required this.month,
     this.events = const [],
+    this.dayComments = const [],
     this.coefficients = const {},
     SalarySettings? settings,
     this.adjustments = const {},
     this.schedules = const {},
     this.statuses = const [],
     this.employeeStatusIds = const {},
+    this.employeeStatusHistory = const {},
+    this.statusPayRates = const {},
     this.employeePayTypes = const {},
     this.employeeBaseSalaries = const {},
     this.claims = const [],
@@ -61,12 +78,15 @@ class AnalyticsState {
   AnalyticsState copyWith({
     AnalyticsMonth? month,
     List<AnalyticsEvent>? events,
+    List<AnalyticsDayComment>? dayComments,
     Map<String, double>? coefficients,
     SalarySettings? settings,
     Map<String, SalaryAdjustments>? adjustments,
     Map<String, Map<int, WorkScheduleEntry>>? schedules,
     List<EmployeeStatus>? statuses,
     Map<String, String>? employeeStatusIds,
+    Map<String, List<EmployeeStatusPeriod>>? employeeStatusHistory,
+    Map<String, double>? statusPayRates,
     Map<String, String?>? employeePayTypes,
     Map<String, double>? employeeBaseSalaries,
     List<ClaimModel>? claims,
@@ -78,12 +98,15 @@ class AnalyticsState {
     return AnalyticsState(
       month: month ?? this.month,
       events: events ?? this.events,
+      dayComments: dayComments ?? this.dayComments,
       coefficients: coefficients ?? this.coefficients,
       settings: settings ?? this.settings,
       adjustments: adjustments ?? this.adjustments,
       schedules: schedules ?? this.schedules,
       statuses: statuses ?? this.statuses,
       employeeStatusIds: employeeStatusIds ?? this.employeeStatusIds,
+      employeeStatusHistory: employeeStatusHistory ?? this.employeeStatusHistory,
+      statusPayRates: statusPayRates ?? this.statusPayRates,
       employeePayTypes: employeePayTypes ?? this.employeePayTypes,
       employeeBaseSalaries: employeeBaseSalaries ?? this.employeeBaseSalaries,
       claims: claims ?? this.claims,
@@ -110,6 +133,8 @@ class AnalyticsService extends ChangeNotifier {
     SalaryAdjustmentsRepository? adjustmentsRepo,
     WorkScheduleRepository? scheduleRepo,
     EmployeeStatusRepository? statusRepo,
+    EmployeePaySettingsRepository? payRepo,
+    EmployeeStatusPayRateRepository? statusRateRepo,
     ClaimsRepository? claimsRepo,
     AnalyticsRepository? analyticsRepo,
     ProdStageHistoryRepository? historyRepo,
@@ -118,7 +143,11 @@ class AnalyticsService extends ChangeNotifier {
         _salarySettingsRepo = salarySettingsRepo ?? SalarySettingsRepository(),
         _adjustmentsRepo = adjustmentsRepo ?? SalaryAdjustmentsRepository(),
         _scheduleRepo = scheduleRepo ?? WorkScheduleRepository(),
+        // Статусы — read-only здесь: репозиторий модуля персонала (владелец
+        // записи/истории). Аналитика только читает для отображения/расчёта.
         _statusRepo = statusRepo ?? EmployeeStatusRepository(),
+        _payRepo = payRepo ?? EmployeePaySettingsRepository(),
+        _statusRateRepo = statusRateRepo ?? EmployeeStatusPayRateRepository(),
         _claimsRepo = claimsRepo ?? ClaimsRepository(),
         _analyticsRepo = analyticsRepo ?? AnalyticsRepository(),
         _historyRepo = historyRepo ?? ProdStageHistoryRepository(),
@@ -133,6 +162,8 @@ class AnalyticsService extends ChangeNotifier {
   final SalaryAdjustmentsRepository _adjustmentsRepo;
   final WorkScheduleRepository _scheduleRepo;
   final EmployeeStatusRepository _statusRepo;
+  final EmployeePaySettingsRepository _payRepo;
+  final EmployeeStatusPayRateRepository _statusRateRepo;
   final ClaimsRepository _claimsRepo;
   final AnalyticsRepository _analyticsRepo;
   final ProdStageHistoryRepository _historyRepo;
@@ -145,6 +176,18 @@ class AnalyticsService extends ChangeNotifier {
   bool _loadInProgress = false;
   bool _hasLoadedOnce = false;
   AnalyticsMonth? _queuedMonth;
+
+  // Фоновый _loadMonthOnce может резолвиться уже после того, как экран
+  // закрыли и вызвал dispose() (Timer.cancel() не отменяет уже идущий
+  // await-чейн) — тогда notifyListeners() падает с "used after disposed".
+  // Флаг превращает это в безопасный no-op вместо падения/шумного лога.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   Future<void> loadMonth(AnalyticsMonth month) async {
     // Провайдеры (tasks/orders) уведомляют при каждом realtime-событии;
@@ -181,16 +224,36 @@ class AnalyticsService extends ChangeNotifier {
     try {
       // Fire all requests in parallel: one DB scan covers both events and
       // previous speeds; the rest are independent lightweight queries.
+      // Финансовые запросы (salary_*, коэффициенты, оклады, тип оплаты)
+      // выполняем только при праве на финансы: в selfView сотрудника эти
+      // данные не должны даже попадать на клиент (deny-by-default).
+      final loadFinance = _permission?.canViewFinance == true;
       final allDataFuture = _analyticsRepo.loadAllMonthData(month);
-      final coeffsFuture = _coefficientsRepo.loadEffective(month.firstDay);
-      final settingsFuture = _salarySettingsRepo.loadEffective(month.firstDay);
-      final adjustmentsFuture = _adjustmentsRepo.loadForMonth(month.firstDay);
+      final coeffsFuture = loadFinance
+          ? _coefficientsRepo.loadEffective(month.firstDay)
+          : Future.value(const <String, double>{});
+      final settingsFuture = loadFinance
+          ? _salarySettingsRepo.loadEffective(month.firstDay)
+          : Future.value(SalarySettings.defaults(month.firstDay));
+      final adjustmentsFuture = loadFinance
+          ? _adjustmentsRepo.loadForMonth(month.firstDay)
+          : Future.value(const <String, SalaryAdjustments>{});
       final schedulesFuture = _scheduleRepo.loadForMonth(month.firstDay);
+      // Статусы (справочник/текущий/история) — не финансовые данные, нужны
+      // и в selfView (badge, история для расчёта "своих" смен под статусом).
       final statusesFuture = _statusRepo.listAll();
-      final employeeStatusIdsFuture = _statusRepo.loadEmployeeStatusIds();
-      final employeePayTypesFuture = _statusRepo.loadEmployeePayTypes();
-      final employeeBaseSalariesFuture =
-          _statusRepo.loadEmployeeBaseSalaries();
+      final employeeStatusIdsFuture = _statusRepo.loadCurrentStatusIds();
+      final statusHistoryFuture = _statusRepo.loadHistoryForMonth(month.firstDay);
+      final employeePayTypesFuture = loadFinance
+          ? _payRepo.loadEmployeePayTypes()
+          : Future.value(const <String, String?>{});
+      final employeeBaseSalariesFuture = loadFinance
+          ? _payRepo.loadEmployeeBaseSalaries()
+          : Future.value(const <String, double>{});
+      // Ставки статусов — финансовые данные, гейтятся как коэффициенты.
+      final statusRatesFuture = loadFinance
+          ? _statusRateRepo.loadEffective(month.firstDay)
+          : Future.value(const <String, double>{});
       final claimsFuture = _claimsRepo.listForMonth(month.firstDay);
 
       final allData = await allDataFuture;
@@ -200,9 +263,22 @@ class AnalyticsService extends ChangeNotifier {
       final schedules = await schedulesFuture;
       final statuses = await statusesFuture;
       final empStatusIds = await employeeStatusIdsFuture;
+      final statusHistoryRows = await statusHistoryFuture;
       final empPayTypes = await employeePayTypesFuture;
       final empBaseSalaries = await employeeBaseSalariesFuture;
+      final statusRates = await statusRatesFuture;
       final claims = await claimsFuture;
+
+      final employeeStatusHistory = <String, List<EmployeeStatusPeriod>>{
+        for (final entry in statusHistoryRows.entries)
+          entry.key: entry.value
+              .map((row) => EmployeeStatusPeriod(
+                    statusId: row.statusId,
+                    dateFrom: row.dateFrom,
+                    dateTo: row.dateTo,
+                  ))
+              .toList(),
+      };
 
       // If the task-comment tracker produced no events for this month,
       // fall back to prod_stage_history transitions (fills historical months).
@@ -222,12 +298,15 @@ class AnalyticsService extends ChangeNotifier {
       _state = AnalyticsState(
         month: month,
         events: events,
+        dayComments: allData.dayComments,
         coefficients: coeffs,
         settings: settings,
         adjustments: adjustments,
         schedules: schedules,
         statuses: statuses,
         employeeStatusIds: empStatusIds,
+        employeeStatusHistory: employeeStatusHistory,
+        statusPayRates: statusRates,
         employeePayTypes: empPayTypes,
         employeeBaseSalaries: empBaseSalaries,
         claims: claims,
@@ -235,6 +314,7 @@ class AnalyticsService extends ChangeNotifier {
         loading: false,
       );
       _hasLoadedOnce = true;
+      if (_disposed) return;
       notifyListeners();
     } catch (e) {
       // При тихом фоновом обновлении не подменяем живую таблицу экраном
@@ -244,11 +324,35 @@ class AnalyticsService extends ChangeNotifier {
         return;
       }
       _state = _state.copyWith(loading: false, error: e);
+      if (_disposed) return;
       notifyListeners();
     }
   }
 
   Future<void> refresh() => loadMonth(_state.month);
+
+  /// Цены за приладку по рабочим местам с включённой приладкой
+  /// (workplaces.priladka_price). Финансовые данные — вне canViewFinance
+  /// возвращается пустая карта (setupPay в расчёте будет 0).
+  Map<String, double> get workplaceSetupPrices {
+    if (_permission?.canViewFinance != true) return const {};
+    return {
+      for (final w in personnel.workplaces)
+        if (w.hasMachine) w.id: w.priladkaPrice,
+    };
+  }
+
+  /// Сохраняет цену за одну приладку рабочего места (workplaces.priladka_price).
+  Future<void> setWorkplaceSetupPrice({
+    required String workplaceId,
+    required double price,
+  }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
+    await personnel.setWorkplacePriladkaPrice(id: workplaceId, price: price);
+    notifyListeners();
+  }
 
   /// Сохраняет коэффициент рабочего места на текущий месяц.
   Future<void> setWorkplaceCoefficient({
@@ -350,39 +454,15 @@ class AnalyticsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Создаёт новый статус.
-  Future<EmployeeStatus> createStatus({
-    required String name,
-    String? description,
-    String? color,
-  }) async {
-    final created = await _statusRepo.create(
-        name: name, description: description, color: color);
-    _state = _state.copyWith(
-      statuses: [..._state.statuses, created],
-    );
-    notifyListeners();
-    return created;
-  }
-
-  Future<void> assignStatusToEmployee(
-      {required String employeeId, required String? statusId}) async {
-    await _statusRepo.assignToEmployee(employeeId, statusId);
-    final next = Map<String, String>.from(_state.employeeStatusIds);
-    if (statusId == null || statusId.isEmpty) {
-      next.remove(employeeId);
-    } else {
-      next[employeeId] = statusId;
-    }
-    _state = _state.copyWith(employeeStatusIds: next);
-    notifyListeners();
-  }
+  // Статусами (создание/удаление/присвоение) управляет модуль персонала
+  // (PersonnelProvider) — он владелец записи. Аналитика только читает
+  // статусы/историю для отображения и расчёта ЗП (см. _loadMonthOnce).
 
   Future<void> setEmployeePayType({
     required String employeeId,
     required String? payType,
   }) async {
-    await _statusRepo.setPayType(employeeId, payType);
+    await _payRepo.setPayType(employeeId, payType);
     final next = Map<String, String?>.from(_state.employeePayTypes);
     next[employeeId] = payType;
     _state = _state.copyWith(employeePayTypes: next);
@@ -404,11 +484,33 @@ class AnalyticsService extends ChangeNotifier {
     _state = _state.copyWith(employeeBaseSalaries: optimistic);
     notifyListeners();
     try {
-      await _statusRepo.setBaseDaySalary(employeeId, value);
+      await _payRepo.setBaseDaySalary(employeeId, value);
     } catch (e) {
       _state = _state.copyWith(employeeBaseSalaries: previous);
       notifyListeners();
       rethrow;
     }
+  }
+
+  /// Сохраняет фиксированную ставку за смену по статусу на текущий месяц.
+  Future<void> setStatusPayRate({
+    required String statusId,
+    required double fixedDayPay,
+    String? actorId,
+  }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
+    await _statusRateRepo.upsert(
+      permission: _permission,
+      statusId: statusId,
+      fixedDayPay: fixedDayPay,
+      month: _state.month.firstDay,
+      updatedBy: actorId,
+    );
+    final next = Map<String, double>.from(_state.statusPayRates);
+    next[statusId] = fixedDayPay;
+    _state = _state.copyWith(statusPayRates: next);
+    notifyListeners();
   }
 }

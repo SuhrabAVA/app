@@ -320,5 +320,95 @@ void main() {
           .fold<double>(0, (s, e) => s + e.qty);
       expect(total, 50, reason: 'Duplicate quantity records must not be double-counted');
     });
+
+    TaskCommentRow setupDoneRow({
+      required String id,
+      required String text,
+      required DateTime ts,
+    }) =>
+        TaskCommentRow(
+          id: id,
+          type: 'setup_done',
+          text: text,
+          userId: 'empA',
+          timestamp: ts,
+          taskId: 't1',
+          stageId: 'stage1',
+          orderId: 'order1',
+        );
+
+    test('Test 8 — setup_done с маркером «приладок: N» использует явное число', () {
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'setup',
+            start: _ts(9),
+            end: _ts(10)),
+        setupDoneRow(
+            id: 's1',
+            text: 'Завершил(а) настройку станка (приладок: 3) — по краскам: 3',
+            ts: _ts(10)),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      final setupQty = events
+          .where((e) => e.type == AnalyticsEventType.setup)
+          .fold<double>(0, (s, e) => s + e.setupQty);
+      expect(setupQty, 3);
+    });
+
+    test('Test 9 — setup_done с «приладок: 0» даёт 0 (размеры совпали)', () {
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'setup',
+            start: _ts(9),
+            end: _ts(10)),
+        setupDoneRow(
+            id: 's1',
+            text: 'Завершил(а) настройку станка (приладок: 0) — '
+                'по размеру: размеры совпадают с предыдущим заказом',
+            ts: _ts(10)),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      final setupQty = events
+          .where((e) => e.type == AnalyticsEventType.setup)
+          .fold<double>(0, (s, e) => s + e.setupQty);
+      expect(setupQty, 0,
+          reason: 'Явный 0 из маркера не должен превращаться в легаси-единицу');
+    });
+
+    test('Test 10 — старый setup_done без маркера по-прежнему = 1', () {
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'setup',
+            start: _ts(9),
+            end: _ts(10)),
+        setupDoneRow(
+            id: 's1',
+            text: 'Завершил(а) настройку станка',
+            ts: _ts(10)),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      final setupQty = events
+          .where((e) => e.type == AnalyticsEventType.setup)
+          .fold<double>(0, (s, e) => s + e.setupQty);
+      expect(setupQty, 1);
+    });
   });
 }

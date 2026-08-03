@@ -9,6 +9,7 @@ import '../orders/order_model.dart';
 import '../orders/order_queue_service.dart';
 import '../orders/stage_queue_builder.dart' as stage_queue;
 import 'task_completion_rules.dart';
+import 'quantity_status_service.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
 
@@ -2307,22 +2308,13 @@ class TaskProvider with ChangeNotifier {
             if (v is Map) comments.add(Map<String, dynamic>.from(v));
           });
         }
-        // Prefer 'quantity_team_total' if present (joint mode)
-        final team =
-            comments.where((m) => (m['type'] ?? '') == 'quantity_team_total');
-        if (team.isNotEmpty) {
-          // take the latest record
-          final last = team.reduce((a, b) =>
-              ((a['timestamp'] ?? 0) as int) >= ((b['timestamp'] ?? 0) as int)
-                  ? a
-                  : b);
-          total += _parseQtySafe(last['text']);
-          continue;
-        }
-        // Else sum 'quantity_done' (separate executors)
-        final parts =
-            comments.where((m) => (m['type'] ?? '') == 'quantity_done');
-        for (final m in parts) {
+        // Сумма всех записей количества: quantity_share (перерывы) +
+        // quantity_done/quantity_team_total (завершение — «сделано с
+        // последнего перерыва»); та же семантика, что в аналитике.
+        for (final m in comments) {
+          if (!_actualQtyCommentTypes.contains((m['type'] ?? '').toString())) {
+            continue;
+          }
           total += _parseQtySafe(m['text']);
         }
       }
@@ -2332,30 +2324,258 @@ class TaskProvider with ChangeNotifier {
 
   Future<void> _maybeUpdateActualQtyAfterStage(
       String orderId, String stageId) async {
+    await recomputeOrderActualQty(orderId, completedStageId: stageId);
+  }
+
+  /// Пересчитывает orders.actual_qty по правилу «фактическое количество —
+  /// только то, что зафиксировано ПОСЛЕ завершения этапа Упаковка».
+  ///
+  /// Критерий — не порядковый номер этапа, а факт завершения упаковки на
+  /// момент фиксации количества (этапы могут закрываться не по порядку:
+  /// упаковке разрешён внеочередной старт, см. canStartPackagingOutOfQueue):
+  ///   • пока упаковка не завершена, actual_qty не трогаем вовсе;
+  ///   • после завершения упаковки допускаются её собственные количества
+  ///     (финальный подсчёт при завершении) и другие этапы, чья последняя
+  ///     фиксация количества не раньше момента завершения упаковки; сумма
+  ///     допущенного этапа включает все его записи (в т.ч. quantity_share
+  ///     на перерывах, даже сделанные до закрытия упаковки);
+  ///   • из допущенных берётся сумма ОДНОЙ группы этапа — той, что
+  ///     зафиксировала количество последней. Этапы обрабатывают один и тот
+  ///     же тираж последовательно, поэтому суммирование по разным этапам
+  ///     завысило бы факт (actual_qty участвует в отгрузке и списаниях).
+  ///
+  /// Для заказов без этапа упаковки сохраняется старое поведение
+  /// («количество последнего этапа»), чтобы не ломать легаси-маршруты.
+  Future<void> recomputeOrderActualQty(String orderId,
+      {String? completedStageId}) async {
+    if (orderId.trim().isEmpty) return;
     try {
-      // 1) Stage tasks all completed?
       final rs = await _supabase
           .from('tasks')
-          .select('status')
-          .eq('order_id', orderId)
-          .eq('stage_id', stageId);
-      final list = List<Map<String, dynamic>>.from(rs as List);
-      final allStageCompleted = list.isNotEmpty &&
-          list.every((r) => (r['status'] ?? '') == 'completed');
-      if (!allStageCompleted) return;
+          .select('*')
+          .eq('order_id', orderId);
+      final rows = List<Map<String, dynamic>>.from(
+          (rs as List).whereType<Map>().map(Map<String, dynamic>.from));
+      if (rows.isEmpty) return;
 
-      // 2) Is this the last stage?
-      final isLast = await _isLastStage(orderId, stageId);
-      if (!isLast) return;
+      // Имена рабочих мест — для надёжного распознавания упаковки, когда
+      // stage_id отличается от канонического kPackagingStageId.
+      final stageIds = rows
+          .map((r) => (r['stage_id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      var stageNames = <String, String>{};
+      var stageUnits = <String, String>{};
+      try {
+        final wr = await _supabase
+            .from('workplaces')
+            .select('id, name, unit')
+            .inFilter('id', stageIds.toList());
+        stageNames = {
+          for (final row in (wr as List).whereType<Map>())
+            (row['id'] ?? '').toString(): (row['name'] ?? '').toString(),
+        };
+        stageUnits = {
+          for (final row in (wr as List).whereType<Map>())
+            (row['id'] ?? '').toString(): (row['unit'] ?? '').toString(),
+        };
+      } catch (_) {
+        // Имена опциональны: сработает матч по id/group key.
+      }
 
-      // 3) Sum quantities and update orders.actual_qty
-      final total = await _sumLastStageQuantity(orderId, stageId);
+      bool rowIsPackaging(Map<String, dynamic> r) {
+        final sid = (r['stage_id'] ?? '').toString();
+        return isPackagingStage(
+          stageId: sid,
+          stageName: stageNames[sid],
+          stageGroupKey: (r['stage_group_key'] ?? '').toString(),
+        );
+      }
+
+      final packagingRows = rows.where(rowIsPackaging).toList(growable: false);
+
+      if (packagingRows.isEmpty) {
+        // Легаси: заказ без упаковки — прежняя логика последнего этапа.
+        final stageId = (completedStageId ?? '').trim();
+        if (stageId.isEmpty) return;
+        final stageRows = rows.where(
+            (r) => (r['stage_id'] ?? '').toString().trim() == stageId);
+        final allStageCompleted = stageRows.isNotEmpty &&
+            stageRows.every((r) => (r['status'] ?? '') == 'completed');
+        if (!allStageCompleted) return;
+        if (!await _isLastStage(orderId, stageId)) return;
+        final total = await _sumLastStageQuantity(orderId, stageId);
+        await _supabase
+            .from('orders')
+            .update({'actual_qty': total}).eq('id', orderId);
+        return;
+      }
+
+      final packagingCompleted =
+          packagingRows.every((r) => (r['status'] ?? '') == 'completed');
+      if (!packagingCompleted) return;
+
+      final packagingCompletedAt = packagingRows
+          .map(_taskCompletionMillis)
+          .fold<int>(0, (max, v) => v > max ? v : max);
+
+      // Группа этапа → (сумма допущенных количеств, поздняя метка фиксации).
+      final qtyByGroup = <String, double>{};
+      final latestTsByGroup = <String, int>{};
+      for (final row in rows) {
+        final measured = _quantityForActualQty(row);
+        if (measured.qty <= 0) continue;
+        // Этап допускается, если его ПОСЛЕДНЯЯ фиксация количества не раньше
+        // завершения упаковки; сумма при этом включает и более ранние записи
+        // этой же стадии (quantity_share на перерывах до закрытия упаковки).
+        if (!rowIsPackaging(row) && measured.latestTs < packagingCompletedAt) {
+          continue;
+        }
+        final groupKey = (row['stage_group_key'] ?? '').toString().trim().isEmpty
+            ? (row['stage_id'] ?? '').toString()
+            : (row['stage_group_key'] ?? '').toString().trim();
+        qtyByGroup[groupKey] = (qtyByGroup[groupKey] ?? 0) + measured.qty;
+        if (measured.latestTs > (latestTsByGroup[groupKey] ?? 0)) {
+          latestTsByGroup[groupKey] = measured.latestTs;
+        }
+      }
+      // Нет ни одного допущенного количества — ничего не перезаписываем
+      // (не затираем возможное ручное значение нулём).
+      if (qtyByGroup.isEmpty) return;
+
+      String winner = qtyByGroup.keys.first;
+      for (final key in qtyByGroup.keys) {
+        if ((latestTsByGroup[key] ?? 0) > (latestTsByGroup[winner] ?? 0)) {
+          winner = key;
+        }
+      }
+      final total = qtyByGroup[winner] ?? 0;
+
+      // actual_qty хранится в штуках продукции. Упаковщик отчитывается в
+      // упаковках, поэтому его число переводим в штуки по фасовке заказа
+      // («Упаковка: N» в дополнительных параметрах). Без фасовки множителя
+      // нет — пишем как есть, чтобы не завышать факт вслепую.
+      final winnerRows = rows.where((r) {
+        final groupKey = (r['stage_group_key'] ?? '').toString().trim().isEmpty
+            ? (r['stage_id'] ?? '').toString()
+            : (r['stage_group_key'] ?? '').toString().trim();
+        return groupKey == winner;
+      });
+      final winnerInPacks = winnerRows.any((r) =>
+          isQuantityPackUnit(stageUnits[(r['stage_id'] ?? '').toString()]));
+      final double packSize =
+          winnerInPacks ? (await _orderPackSize(orderId) ?? 1) : 1;
+
       await _supabase
           .from('orders')
-          .update({'actual_qty': total}).eq('id', orderId);
+          .update({'actual_qty': total * packSize}).eq('id', orderId);
     } catch (e, st) {
-      debugPrint('❌ _maybeUpdateActualQtyAfterStage error: $e\n$st');
+      debugPrint('❌ recomputeOrderActualQty error: $e\n$st');
     }
+  }
+
+  /// Фасовка заказа («Упаковка: N» в дополнительных параметрах) — сколько
+  /// штук в одной упаковке. null, если параметр не заполнен.
+  Future<double?> _orderPackSize(String orderId) async {
+    try {
+      final row = await _supabase
+          .from('orders')
+          .select('additional_params')
+          .eq('id', orderId)
+          .maybeSingle();
+      final raw = row == null ? null : row['additional_params'];
+      if (raw is! List) return null;
+      return packSizeFromParams(raw.map((e) => e?.toString() ?? ''));
+    } catch (e) {
+      debugPrint('⚠️ _orderPackSize failed: $e');
+      return null;
+    }
+  }
+
+  /// Момент завершения задачи в millis. Приоритет: колонка completed_at
+  /// (миграция 20260720, пишется _syncStageGroupStatusToSharedSources) →
+  /// поздняя метка завершающих комментариев (user_done/количества — их
+  /// пишет и клиент, и RPC complete_task_stage) → updated_at.
+  int _taskCompletionMillis(Map<String, dynamic> row) {
+    final direct = row['completed_at'];
+    if (direct is int && direct > 0) return direct;
+    if (direct is num && direct > 0) return direct.toInt();
+    if (direct is String) {
+      final parsed = int.tryParse(direct) ??
+          DateTime.tryParse(direct)?.millisecondsSinceEpoch;
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    const finishTypes = {
+      'user_done',
+      'quantity_done',
+      'quantity_team_total',
+      'finish_note',
+    };
+    var latest = 0;
+    for (final c in _rowComments(row)) {
+      if (!finishTypes.contains((c['type'] ?? '').toString())) continue;
+      final ts = _commentMillis(c['timestamp']);
+      if (ts > latest) latest = ts;
+    }
+    if (latest > 0) return latest;
+
+    final updated = row['updated_at'];
+    if (updated is String) {
+      return DateTime.tryParse(updated)?.millisecondsSinceEpoch ?? 0;
+    }
+    return 0;
+  }
+
+  /// Количество по задаче для actual_qty: сумма ВСЕХ записей количества —
+  /// quantity_share (фиксации на перерывах/пересменах), quantity_done
+  /// (отдельные исполнители) и quantity_team_total (финал совместного
+  /// режима — «сделано с последнего перерыва», а не итог за этап; та же
+  /// семантика, что в аналитике, см. TaskAnalyticsMapper).
+  /// Вместе с количеством возвращается поздняя метка учтённой записи —
+  /// по ней выбирается этап, зафиксировавший количество последним.
+  static const _actualQtyCommentTypes = {
+    'quantity_share',
+    'quantity_done',
+    'quantity_team_total',
+  };
+
+  ({double qty, int latestTs}) _quantityForActualQty(Map<String, dynamic> row) {
+    double sum = 0;
+    var latestTs = 0;
+    for (final c in _rowComments(row)) {
+      final type = (c['type'] ?? '').toString();
+      if (!_actualQtyCommentTypes.contains(type)) continue;
+      sum += _parseQtySafe(c['text']);
+      final ts = _commentMillis(c['timestamp']);
+      if (ts > latestTs) latestTs = ts;
+    }
+    return (qty: sum, latestTs: latestTs);
+  }
+
+  List<Map<String, dynamic>> _rowComments(Map<String, dynamic> row) {
+    final c = row['comments'];
+    final comments = <Map<String, dynamic>>[];
+    if (c is List) {
+      comments.addAll(
+          c.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+    } else if (c is Map) {
+      c.forEach((_, v) {
+        if (v is Map) comments.add(Map<String, dynamic>.from(v));
+      });
+    }
+    return comments;
+  }
+
+  int _commentMillis(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final asInt = int.tryParse(value.trim());
+      if (asInt != null) return asInt;
+      return DateTime.tryParse(value.trim())?.millisecondsSinceEpoch ?? 0;
+    }
+    return 0;
   }
 
   @override

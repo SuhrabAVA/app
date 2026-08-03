@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -165,11 +166,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   late final TabController _tabs;
-  RealtimeChannel? _rt;
-  // Дебаунс realtime-событий: пачка insert/update/delete по ~15 таблицам
-  // (остатки + логи + резервы) схлопывается в один _loadAll, иначе десятки
-  // параллельных тяжёлых перезагрузок спамили main thread и валили запросы
-  // по statement timeout (57014).
+  // Ф3: собственного realtime-канала у экрана больше нет — единственный
+  // источник обновлений WarehouseProvider (слушаем его как ChangeNotifier
+  // и перерисовываемся из его памяти без сетевых запросов).
+  WarehouseProvider? _provider;
+  // Дебаунс отложенного повтора _loadAll (если загрузку запросили, пока
+  // предыдущая ещё шла).
   Timer? _reloadDebounce;
   // Guard от наложения: если _loadAll уже идёт, помечаем, что нужен повтор,
   // и запускаем его один раз по завершении текущего.
@@ -202,6 +204,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   String _sortField = 'name';
   bool _sortDesc = false;
   String _query = '';
+  // Признаки «в таблице есть более старые записи, чем загружено» по видам
+  // логов + флаг идущей догрузки («Показать ещё»).
+  bool _woHasMore = false;
+  bool _arrHasMore = false;
+  bool _invHasMore = false;
+  bool _loadingMoreLogs = false;
 
   final TextEditingController _searchController = TextEditingController();
 
@@ -423,11 +431,25 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     _tabs.addListener(() {
       if (mounted) setState(() {});
     });
+    _provider = context.read<WarehouseProvider>()
+      ..addListener(_onProviderChanged);
     _loadAll();
-    _setupRealtime();
   }
 
-  /// Дебаунс: пачка realtime-событий схлопывается в один _loadAll через 350 мс.
+  /// Ф3: провайдер — единственный источник realtime-обновлений. Любое его
+  /// изменение (точечный апдейт остатков, перечитанный вид лога, пересчёт
+  /// резервов) применяется к экрану из памяти, без запросов и подписок.
+  void _onProviderChanged() {
+    if (!mounted || _loadInFlight) return;
+    final provider = _provider;
+    if (provider == null) return;
+    _applySnapshot(
+      items: provider.getTmcByType(widget.type),
+      bundle: provider.logsBundle(_normalizeType(widget.type)),
+    );
+  }
+
+  /// Отложенный повтор _loadAll (запрос пришёл во время идущей загрузки).
   void _scheduleReload() {
     _reloadDebounce?.cancel();
     _reloadDebounce = Timer(const Duration(milliseconds: 350), () {
@@ -438,14 +460,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   /// Обёртка с guard: не запускаем параллельные тяжёлые перезагрузки. Если
   /// _loadAll вызвали во время уже идущей загрузки — ставим отложенный повтор
   /// и выполняем его один раз по завершении текущей.
-  Future<void> _loadAll() async {
+  Future<void> _loadAll({bool force = false}) async {
     if (_loadInFlight) {
       _reloadRequested = true;
       return;
     }
     _loadInFlight = true;
     try {
-      await _loadAllImpl();
+      await _loadAllImpl(force: force);
     } finally {
       _loadInFlight = false;
       if (_reloadRequested && mounted) {
@@ -457,51 +479,114 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
-  Future<void> _loadAllImpl() async {
+  void _applySnapshot({
+    required List<TmcModel> items,
+    WarehouseLogsBundle? bundle,
+  }) {
+    if (!mounted) return;
+    final writeoffs =
+        bundle == null ? _writeoffs : _mapBundleLogs(bundle.writeoffs);
+    final inventories =
+        bundle == null ? _inventories : _mapBundleLogs(bundle.inventories);
+    final arrivals = bundle == null ? _arrivals : _mapBundleLogs(bundle.arrivals);
+
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _writeoffs = writeoffs;
+      _inventories = inventories;
+      _arrivals = arrivals;
+      if (bundle != null) {
+        _woHasMore = bundle.writeoffsHasMore;
+        _arrHasMore = bundle.arrivalsHasMore;
+        _invHasMore = bundle.inventoriesHasMore;
+      }
+    });
+    _notifyThresholds();
+    _resort();
+  }
+
+  Future<void> _loadAllImpl({required bool force}) async {
     if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
     final typeKey = _normalizeType(widget.type);
 
-    void applySnapshot({
-      required List<TmcModel> items,
-      WarehouseLogsBundle? bundle,
-    }) {
-      if (!mounted) return;
-      final writeoffs =
-          bundle == null ? _writeoffs : _mapBundleLogs(bundle.writeoffs);
-      final inventories =
-          bundle == null ? _inventories : _mapBundleLogs(bundle.inventories);
-      final arrivals = bundle == null ? _arrivals : _mapBundleLogs(bundle.arrivals);
-
-      if (!mounted) return;
-      setState(() {
-        _items = items;
-        _writeoffs = writeoffs;
-        _inventories = inventories;
-        _arrivals = arrivals;
-      });
-      _notifyThresholds();
-      _resort();
-    }
-
     // 1) Мгновенно показываем то, что уже есть в памяти.
     final cachedItems = provider.getTmcByType(widget.type);
     final cachedBundle = provider.logsBundle(typeKey);
-    applySnapshot(items: cachedItems, bundle: cachedBundle);
+    _applySnapshot(items: cachedItems, bundle: cachedBundle);
 
-    // 2) Затем обновляем данные из БД и перерисовываем экран.
-    try {
-      await provider.fetchTmc();
-    } catch (_) {}
+    // 2) Остатки: провайдер загружает их сам при создании; повторный fetchTmc
+    // здесь был дублирующим (Ф2). Гоняем его только по явному действию
+    // (force) или если провайдер ещё ни разу не загрузился.
+    if (force || !provider.hasLoadedTmc) {
+      try {
+        await provider.fetchTmc();
+      } catch (_) {}
+    }
 
+    // 3) Логи типа: лениво из кэша провайдера; forceRefresh — только по
+    // явному действию, а не при каждом открытии экрана (Ф2).
     final freshItems = provider.getTmcByType(widget.type);
     WarehouseLogsBundle? freshBundle;
     try {
-      freshBundle = await provider.fetchLogsBundle(typeKey, forceRefresh: true);
+      freshBundle = await provider.fetchLogsBundle(typeKey, forceRefresh: force);
     } catch (_) {
       freshBundle = provider.logsBundle(typeKey);
     }
-    applySnapshot(items: freshItems, bundle: freshBundle);
+    _applySnapshot(items: freshItems, bundle: freshBundle);
+  }
+
+  /// «Показать ещё»: догружает следующую порцию логов вида [action].
+  Future<void> _loadMoreLogs(WarehouseLogAction action) async {
+    if (_loadingMoreLogs) return;
+    setState(() => _loadingMoreLogs = true);
+    try {
+      final provider = context.read<WarehouseProvider>();
+      final bundle =
+          await provider.loadMoreLogs(_normalizeType(widget.type), action);
+      if (!mounted || bundle == null) return;
+      setState(() {
+        _writeoffs = _mapBundleLogs(bundle.writeoffs);
+        _inventories = _mapBundleLogs(bundle.inventories);
+        _arrivals = _mapBundleLogs(bundle.arrivals);
+        _woHasMore = bundle.writeoffsHasMore;
+        _arrHasMore = bundle.arrivalsHasMore;
+        _invHasMore = bundle.inventoriesHasMore;
+      });
+      _resort();
+    } catch (e) {
+      debugPrint('⚠️ load more logs failed: $e');
+    } finally {
+      if (mounted) setState(() => _loadingMoreLogs = false);
+    }
+  }
+
+  /// Подпись + кнопка догрузки под таблицей лога, когда история не вся.
+  Widget _logsFooter(WarehouseLogAction action, int loadedCount) {
+    return Padding(
+      // Нижний отступ 88px выводит кнопку из-под плавающей кнопки «Добавить»
+      // (FAB занимает правый нижний угол, ~72px с отступами): при прокрутке
+      // до конца кнопка «Показать ещё» остаётся выше зоны FAB и кликабельна
+      // на любых размерах экрана.
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 88),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Показаны последние $loadedCount записей — история загружена не вся.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ),
+          TextButton(
+            onPressed: _loadingMoreLogs ? null : () => _loadMoreLogs(action),
+            child: Text(_loadingMoreLogs
+                ? 'Загрузка…'
+                : 'Показать ещё ${WarehouseLogsRepository.kLogPageSize}'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<_LogRow> _mapBundleLogs(List<WarehouseLogEntry> entries) {
@@ -549,53 +634,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           );
         })
         .toList();
-  }
-
-  void _setupRealtime() {
-    try {
-      final s = Supabase.instance.client;
-      _rt?.unsubscribe();
-
-      final typeKey = _normalizeType(widget.type);
-      final bases = _baseTables(typeKey);
-      final woTables = _writeoffTables(typeKey);
-      final invTables = _inventoryTables(typeKey);
-      final arrTables = _arrivalTables(typeKey);
-
-      final ch = s.channel('wh_${DateTime.now().millisecondsSinceEpoch}');
-      final watchedTables = <String>[
-        ...bases,
-        ...woTables,
-        ...invTables,
-        ...arrTables,
-        // Бизнес-логика резерва: для бумаги и краски обновляем таблицу
-        // при любом изменении активных резервов.
-        if (typeKey == 'paper') 'order_paper_reservations',
-        if (typeKey == 'paint') 'order_paint_reservations',
-      ];
-      for (final t in watchedTables) {
-        ch.onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: t,
-          callback: (payload) => _scheduleReload(),
-        );
-        ch.onPostgresChanges(
-          event: PostgresChangeEvent.update,
-          schema: 'public',
-          table: t,
-          callback: (payload) => _scheduleReload(),
-        );
-        ch.onPostgresChanges(
-          event: PostgresChangeEvent.delete,
-          schema: 'public',
-          table: t,
-          callback: (payload) => _scheduleReload(),
-        );
-      }
-      ch.subscribe();
-      _rt = ch;
-    } catch (_) {}
   }
 
   bool _isReserveAwareType(String typeKey) => typeKey == 'paper' || typeKey == 'paint';
@@ -700,7 +738,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   void didUpdateWidget(covariant TypeTableTabsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.type != widget.type) {
-      _setupRealtime();
       _loadAll();
     }
   }
@@ -708,9 +745,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   @override
   void dispose() {
     _reloadDebounce?.cancel();
-    try {
-      _rt?.unsubscribe();
-    } catch (_) {}
+    _provider?.removeListener(_onProviderChanged);
     _tabs.dispose();
     _listVCtl.dispose();
     _listHCtl.dispose();
@@ -1520,22 +1555,29 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     Widget table, {
     required ScrollController vertical,
     required ScrollController horizontal,
+    Widget? footer,
   }) {
     return Scrollbar(
       controller: vertical,
       thumbVisibility: true,
       child: SingleChildScrollView(
         controller: vertical,
-        child: Scrollbar(
-          controller: horizontal,
-          thumbVisibility: true,
-          notificationPredicate: (notif) =>
-              notif.metrics.axis == Axis.horizontal,
-          child: SingleChildScrollView(
-            controller: horizontal,
-            scrollDirection: Axis.horizontal,
-            child: table,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Scrollbar(
+              controller: horizontal,
+              thumbVisibility: true,
+              notificationPredicate: (notif) =>
+                  notif.metrics.axis == Axis.horizontal,
+              child: SingleChildScrollView(
+                controller: horizontal,
+                scrollDirection: Axis.horizontal,
+                child: table,
+              ),
+            ),
+            if (footer != null) footer,
+          ],
         ),
       ),
     );
@@ -1593,7 +1635,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'Обновить данные',
-              onPressed: _loadAll),
+              onPressed: () => _loadAll(force: true)),
           if (canDeleteTable)
             IconButton(
                 icon: const Icon(Icons.delete_outline),
@@ -1652,202 +1694,325 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     final items = _applyFilterItems(base);
     final showReserveColumns = _isReserveAwareType(typeKey);
     final showAvailableColumn = typeKey == 'paint';
+    final showFormat =
+        items.any((i) => i.format != null && i.format!.trim().isNotEmpty);
+    final showGrammage =
+        items.any((i) => i.grammage != null && i.grammage!.trim().isNotEmpty);
+    final showWeight = typeKey != 'paper' && items.any((i) => i.weight != null);
+    final showNote =
+        items.any((i) => i.note != null && i.note!.trim().isNotEmpty);
+    final specs = _listColumnSpecs(
+      typeKey: typeKey,
+      showFormat: showFormat,
+      showGrammage: showGrammage,
+      showWeight: showWeight,
+      showNote: showNote,
+      showAvailableColumn: showAvailableColumn,
+      showReserveColumns: showReserveColumns,
+    );
+    final double totalWidth =
+        specs.fold(0.0, (sum, c) => sum + c.width) + 16;
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Card(
         elevation: 2,
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: items.isEmpty
-              ? const Center(child: Text('Нет данных'))
-              : _scrollableTable(
-                  DataTable(
-                    columnSpacing: 24,
-                    columns: [
-                      const DataColumn(label: Text('№')),
-                      const DataColumn(label: Text('Наименование')),
-                      const DataColumn(label: Text('Кол-во')),
-                      const DataColumn(label: Text('Ед.')),
-                      if (items.any((i) =>
-                          i.format != null && i.format!.trim().isNotEmpty))
-                        const DataColumn(label: Text('Формат')),
-                      if (items.any((i) =>
-                          i.grammage != null && i.grammage!.trim().isNotEmpty))
-                        const DataColumn(label: Text('Граммаж')),
-                      if (typeKey != 'paper' &&
-                          items.any((i) => i.weight != null))
-                        const DataColumn(label: Text('Вес (кг)')),
-                      if (items.any(
-                          (i) => i.note != null && i.note!.trim().isNotEmpty))
-                        const DataColumn(label: Text('Заметки')),
-                      if (widget.enablePhoto)
-                        const DataColumn(label: Text('Фото')),
-                      const DataColumn(label: Text('Действия')),
-                      if (showAvailableColumn)
-                        const DataColumn(label: Text('Доступно')),
-                      if (showReserveColumns)
-                        const DataColumn(label: Text('В резерве')),
-                    ],
-                    rows: List<DataRow>.generate(items.length, (i) {
-                      final item = items[i];
-                      String fmtNum(num? v, {int frac = 2}) => v == null
-                          ? ''
-                          : (v is int
-                              ? '$v'
-                              : (v as double).toStringAsFixed(frac));
-                      return DataRow(color: warehouseRowHoverColor, cells: [
-                        DataCell(Text('${i + 1}')),
-                        DataCell(Text(item.description)),
-                        DataCell(
-                          typeKey == 'paper'
-                              ? FutureBuilder<double>(
-                                  future: _reservedQtyForItem(item, typeKey),
-                                  builder: (context, snapshot) {
-                                    final reserved = snapshot.data ?? 0;
-                                    final available = item.quantity - reserved;
-                                    final safeAvailable =
-                                        available < 0 ? 0 : available;
-                                    return Text(fmtNum(safeAvailable, frac: 2));
-                                  },
-                                )
-                              : Text(fmtNum(item.quantity, frac: 2)),
-                        ),
-                        DataCell(Text(item.unit)),
-                        if (items.any((i) =>
-                            i.format != null && i.format!.trim().isNotEmpty))
-                          DataCell(Text(item.format ?? '')),
-                        if (items.any((i) =>
-                            i.grammage != null &&
-                            i.grammage!.trim().isNotEmpty))
-                          DataCell(Text(item.grammage ?? '')),
-                        if (typeKey != 'paper' &&
-                            items.any((i) => i.weight != null))
-                          DataCell(Text(fmtNum(item.weight, frac: 2))),
-                        if (items.any(
-                            (i) => i.note != null && i.note!.trim().isNotEmpty))
-                          DataCell(Text(item.note ?? '')),
-                        if (widget.enablePhoto)
-                          DataCell(Row(children: [
-                            Builder(builder: (context) {
-                              // 1) inline base64 (если вдруг пришёл со строкой)
-                              Uint8List? bytes;
-                              try {
-                                if (item.imageBase64 != null &&
-                                    item.imageBase64!.isNotEmpty) {
-                                  bytes = base64Decode(item.imageBase64!);
-                                }
-                              } catch (_) {}
-                              if (bytes != null && bytes.isNotEmpty) {
-                                return ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  // cacheWidth/Height: декодим превью в ~100px,
-                                  // а не в полном разрешении. Иначе N крупных
-                                  // фото красок в невиртуализированном DataTable
-                                  // декодятся full-res разом и топят конвейер
-                                  // растеризации (Failed to post message).
-                                  child: Image.memory(bytes,
-                                      width: 50,
-                                      height: 50,
-                                      cacheWidth: 100,
-                                      cacheHeight: 100,
-                                      fit: BoxFit.cover),
-                                );
-                              }
-                              // 2) картинка из Storage по image_url
-                              if (item.imageUrl != null &&
-                                  item.imageUrl!.isNotEmpty) {
-                                return ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  // cacheWidth/Height: см. коммент выше —
-                                  // декод миниатюры вместо full-res.
-                                  child: Image.network(item.imageUrl!,
-                                      width: 50,
-                                      height: 50,
-                                      cacheWidth: 100,
-                                      cacheHeight: 100,
-                                      fit: BoxFit.cover),
-                                );
-                              }
-                              // 3) фото нет в списочном запросе (image_base64
-                              // исключён ради фикса 57014). Полноразмерное фото
-                              // подгружается лениво в диалоге редактирования
-                              // (add_entry_dialog), а не в списке — иначе на
-                              // невиртуализированном DataTable это порождало
-                              // шторм параллельных запросов и setState.
-                              return const Icon(Icons.image_not_supported);
-                            }),
-                            IconButton(
-                                icon: const Icon(Icons.add_a_photo),
-                                tooltip: 'Сменить фото',
-                                onPressed: () => _changePhoto(item)),
-                          ])),
-                        DataCell(Row(children: [
-                          IconButton(
-                              icon: const Icon(Icons.edit, size: 20),
-                              tooltip: 'Редактировать',
-                              onPressed: () => _editItem(item)),
-                          IconButton(
-                              icon: const Icon(Icons.add, size: 20),
-                              tooltip: 'Пополнить',
-                              onPressed: () => _increase(item)),
-                          IconButton(
-                              icon: const Icon(Icons.remove_circle_outline,
-                                  size: 20),
-                              tooltip: 'Списать',
-                              onPressed: () => _writeOff(item)),
-                          IconButton(
-                              icon: const Icon(Icons.inventory_2_outlined,
-                                  size: 20),
-                              tooltip: 'Инвентаризация',
-                              onPressed: () => _inventory(item)),
-                          IconButton(
-                              icon: const Icon(Icons.delete, size: 20),
-                              tooltip: 'Удалить',
-                              onPressed: () => _deleteItem(item)),
-                        ])),
-                        if (showAvailableColumn)
-                          DataCell(Text(
-                            fmtNum(item.availableQty < 0 ? 0 : item.availableQty,
-                                frac: 2),
-                          )),
-                        if (showReserveColumns)
-                          DataCell(
-                            FutureBuilder<double>(
-                              future: _reservedQtyForItem(item, typeKey),
-                              builder: (context, snapshot) {
-                                final reserved = snapshot.data ?? item.reservedQty;
-                                final unit = _reserveUnitLabel(item, typeKey);
-                                final reserveLabel =
-                                    '${reserved.toStringAsFixed(2)} $unit';
-                                return TextButton(
-                                  style: ButtonStyle(
-                                    foregroundColor:
-                                        WidgetStateProperty.resolveWith(
-                                      (states) => states
-                                              .contains(WidgetState.disabled)
-                                          ? Colors.red.shade200
-                                          : Colors.red.shade700,
-                                    ),
-                                    overlayColor: WidgetStateProperty.all(
-                                      Colors.red.withValues(alpha: 0.12),
-                                    ),
-                                  ),
-                                  onPressed: reserved > 0
-                                      ? () => _showReserveDetails(item)
-                                      : null,
-                                  child: Text(reserveLabel),
-                                );
-                              },
+        child: items.isEmpty
+            ? const Center(child: Text('Нет данных'))
+            // Непрерывный список вместо PaginatedDataTable (страницы
+            // неудобны для склада): виртуализация Ф1 сохранена —
+            // ListView.builder строит только видимые строки, поэтому фото
+            // по-прежнему грузятся лениво по мере скролла, а не все разом.
+            : LayoutBuilder(builder: (context, constraints) {
+                final double width = totalWidth < constraints.maxWidth
+                    ? constraints.maxWidth
+                    : totalWidth;
+                return Scrollbar(
+                  controller: _listHCtl,
+                  thumbVisibility: true,
+                  notificationPredicate: (notif) =>
+                      notif.metrics.axis == Axis.horizontal,
+                  child: SingleChildScrollView(
+                    controller: _listHCtl,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: width,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _listHeader(specs),
+                          const Divider(height: 1),
+                          Expanded(
+                            child: Scrollbar(
+                              controller: _listVCtl,
+                              thumbVisibility: true,
+                              child: ListView.separated(
+                                controller: _listVCtl,
+                                itemCount: items.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (context, i) =>
+                                    _listRow(specs, items[i], i),
+                              ),
                             ),
                           ),
-                      ]);
-                    }),
+                        ],
+                      ),
+                    ),
                   ),
-                  vertical: _listVCtl,
-                  horizontal: _listHCtl,
-                ),
-        ),
+                );
+              }),
       ),
+    );
+  }
+
+  Widget _listHeader(List<_TmcColumnSpec> specs) {
+    const style = TextStyle(fontWeight: FontWeight.w600, fontSize: 13);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+      child: Row(
+        children: [
+          for (final col in specs)
+            col.flex
+                ? Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Text(col.label, style: style),
+                    ),
+                  )
+                : SizedBox(
+                    width: col.width,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Text(col.label, style: style),
+                    ),
+                  ),
+        ],
+      ),
+    );
+  }
+
+  Widget _listRow(List<_TmcColumnSpec> specs, TmcModel item, int index) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        children: [
+          for (final col in specs)
+            col.flex
+                ? Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: col.cell(item, index),
+                    ),
+                  )
+                : SizedBox(
+                    width: col.width,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: col.cell(item, index),
+                      ),
+                    ),
+                  ),
+        ],
+      ),
+    );
+  }
+
+  /// Колонки вкладки «Список»: заголовок и ячейка описаны одной записью,
+  /// поэтому рассинхрон «колонки/ячейки» (позиционная сверка DataTable)
+  /// невозможен. Порядок: № → Фото → Наименование → остальное.
+  List<_TmcColumnSpec> _listColumnSpecs({
+    required String typeKey,
+    required bool showFormat,
+    required bool showGrammage,
+    required bool showWeight,
+    required bool showNote,
+    required bool showAvailableColumn,
+    required bool showReserveColumns,
+  }) {
+    String fmtNum(num? v, {int frac = 2}) =>
+        v == null ? '' : (v is int ? '$v' : (v as double).toStringAsFixed(frac));
+    return [
+      _TmcColumnSpec(
+        label: '№',
+        width: 48,
+        cell: (item, i) => Text('${i + 1}'),
+      ),
+      if (widget.enablePhoto)
+        _TmcColumnSpec(
+          label: 'Фото',
+          width: 118,
+          cell: (item, i) => Row(mainAxisSize: MainAxisSize.min, children: [
+            _photoPreview(item),
+            IconButton(
+                icon: const Icon(Icons.add_a_photo),
+                tooltip: 'Сменить фото',
+                onPressed: () => _changePhoto(item)),
+          ]),
+        ),
+      _TmcColumnSpec(
+        label: 'Наименование',
+        width: 240,
+        flex: true,
+        cell: (item, i) => Text(item.description),
+      ),
+      _TmcColumnSpec(
+        label: 'Кол-во',
+        width: 90,
+        cell: (item, i) => typeKey == 'paper'
+            ? FutureBuilder<double>(
+                future: _reservedQtyForItem(item, typeKey),
+                builder: (context, snapshot) {
+                  final reserved = snapshot.data ?? 0;
+                  final available = item.quantity - reserved;
+                  final safeAvailable = available < 0 ? 0 : available;
+                  return Text(fmtNum(safeAvailable, frac: 2));
+                },
+              )
+            : Text(fmtNum(item.quantity, frac: 2)),
+      ),
+      _TmcColumnSpec(
+        label: 'Ед.',
+        width: 64,
+        cell: (item, i) => Text(item.unit),
+      ),
+      if (showFormat)
+        _TmcColumnSpec(
+          label: 'Формат',
+          width: 90,
+          cell: (item, i) => Text(item.format ?? ''),
+        ),
+      if (showGrammage)
+        _TmcColumnSpec(
+          label: 'Граммаж',
+          width: 90,
+          cell: (item, i) => Text(item.grammage ?? ''),
+        ),
+      if (showWeight)
+        _TmcColumnSpec(
+          label: 'Вес (кг)',
+          width: 80,
+          cell: (item, i) => Text(fmtNum(item.weight, frac: 2)),
+        ),
+      if (showNote)
+        _TmcColumnSpec(
+          label: 'Заметки',
+          width: 160,
+          cell: (item, i) => Text(item.note ?? ''),
+        ),
+      _TmcColumnSpec(
+        label: 'Действия',
+        width: 244,
+        cell: (item, i) => Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(
+              icon: const Icon(Icons.edit, size: 20),
+              tooltip: 'Редактировать',
+              onPressed: () => _editItem(item)),
+          IconButton(
+              icon: const Icon(Icons.add, size: 20),
+              tooltip: 'Пополнить',
+              onPressed: () => _increase(item)),
+          IconButton(
+              icon: const Icon(Icons.remove_circle_outline, size: 20),
+              tooltip: 'Списать',
+              onPressed: () => _writeOff(item)),
+          IconButton(
+              icon: const Icon(Icons.inventory_2_outlined, size: 20),
+              tooltip: 'Инвентаризация',
+              onPressed: () => _inventory(item)),
+          IconButton(
+              icon: const Icon(Icons.delete, size: 20),
+              tooltip: 'Удалить',
+              onPressed: () => _deleteItem(item)),
+        ]),
+      ),
+      if (showAvailableColumn)
+        _TmcColumnSpec(
+          label: 'Доступно',
+          width: 90,
+          cell: (item, i) => Text(
+            fmtNum(item.availableQty < 0 ? 0 : item.availableQty, frac: 2),
+          ),
+        ),
+      if (showReserveColumns)
+        _TmcColumnSpec(
+          label: 'В резерве',
+          width: 130,
+          cell: (item, i) => FutureBuilder<double>(
+            future: _reservedQtyForItem(item, typeKey),
+            builder: (context, snapshot) {
+              final reserved = snapshot.data ?? item.reservedQty;
+              final unit = _reserveUnitLabel(item, typeKey);
+              final reserveLabel = '${reserved.toStringAsFixed(2)} $unit';
+              return TextButton(
+                style: ButtonStyle(
+                  foregroundColor: WidgetStateProperty.resolveWith(
+                    (states) => states.contains(WidgetState.disabled)
+                        ? Colors.red.shade200
+                        : Colors.red.shade700,
+                  ),
+                  overlayColor: WidgetStateProperty.all(
+                    Colors.red.withValues(alpha: 0.12),
+                  ),
+                ),
+                onPressed:
+                    reserved > 0 ? () => _showReserveDetails(item) : null,
+                child: Text(reserveLabel),
+              );
+            },
+          ),
+        ),
+    ];
+  }
+
+  /// Превью фото строки: миниатюра `<имя>_thumb.jpg` из Storage через
+  /// диск-кэш (cached_network_image). Если миниатюры ещё нет (бэкофилл не
+  /// прошёл) — откат на полноразмерный оригинал, затем на заглушку.
+  Widget _photoPreview(TmcModel item) {
+    // 1) inline base64 (если вдруг пришёл со строкой)
+    Uint8List? bytes;
+    try {
+      if (item.imageBase64 != null && item.imageBase64!.isNotEmpty) {
+        bytes = base64Decode(item.imageBase64!);
+      }
+    } catch (_) {}
+    if (bytes != null && bytes.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        // cacheWidth/Height: декодим превью в ~100px, а не в полном
+        // разрешении — full-res декод топил конвейер растеризации.
+        child: Image.memory(bytes,
+            width: 50,
+            height: 50,
+            cacheWidth: 100,
+            cacheHeight: 100,
+            fit: BoxFit.cover),
+      );
+    }
+    final imageUrl = item.imageUrl;
+    final thumbUrl = item.thumbUrl;
+    if (imageUrl == null || imageUrl.isEmpty || thumbUrl == null) {
+      // Фото нет в списочном запросе (image_base64 исключён ради фикса
+      // 57014). Полноразмерное фото подгружается лениво в диалоге
+      // редактирования (add_entry_dialog), а не в списке.
+      return const Icon(Icons.image_not_supported);
+    }
+    Widget cached(String url, {Widget Function(BuildContext)? onError}) =>
+        CachedNetworkImage(
+          imageUrl: url,
+          width: 50,
+          height: 50,
+          fit: BoxFit.cover,
+          memCacheWidth: 100,
+          memCacheHeight: 100,
+          errorWidget: (context, _, __) => onError == null
+              ? const Icon(Icons.image_not_supported)
+              : onError(context),
+        );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: cached(thumbUrl, onError: (_) => cached(imageUrl)),
     );
   }
 
@@ -1875,7 +2040,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       child: Card(
         elevation: 2,
         child: rows.isEmpty
-            ? const Center(heightFactor: 4, child: Text('Нет списаний'))
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Center(heightFactor: 4, child: Text('Нет списаний')),
+                  if (_woHasMore)
+                    _logsFooter(WarehouseLogAction.writeoff, _writeoffs.length),
+                ],
+              )
             : _scrollableTable(
                 DataTable(
                   columnSpacing: 24,
@@ -1921,6 +2094,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 ),
                 vertical: _woVCtl,
                 horizontal: _woHCtl,
+                footer: _woHasMore
+                    ? _logsFooter(WarehouseLogAction.writeoff, _writeoffs.length)
+                    : null,
               ),
       ),
     );
@@ -1950,7 +2126,15 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       child: Card(
         elevation: 2,
         child: rows.isEmpty
-            ? const Center(heightFactor: 4, child: Text('Нет приходов'))
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Center(heightFactor: 4, child: Text('Нет приходов')),
+                  if (_arrHasMore)
+                    _logsFooter(WarehouseLogAction.arrival, _arrivals.length),
+                ],
+              )
             : _scrollableTable(
                 DataTable(
                   columnSpacing: 24,
@@ -1996,6 +2180,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 ),
                 vertical: _arrVCtl,
                 horizontal: _arrHCtl,
+                footer: _arrHasMore
+                    ? _logsFooter(WarehouseLogAction.arrival, _arrivals.length)
+                    : null,
               ),
       ),
     );
@@ -2024,7 +2211,17 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       child: Card(
         elevation: 2,
         child: rows.isEmpty
-            ? const Center(heightFactor: 4, child: Text('Нет инвентаризаций'))
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Center(
+                      heightFactor: 4, child: Text('Нет инвентаризаций')),
+                  if (_invHasMore)
+                    _logsFooter(
+                        WarehouseLogAction.inventory, _inventories.length),
+                ],
+              )
             : _scrollableTable(
                 DataTable(
                   columnSpacing: 24,
@@ -2063,6 +2260,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 ),
                 vertical: _invVCtl,
                 horizontal: _invHCtl,
+                footer: _invHasMore
+                    ? _logsFooter(
+                        WarehouseLogAction.inventory, _inventories.length)
+                    : null,
               ),
       ),
     );
@@ -3063,4 +3264,21 @@ class _LogRow {
       byName: byName,
     );
   }
+}
+
+/// Описание колонки вкладки «Список»: заголовок, фиксированная ширина и
+/// билдер ячейки в одной записи. Колонка с [flex] растягивается на остаток
+/// ширины (Наименование).
+class _TmcColumnSpec {
+  const _TmcColumnSpec({
+    required this.label,
+    required this.width,
+    required this.cell,
+    this.flex = false,
+  });
+
+  final String label;
+  final double width;
+  final bool flex;
+  final Widget Function(TmcModel item, int index) cell;
 }

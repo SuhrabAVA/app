@@ -308,6 +308,8 @@ class _PaperTableState extends State<PaperTable> {
       }
 
       counter++;
+      final reservedFuture =
+          context.read<WarehouseProvider>().paperReservedQty(item.id);
       rows.add(
         warehouseHoverableRow(
           cells: [
@@ -315,7 +317,7 @@ class _PaperTableState extends State<PaperTable> {
             DataCell(Text(item.description)), // Наименование
             DataCell(
               FutureBuilder<double>(
-                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
+                future: reservedFuture,
                 builder: (context, snapshot) {
                   final reserved = snapshot.data ?? 0;
                   final available = item.quantity - reserved;
@@ -330,7 +332,7 @@ class _PaperTableState extends State<PaperTable> {
             DataCell(Text(item.note ?? '')), // Заметки
             DataCell(
               FutureBuilder<double>(
-                future: context.read<WarehouseProvider>().paperReservedQty(item.id),
+                future: reservedFuture,
                 builder: (context, snapshot) {
                   final reserved = snapshot.data ?? 0;
                   final reserveLabel = '${reserved.toStringAsFixed(2)} м';

@@ -69,30 +69,32 @@ class TimelineCalculator {
       return diff;
     }
 
-    // 1. Определяем базовый старт.
+    // 1. Базовые границы шкалы = заданный график (произвольный интервал
+    //    arrival/departure как есть, без округления до стандартной смены);
+    //    при отсутствии времени — дефолты типа смены. Итоговые границы:
+    //    начало = min(график_start, факт_start),
+    //    конец  = max(график_end, факт_end) — см. корректировку по фактам
+    //    ниже. Опоздание/ранний уход шкалу НЕ укорачивают.
     final shiftType = schedule?.shiftType ?? _guessShiftType(events, midnight);
     final defaults = WorkScheduleEntry.defaultsFor(shiftType);
     final arrival = schedule?.arrivalTime ?? defaults.$1;
+    final departure = schedule?.departureTime ?? defaults.$2;
 
-    int baseStart;
-    int baseEnd;
+    int defaultStart;
+    int defaultEnd;
     if (shiftType == DayShiftType.night) {
-      baseStart = AnalyticsConstants.nightShiftStartMinutes;
-      baseEnd = baseStart + AnalyticsConstants.shiftMinutes; // 20:00 -> 08:00 next
+      defaultStart = AnalyticsConstants.nightShiftStartMinutes;
+      defaultEnd = defaultStart + AnalyticsConstants.shiftMinutes; // 20:00 -> 08:00 next
     } else {
-      baseStart = AnalyticsConstants.dayShiftStartMinutes;
-      baseEnd = AnalyticsConstants.dayShiftEndMinutes;
+      defaultStart = AnalyticsConstants.dayShiftStartMinutes;
+      defaultEnd = AnalyticsConstants.dayShiftEndMinutes;
     }
-    if (arrival != null && arrival.isNotEmpty) {
-      final parsed = _parseHHMM(arrival);
-      if (parsed != null) {
-        // Для ночной смены приход типа "20:00" уже > baseStart значит нормально.
-        // Для дневной смены приход "07:00" < baseStart значит расширяем влево.
-        if (shiftType != DayShiftType.night && parsed < baseStart) {
-          baseStart = parsed;
-        }
-      }
-    }
+
+    int baseStart = _parseHHMM(arrival ?? '') ?? defaultStart;
+    int baseEnd = _parseHHMM(departure ?? '') ?? defaultEnd;
+    // Уход не позже прихода — смена через полночь (например 20:00–08:00):
+    // конец переносится в минуты следующего дня.
+    if (baseEnd <= baseStart) baseEnd += 24 * 60;
 
     // Если есть события, корректируем границы по фактам.
     for (final e in events) {

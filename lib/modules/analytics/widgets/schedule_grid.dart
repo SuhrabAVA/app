@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../../personnel/personnel_provider.dart';
@@ -62,7 +63,18 @@ class _ScheduleGridState extends State<ScheduleGrid> {
           ..sort((a, b) => ('${a.lastName} ${a.firstName}')
               .compareTo('${b.lastName} ${b.firstName}'));
 
-    return Column(
+    // Тащить график мышью: по умолчанию Flutter принимает drag только от
+    // пальца, поэтому на ПК сетка дней не прокручивалась вбок.
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(
+        dragDevices: {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.trackpad,
+          PointerDeviceKind.stylus,
+        },
+      ),
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -129,6 +141,7 @@ class _ScheduleGridState extends State<ScheduleGrid> {
           );
         }),
       ],
+      ),
     );
   }
 
@@ -206,8 +219,17 @@ class _ScheduleGridState extends State<ScheduleGrid> {
     );
   }
 
+  /// Актуальная запись ячейки из состояния сервиса. Замыкания строк грида
+  /// захватывают карту byDay на момент build — между сохранением первого
+  /// поля времени и вводом второго она может устареть, и тогда второй
+  /// upsert откатил бы первое поле к дефолту смены.
+  WorkScheduleEntry? _freshEntry(
+          String empId, int day, WorkScheduleEntry? fallback) =>
+      widget.service.state.schedules[empId]?[day] ?? fallback;
+
   Future<void> _cycle(
-      AnalyticsMonth month, String empId, int day, WorkScheduleEntry? existing) async {
+      AnalyticsMonth month, String empId, int day, WorkScheduleEntry? stale) async {
+    final existing = _freshEntry(empId, day, stale);
     final current = existing?.shiftType ?? DayShiftType.off;
     DayShiftType next;
     switch (current) {
@@ -222,13 +244,22 @@ class _ScheduleGridState extends State<ScheduleGrid> {
         break;
     }
     final defaults = WorkScheduleEntry.defaultsFor(next);
+    // Произвольный интервал (время, отличное от дефолтов текущего типа
+    // смены) переживает клик-цикл день↔ночь: клик по ячейке не должен
+    // «округлять» кастомный график обратно к стандартной смене.
+    // Переключение на выходной время очищает.
+    final oldDefaults = WorkScheduleEntry.defaultsFor(current);
+    final keepCustom = next != DayShiftType.off &&
+        existing != null &&
+        (existing.arrivalTime != oldDefaults.$1 ||
+            existing.departureTime != oldDefaults.$2);
     final entry = WorkScheduleEntry(
       id: existing?.id ?? '',
       employeeId: empId,
       workDate: DateTime(month.year, month.month, day),
       shiftType: next,
-      arrivalTime: defaults.$1,
-      departureTime: defaults.$2,
+      arrivalTime: keepCustom ? existing.arrivalTime : defaults.$1,
+      departureTime: keepCustom ? existing.departureTime : defaults.$2,
     );
     await widget.service.saveScheduleCell(
       employeeId: empId,
@@ -241,16 +272,21 @@ class _ScheduleGridState extends State<ScheduleGrid> {
     AnalyticsMonth month,
     String empId,
     int day,
-    WorkScheduleEntry? existing,
+    WorkScheduleEntry? stale,
     String field,
     String value,
   ) async {
+    final existing = _freshEntry(empId, day, stale);
     final defaults = WorkScheduleEntry.defaultsFor(
         existing?.shiftType ?? DayShiftType.day);
-    final arrival =
-        field == 'arrival' ? value : (existing?.arrivalTime ?? defaults.$1);
+    // Пустой ввод = «очистить время»: в колонку TIME должен уйти null,
+    // пустая строка не пройдёт кастинг на стороне Postgres.
+    final String? normalized = value.isEmpty ? null : value;
+    final arrival = field == 'arrival'
+        ? normalized
+        : (existing?.arrivalTime ?? defaults.$1);
     final departure = field == 'departure'
-        ? value
+        ? normalized
         : (existing?.departureTime ?? defaults.$2);
     final entry = WorkScheduleEntry(
       id: existing?.id ?? '',
@@ -359,6 +395,18 @@ class _Cell extends StatelessWidget {
   }
 }
 
+/// Нормализует ввод времени к «HH:MM». Допускает «H:MM» и разделитель
+/// «.» вместо «:». Возвращает null, если строка — не корректное время;
+/// произвольные значения (13:00, 15:45 и т.п.) проходят как есть.
+String? normalizeScheduleTime(String raw) {
+  final m = RegExp(r'^\s*(\d{1,2})[:.](\d{2})\s*$').firstMatch(raw);
+  if (m == null) return null;
+  final h = int.parse(m.group(1)!);
+  final mm = int.parse(m.group(2)!);
+  if (h > 23 || mm > 59) return null;
+  return '${h.toString().padLeft(2, '0')}:${mm.toString().padLeft(2, '0')}';
+}
+
 class _TimePill extends StatefulWidget {
   const _TimePill({
     required this.value,
@@ -380,11 +428,21 @@ class _TimePill extends StatefulWidget {
 
 class _TimePillState extends State<_TimePill> {
   late TextEditingController _ctrl;
+  late FocusNode _focus;
 
   @override
   void initState() {
     super.initState();
     _ctrl = TextEditingController(text: widget.value);
+    // На десктопе клик мимо поля не вызывает onSubmitted/onEditingComplete —
+    // без сохранения по потере фокуса введённое время молча пропадало и
+    // ячейка откатывалась к дефолту смены (08:00–20:00).
+    _focus = FocusNode();
+    _focus.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (!_focus.hasFocus) _submit();
   }
 
   @override
@@ -397,8 +455,34 @@ class _TimePillState extends State<_TimePill> {
 
   @override
   void dispose() {
+    _focus.removeListener(_onFocusChanged);
+    _focus.dispose();
     _ctrl.dispose();
     super.dispose();
+  }
+
+  /// Валидация перед сохранением: наверх уходит либо нормализованное
+  /// «HH:MM», либо пустая строка (очистка). Некорректный ввод откатывается
+  /// к последнему сохранённому значению и в Supabase не попадает.
+  void _submit() {
+    if (!mounted) return;
+    final raw = _ctrl.text.trim();
+    if (raw.isEmpty) {
+      if (widget.value.isNotEmpty) widget.onSubmitted('');
+      return;
+    }
+    final normalized = normalizeScheduleTime(raw);
+    if (normalized == null) {
+      _ctrl.text = widget.value;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Время — в формате ЧЧ:ММ, например 13:00'),
+        ),
+      );
+      return;
+    }
+    _ctrl.text = normalized;
+    if (normalized != widget.value) widget.onSubmitted(normalized);
   }
 
   @override
@@ -425,6 +509,7 @@ class _TimePillState extends State<_TimePill> {
             Expanded(
               child: TextField(
                 controller: _ctrl,
+                focusNode: _focus,
                 enabled: widget.enabled,
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -437,9 +522,8 @@ class _TimePillState extends State<_TimePill> {
                   border: InputBorder.none,
                   contentPadding: EdgeInsets.symmetric(vertical: 0),
                 ),
-                onSubmitted: widget.onSubmitted,
-                onEditingComplete: () =>
-                    widget.onSubmitted(_ctrl.text.trim()),
+                onSubmitted: (_) => _submit(),
+                onEditingComplete: _submit,
               ),
             ),
           ],

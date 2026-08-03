@@ -8,6 +8,12 @@ class WorkplaceModel {
   final String? unit;
   final WorkplaceExecutionMode executionMode;
 
+  /// Способ расчёта приладки. null = не выбран (обязателен при hasMachine).
+  final PriladkaCalcMode? priladkaCalcMode;
+
+  /// Цена за одну засчитанную приладку (₸).
+  final double priladkaPrice;
+
   WorkplaceModel({
     required this.id,
     required this.name,
@@ -17,6 +23,8 @@ class WorkplaceModel {
     this.maxConcurrentWorkers = 0,
     this.unit,
     this.executionMode = WorkplaceExecutionMode.joint,
+    this.priladkaCalcMode,
+    this.priladkaPrice = 0,
   });
 
   /// Преобразование модели рабочего места в [Map] для сохранения в базе данных.
@@ -31,6 +39,8 @@ class WorkplaceModel {
         'max_concurrent_workers': maxConcurrentWorkers,
         'unit': unit,
         'execution_mode': executionMode.name,
+        'priladka_calc_mode': priladkaCalcMode?.dbValue,
+        'priladka_price': priladkaPrice,
       };
 
   /// Создание модели из [Map], полученного из базы данных. Использует snake_case
@@ -64,7 +74,58 @@ class WorkplaceModel {
         unit: map['unit'] as String?,
         executionMode:
             parseWorkplaceExecutionMode(map['execution_mode'] ?? map['executionMode']),
+        priladkaCalcMode: parsePriladkaCalcMode(
+            map['priladka_calc_mode'] ?? map['priladkaCalcMode']),
+        priladkaPrice: (() {
+          final raw = map['priladka_price'] ?? map['priladkaPrice'];
+          if (raw is num) return raw.toDouble();
+          return double.tryParse('$raw'.replaceAll(',', '.')) ?? 0.0;
+        })(),
       );
+}
+
+/// Способ расчёта приладки на рабочем месте с включённой приладкой.
+enum PriladkaCalcMode { byColors, byOrder, bySize }
+
+extension PriladkaCalcModeX on PriladkaCalcMode {
+  /// Значение для БД (workplaces.priladka_calc_mode).
+  String get dbValue {
+    switch (this) {
+      case PriladkaCalcMode.byColors:
+        return 'by_colors';
+      case PriladkaCalcMode.byOrder:
+        return 'by_order';
+      case PriladkaCalcMode.bySize:
+        return 'by_size';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case PriladkaCalcMode.byColors:
+        return 'По краскам';
+      case PriladkaCalcMode.byOrder:
+        return 'По заказу';
+      case PriladkaCalcMode.bySize:
+        return 'По размеру';
+    }
+  }
+}
+
+PriladkaCalcMode? parsePriladkaCalcMode(dynamic raw) {
+  final value = raw?.toString().trim().toLowerCase() ?? '';
+  switch (value) {
+    case 'by_colors':
+    case 'bycolors':
+      return PriladkaCalcMode.byColors;
+    case 'by_order':
+    case 'byorder':
+      return PriladkaCalcMode.byOrder;
+    case 'by_size':
+    case 'bysize':
+      return PriladkaCalcMode.bySize;
+  }
+  return null;
 }
 
 enum WorkplaceExecutionMode { separate, joint }

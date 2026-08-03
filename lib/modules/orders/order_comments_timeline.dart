@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../personnel/personnel_provider.dart';
+import '../tasks/task_comment_presentation.dart';
 import '../tasks/task_model.dart';
 import 'order_comment_attachment.dart';
 import 'order_comments_repository.dart';
@@ -63,7 +66,12 @@ class _OrderCommentsSectionState extends State<OrderCommentsSection> {
   }
 
   Future<_OrderCommentsBundle> _load(String orderId) async {
-    final comments = await _repository.loadComments(orderId);
+    final loaded = await _repository.loadComments(orderId);
+    // Интервальные time_event дублируют паузы/проблемы отдельными
+    // комментариями — в ленте их скрываем (решение рабочего пространства).
+    final comments = loaded
+        .where((c) => c.type.trim().toLowerCase() != 'time_event')
+        .toList();
     final filtered = widget.commentFilter == null
         ? comments
         : comments.where(widget.commentFilter!).toList();
@@ -153,11 +161,19 @@ class OrderCommentsTimeline extends StatelessWidget {
     required this.comments,
     required this.attachmentsByComment,
     this.emptyLabel = 'Комментариев пока нет',
+    this.stageNamesByCommentId = const {},
+    this.tileScale = 1.0,
   });
 
   final List<TaskComment> comments;
   final Map<String, List<OrderCommentAttachment>> attachmentsByComment;
   final String emptyLabel;
+
+  /// Имя этапа по id комментария (если экран знает привязку к задачам).
+  final Map<String, String> stageNamesByCommentId;
+
+  /// Масштаб тайлов (рабочее пространство использует уменьшенный).
+  final double tileScale;
 
   @override
   Widget build(BuildContext context) {
@@ -170,6 +186,8 @@ class OrderCommentsTimeline extends StatelessWidget {
         return OrderCommentItem(
           comment: c,
           attachments: attachmentsByComment[c.id] ?? const [],
+          stageName: stageNamesByCommentId[c.id],
+          scale: tileScale,
         );
       },
     );
@@ -177,28 +195,46 @@ class OrderCommentsTimeline extends StatelessWidget {
 }
 
 class OrderCommentItem extends StatelessWidget {
-  const OrderCommentItem({super.key, required this.comment, required this.attachments});
+  const OrderCommentItem({
+    super.key,
+    required this.comment,
+    required this.attachments,
+    this.stageName,
+    this.scale = 1.0,
+  });
+
   final TaskComment comment;
   final List<OrderCommentAttachment> attachments;
+  final String? stageName;
+  final double scale;
+
+  String _resolveUserName(BuildContext context, String userId) {
+    if (userId.isEmpty) return '';
+    try {
+      // Провайдер может отсутствовать (тесты, изолированные экраны).
+      final personnel =
+          Provider.of<PersonnelProvider>(context, listen: false);
+      final emp = personnel.employees.firstWhere((e) => e.id == userId);
+      final full = '${emp.firstName} ${emp.lastName}'.trim();
+      return full.isNotEmpty ? full : userId;
+    } catch (_) {
+      return userId;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final text = comment.text.trim();
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(text.isEmpty ? '—' : text),
-          if (attachments.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: attachments.map((a) => AttachmentPreview(attachment: a)).toList(),
-            ),
-          ]
-        ]),
-      ),
+    // Плоская строка — эталонная плотность рабочего пространства
+    // (без Card-обвязки, съедавшей ~32px на запись).
+    return TaskCommentTile(
+      comment: comment,
+      scale: scale,
+      authorName: _resolveUserName(context, comment.userId),
+      stageName: stageName,
+      resolveUserName: (userId) => _resolveUserName(context, userId),
+      attachments: [
+        for (final a in attachments) AttachmentPreview(attachment: a),
+      ],
     );
   }
 }

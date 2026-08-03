@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'analytics_module.dart';
 import 'screens/analytics_access_denied_screen.dart';
+import 'screens/analytics_home_screen.dart';
+import 'services/analytics_permission_service.dart';
 import 'widgets/analytics_topbar.dart';
 
 class AnalyticsRoutes {
@@ -12,11 +14,29 @@ class AnalyticsRoutes {
   static const String workplaces = '/analytics/workplaces';
   static const String schedule = '/analytics/schedule';
   static const String accessDenied = '/analytics/access-denied';
+  static const String employeeSelf = '/analytics/me';
 
   static Route<dynamic> buildAccessDeniedRoute() {
     return MaterialPageRoute(
       settings: const RouteSettings(name: accessDenied),
       builder: (_) => const AnalyticsAccessDeniedScreen(),
+    );
+  }
+
+  /// Самопросмотр сотрудника из рабочего пространства: только свои данные,
+  /// без финансов. Права создаются напрямую (isTechLeader: false), минуя
+  /// AnalyticsEntry/fromTrustedSupabaseContext — общий Supabase-пользователь
+  /// приложения не должен «повышать» сотрудника до лида.
+  static Route<dynamic> buildSelfViewRoute({required String employeeId}) {
+    return MaterialPageRoute(
+      settings: const RouteSettings(name: employeeSelf),
+      builder: (_) => AnalyticsHomeScreen(
+        permission: AnalyticsPermissionService(
+          isTechLeader: false,
+          currentEmployeeId: employeeId,
+        ),
+        selfViewCanGoBack: true,
+      ),
     );
   }
 

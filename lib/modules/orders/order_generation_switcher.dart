@@ -62,6 +62,28 @@ class OrderGenerationSwitcher extends StatelessWidget {
 
     final isHistorySelected = selectedOrderId != currentOrderId;
 
+    // Компактные chips: дефолтный ChoiceChip (высота ~48px с tap-target)
+    // выглядел непропорционально крупным рядом с текстом комментариев.
+    Widget chip({
+      required String label,
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: ChoiceChip(
+          label: Text(label),
+          labelStyle: const TextStyle(fontSize: 12),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          selected: selected,
+          onSelected: (_) => onTap(),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -69,22 +91,16 @@ class OrderGenerationSwitcher extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  label: Text(currentLabel),
-                  selected: !isHistorySelected,
-                  onSelected: (_) => onSelected(currentOrderId),
-                ),
+              chip(
+                label: currentLabel,
+                selected: !isHistorySelected,
+                onTap: () => onSelected(currentOrderId),
               ),
               for (final entry in others)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(labelFor(entry)),
-                    selected: selectedOrderId == entry.id,
-                    onSelected: (_) => onSelected(entry.id),
-                  ),
+                chip(
+                  label: labelFor(entry),
+                  selected: selectedOrderId == entry.id,
+                  onTap: () => onSelected(entry.id),
                 ),
             ],
           ),

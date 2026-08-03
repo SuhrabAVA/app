@@ -482,10 +482,12 @@ class AnalyticsPdfButton extends StatelessWidget {
     super.key,
     required this.loading,
     required this.onPressed,
+    this.label = 'Скачать PDF',
   });
 
   final bool loading;
   final VoidCallback onPressed;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -511,7 +513,7 @@ class AnalyticsPdfButton extends StatelessWidget {
               ),
             )
           : const Icon(Icons.picture_as_pdf_outlined, size: 18),
-      label: Text(loading ? 'Создаём PDF…' : 'Скачать PDF'),
+      label: Text(loading ? 'Создаём PDF…' : label),
     );
   }
 }
