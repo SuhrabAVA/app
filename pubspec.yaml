@@ -10,7 +10,12 @@ dependencies:
     sdk: flutter
   google_fonts: ^6.2.1
   # Supabase
-  supabase_flutter: 2.9.1
+  # 2.12.4 — минимальная версия с фиксами краша при возврате из фона:
+  # #1178 (safe conn null check в onResumed), #1321 (null check в connect
+  # при быстрых lifecycle-переходах), #1340 (serial Future chain).
+  # Выше не идём: 2.13.0 переименовывает anon key → publishable key,
+  # 2.15.0 требует Dart SDK 3.4.0 — это отдельная задача.
+  supabase_flutter: 2.12.4
   supabase: ^2.3.0 
   flutter_dotenv: ^5.1.0
     
