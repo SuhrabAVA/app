@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sheet_clone/modules/orders/production_ids.dart';
 import 'package:sheet_clone/modules/orders/order_queue_service.dart';
 import 'package:sheet_clone/modules/orders/order_queue_sync_service.dart';
 
@@ -73,15 +74,15 @@ void main() {
     'diff ignores legacy protected task group when its plan stage is unchanged',
     () {
       const protectedPlanStage = OrderQueueSyncEntry(
-        stageId: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        stageId: wpBobbinUuid,
         stageGroupKey: 'bobbin',
         step: 1,
         status: 'completed',
         row: {'name': 'Бобинорезка'},
       );
       const legacyProtectedTask = OrderQueueSyncEntry(
-        stageId: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
-        stageGroupKey: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        stageId: wpBobbinUuid,
+        stageGroupKey: wpBobbinUuid,
         step: 1,
         status: 'completed',
       );
@@ -93,7 +94,7 @@ void main() {
         row: {'name': 'Автомат большой'},
       );
       const nextProtectedPlanStage = OrderQueueSyncEntry(
-        stageId: 'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
+        stageId: wpBobbinUuid,
         stageGroupKey: 'bobbin',
         step: 1,
       );

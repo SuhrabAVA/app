@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sheet_clone/modules/orders/material_model.dart';
 import 'package:sheet_clone/modules/orders/order_handle_type.dart';
 import 'package:sheet_clone/modules/orders/order_model.dart';
+import 'package:sheet_clone/modules/orders/production_ids.dart';
 import 'package:sheet_clone/modules/orders/product_model.dart';
 import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
 import 'package:sheet_clone/modules/production/production_details_screen.dart';
@@ -699,6 +700,21 @@ void main() {
   });
 
   test('normalizes base stage aliases without changing composition', () {
+    // Предмет теста — канонизация legacy-алиасов и имён, а НЕ порядок.
+    //
+    // Раньше тест ожидал, что normalize поднимет Бабинорезку и Флексопечать в
+    // начало. Реализация этого не делает и делать не должна:
+    //  * билдер и так добавляет базовые этапы первыми (_appendBaseStages
+    //    вызывается до _appendProductStages), а его вывод всегда несёт
+    //    sortOrder — значит ветка переупорядочивания для него недостижима;
+    //  * канонический порядок Бабинорезка→Флексопечать противоречил бы
+    //    _preserveSwitchableBobbinFlexOrder, который намеренно сохраняет
+    //    обратный порядок из существующей очереди (см. тест
+    //    «preserves manually swapped flex printing before bobbin cutting»).
+    //
+    // Для строк без ключей порядка normalize гарантирует только одно:
+    // упаковка уезжает в конец, остальные сохраняют исходную
+    // последовательность.
     final result = normalizeBuiltOrderStageQueue([
       {'stageId': kPackagingStageId, 'stageName': 'Упаковка'},
       {'stageId': kSheetCutStageId, 'stageName': 'Листорезка'},
@@ -706,17 +722,37 @@ void main() {
       {'stageId': 'w_bobiner', 'stageName': 'Бобинорезка'},
     ]);
 
+    // Состав не изменился.
     expect(
-      result.map((stage) => stage['stageId']),
-      [
+      result.map((stage) => stage['stageId']).toSet(),
+      {
         kBobbinStageId,
         kFlexPrintingStageId,
         kSheetCutStageId,
         kPackagingStageId,
+      },
+    );
+
+    // Алиасы канонизированы, относительный порядок входа сохранён,
+    // упаковка — последней.
+    expect(
+      result.map((stage) => stage['stageId']),
+      [
+        kSheetCutStageId,
+        kFlexPrintingStageId,
+        kBobbinStageId,
+        kPackagingStageId,
       ],
     );
-    expect(result[0]['stageName'], 'Бабинорезка');
-    expect(result[1]['stageName'], 'Флексопечать');
+
+    // Имена приведены к эталонным.
+    final nameById = <String, String>{
+      for (final stage in result)
+        stage['stageId'].toString(): stage['stageName'].toString(),
+    };
+    expect(nameById[kBobbinStageId], 'Бабинорезка');
+    expect(nameById[kFlexPrintingStageId], 'Флексопечать');
+    expect(nameById[kPackagingStageId], 'Упаковка');
   });
 
   test('does not add bobbin cutting without positive widths', () {
@@ -1149,10 +1185,11 @@ void main() {
     });
 
     test('Листорезка uses ТЗ UUID when built and read from stage_id', () {
-      // Значение сверено со справочником public.workplaces («Листорезка»).
-      // Раньше здесь стояло '…-8374-49f1-…' — перестановка символов, из-за
-      // которой тест падал: реальный id заканчивается на '…-8374-4f9f-…'.
-      const expectedSheetCutStageId = '19a67630-8374-4f9f-ae5b-f2f66828720b';
+      // Раньше здесь был свой литерал '…-8374-49f1-…' — перестановка символов,
+      // из-за которой тест падал при верной реализации. Теперь ожидание берётся
+      // из реестра, а сверку реестра со справочником делает
+      // test/modules/orders/production_ids_test.dart.
+      const expectedSheetCutStageId = wpSheetCutUuid;
       expect(kSheetCutStageId, expectedSheetCutStageId);
 
       for (final productTypeId in const [

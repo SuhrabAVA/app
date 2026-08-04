@@ -100,23 +100,32 @@ void main() {
   });
 
   group('uuid-литералы только в production_ids.dart', () {
-    test('в lib/ больше нигде нет захардкоженных uuid этапов', () {
-      final uuidPattern = RegExp(
-        r"'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'",
-      );
-      // Файлы вне периметра очереди этапов: там свои справочники (роли,
-      // терминалы, демо-данные), к маршрутам производства они не относятся.
-      const allowedOutside = <String>{
-        'lib/modules/orders/production_ids.dart',
-        'lib/admin_panel.dart',
-        'lib/modules/personnel/personnel_provider.dart',
-        'lib/modules/personnel/workplaces_screen.dart',
-        'lib/modules/production_planning/form_editor_screen.dart',
-      };
+    // Правило распространено и на test/: опечатка `19a67630-8374-49f1-…`
+    // вместо `…-4f9f-…` жила именно в ожидании теста и до сих пор
+    // правилом не ловилась.
+    final uuidPattern = RegExp(
+      r"'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+      r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'",
+    );
 
+    // Файлы вне периметра очереди этапов: там свои справочники (роли,
+    // терминалы, демо-данные), к маршрутам производства они не относятся.
+    // Вычистим отдельной задачей.
+    const allowedOutside = <String>{
+      'lib/modules/orders/production_ids.dart',
+      'lib/admin_panel.dart',
+      'lib/modules/personnel/personnel_provider.dart',
+      'lib/modules/personnel/workplaces_screen.dart',
+      'lib/modules/production_planning/form_editor_screen.dart',
+      // Снимок справочника — это и есть эталон, uuid в нём обязаны быть.
+      'test/fixtures/workplaces_snapshot.json',
+    };
+
+    List<String> scan(String root) {
       final offenders = <String>[];
-      for (final entity in Directory('lib').listSync(recursive: true)) {
+      final dir = Directory(root);
+      if (!dir.existsSync()) return offenders;
+      for (final entity in dir.listSync(recursive: true)) {
         if (entity is! File || !entity.path.endsWith('.dart')) continue;
         final path = entity.path.replaceAll(r'\', '/');
         if (allowedOutside.contains(path)) continue;
@@ -124,10 +133,19 @@ void main() {
           offenders.add('$path: ${match.group(0)}');
         }
       }
+      return offenders;
+    }
 
-      expect(offenders, isEmpty,
+    test('в lib/ нет захардкоженных uuid этапов', () {
+      expect(scan('lib'), isEmpty,
           reason: 'uuid объявляются только в production_ids.dart — '
               'дублирование приводит к расхождению значений');
+    });
+
+    test('в test/ нет захардкоженных uuid этапов', () {
+      expect(scan('test'), isEmpty,
+          reason: 'ожидания тестов тоже берут id из реестра: '
+              'иначе опечатка в тесте маскирует верную реализацию');
     });
   });
 }

@@ -3,8 +3,6 @@ import 'material_model.dart';
 import 'order_handle_type.dart';
 import 'production_ids.dart';
 
-export 'order_handle_type.dart' show OrderHandleType;
-
 // Идентификаторы приходят из единого реестра production_ids.dart —
 // собственных uuid-литералов в этом файле быть не должно.
 
