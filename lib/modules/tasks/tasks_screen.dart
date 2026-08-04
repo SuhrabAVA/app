@@ -27,6 +27,7 @@ import '../production_planning/template_model.dart';
 import '../production_planning/planned_stage_model.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
+import '../orders/production_ids.dart' as production_ids;
 import 'task_buttons_state.dart';
 import 'task_comment_presentation.dart';
 import 'task_model.dart';
@@ -4774,7 +4775,7 @@ class _TasksScreenState extends State<TasksScreen>
   bool _isInkConfirmationStage(TaskModel task) {
     final stageId = task.stageId.trim().toLowerCase();
     const flexoStageAliases = {
-      '0571c01c-f086-47e4-81b2-5d8b2ab91218',
+      production_ids.wpFlexPrintingUuid,
       'w_flexoprint',
       'w_flexo',
       'position:print',

@@ -1,3 +1,5 @@
+import '../orders/production_ids.dart' as production_ids;
+
 List<String> normalizeStageSequence(Iterable<String> rawSequence) {
   final sequence = <String>[];
   for (final value in rawSequence) {
@@ -29,10 +31,9 @@ List<String> normalizeStageSequence(Iterable<String> rawSequence) {
   return unique;
 }
 
-const String kCardboardCuttingStageId =
-    'd7d91f75-2f85-446f-8c1d-a20606bdb3b1';
+const String kCardboardCuttingStageId = production_ids.wpCardboardCuttingUuid;
 
-const String kPackagingStageId = 'edeb85db-c7a3-4a24-8f33-70ccdd4aaae1';
+const String kPackagingStageId = production_ids.wpPackagingUuid;
 
 const Set<String> _packagingAliases = <String>{
   'упаковка',

@@ -1,9 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sheet_clone/modules/orders/material_model.dart';
-import 'package:sheet_clone/modules/orders/order_stage_filter.dart'
-    hide kBottomWithCardboardAssemblyStageId,
-        kCardboardCuttingStageId,
-        kCardboardInsertStageId;
+import 'package:sheet_clone/modules/orders/order_handle_type.dart';
 import 'package:sheet_clone/modules/orders/order_model.dart';
 import 'package:sheet_clone/modules/orders/product_model.dart';
 import 'package:sheet_clone/modules/orders/stage_queue_builder.dart';
@@ -86,18 +83,18 @@ void main() {
       final stages = productionDetailsPlannedStagesFromQueueRowsForTesting(
         rows: const <Map<String, dynamic>>[
           {
-            'stageKey': kTwistedHandleStageId,
-            'stageId': kTwistedHandleStageId,
-            'stage_id': kTwistedHandleStageId,
+            'stageKey': kTwistedHandleWorkplaceId,
+            'stageId': kTwistedHandleWorkplaceId,
+            'stage_id': kTwistedHandleWorkplaceId,
             'stageName': 'Кручёная ручка',
             'stage_name': 'Кручёная ручка',
             'seq': 1,
             'step_no': 1,
           },
           {
-            'stageKey': kTwistedHandleStageId,
-            'stageId': kTwistedHandleStageId,
-            'stage_id': kTwistedHandleStageId,
+            'stageKey': kTwistedHandleWorkplaceId,
+            'stageId': kTwistedHandleWorkplaceId,
+            'stage_id': kTwistedHandleWorkplaceId,
             'stageName': 'Кручёная ручка',
             'stage_name': 'Кручёная ручка',
             'seq': 2,
@@ -152,7 +149,7 @@ void main() {
       kCuttingStageId,
       kCardboardCuttingStageId,
       kCardboardInsertStageId,
-      kTwistedHandleStageId,
+      kTwistedHandleWorkplaceId,
       kPackagingStageId,
     ];
     const stageNames = {
@@ -163,7 +160,7 @@ void main() {
       kCuttingStageId: 'Резка',
       kCardboardCuttingStageId: 'Резка картона',
       kCardboardInsertStageId: 'Вставка картона',
-      kTwistedHandleStageId: 'Кручёная ручка',
+      kTwistedHandleWorkplaceId: 'Кручёная ручка',
       kPackagingStageId: 'Упаковка',
     };
     const stageGroupMap = {
@@ -212,7 +209,7 @@ void main() {
         task(kCuttingStageId),
         task(kCardboardCuttingStageId),
         task(kCardboardInsertStageId),
-        task(kTwistedHandleStageId),
+        task(kTwistedHandleWorkplaceId),
         task(kPackagingStageId),
       ],
     );
@@ -259,7 +256,7 @@ void main() {
         kCuttingStageId,
         kCardboardCuttingStageId,
         kCardboardInsertStageId,
-        kTwistedHandleStageId,
+        kTwistedHandleWorkplaceId,
         kPackagingStageId,
       ];
       const stageNames = {
@@ -270,7 +267,7 @@ void main() {
         kCuttingStageId: 'Резка',
         kCardboardCuttingStageId: 'Резка картона',
         kCardboardInsertStageId: 'Вставка картона',
-        kTwistedHandleStageId: 'Кручёная ручка',
+        kTwistedHandleWorkplaceId: 'Кручёная ручка',
         kPackagingStageId: 'Упаковка',
       };
       const stageGroupMap = {
@@ -677,7 +674,7 @@ void main() {
         'seq': 5,
       },
       {
-        'stageId': kTwistedHandleStageId,
+        'stageId': kTwistedHandleWorkplaceId,
         'stageName': 'Кручёная ручка',
         'seq': 6,
       },
@@ -797,7 +794,7 @@ void main() {
       kBottomGlueSecondAltWorkplaceId,
     ]);
     expect(flatHandleStage.workplaceIds, [
-      kFlatHandleStageId,
+      kFlatHandleWorkplaceId,
       kManualHandleStageId,
     ]);
     expect(result.last.stageKey, kPackagingStageId);
@@ -845,7 +842,7 @@ void main() {
       isNot(contains(kCardboardCuttingStageId)),
     );
     expect(twistedHandleStage.workplaceIds, [
-      kTwistedHandleStageId,
+      kTwistedHandleWorkplaceId,
       kManualHandleStageId,
     ]);
   });
@@ -904,7 +901,7 @@ void main() {
     );
     expect(handleStage.stageName, 'Кручёная ручка');
     expect(handleStage.workplaceIds, [
-      kTwistedHandleStageId,
+      kTwistedHandleWorkplaceId,
       kManualHandleStageId,
     ]);
   });
@@ -975,7 +972,7 @@ void main() {
       isNot(contains(kBottomGlueStageId)),
     );
     expect(handleStage.workplaceIds, [
-      kFlatHandleStageId,
+      kFlatHandleWorkplaceId,
       kManualHandleStageId,
     ]);
   });
@@ -1023,7 +1020,7 @@ void main() {
       isNot(contains(kBottomGlueStageId)),
     );
     expect(handleStage.workplaceIds, [
-      kTwistedHandleStageId,
+      kTwistedHandleWorkplaceId,
       kManualHandleStageId,
     ]);
   });
@@ -1152,7 +1149,10 @@ void main() {
     });
 
     test('Листорезка uses ТЗ UUID when built and read from stage_id', () {
-      const expectedSheetCutStageId = '19a67630-8374-49f1-ae5b-f2f66828720b';
+      // Значение сверено со справочником public.workplaces («Листорезка»).
+      // Раньше здесь стояло '…-8374-49f1-…' — перестановка символов, из-за
+      // которой тест падал: реальный id заканчивается на '…-8374-4f9f-…'.
+      const expectedSheetCutStageId = '19a67630-8374-4f9f-ae5b-f2f66828720b';
       expect(kSheetCutStageId, expectedSheetCutStageId);
 
       for (final productTypeId in const [
@@ -1285,7 +1285,7 @@ void main() {
         [kSheetCutStageId, kFlatHandleGroupStageId, kPackagingStageId],
         workplaceIdsByStageKey: const {
           kFlatHandleGroupStageId: [
-            kFlatHandleStageId,
+            kFlatHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },
@@ -1402,7 +1402,7 @@ void main() {
         workplaceIdsByStageKey: const {
           kVMainSwitchStageKey: [kFriStageId, kWindowStageId],
           kTwistedHandleGroupStageId: [
-            kTwistedHandleStageId,
+            kTwistedHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },
@@ -1448,7 +1448,7 @@ void main() {
             kBottomGlueSecondAltWorkplaceId,
           ],
           kFlatHandleGroupStageId: [
-            kFlatHandleStageId,
+            kFlatHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },
@@ -1517,7 +1517,7 @@ void main() {
         ],
         workplaceIdsByStageKey: const {
           kTwistedHandleGroupStageId: [
-            kTwistedHandleStageId,
+            kTwistedHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },
@@ -1553,7 +1553,7 @@ void main() {
             kTubeStageId,
           ],
           kFlatHandleGroupStageId: [
-            kFlatHandleStageId,
+            kFlatHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },
@@ -1599,7 +1599,7 @@ void main() {
             kTubeStageId,
           ],
           kTwistedHandleGroupStageId: [
-            kTwistedHandleStageId,
+            kTwistedHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },
@@ -1689,7 +1689,7 @@ void main() {
             kTubeStageId,
           ],
           kFlatHandleGroupStageId: [
-            kFlatHandleStageId,
+            kFlatHandleWorkplaceId,
             kManualHandleStageId,
           ],
         },

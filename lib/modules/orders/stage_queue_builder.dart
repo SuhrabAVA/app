@@ -1,17 +1,23 @@
 import '../tasks/stage_sequence_utils.dart' as stage_sequence;
-import 'order_stage_filter.dart';
 import 'material_model.dart';
+import 'order_handle_type.dart';
+import 'production_ids.dart';
 
-// Product type IDs from the production routing specification.
-const String kSheetProductTypeId = 'aab3ed17-1688-43f0-b623-58dac264941f';
+export 'order_handle_type.dart' show OrderHandleType;
+
+// Идентификаторы приходят из единого реестра production_ids.dart —
+// собственных uuid-литералов в этом файле быть не должно.
+
+// Product type IDs.
+const String kSheetProductTypeId = ptSheetUuid;
 const Set<String> kSheetProducts = {
   kSheetProductTypeId,
 };
 
-const String kVTypeProductId = '448b731a-eafe-40f1-9268-bc5dd6ba57bc';
-const String kVTypeProductAltId = '688ce20b-2db5-43ed-a414-dda08443a06a';
-const String kVTypeProductAlt2Id = 'd2323dba-74c9-4e86-adfb-18cd47be9480';
-const String kVTypeProductAlt3Id = 'dfd3beb1-1afd-4c06-9b3b-5da680377b0d';
+const String kVTypeProductId = ptVWindowUuid;
+const String kVTypeProductAltId = ptVPackageUuid;
+const String kVTypeProductAlt2Id = ptVFriUuid;
+const String kVTypeProductAlt3Id = ptVCornerUuid;
 const Set<String> kVTypeProducts = {
   kVTypeProductId,
   kVTypeProductAltId,
@@ -19,54 +25,48 @@ const Set<String> kVTypeProducts = {
   kVTypeProductAlt3Id,
 };
 
-const String kTwoSheetPackageProductTypeId =
-    'b07cd977-939c-4d4f-b68c-8d163341460e';
+const String kTwoSheetPackageProductTypeId = ptTwoSheetPackageUuid;
 const Set<String> kTwoSheetPackageProducts = {kTwoSheetPackageProductTypeId};
 
-const String kPTypePackageProduct = '71c889cb-b24c-4bda-9a69-ae312f9a4bbd';
+const String kPTypePackageProduct = ptPPackageUuid;
 const Set<String> kPTypePackageProducts = {kPTypePackageProduct};
 
-// Workplace/stage IDs from the production routing specification.
-const String kBobbinStageId = 'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
-const String kFlexPrintingStageId = '0571c01c-f086-47e4-81b2-5d8b2ab91218';
+// Workplace/stage IDs.
+const String kBobbinStageId = wpBobbinUuid;
+const String kFlexPrintingStageId = wpFlexPrintingUuid;
 const Set<String> kLegacyBobbinStageAliases = {'w_bobiner', 'w_bobbin'};
 const Set<String> kLegacyFlexPrintingStageAliases = {'w_flexoprint', 'w_flexo'};
 const String kPackagingStageId = stage_sequence.kPackagingStageId;
-const String kFriStageId = '92d96ee9-0519-40b9-bd17-9bec475496b6';
-const String kWindowStageId = '8337f16e-c2d1-42dc-966d-6277ba3c1a50';
-const String kAutoBigStageId = 'fdbf1735-a67c-47c9-a7e1-90546e1fe6ed';
-const String kAutoSmallStageId = 'cbcbe469-b924-4064-ae05-885ccd1b842a';
-const String kTubeStageId = 'e62fc013-4785-43f3-b3ee-a3ca51777199';
-const String kSheetCutStageId = '19a67630-8374-4f9f-ae5b-f2f66828720b';
-const String kCuttingStageId = cuttingStageId;
-const String kCardboardCuttingStageId =
-    'd7d91f75-2f85-446f-8c1d-a20606bdb3b1';
-const String kCardboardInsertStageId =
-    'ce15da53-34bb-4a48-acef-610dddfad42e';
+const String kFriStageId = wpFriUuid;
+const String kWindowStageId = wpWindowUuid;
+const String kAutoBigStageId = wpAutoBigUuid;
+const String kAutoSmallStageId = wpAutoSmallUuid;
+const String kTubeStageId = wpTubeUuid;
+const String kSheetCutStageId = wpSheetCutUuid;
+const String kCuttingStageId = wpCuttingUuid;
+const String kCardboardCuttingStageId = wpCardboardCuttingUuid;
+const String kCardboardInsertStageId = wpCardboardInsertUuid;
 const String kBottomWithCardboardAssemblyStageId =
-    'd15da69b-9842-4967-96ed-28a4834b409e';
-const String kFlatHandleStageId = flatHandleStageId;
-const String kTwistedHandleStageId = twistedHandleStageId;
-const String kManualHandleStageId = manualHandleStageId;
-const String kDieCutHandleStageId = dieCutHandleStageId;
+    wpBottomWithCardboardAssemblyUuid;
+const String kManualHandleStageId = wpManualHandleUuid;
+const String kDieCutHandleStageId = wpDieCutHandleUuid;
 
-const String kDieCutA1WorkplaceId = '7c168998-76b8-4a4c-9708-af45c2dbd4f0';
-const String kDieCutA2WorkplaceId = '5a47821b-c276-4deb-90de-f196539fc95d';
-const String kBottomGlueWorkplaceId = 'dee83c5c-4624-4ca4-b36c-47673dc5cd72';
-const String kBottomGlueAltWorkplaceId = 'ad504db5-86c3-4284-8266-42bbf967b064';
-const String kBottomGlueSecondAltWorkplaceId =
-    '96075b60-77d8-4fb2-91b0-bfbe6c1ed13c';
-const String kTwistedHandleWorkplaceId = 'c5c1eb2e-dac8-4068-9e4c-ced8fb975626';
-                                          
+const String kDieCutA1WorkplaceId = wpDieCutA1Uuid;
+const String kDieCutA2WorkplaceId = wpDieCutA2Uuid;
+const String kBottomGlueWorkplaceId = wpBottomGlueManualUuid;
+const String kBottomGlueAltWorkplaceId = wpBottomGlueHotUuid;
+const String kBottomGlueSecondAltWorkplaceId = wpBottomGlueColdUuid;
+const String kTwistedHandleWorkplaceId = wpTwistedHandleUuid;
+
 const String kSharedHandleWorkplaceId = kManualHandleStageId;
-const String kFlatHandleWorkplaceId = kFlatHandleStageId;
+const String kFlatHandleWorkplaceId = wpFlatHandleUuid;
 
 // The following technological stage keys are intentionally distinct even when
 // a customer installation maps several of them to the same physical workplace.
 const String kDieCutA1A2StageId = 'die_cut_a1_a2';
-const String kScotchStageId = 'a9e21c59-e145-4074-8d24-f2db089c8747';
-const String kFromTwoSheetsStageId = '008a5bbd-86f8-48c1-a98b-0034f80492a6';
-const String kTubeAssemblyStageId = '4e4750b0-5849-42be-94b8-a721a68b85da';
+const String kScotchStageId = wpScotchUuid;
+const String kFromTwoSheetsStageId = wpFromTwoSheetsUuid;
+const String kTubeAssemblyStageId = wpTubeAssemblyUuid;
 const String kBottomGlueStageId = 'bottom_glue_group';
 const String kTwistedHandleGroupStageId = 'twisted_handle_group';
 const String kFlatHandleGroupStageId = 'flat_handle_group';

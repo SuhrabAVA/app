@@ -15,7 +15,7 @@ import '../../services/storage_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'orders_provider.dart';
-import 'order_stage_filter.dart';
+import 'order_handle_type.dart';
 import 'stage_queue_builder.dart';
 import 'order_queue_service.dart';
 import 'order_queue_validity.dart';

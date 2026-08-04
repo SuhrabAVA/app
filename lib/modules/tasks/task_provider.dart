@@ -7,16 +7,15 @@ import '../../services/attachment_service.dart';
 
 import '../orders/order_model.dart';
 import '../orders/order_queue_service.dart';
+import '../orders/production_ids.dart' as production_ids;
 import '../orders/stage_queue_builder.dart' as stage_queue;
 import 'task_completion_rules.dart';
 import 'quantity_status_service.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
 
-const String _canonicalFlexoWorkplaceId =
-    '0571c01c-f086-47e4-81b2-5d8b2ab91218';
-const String _canonicalBobbinWorkplaceId =
-    'b92a89d1-8e95-4c6d-b990-e308486e4bf1';
+const String _canonicalFlexoWorkplaceId = production_ids.wpFlexPrintingUuid;
+const String _canonicalBobbinWorkplaceId = production_ids.wpBobbinUuid;
 
 class _KnownWorkplaceAliasSpec {
   const _KnownWorkplaceAliasSpec({
