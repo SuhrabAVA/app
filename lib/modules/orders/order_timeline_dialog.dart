@@ -116,10 +116,7 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
     if (value == null) return null;
     if (value is DateTime) return value;
     if (value is int) {
-      if (value > 2000000000) {
-        return DateTime.fromMillisecondsSinceEpoch(value);
-      }
-      return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+      return DateTime.fromMillisecondsSinceEpoch(normalizeEpochToMillis(value));
     }
     if (value is num) {
       return _parseTimestamp(value.toInt());

@@ -35,9 +35,8 @@ const Set<String> kTaskCommentQuantityTypes = <String>{
 String formatTaskCommentTimestamp(int? ts, {DateTime? reference}) {
   if (ts == null || ts <= 0) return '';
   try {
-    final dt = ts < 2000000000000
-        ? DateTime.fromMillisecondsSinceEpoch(ts * 1000)
-        : DateTime.fromMillisecondsSinceEpoch(ts);
+    final dt =
+        DateTime.fromMillisecondsSinceEpoch(normalizeEpochToMillis(ts));
     String two(int n) => n.toString().padLeft(2, '0');
     final currentYear = (reference ?? DateTime.now()).year;
     final date = dt.year == currentYear

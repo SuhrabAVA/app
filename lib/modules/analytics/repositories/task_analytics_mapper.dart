@@ -374,23 +374,26 @@ class TaskAnalyticsMapper {
   }
 
   static DateTime? parseCommentTimestamp(dynamic value) {
+    // Единицы в tasks.comments смешанные: старые метки в секундах, новые в
+    // миллисекундах. Без нормализации секундная метка (~1.79e9) читалась как
+    // миллисекунды и давала январь 1970-го — такие комментарии выпадали из
+    // выборки месяца в аналитике.
+    DateTime fromEpoch(int raw) => DateTime.fromMillisecondsSinceEpoch(
+          normalizeEpochToMillis(raw),
+          isUtc: true,
+        );
+
     if (value == null) return null;
     if (value is DateTime) return value.toUtc();
-    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
-    if (value is num) {
-      return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
-    }
+    if (value is int) return fromEpoch(value);
+    if (value is num) return fromEpoch(value.toInt());
     if (value is String) {
       final raw = value.trim();
       if (raw.isEmpty) return null;
       final intValue = int.tryParse(raw);
-      if (intValue != null) {
-        return DateTime.fromMillisecondsSinceEpoch(intValue, isUtc: true);
-      }
+      if (intValue != null) return fromEpoch(intValue);
       final doubleValue = double.tryParse(raw);
-      if (doubleValue != null) {
-        return DateTime.fromMillisecondsSinceEpoch(doubleValue.toInt(), isUtc: true);
-      }
+      if (doubleValue != null) return fromEpoch(doubleValue.toInt());
       return DateTime.tryParse(raw)?.toUtc();
     }
     return null;

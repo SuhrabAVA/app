@@ -1126,11 +1126,9 @@ class _TasksScreenState extends State<TasksScreen>
     int? activeStart;
     int totalMs = 0;
 
-    int normTs(int ts) {
-      // normalise seconds to milliseconds if necessary
-      if (ts < 2000000000000) return ts * 1000;
-      return ts;
-    }
+    // Единый нормализатор: локальная копия держала порог 2e12 и завышала
+    // длительности наладки в тысячу раз для меток в миллисекундах.
+    int normTs(int ts) => normalizeEpochToMillis(ts);
 
     for (final e in events) {
       if (e.type == 'setup_start') {
@@ -7301,19 +7299,8 @@ bool _hasRealStartConflict({
   }
 
   // Нормализация: если timestamp в секундах — переводим в миллисекунды.
-  int _normTs(int ts) {
-    // Значения меньше ~2 млрд считаем заданными в секундах (UNIX time),
-    // всё остальное — уже миллисекунды. Отдельно обрабатываем редкий случай
-    // микросекунд, чтобы не завышать длительности настройки.
-    if (ts > 10000000000000) {
-      // микросекунды -> миллисекунды
-      return ts ~/ 1000;
-    }
-    if (ts < 2000000000) {
-      return ts * 1000;
-    }
-    return ts;
-  }
+  // Реализация одна на проект, см. normalizeEpochToMillis в task_model.dart.
+  int _normTs(int ts) => normalizeEpochToMillis(ts);
 
   /// Суммарное время настройки по всем исполнителям.
   /// Объединяет перекрывающиеся промежутки между 'setup_start' и 'setup_done'.

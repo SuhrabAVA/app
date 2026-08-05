@@ -1,16 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sheet_clone/modules/tasks/task_comment_presentation.dart';
+import 'package:sheet_clone/modules/tasks/task_model.dart';
 
 void main() {
-  // ВНИМАНИЕ. Функция нормализует «секунды → миллисекунды» по порогу
-  // 2000000000000 (2e12). Текущий epoch в МИЛЛИСЕКУНДАХ (~1.79e12) этот порог
-  // не превышает, поэтому значения в мс тоже домножаются на 1000. Правильный
-  // порог — 2e9, как в _normTs (tasks_screen.dart). Порог здесь намеренно НЕ
-  // трогается: это отдельный дефект вне периметра задачи, вынесен в отчёт.
-  //
-  // Поэтому тесты подают время в СЕКУНДАХ — так функция и работает сегодня
-  // для реальных дат. Отдельный кейс ниже фиксирует ветку выше порога.
+  // Единицы в tasks.comments смешанные: старые метки в секундах, новые в
+  // миллисекундах. Порог нормализации — kEpochSecondsThreshold (2e9), и оба
+  // варианта должны давать одну и ту же дату.
   int secondsOf(DateTime local) => local.millisecondsSinceEpoch ~/ 1000;
+  int millisOf(DateTime local) => local.millisecondsSinceEpoch;
 
   group('formatTaskCommentTimestamp — год в дате', () {
     test('текущий год — без года', () {
@@ -72,31 +69,93 @@ void main() {
     });
   });
 
-  group('formatTaskCommentTimestamp — нормализация единиц (текущее поведение)',
-      () {
-    test('значение выше порога 2e12 трактуется как миллисекунды', () {
-      // 2033-05-18 03:33:20 UTC — первое значение выше порога.
-      const aboveThreshold = 2000000000000;
-      final expected = DateTime.fromMillisecondsSinceEpoch(aboveThreshold);
-      final reference = expected;
-      String two(int n) => n.toString().padLeft(2, '0');
+  group('formatTaskCommentTimestamp — нормализация единиц', () {
+    test('секунды и миллисекунды дают одну и ту же дату', () {
+      final moment = DateTime(2026, 8, 3, 14, 5, 9);
       expect(
-        formatTaskCommentTimestamp(aboveThreshold, reference: reference),
-        '${two(expected.day)}.${two(expected.month)} '
-        '${two(expected.hour)}:${two(expected.minute)}:${two(expected.second)}',
+        formatTaskCommentTimestamp(millisOf(moment), reference: moment),
+        formatTaskCommentTimestamp(secondsOf(moment), reference: moment),
+      );
+      expect(
+        formatTaskCommentTimestamp(millisOf(moment), reference: moment),
+        '03.08 14:05:09',
       );
     });
 
-    test(
-        'РЕГРЕСС-МАРКЕР: значение в мс ниже порога уезжает в далёкое будущее '
-        '(порог 2e12 вместо 2e9) — падёт, когда порог починят', () {
-      final now = DateTime(2026, 8, 3, 14, 5, 9);
-      final ms = now.millisecondsSinceEpoch;
-      expect(ms < 2000000000000, isTrue,
-          reason: 'текущий epoch в мс ниже неверного порога');
-      final formatted = formatTaskCommentTimestamp(ms, reference: now);
-      expect(formatted, contains('.58'),
-          reason: 'сейчас мс домножаются на 1000 и дают ~58-тысячный год');
+    test('РЕГРЕСС: метка в мс больше не уезжает в 58-тысячный год', () {
+      final moment = DateTime(2026, 8, 3, 14, 5, 9);
+      final ms = millisOf(moment);
+      // Именно это значение попадало под старый порог 2e12 и домножалось.
+      expect(ms < 2000000000000, isTrue);
+      final formatted = formatTaskCommentTimestamp(ms, reference: moment);
+      expect(formatted, isNot(contains('58')));
+      expect(formatted, '03.08 14:05:09');
+    });
+  });
+
+  group('normalizeEpochToMillis', () {
+    test('секунды домножаются', () {
+      expect(normalizeEpochToMillis(1785744309), 1785744309000);
+    });
+
+    test('миллисекунды не трогаются', () {
+      expect(normalizeEpochToMillis(1785744309000), 1785744309000);
+    });
+
+    test('граница 2e9: ниже — секунды, ровно и выше — миллисекунды', () {
+      expect(kEpochSecondsThreshold, 2000000000);
+      expect(normalizeEpochToMillis(kEpochSecondsThreshold - 1),
+          (kEpochSecondsThreshold - 1) * 1000);
+      expect(normalizeEpochToMillis(kEpochSecondsThreshold),
+          kEpochSecondsThreshold);
+      expect(normalizeEpochToMillis(kEpochSecondsThreshold + 1),
+          kEpochSecondsThreshold + 1);
+    });
+
+    test('микросекунды делятся на 1000', () {
+      expect(normalizeEpochToMillis(1785744309000000), 1785744309000);
+      expect(normalizeEpochToMillis(kEpochMicrosecondsThreshold),
+          kEpochMicrosecondsThreshold,
+          reason: 'ровно на границе — уже миллисекунды');
+    });
+
+    test('ноль и отрицательные возвращаются как есть', () {
+      expect(normalizeEpochToMillis(0), 0);
+      expect(normalizeEpochToMillis(-1), -1);
+      expect(normalizeEpochToMillis(-1785744309), -1785744309);
+    });
+
+    test('значение из будущего в мс не трогается', () {
+      final future = DateTime(2030, 1, 1).millisecondsSinceEpoch;
+      expect(normalizeEpochToMillis(future), future);
+    });
+
+    test('значение из будущего в секундах домножается', () {
+      final future = DateTime(2030, 1, 1).millisecondsSinceEpoch ~/ 1000;
+      expect(future < kEpochSecondsThreshold, isTrue,
+          reason: '2030 год в секундах ещё ниже границы 2033-го');
+      expect(normalizeEpochToMillis(future), future * 1000);
+    });
+  });
+
+  group('formatTaskCommentTimestamp — граничные значения', () {
+    test('ноль и отрицательные дают пустую строку', () {
+      expect(formatTaskCommentTimestamp(0), '');
+      expect(formatTaskCommentTimestamp(-1), '');
+      expect(formatTaskCommentTimestamp(-1785744309000), '');
+    });
+
+    test('дата из будущего печатается с годом', () {
+      final reference = DateTime(2026, 8, 3);
+      final future = DateTime(2030, 3, 17, 8, 9, 10);
+      expect(
+        formatTaskCommentTimestamp(millisOf(future), reference: reference),
+        '17.03.2030 08:09:10',
+      );
+      expect(
+        formatTaskCommentTimestamp(secondsOf(future), reference: reference),
+        '17.03.2030 08:09:10',
+      );
     });
   });
 }

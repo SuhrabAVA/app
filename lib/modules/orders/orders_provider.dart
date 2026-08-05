@@ -11,6 +11,7 @@ import 'order_form_rules.dart';
 import 'order_queue_service.dart';
 import 'orders_repository.dart';
 import 'product_model.dart';
+import '../tasks/task_model.dart' show normalizeEpochToMillis;
 import '../../utils/auth_helper.dart';
 
 class OrdersProvider with ChangeNotifier {
@@ -2439,10 +2440,7 @@ class OrdersProvider with ChangeNotifier {
     DateTime? _parseTimestamp(dynamic value) {
       if (value == null) return null;
       if (value is int) {
-        if (value > 2000000000) {
-          return DateTime.fromMillisecondsSinceEpoch(value);
-        }
-        return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+        return DateTime.fromMillisecondsSinceEpoch(normalizeEpochToMillis(value));
       }
       if (value is num) {
         final int intValue = value.toInt();
