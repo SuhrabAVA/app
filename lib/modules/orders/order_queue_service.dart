@@ -503,48 +503,57 @@ class OrderQueueService {
   }
 
   Future<List<Map<String, dynamic>>> _selectPlanStageRows(String planId) async {
-    const attempts = <({String columns, String orderColumn})>[
+    // Порядок этапов несёт step_no. seq — только уникальный ключ строки, и
+    // при схеме seq = step_no*1000 + offset сортировка по нему расходится с
+    // фактическим порядком: упаковка со «скромным» seq оказывалась раньше
+    // этапов с несколькими рабочими местами. Поэтому первый ключ — step_no,
+    // второй — seq, он держит стабильный порядок внутри одного шага.
+    const attempts = <({String columns, List<String> orderColumns})>[
       // Рабочие попытки (без stage_name, который отсутствует в схеме)
       (
         columns: 'stage_id,stage_group_key,name,step_no,seq,status,'
             'started_at,finished_at,assigned_employee_id',
-        orderColumn: 'seq',
+        orderColumns: ['step_no', 'seq'],
       ),
       (
         columns: 'stage_id,stage_group_key,name,step_no,seq,status',
-        orderColumn: 'seq',
+        orderColumns: ['step_no', 'seq'],
       ),
       (
         columns: 'stage_id,stage_group_key,name,seq,status',
-        orderColumn: 'seq',
+        orderColumns: ['seq'],
       ),
       // Запасные попытки для схем со stage_name
       (
         columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status,'
             'started_at,finished_at,assigned_employee_id',
-        orderColumn: 'seq',
+        orderColumns: ['step_no', 'seq'],
       ),
       (
         columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status',
-        orderColumn: 'seq',
+        orderColumns: ['step_no', 'seq'],
       ),
       (
         columns: 'stage_id,stage_group_key,stage_name,step_no,seq,status',
-        orderColumn: 'seq',
+        orderColumns: ['step_no', 'seq'],
       ),
       (
         columns: 'stage_id,stage_group_key,stage_name,step_no,status',
-        orderColumn: 'step_no',
+        orderColumns: ['step_no'],
       ),
     ];
 
     for (final attempt in attempts) {
       try {
-        final rows = await _client
+        var query = _client
             .from('prod_plan_stages')
             .select(attempt.columns)
             .eq('plan_id', planId)
-            .order(attempt.orderColumn, ascending: true);
+            .order(attempt.orderColumns.first, ascending: true);
+        for (final column in attempt.orderColumns.skip(1)) {
+          query = query.order(column, ascending: true);
+        }
+        final rows = await query;
         final decoded = _decodeRows(rows);
         if (decoded.isNotEmpty) return _groupNormalizedPlanRows(decoded);
       } catch (_) {}

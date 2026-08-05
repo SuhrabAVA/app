@@ -424,10 +424,15 @@ class OrderQueueSyncService {
   }
 
   Future<List<OrderQueueSyncEntry>> _loadPlanStages(String planId) async {
+    // Сортируем по step_no: он и есть плановый порядок. seq — уникальный
+    // ключ, и при схеме step*1000+offset порядок по нему расходится с
+    // фактическим (упаковка уезжала в середину списка). Вторым ключом seq
+    // держит стабильный порядок внутри шага с несколькими РМ.
     final rows = await _sb
         .from('prod_plan_stages')
         .select('*')
         .eq('plan_id', planId)
+        .order('step_no', ascending: true)
         .order('seq', ascending: true);
     if (rows is! List) return const <OrderQueueSyncEntry>[];
     return rows

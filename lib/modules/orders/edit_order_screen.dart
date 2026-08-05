@@ -1062,10 +1062,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             .maybeSingle();
         final String? planId = plan?['id']?.toString();
         if (planId != null && planId.isNotEmpty) {
+          // Порядок этапов несёт step_no; seq — лишь уникальный ключ, и при
+          // схеме step*1000+offset сортировка по нему ставит поздние шаги
+          // раньше ранних. seq вторым ключом держит стабильный порядок
+          // внутри шага с несколькими рабочими местами.
           final firstStage = await _sb
               .from('prod_plan_stages')
               .select('stage_id')
               .eq('plan_id', planId)
+              .order('step_no', ascending: true)
               .order('seq', ascending: true)
               .limit(1)
               .maybeSingle();
