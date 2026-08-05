@@ -1,0 +1,4606 @@
+diff --git a/lib/main.dart b/lib/main.dart
+index 8fd5a82..6eb0b41 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -21,7 +21,9 @@ import 'modules/warehouse/supplier_provider.dart';
+ import 'modules/warehouse/warehouse_provider.dart';
+ import 'my_app.dart';
+ import 'services/error_log_service.dart';
++import 'services/product_type_config_capability.dart';
+ import 'utils/http_overrides.dart';
++import 'utils/auth_helper.dart';
+ 
+ Future<void> main() async {
+   runZonedGuarded(
+@@ -202,10 +204,24 @@ class _BootstrapAppState extends State<BootstrapApp> {
+ 
+     return MultiProvider(
+       providers: [
++        ChangeNotifierProvider(
++          create: (_) => ProductTypeConfigCapabilityProvider(
++            SupabaseProductTypeConfigCapabilityRepository(
++              Supabase.instance.client,
++            ),
++            authChanges: Supabase.instance.client.auth.onAuthStateChange,
++            appUserChanges: AuthHelper.onUserChanged,
++          )..refresh(),
++        ),
+         ChangeNotifierProvider(create: (_) => WarehouseProvider()),
+         ChangeNotifierProvider(create: (_) => SupplierProvider()),
+         ChangeNotifierProvider(create: (_) => PersonnelProvider()),
+-        ChangeNotifierProvider(create: (_) => OrdersProvider()),
++        ChangeNotifierProvider(
++          create: (context) => OrdersProvider(
++            capabilityProvider:
++                context.read<ProductTypeConfigCapabilityProvider>(),
++          ),
++        ),
+         ChangeNotifierProvider(create: (_) => StageProvider()),
+         ChangeNotifierProvider(create: (_) => ProductionQueueProvider()),
+         ChangeNotifierProvider(create: (_) => TaskProvider()),
+@@ -244,7 +260,8 @@ Future<void> _ensureSignedInFromEnv() async {
+       _BootLogger.log('Auth error: $e\n$st');
+     }
+   } else {
+-    _BootLogger.log('AUTH_EMAIL/AUTH_PASSWORD отсутствуют — авто-вход пропущен.');
++    _BootLogger.log(
++        'AUTH_EMAIL/AUTH_PASSWORD отсутствуют — авто-вход пропущен.');
+   }
+ }
+ 
+diff --git a/lib/modules/orders/edit_order_screen.dart b/lib/modules/orders/edit_order_screen.dart
+index ec68d1d..6a45be5 100644
+--- a/lib/modules/orders/edit_order_screen.dart
++++ b/lib/modules/orders/edit_order_screen.dart
+@@ -1,4 +1,3 @@
+-
+ // lib/modules/orders/edit_order_screen.dart
+ import 'dart:async';
+ import 'dart:convert';
+@@ -31,6 +30,7 @@ import '../production_planning/template_model.dart';
+ import '../warehouse/warehouse_provider.dart';
+ import '../warehouse/stock_tables.dart';
+ import '../warehouse/tmc_model.dart';
++import '../warehouse/warehouse_category_option.dart';
+ import '../personnel/personnel_provider.dart';
+ import '../common/pdf_view_screen.dart';
+ import '../../utils/media_viewer.dart';
+@@ -286,8 +286,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       if (_formExtraInfoController.text.trim() != extractedFormExtra) {
+         _formExtraInfoController.value = TextEditingValue(
+           text: extractedFormExtra,
+-          selection:
+-              TextSelection.collapsed(offset: extractedFormExtra.length),
++          selection: TextSelection.collapsed(offset: extractedFormExtra.length),
+         );
+       }
+ 
+@@ -363,7 +362,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+         _loadingAssignedFormPdfs = false;
+       });
+     } catch (_) {
+-      _assignedFormPdfsRequested = false; // разрешим повтор при следующем заходе
++      _assignedFormPdfsRequested =
++          false; // разрешим повтор при следующем заходе
+       if (mounted) setState(() => _loadingAssignedFormPdfs = false);
+     }
+   }
+@@ -592,8 +592,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   }
+ 
+   void _applyDimensionsInput(String input) {
+-    final matches =
+-        RegExp(r'[0-9]+(?:[\\.,][0-9]+)?').allMatches(input.trim());
++    final matches = RegExp(r'[0-9]+(?:[\\.,][0-9]+)?').allMatches(input.trim());
+     final values = matches
+         .map((m) => double.tryParse(m.group(0)!.replaceAll(',', '.')))
+         .whereType<double>()
+@@ -744,7 +743,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   // Фактическое количество (пока не вычисляется)
+   String _actualQuantity = '';
+   // ===== Категории склада для поля "Наименование изделия" =====
+-  List<String> _categoryTitles = [];
++  List<WarehouseCategoryOption> _categoryOptions = [];
++  String? _selectedProductTypeId;
+   bool _catsLoading = false;
+   bool _stockExtraAutoloaded = false;
+   bool _launchedNoStartedStages = false;
+@@ -754,14 +754,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   Future<void> _loadCategoriesForProduct() async {
+     setState(() => _catsLoading = true);
+     try {
+-      final rows = await _sb.from('warehouse_categories').select('title, code');
+-      final names = <String>[];
+-      for (final r in (rows as List)) {
+-        final title = (r['title'] ?? r['code'] ?? '').toString().trim();
+-        if (title.isNotEmpty) names.add(title);
++      final rows = await _sb
++          .from('warehouse_categories')
++          .select('id, title, code, archived_at')
++          .isFilter('archived_at', null);
++      final active = (rows as List)
++          .whereType<Map>()
++          .map((row) => WarehouseCategoryOption.fromMap(
++                Map<String, dynamic>.from(row),
++              ))
++          .where(
++              (category) => category.id.isNotEmpty && category.title.isNotEmpty)
++          .toList();
++
++      WarehouseCategoryOption? current;
++      final currentId = widget.order?.productTypeId?.trim() ?? '';
++      if (currentId.isNotEmpty) {
++        final row = await _sb
++            .from('warehouse_categories')
++            .select('id, title, code, archived_at')
++            .eq('id', currentId)
++            .maybeSingle();
++        if (row != null) {
++          current = WarehouseCategoryOption.fromMap(
++            Map<String, dynamic>.from(row),
++          );
++        }
++      }
++
++      final options = categoryOptionsForOrder(active: active, current: current);
++      var selectedId = _selectedProductTypeId;
++      if (selectedId == null ||
++          !options.any((category) => category.id == selectedId)) {
++        final normalizedTitle = _product.type.trim().toLowerCase();
++        for (final category in options) {
++          if (category.title.trim().toLowerCase() == normalizedTitle ||
++              category.code.trim().toLowerCase() == normalizedTitle) {
++            selectedId = category.id;
++            break;
++          }
++        }
++      }
++      if (mounted) {
++        setState(() {
++          _categoryOptions = options;
++          _selectedProductTypeId = selectedId;
++        });
+       }
+-      names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+-      setState(() => _categoryTitles = names);
+     } catch (e) {
+       debugPrint('load categories error: $e');
+     } finally {
+@@ -797,6 +836,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+ 
+     // order передан при редактировании, initialOrder - при создании на основе шаблона
+     final template = widget.order ?? widget.initialOrder;
++    _selectedProductTypeId = widget.order?.productTypeId;
+     // Текущий менеджер будет выбран позже в didChangeDependencies, когда загрузится список менеджеров.
+     // Здесь просто запомним имя менеджера из шаблона для последующего выбора.
+     final initialManager =
+@@ -960,7 +1000,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     } else {
+       _actualQuantity = '';
+     }
+-    _loadCategoriesForProduct(); // загрузка категорий склада
+     _lengthController = TextEditingController(
+       text: _product.width > 0 ? _formatDecimal(_product.width) : '',
+     );
+@@ -1111,8 +1150,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                 map['stage_name'],
+                 id,
+               ];
+-              final isFlexo =
+-                  probes.any((value) => _looksLikeFlexo((value ?? '').toString()));
++              final isFlexo = probes
++                  .any((value) => _looksLikeFlexo((value ?? '').toString()));
+               if (isFlexo) {
+                 flexoStageIds.add(id);
+               }
+@@ -1231,7 +1270,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     _scheduleStagePreviewUpdate(immediate: true);
+   }
+ 
+-
+   OrderHandleType _resolveSelectedHandleType() {
+     final normalized = _selectedHandleDescription.trim().toLowerCase();
+     if (normalized.isEmpty || normalized == '-') {
+@@ -1275,7 +1313,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     );
+   }
+ 
+-
+   Map<String, dynamic> _currentQueueSignature() {
+     final mainMaterial = _mainMaterialForStageQueue();
+     return buildQueueSignature(
+@@ -1393,8 +1430,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+             ? _selectedPStage
+             : null;
+     final selected =
+-        (stateSelected ?? _selectedSwitchableIdFromPreviewStage(stage))
+-            ?.trim();
++        (stateSelected ?? _selectedSwitchableIdFromPreviewStage(stage))?.trim();
+     final options = _switchableOptionsForStageKey(stageKey)
+         .map((option) => option.stageId)
+         .toSet();
+@@ -1534,9 +1570,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     List<Map<String, dynamic>> templateStages = const <Map<String, dynamic>>[],
+   }) {
+     final draft = _currentStageQueueDraft();
+-    final switchableSelectionSource = existingStages.isNotEmpty
+-        ? existingStages
+-        : _stagePreviewStages;
++    final switchableSelectionSource =
++        existingStages.isNotEmpty ? existingStages : _stagePreviewStages;
+     final selectedSwitchableStageIdsByStageKey = <String, String>{
+       ...collectSwitchableStageSelectionsByStageKey(switchableSelectionSource),
+       if ((_selectedVStage ?? '').trim().isNotEmpty)
+@@ -1665,8 +1700,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+         row.tmc = match;
+         row.nameNotFound = match == null;
+         if (match != null && row.qtyGrams != null) {
+-          row.exceeded =
+-              _gramsToStockUnit(row.qtyGrams!, match) > _paintAvailableQty(match);
++          row.exceeded = _gramsToStockUnit(row.qtyGrams!, match) >
++              _paintAvailableQty(match);
+         } else if (match == null) {
+           row.exceeded = false;
+         }
+@@ -1836,7 +1871,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   List<Map<String, dynamic>> _templateStageMaps(TemplateModel template) {
+     return template.stages
+         .map((s) => {
+-              'stageId': s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
++              'stageId':
++                  s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
+               'workplaceId':
+                   s.allStageIds.isNotEmpty ? s.allStageIds.first : s.stageId,
+               'workplaceIds': List<String>.from(s.allStageIds),
+@@ -2073,7 +2109,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+         try {
+           final row = await _sb
+               .from('orders')
+-              .select('has_form, is_old_form, new_form_no, form_series, form_code')
++              .select(
++                  'has_form, is_old_form, new_form_no, form_series, form_code')
+               .eq('id', widget.order!.id)
+               .maybeSingle();
+           if (mounted) {
+@@ -2184,12 +2221,25 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     }
+ 
+     try {
+-      final sanitizedTitle = typeTitle.replaceAll("'", "''");
+-      final cat = await _sb
+-          .from('warehouse_categories')
+-          .select('id, title, code, has_subtables')
+-          .or('title.eq.$sanitizedTitle,code.eq.$sanitizedTitle')
+-          .maybeSingle();
++      Map<String, dynamic>? cat;
++      final categoryId = _selectedProductTypeId?.trim() ?? '';
++      if (categoryId.isNotEmpty) {
++        final row = await _sb
++            .from('warehouse_categories')
++            .select('id, title, code, has_subtables, archived_at')
++            .eq('id', categoryId)
++            .maybeSingle();
++        if (row != null) cat = Map<String, dynamic>.from(row);
++      }
++      if (cat == null) {
++        final sanitizedTitle = typeTitle.replaceAll("'", "''");
++        final row = await _sb
++            .from('warehouse_categories')
++            .select('id, title, code, has_subtables, archived_at')
++            .or('title.eq.$sanitizedTitle,code.eq.$sanitizedTitle')
++            .maybeSingle();
++        if (row != null) cat = Map<String, dynamic>.from(row);
++      }
+       if (cat == null) {
+         if (mounted) {
+           setState(() {
+@@ -2408,6 +2458,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       }
+       return null;
+     }
++
+     if (_selectedMaterial != null) {
+       final resolved = resolvePaperByMaterial(_selectedMaterial!);
+       selected.add(
+@@ -2538,7 +2589,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       final qty = double.tryParse(qtyStr);
+       if (name.isEmpty || qty == null) continue;
+       // Важно: "кг" тоже содержит букву "г", поэтому проверяем килограммы первыми.
+-      final grams = (unit.contains('кг') || unit.contains('kg')) ? qty * 1000 : qty;
++      final grams =
++          (unit.contains('кг') || unit.contains('kg')) ? qty * 1000 : qty;
+       TmcModel? found;
+       for (final t in paintTmcList) {
+         if (t.description.trim() == name) {
+@@ -2796,7 +2848,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   Future<void> _openSavedPdf(Map<String, dynamic> file) async {
+     final objectPath = (file['objectPath'] ?? '').toString();
+     if (objectPath.isEmpty) return;
+-    final fileName = (file['filename'] ?? objectPath.split('/').last).toString();
++    final fileName =
++        (file['filename'] ?? objectPath.split('/').last).toString();
+     final url = await getSignedUrl(objectPath);
+     if (!mounted) return;
+     await Navigator.of(context).push(
+@@ -3073,579 +3126,585 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     if (_isSavingOrder) return;
+     setState(() => _isSavingOrder = true);
+     try {
+-    // Флаг: создаём новый заказ или редактируем
+-    final bool isCreating = (widget.order == null);
+-    final messenger = ScaffoldMessenger.of(context);
+-    if (!_formKey.currentState!.validate()) return;
+-    _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
+-    final params = {..._selectedParams};
+-    if (_trimming) {
+-      params.add('Подрезка');
+-    } else {
+-      params.remove('Подрезка');
+-    }
+-    params.removeWhere(
+-      (value) => value.trim().toLowerCase().startsWith('упаковка:'),
+-    );
+-    final packaging = _packagingController.text.trim();
+-    if (packaging.isNotEmpty) {
+-      params.add('Упаковка: $packaging');
+-    }
+-    _selectedParams = params.toList();
+-    if (_orderDate == null) {
+-      if (mounted)
+-        messenger.showSnackBar(
+-          const SnackBar(content: Text('Укажите дату заказа')),
+-        );
+-      return;
+-    }
+-    if (_dueDate == null) {
+-      if (mounted)
+-        messenger.showSnackBar(
+-          const SnackBar(content: Text('Укажите срок выполнения')),
+-        );
+-      return;
+-    }
+-    _validatePaintNames();
+-    if (_hasInvalidPaintNames()) {
+-      if (mounted)
+-        messenger.showSnackBar(
+-          const SnackBar(
+-              content: Text('Данной краски нет на складе. Уточните название.')),
+-        );
+-      return;
+-    }
+-    final managerName = widget.order != null
+-        ? widget.order!.manager
+-        : (_selectedManager?.trim().isNotEmpty ?? false)
+-            ? _selectedManager!.trim()
+-            : '';
+-    final penName =
+-        _selectedHandleDescription == '-' ? '' : _selectedHandleDescription;
+-    _upsertPensInParameters(penName);
+-    final provider = Provider.of<OrdersProvider>(context, listen: false);
+-    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
+-    // Бумага хранится динамическим списком без жёсткого лимита.
+-    final List<MaterialModel> selectedPapers = _collectSelectedPapers();
+-    final currentQueueSignature = _currentQueueSignature();
+-    var nextQueueBuildStatus = _queueBuildStatus;
+-    if (isCreating &&
+-        nextQueueBuildStatus != QueueBuildStatus.built &&
+-        nextQueueBuildStatus != QueueBuildStatus.outdated) {
+-      nextQueueBuildStatus = QueueBuildStatus.notBuilt;
+-    } else if (!isCreating &&
+-        widget.order?.queueBuildStatus == QueueBuildStatus.built &&
+-        !_sameQueueSignature(
+-            widget.order?.queueSignature, currentQueueSignature)) {
+-      nextQueueBuildStatus = QueueBuildStatus.outdated;
+-    }
+-
+-    // Запущенный заказ: правки применяются целиком, включая смену типа
+-    // продукта. Очередь пересобираем сами — требовать ручного нажатия
+-    // «Собрать очередь» здесь нельзя, иначе заказ сохранился бы с новым
+-    // типом продукта, но со старым маршрутом этапов.
+-    if (!isCreating &&
+-        (widget.order?.assignmentCreated ?? false) &&
+-        nextQueueBuildStatus != QueueBuildStatus.built) {
+-      _buildStageQueue();
+-      nextQueueBuildStatus = QueueBuildStatus.built;
+-    }
+-    if (nextQueueBuildStatus == QueueBuildStatus.built) {
+-      _syncSwitchableStageSelectionFields(_stagePreviewStages);
+-    }
+-    bool hasEnoughPaperForLaunch() {
+-      if (selectedPapers.isEmpty) return true;
+-      for (final paper in selectedPapers) {
+-        final paperId = (paper.id ?? '').trim();
+-        final double need = paper.quantity > 0
+-            ? paper.quantity
+-            : (_product.length ?? 0).toDouble();
+-        if (paperId.isEmpty || need <= 0) {
+-          continue;
+-        }
+-        final current = warehouse.allTmc.where((t) => t.id == paperId).toList();
+-        if (current.isEmpty) return false;
+-        final availableQty = current.first.quantity;
+-        if (need > availableQty) return false;
++      // Флаг: создаём новый заказ или редактируем
++      final bool isCreating = (widget.order == null);
++      final messenger = ScaffoldMessenger.of(context);
++      if (!_formKey.currentState!.validate()) return;
++      _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
++      final params = {..._selectedParams};
++      if (_trimming) {
++        params.add('Подрезка');
++      } else {
++        params.remove('Подрезка');
+       }
+-      return true;
+-    }
+-
+-    final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
+-    if (wasAlreadyLaunched) {
+-      await _loadRuntimeEditLocks();
+-    }
+-    // Запущенный заказ больше не снимается с производства только из-за
+-    // редактирования очереди. OrderQueueSyncService точечно обновляет pending
+-    // этапы/задачи и блокирует только изменение защищённых этапов.
+-    // Очередь сохраняем только после явного нажатия «Собрать очередь».
+-    // Если очередь не собрана или устарела, заказ остаётся черновиком и не
+-    // может быть запущен.
+-    final bool willSaveBuiltStageQueue =
+-        nextQueueBuildStatus == QueueBuildStatus.built;
+-    final stageMaps = willSaveBuiltStageQueue
+-        ? _currentBuiltStageMapsForSave()
+-        : <Map<String, dynamic>>[];
+-    final bool hasEffectiveStageQueue =
+-        willSaveBuiltStageQueue && stageMaps.isNotEmpty;
+-    if (hasEffectiveStageQueue) {
+-      _syncSwitchableStageSelectionFields(stageMaps);
+-    }
+-    final bool hasQueueForStatus = hasEffectiveStageQueue;
+-    final bool hasEnoughMaterialsForQueue = hasEnoughPaperForLaunch();
+-    final bool canLaunchProductionNow =
+-        hasQueueForStatus && hasEnoughMaterialsForQueue;
+-    final String nextOrderStatus = wasAlreadyLaunched
+-        ? widget.order!.status
+-        : (!hasQueueForStatus
+-            ? OrderStatus.draft.name
+-            : (canLaunchProductionNow
+-                ? OrderStatus.ready_to_start.name
+-                : OrderStatus.waiting_materials.name));
+-    final bool nextHasMaterialShortage = wasAlreadyLaunched
+-        ? widget.order!.hasMaterialShortage
+-        : (hasQueueForStatus && !hasEnoughMaterialsForQueue);
+-    final String shortageMessage = wasAlreadyLaunched
+-        ? widget.order!.materialShortageMessage
+-        : (!hasQueueForStatus
+-            ? ''
+-            : (hasEnoughMaterialsForQueue
+-                ? ''
+-                : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
+-    late OrderModel createdOrUpdatedOrder;
+-    if (widget.order == null) {
+-      // создаём новый заказ
+-      final _created = await provider.createOrder(
+-        manager: managerName,
+-        customer: _customerController.text.trim(),
+-        orderDate: _orderDate!,
+-        dueDate: _dueDate,
+-        product: _product,
+-        additionalParams: _selectedParams,
+-        handle: _selectedHandleDescription == '-'
+-            ? '-'
+-            : _selectedHandleDescription,
+-        cardboard: _selectedCardboard,
+-        material: _selectedMaterial,
+-        paperMaterials: selectedPapers,
+-        makeready: _makeready,
+-        val: _val,
+-        // Возобновление из архива: PDF-ссылка исходного заказа переносится
+-        // в новое поколение (сам файл в Storage не копируется).
+-        pdfUrl: widget.initialOrder?.pdfUrl,
+-        stageTemplateId: _stageTemplateId,
+-        hasForm: _hasForm,
+-        // Временно отключено в форме создания/редактирования заказа.
+-        contractSigned: false,
+-        paymentDone: false,
+-        comments: _commentsController.text.trim(),
+-        status: nextOrderStatus,
+-        queueBuildStatus: nextQueueBuildStatus,
+-        selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
+-        selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
+-        queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
+-            ? null
+-            : currentQueueSignature,
+-        restartedFromOrderId: widget.initialOrder?.restartedFromOrderId,
+-        restartRootOrderId: widget.initialOrder?.restartRootOrderId,
+-        restartGeneration: widget.initialOrder?.restartGeneration ?? 0,
++      params.removeWhere(
++        (value) => value.trim().toLowerCase().startsWith('упаковка:'),
+       );
+-      if (_created == null) {
+-        if (mounted) {
++      final packaging = _packagingController.text.trim();
++      if (packaging.isNotEmpty) {
++        params.add('Упаковка: $packaging');
++      }
++      _selectedParams = params.toList();
++      if (_orderDate == null) {
++        if (mounted)
+           messenger.showSnackBar(
+-            const SnackBar(content: Text('Не удалось создать заказ')),
++            const SnackBar(content: Text('Укажите дату заказа')),
+           );
+-        }
+         return;
+       }
+-      createdOrUpdatedOrder = _created;
+-      // Возобновление из архива: переносим метаданные PDF-файлов исходного
+-      // заказа на новый order id. Объекты в Storage не дублируются —
+-      // используются те же objectPath (компромисс: удаление файла в одном
+-      // поколении удаляет объект и для другого).
+-      final restartSourceId =
+-          widget.initialOrder?.restartedFromOrderId?.trim() ?? '';
+-      if (restartSourceId.isNotEmpty) {
+-        try {
+-          final sourceFiles = await listOrderFiles(restartSourceId);
+-          for (final file in sourceFiles) {
+-            final objectPath = (file['objectPath'] ?? '').toString().trim();
+-            if (objectPath.isEmpty) continue;
+-            // Пользователь исключил файл в черновике — не переносим на новый
+-            // заказ. Сам файл архивного заказа остаётся нетронутым.
+-            if (_draftRemovedOrderPdfPaths.contains(objectPath)) continue;
+-            final fileName =
+-                (file['filename'] ?? '').toString().trim().isNotEmpty
+-                    ? (file['filename'] ?? '').toString().trim()
+-                    : objectPath.split('/').last;
+-            final sizeRaw = file['sizeBytes'];
+-            await linkOrderPdf(
+-              orderId: createdOrUpdatedOrder.id,
+-              objectPath: objectPath,
+-              fileName: fileName,
+-              sizeBytes: sizeRaw is num ? sizeRaw.toInt() : null,
+-            );
++      if (_dueDate == null) {
++        if (mounted)
++          messenger.showSnackBar(
++            const SnackBar(content: Text('Укажите срок выполнения')),
++          );
++        return;
++      }
++      _validatePaintNames();
++      if (_hasInvalidPaintNames()) {
++        if (mounted)
++          messenger.showSnackBar(
++            const SnackBar(
++                content:
++                    Text('Данной краски нет на складе. Уточните название.')),
++          );
++        return;
++      }
++      final managerName = widget.order != null
++          ? widget.order!.manager
++          : (_selectedManager?.trim().isNotEmpty ?? false)
++              ? _selectedManager!.trim()
++              : '';
++      final penName =
++          _selectedHandleDescription == '-' ? '' : _selectedHandleDescription;
++      _upsertPensInParameters(penName);
++      final provider = Provider.of<OrdersProvider>(context, listen: false);
++      final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
++      // Бумага хранится динамическим списком без жёсткого лимита.
++      final List<MaterialModel> selectedPapers = _collectSelectedPapers();
++      final currentQueueSignature = _currentQueueSignature();
++      var nextQueueBuildStatus = _queueBuildStatus;
++      if (isCreating &&
++          nextQueueBuildStatus != QueueBuildStatus.built &&
++          nextQueueBuildStatus != QueueBuildStatus.outdated) {
++        nextQueueBuildStatus = QueueBuildStatus.notBuilt;
++      } else if (!isCreating &&
++          widget.order?.queueBuildStatus == QueueBuildStatus.built &&
++          !_sameQueueSignature(
++              widget.order?.queueSignature, currentQueueSignature)) {
++        nextQueueBuildStatus = QueueBuildStatus.outdated;
++      }
++
++      // Запущенный заказ: правки применяются целиком, включая смену типа
++      // продукта. Очередь пересобираем сами — требовать ручного нажатия
++      // «Собрать очередь» здесь нельзя, иначе заказ сохранился бы с новым
++      // типом продукта, но со старым маршрутом этапов.
++      if (!isCreating &&
++          (widget.order?.assignmentCreated ?? false) &&
++          nextQueueBuildStatus != QueueBuildStatus.built) {
++        _buildStageQueue();
++        nextQueueBuildStatus = QueueBuildStatus.built;
++      }
++      if (nextQueueBuildStatus == QueueBuildStatus.built) {
++        _syncSwitchableStageSelectionFields(_stagePreviewStages);
++      }
++      bool hasEnoughPaperForLaunch() {
++        if (selectedPapers.isEmpty) return true;
++        for (final paper in selectedPapers) {
++          final paperId = (paper.id ?? '').trim();
++          final double need = paper.quantity > 0
++              ? paper.quantity
++              : (_product.length ?? 0).toDouble();
++          if (paperId.isEmpty || need <= 0) {
++            continue;
+           }
+-        } catch (e) {
+-          debugPrint('❌ resume: copy order files failed: $e');
++          final current =
++              warehouse.allTmc.where((t) => t.id == paperId).toList();
++          if (current.isEmpty) return false;
++          final availableQty = current.first.quantity;
++          if (need > availableQty) return false;
+         }
++        return true;
+       }
+-    } else {
+-      final bool effectivePersistedHasForm = (_orderFormNo != null) ||
+-          (_orderFormCode != null && _orderFormCode!.trim().isNotEmpty) ||
+-          ((_orderFormIsOld != null) &&
+-              ((_orderFormNo != null) ||
+-                  (_orderFormCode != null &&
+-                      _orderFormCode!.trim().isNotEmpty))) ||
+-          widget.order!.hasForm;
+-      final bool effectivePersistedIsOldForm =
+-          _orderFormIsOld ?? widget.order!.isOldForm;
+-      final int? effectivePersistedFormNo =
+-          _orderFormNo ?? widget.order!.newFormNo;
+-      final String? effectivePersistedFormSeries =
+-          _orderFormSeries ?? widget.order!.formSeries;
+-      final String? effectivePersistedFormCode =
+-          _orderFormCode ?? widget.order!.formCode;
+-
+-      final List<MaterialModel> oldPapers =
+-          widget.order!.paperMaterials.isNotEmpty
+-              ? widget.order!.paperMaterials
+-              : <MaterialModel>[
+-                  if (widget.order!.material != null) widget.order!.material!,
+-                ];
+-      final bool paperChanged = oldPapers.length != selectedPapers.length ||
+-          oldPapers.asMap().entries.any((entry) {
+-            final idx = entry.key;
+-            final old = entry.value;
+-            final next = selectedPapers[idx];
+-            return old.id != next.id ||
+-                (old.quantity - next.quantity).abs() > 0.0001;
+-          });
+-      // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
+-      final updated = OrderModel(
+-        id: widget.order!.id,
+-        manager: managerName,
+-        customer: _customerController.text.trim(),
+-        orderDate: _orderDate!,
+-        dueDate: _dueDate,
+-        product: _product,
+-        additionalParams: _selectedParams,
+-        handle: _selectedHandleDescription == '-'
+-            ? '-'
+-            : _selectedHandleDescription,
+-        cardboard: _selectedCardboard,
+-        material: _selectedMaterial,
+-        paperMaterials: selectedPapers,
+-        makeready: _makeready,
+-        val: _val,
+-        pdfUrl: widget.order!.pdfUrl,
+-        stageTemplateId: _stageTemplateId,
+-        // На этапе базового сохранения не перетираем уже привязанную форму.
+-        // Фактическая запись формы всегда выполняется позже в _processFormAssignment.
+-        hasForm: effectivePersistedHasForm,
+-        isOldForm: effectivePersistedIsOldForm,
+-        newFormNo: effectivePersistedFormNo,
+-        formSeries: effectivePersistedFormSeries,
+-        formCode: effectivePersistedFormCode,
+-        // Временно отключено в форме создания/редактирования заказа.
+-        contractSigned: false,
+-        paymentDone: false,
+-        comments: _commentsController.text.trim(),
+-        status: nextOrderStatus,
+-        hasMaterialShortage: nextHasMaterialShortage,
+-        materialShortageMessage: shortageMessage,
+-        assignmentId: widget.order!.assignmentId,
+-        assignmentCreated: widget.order!.assignmentCreated,
+-        queueBuildStatus: nextQueueBuildStatus,
+-        selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
+-        selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
+-        queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
+-            ? null
+-            : currentQueueSignature,
+-        // Связи возобновления обязаны переживать пересохранение:
+-        // updateOrder пишет toMap(includeNulls: true), и без этих полей
+-        // каждый сейв затирал бы цепочку поколений в БД.
+-        restartedFromOrderId: widget.order!.restartedFromOrderId,
+-        restartRootOrderId: widget.order!.restartRootOrderId,
+-        restartGeneration: widget.order!.restartGeneration,
+-        // По той же причине сохраняем данные производства/отгрузки:
+-        // без них пересохранение завершённого заказа обнуляло бы
+-        // actual_qty/shipped_* в БД.
+-        actualQty: widget.order!.actualQty,
+-        shippedAt: widget.order!.shippedAt,
+-        shippedBy: widget.order!.shippedBy,
+-        shippedQty: widget.order!.shippedQty,
+-      );
+-      await provider.updateOrder(updated);
+-      createdOrUpdatedOrder = updated;
+-    }
+-
+-    final String effectiveNextOrderStatus = nextOrderStatus;
+-    if (createdOrUpdatedOrder.status != effectiveNextOrderStatus ||
+-        createdOrUpdatedOrder.hasMaterialShortage != nextHasMaterialShortage ||
+-        createdOrUpdatedOrder.materialShortageMessage != shortageMessage) {
+-      final normalized = createdOrUpdatedOrder.copyWith(
+-        status: effectiveNextOrderStatus,
+-        hasMaterialShortage: nextHasMaterialShortage,
+-        materialShortageMessage: shortageMessage,
+-      );
+-      await provider.updateOrder(normalized);
+-      createdOrUpdatedOrder = normalized;
+-    }
+ 
+-    // Присвоим читаемый номер заказа (ЗК-YYYY.MM.DD-N), если ещё не присвоен
+-    if ((createdOrUpdatedOrder.assignmentId == null ||
+-            createdOrUpdatedOrder.assignmentId!.isEmpty) &&
+-        _orderDate != null) {
+-      try {
+-        final humanId = await provider.generateReadableOrderId(_orderDate!);
+-        // copyWith вместо ручной пересборки: перечисление полей теряло
+-        // restart_* и поля формы, а updateOrder(includeNulls: true) затирал
+-        // их в БД сразу после создания заказа.
+-        final withReadable =
+-            createdOrUpdatedOrder.copyWith(assignmentId: humanId);
+-        await provider.updateOrder(withReadable);
+-        createdOrUpdatedOrder = withReadable;
+-      } catch (_) {}
+-    }
+-    // Загружаем все выбранные PDF заказа при необходимости.
+-    // Привязка PDF к форме выполняется НЕ здесь, а после _processFormAssignment
+-    // (см. _syncOrderPdfsToForm): при создании заказа реквизиты формы в этот
+-    // момент ещё не записаны, и линковка уходила бы «в никуда».
+-    final bool didUploadOrderPdfs = _pickedOrderPdfs.isNotEmpty;
+-    if (_pickedOrderPdfs.isNotEmpty) {
+-      String? lastUploaded;
+-      for (final f in _pickedOrderPdfs) {
+-        try {
+-          lastUploaded = await uploadPickedOrderPdf(
+-            orderId: createdOrUpdatedOrder.id,
+-            file: f,
+-          );
+-        } catch (e) {
+-          debugPrint('❌ upload order pdf ${f.name}: $e');
++      final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
++      if (wasAlreadyLaunched) {
++        await _loadRuntimeEditLocks();
++      }
++      // Запущенный заказ больше не снимается с производства только из-за
++      // редактирования очереди. OrderQueueSyncService точечно обновляет pending
++      // этапы/задачи и блокирует только изменение защищённых этапов.
++      // Очередь сохраняем только после явного нажатия «Собрать очередь».
++      // Если очередь не собрана или устарела, заказ остаётся черновиком и не
++      // может быть запущен.
++      final bool willSaveBuiltStageQueue =
++          nextQueueBuildStatus == QueueBuildStatus.built;
++      final stageMaps = willSaveBuiltStageQueue
++          ? _currentBuiltStageMapsForSave()
++          : <Map<String, dynamic>>[];
++      final bool hasEffectiveStageQueue =
++          willSaveBuiltStageQueue && stageMaps.isNotEmpty;
++      if (hasEffectiveStageQueue) {
++        _syncSwitchableStageSelectionFields(stageMaps);
++      }
++      final bool hasQueueForStatus = hasEffectiveStageQueue;
++      final bool hasEnoughMaterialsForQueue = hasEnoughPaperForLaunch();
++      final bool canLaunchProductionNow =
++          hasQueueForStatus && hasEnoughMaterialsForQueue;
++      final String nextOrderStatus = wasAlreadyLaunched
++          ? widget.order!.status
++          : (!hasQueueForStatus
++              ? OrderStatus.draft.name
++              : (canLaunchProductionNow
++                  ? OrderStatus.ready_to_start.name
++                  : OrderStatus.waiting_materials.name));
++      final bool nextHasMaterialShortage = wasAlreadyLaunched
++          ? widget.order!.hasMaterialShortage
++          : (hasQueueForStatus && !hasEnoughMaterialsForQueue);
++      final String shortageMessage = wasAlreadyLaunched
++          ? widget.order!.materialShortageMessage
++          : (!hasQueueForStatus
++              ? ''
++              : (hasEnoughMaterialsForQueue
++                  ? ''
++                  : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
++      late OrderModel createdOrUpdatedOrder;
++      if (widget.order == null) {
++        // создаём новый заказ
++        final _created = await provider.createOrder(
++          manager: managerName,
++          customer: _customerController.text.trim(),
++          orderDate: _orderDate!,
++          dueDate: _dueDate,
++          product: _product,
++          productTypeId: _selectedProductTypeId,
++          additionalParams: _selectedParams,
++          handle: _selectedHandleDescription == '-'
++              ? '-'
++              : _selectedHandleDescription,
++          cardboard: _selectedCardboard,
++          material: _selectedMaterial,
++          paperMaterials: selectedPapers,
++          makeready: _makeready,
++          val: _val,
++          // Возобновление из архива: PDF-ссылка исходного заказа переносится
++          // в новое поколение (сам файл в Storage не копируется).
++          pdfUrl: widget.initialOrder?.pdfUrl,
++          stageTemplateId: _stageTemplateId,
++          hasForm: _hasForm,
++          // Временно отключено в форме создания/редактирования заказа.
++          contractSigned: false,
++          paymentDone: false,
++          comments: _commentsController.text.trim(),
++          status: nextOrderStatus,
++          queueBuildStatus: nextQueueBuildStatus,
++          selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
++          selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
++          queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
++              ? null
++              : currentQueueSignature,
++          restartedFromOrderId: widget.initialOrder?.restartedFromOrderId,
++          restartRootOrderId: widget.initialOrder?.restartRootOrderId,
++          restartGeneration: widget.initialOrder?.restartGeneration ?? 0,
++        );
++        if (_created == null) {
+           if (mounted) {
+-            ScaffoldMessenger.of(context).showSnackBar(
+-              SnackBar(content: Text('Ошибка загрузки ${f.name}: $e')),
++            messenger.showSnackBar(
++              const SnackBar(content: Text('Не удалось создать заказ')),
+             );
+           }
++          return;
++        }
++        createdOrUpdatedOrder = _created;
++        // Возобновление из архива: переносим метаданные PDF-файлов исходного
++        // заказа на новый order id. Объекты в Storage не дублируются —
++        // используются те же objectPath (компромисс: удаление файла в одном
++        // поколении удаляет объект и для другого).
++        final restartSourceId =
++            widget.initialOrder?.restartedFromOrderId?.trim() ?? '';
++        if (restartSourceId.isNotEmpty) {
++          try {
++            final sourceFiles = await listOrderFiles(restartSourceId);
++            for (final file in sourceFiles) {
++              final objectPath = (file['objectPath'] ?? '').toString().trim();
++              if (objectPath.isEmpty) continue;
++              // Пользователь исключил файл в черновике — не переносим на новый
++              // заказ. Сам файл архивного заказа остаётся нетронутым.
++              if (_draftRemovedOrderPdfPaths.contains(objectPath)) continue;
++              final fileName =
++                  (file['filename'] ?? '').toString().trim().isNotEmpty
++                      ? (file['filename'] ?? '').toString().trim()
++                      : objectPath.split('/').last;
++              final sizeRaw = file['sizeBytes'];
++              await linkOrderPdf(
++                orderId: createdOrUpdatedOrder.id,
++                objectPath: objectPath,
++                fileName: fileName,
++                sizeBytes: sizeRaw is num ? sizeRaw.toInt() : null,
++              );
++            }
++          } catch (e) {
++            debugPrint('❌ resume: copy order files failed: $e');
++          }
+         }
++      } else {
++        final bool effectivePersistedHasForm = (_orderFormNo != null) ||
++            (_orderFormCode != null && _orderFormCode!.trim().isNotEmpty) ||
++            ((_orderFormIsOld != null) &&
++                ((_orderFormNo != null) ||
++                    (_orderFormCode != null &&
++                        _orderFormCode!.trim().isNotEmpty))) ||
++            widget.order!.hasForm;
++        final bool effectivePersistedIsOldForm =
++            _orderFormIsOld ?? widget.order!.isOldForm;
++        final int? effectivePersistedFormNo =
++            _orderFormNo ?? widget.order!.newFormNo;
++        final String? effectivePersistedFormSeries =
++            _orderFormSeries ?? widget.order!.formSeries;
++        final String? effectivePersistedFormCode =
++            _orderFormCode ?? widget.order!.formCode;
++
++        final List<MaterialModel> oldPapers =
++            widget.order!.paperMaterials.isNotEmpty
++                ? widget.order!.paperMaterials
++                : <MaterialModel>[
++                    if (widget.order!.material != null) widget.order!.material!,
++                  ];
++        final bool paperChanged = oldPapers.length != selectedPapers.length ||
++            oldPapers.asMap().entries.any((entry) {
++              final idx = entry.key;
++              final old = entry.value;
++              final next = selectedPapers[idx];
++              return old.id != next.id ||
++                  (old.quantity - next.quantity).abs() > 0.0001;
++            });
++        // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
++        final updated = OrderModel(
++          id: widget.order!.id,
++          manager: managerName,
++          customer: _customerController.text.trim(),
++          orderDate: _orderDate!,
++          dueDate: _dueDate,
++          product: _product,
++          productTypeId: _selectedProductTypeId,
++          additionalParams: _selectedParams,
++          handle: _selectedHandleDescription == '-'
++              ? '-'
++              : _selectedHandleDescription,
++          cardboard: _selectedCardboard,
++          material: _selectedMaterial,
++          paperMaterials: selectedPapers,
++          makeready: _makeready,
++          val: _val,
++          pdfUrl: widget.order!.pdfUrl,
++          stageTemplateId: _stageTemplateId,
++          // На этапе базового сохранения не перетираем уже привязанную форму.
++          // Фактическая запись формы всегда выполняется позже в _processFormAssignment.
++          hasForm: effectivePersistedHasForm,
++          isOldForm: effectivePersistedIsOldForm,
++          newFormNo: effectivePersistedFormNo,
++          formSeries: effectivePersistedFormSeries,
++          formCode: effectivePersistedFormCode,
++          // Временно отключено в форме создания/редактирования заказа.
++          contractSigned: false,
++          paymentDone: false,
++          comments: _commentsController.text.trim(),
++          status: nextOrderStatus,
++          hasMaterialShortage: nextHasMaterialShortage,
++          materialShortageMessage: shortageMessage,
++          assignmentId: widget.order!.assignmentId,
++          assignmentCreated: widget.order!.assignmentCreated,
++          queueBuildStatus: nextQueueBuildStatus,
++          selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
++          selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
++          queueSignature: nextQueueBuildStatus == QueueBuildStatus.notBuilt
++              ? null
++              : currentQueueSignature,
++          // Связи возобновления обязаны переживать пересохранение:
++          // updateOrder пишет toMap(includeNulls: true), и без этих полей
++          // каждый сейв затирал бы цепочку поколений в БД.
++          restartedFromOrderId: widget.order!.restartedFromOrderId,
++          restartRootOrderId: widget.order!.restartRootOrderId,
++          restartGeneration: widget.order!.restartGeneration,
++          // По той же причине сохраняем данные производства/отгрузки:
++          // без них пересохранение завершённого заказа обнуляло бы
++          // actual_qty/shipped_* в БД.
++          actualQty: widget.order!.actualQty,
++          shippedAt: widget.order!.shippedAt,
++          shippedBy: widget.order!.shippedBy,
++          shippedQty: widget.order!.shippedQty,
++        );
++        await provider.updateOrder(updated);
++        createdOrUpdatedOrder = updated;
+       }
+-      if (lastUploaded != null) {
+-        createdOrUpdatedOrder.pdfUrl = lastUploaded;
+-        await provider.updateOrder(createdOrUpdatedOrder);
++
++      final String effectiveNextOrderStatus = nextOrderStatus;
++      if (createdOrUpdatedOrder.status != effectiveNextOrderStatus ||
++          createdOrUpdatedOrder.hasMaterialShortage !=
++              nextHasMaterialShortage ||
++          createdOrUpdatedOrder.materialShortageMessage != shortageMessage) {
++        final normalized = createdOrUpdatedOrder.copyWith(
++          status: effectiveNextOrderStatus,
++          hasMaterialShortage: nextHasMaterialShortage,
++          materialShortageMessage: shortageMessage,
++        );
++        await provider.updateOrder(normalized);
++        createdOrUpdatedOrder = normalized;
+       }
+-      _pickedOrderPdfs = [];
+-      await _loadSavedOrderPdfs();
+-    }
+-    if (willSaveBuiltStageQueue) {
+-      // Сохраняем фактическую очередь заказа через общий сервис.
+-      // stageTemplateId остаётся метаданным выбора в UI, а не источником истины.
+-      SaveBuiltQueueResult queueSaveResult;
+-      try {
+-        if (!isCreating && wasAlreadyLaunched) {
+-          queueSaveResult = await _orderQueueService.saveLaunchedOrderQueue(
+-            createdOrUpdatedOrder.id,
+-            stageMaps,
+-            <String, String?>{
+-              'selected_v_stage': _selectedVStage,
+-              'selected_p_stage': _selectedPStage,
+-            },
+-            currentQueueSignature,
+-            // Правки запущенного заказа сохраняем всегда: уже начатые и
+-            // завершённые этапы остаются как есть, обновляются ожидающие.
+-            force: true,
+-          );
+-        } else {
+-          queueSaveResult = await _orderQueueService.saveBuiltQueue(
+-            createdOrUpdatedOrder.id,
+-            stageMaps,
+-            <String, String?>{
+-              'selected_v_stage': _selectedVStage,
+-              'selected_p_stage': _selectedPStage,
+-            },
+-            currentQueueSignature,
+-          );
++
++      // Присвоим читаемый номер заказа (ЗК-YYYY.MM.DD-N), если ещё не присвоен
++      if ((createdOrUpdatedOrder.assignmentId == null ||
++              createdOrUpdatedOrder.assignmentId!.isEmpty) &&
++          _orderDate != null) {
++        try {
++          final humanId = await provider.generateReadableOrderId(_orderDate!);
++          // copyWith вместо ручной пересборки: перечисление полей теряло
++          // restart_* и поля формы, а updateOrder(includeNulls: true) затирал
++          // их в БД сразу после создания заказа.
++          final withReadable =
++              createdOrUpdatedOrder.copyWith(assignmentId: humanId);
++          await provider.updateOrder(withReadable);
++          createdOrUpdatedOrder = withReadable;
++        } catch (_) {}
++      }
++      // Загружаем все выбранные PDF заказа при необходимости.
++      // Привязка PDF к форме выполняется НЕ здесь, а после _processFormAssignment
++      // (см. _syncOrderPdfsToForm): при создании заказа реквизиты формы в этот
++      // момент ещё не записаны, и линковка уходила бы «в никуда».
++      final bool didUploadOrderPdfs = _pickedOrderPdfs.isNotEmpty;
++      if (_pickedOrderPdfs.isNotEmpty) {
++        String? lastUploaded;
++        for (final f in _pickedOrderPdfs) {
++          try {
++            lastUploaded = await uploadPickedOrderPdf(
++              orderId: createdOrUpdatedOrder.id,
++              file: f,
++            );
++          } catch (e) {
++            debugPrint('❌ upload order pdf ${f.name}: $e');
++            if (mounted) {
++              ScaffoldMessenger.of(context).showSnackBar(
++                SnackBar(content: Text('Ошибка загрузки ${f.name}: $e')),
++              );
++            }
++          }
+         }
+-      } on OrderQueueSyncBlockedException catch (error) {
+-        if (!isCreating && widget.order != null) {
+-          final restoredQueueState = createdOrUpdatedOrder.copyWith(
+-            stageTemplateId: widget.order!.stageTemplateId,
+-            queueBuildStatus: widget.order!.queueBuildStatus,
+-            selectedVStage: widget.order!.selectedVStage,
+-            selectedPStage: widget.order!.selectedPStage,
+-            queueSignature: widget.order!.queueSignature,
+-          );
+-          await provider.updateOrder(restoredQueueState);
+-          createdOrUpdatedOrder = restoredQueueState;
+-          _queueBuildStatus = widget.order!.queueBuildStatus;
+-          _queueSignature = widget.order!.queueSignature;
++        if (lastUploaded != null) {
++          createdOrUpdatedOrder.pdfUrl = lastUploaded;
++          await provider.updateOrder(createdOrUpdatedOrder);
+         }
+-        if (mounted) {
+-          messenger.showSnackBar(SnackBar(content: Text(error.message)));
++        _pickedOrderPdfs = [];
++        await _loadSavedOrderPdfs();
++      }
++      if (willSaveBuiltStageQueue) {
++        // Сохраняем фактическую очередь заказа через общий сервис.
++        // stageTemplateId остаётся метаданным выбора в UI, а не источником истины.
++        SaveBuiltQueueResult queueSaveResult;
++        try {
++          if (!isCreating && wasAlreadyLaunched) {
++            queueSaveResult = await _orderQueueService.saveLaunchedOrderQueue(
++              createdOrUpdatedOrder.id,
++              stageMaps,
++              <String, String?>{
++                'selected_v_stage': _selectedVStage,
++                'selected_p_stage': _selectedPStage,
++              },
++              currentQueueSignature,
++              // Правки запущенного заказа сохраняем всегда: уже начатые и
++              // завершённые этапы остаются как есть, обновляются ожидающие.
++              force: true,
++            );
++          } else {
++            queueSaveResult = await _orderQueueService.saveBuiltQueue(
++              createdOrUpdatedOrder.id,
++              stageMaps,
++              <String, String?>{
++                'selected_v_stage': _selectedVStage,
++                'selected_p_stage': _selectedPStage,
++              },
++              currentQueueSignature,
++            );
++          }
++        } on OrderQueueSyncBlockedException catch (error) {
++          if (!isCreating && widget.order != null) {
++            final restoredQueueState = createdOrUpdatedOrder.copyWith(
++              stageTemplateId: widget.order!.stageTemplateId,
++              queueBuildStatus: widget.order!.queueBuildStatus,
++              selectedVStage: widget.order!.selectedVStage,
++              selectedPStage: widget.order!.selectedPStage,
++              queueSignature: widget.order!.queueSignature,
++            );
++            await provider.updateOrder(restoredQueueState);
++            createdOrUpdatedOrder = restoredQueueState;
++            _queueBuildStatus = widget.order!.queueBuildStatus;
++            _queueSignature = widget.order!.queueSignature;
++          }
++          if (mounted) {
++            messenger.showSnackBar(SnackBar(content: Text(error.message)));
++          }
++          return;
++        } catch (error) {
++          final failedOrder = createdOrUpdatedOrder.copyWith(
++            status: isCreating
++                ? OrderStatus.draft.name
++                : createdOrUpdatedOrder.status,
++            hasMaterialShortage:
++                isCreating ? false : createdOrUpdatedOrder.hasMaterialShortage,
++            materialShortageMessage:
++                isCreating ? '' : createdOrUpdatedOrder.materialShortageMessage,
++            stageTemplateId: !isCreating && widget.order != null
++                ? widget.order!.stageTemplateId
++                : createdOrUpdatedOrder.stageTemplateId,
++            queueBuildStatus: isCreating
++                ? QueueBuildStatus.notBuilt
++                : (widget.order?.queueBuildStatus ??
++                    createdOrUpdatedOrder.queueBuildStatus),
++            selectedVStage: isCreating
++                ? ''
++                : (widget.order?.selectedVStage ??
++                    createdOrUpdatedOrder.selectedVStage),
++            selectedPStage: isCreating
++                ? ''
++                : (widget.order?.selectedPStage ??
++                    createdOrUpdatedOrder.selectedPStage),
++            queueSignature: isCreating
++                ? const <String, dynamic>{}
++                : (widget.order?.queueSignature ??
++                    createdOrUpdatedOrder.queueSignature),
++          );
++          await provider.updateOrder(failedOrder);
++          if (isCreating) {
++            _queueBuildStatus = QueueBuildStatus.notBuilt;
++            _queueSignature = null;
++          }
++          if (mounted) {
++            messenger.showSnackBar(
++              SnackBar(
++                content: Text(
++                  error is OrderQueueSaveException
++                      ? error.message
++                      : '$kCreateProductionTasksFailedMessage: $error',
++                ),
++              ),
++            );
++          }
++          return;
+         }
+-        return;
+-      } catch (error) {
+-        final failedOrder = createdOrUpdatedOrder.copyWith(
+-          status: isCreating
+-              ? OrderStatus.draft.name
+-              : createdOrUpdatedOrder.status,
+-          hasMaterialShortage:
+-              isCreating ? false : createdOrUpdatedOrder.hasMaterialShortage,
+-          materialShortageMessage:
+-              isCreating ? '' : createdOrUpdatedOrder.materialShortageMessage,
+-          stageTemplateId: !isCreating && widget.order != null
+-              ? widget.order!.stageTemplateId
+-              : createdOrUpdatedOrder.stageTemplateId,
+-          queueBuildStatus: isCreating
+-              ? QueueBuildStatus.notBuilt
+-              : (widget.order?.queueBuildStatus ??
+-                  createdOrUpdatedOrder.queueBuildStatus),
+-          selectedVStage: isCreating
+-              ? ''
+-              : (widget.order?.selectedVStage ??
+-                  createdOrUpdatedOrder.selectedVStage),
+-          selectedPStage: isCreating
+-              ? ''
+-              : (widget.order?.selectedPStage ??
+-                  createdOrUpdatedOrder.selectedPStage),
+-          queueSignature: isCreating
+-              ? const <String, dynamic>{}
+-              : (widget.order?.queueSignature ??
+-                  createdOrUpdatedOrder.queueSignature),
+-        );
+-        await provider.updateOrder(failedOrder);
+-        if (isCreating) {
++        if (!queueSaveResult.productionTasksCreated) {
++          final failedOrder = createdOrUpdatedOrder.copyWith(
++            status: OrderStatus.draft.name,
++            hasMaterialShortage: false,
++            materialShortageMessage: '',
++            queueBuildStatus: QueueBuildStatus.notBuilt,
++            selectedVStage: '',
++            selectedPStage: '',
++            queueSignature: const <String, dynamic>{},
++          );
++          await provider.updateOrder(failedOrder);
+           _queueBuildStatus = QueueBuildStatus.notBuilt;
+           _queueSignature = null;
+-        }
+-        if (mounted) {
+-          messenger.showSnackBar(
+-            SnackBar(
+-              content: Text(
+-                error is OrderQueueSaveException
+-                    ? error.message
+-                    : '$kCreateProductionTasksFailedMessage: $error',
++          if (mounted) {
++            messenger.showSnackBar(
++              const SnackBar(
++                content: Text(kCreateProductionTasksFailedMessage),
+               ),
+-            ),
+-          );
++            );
++          }
++          return;
+         }
+-        return;
+-      }
+-      if (!queueSaveResult.productionTasksCreated) {
+-        final failedOrder = createdOrUpdatedOrder.copyWith(
+-          status: OrderStatus.draft.name,
+-          hasMaterialShortage: false,
+-          materialShortageMessage: '',
+-          queueBuildStatus: QueueBuildStatus.notBuilt,
+-          selectedVStage: '',
+-          selectedPStage: '',
+-          queueSignature: const <String, dynamic>{},
++        createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
++          queueBuildStatus: QueueBuildStatus.built,
++          selectedVStage: _selectedVStage,
++          selectedPStage: _selectedPStage,
++          queueSignature: currentQueueSignature,
+         );
+-        await provider.updateOrder(failedOrder);
+-        _queueBuildStatus = QueueBuildStatus.notBuilt;
+-        _queueSignature = null;
+-        if (mounted) {
+-          messenger.showSnackBar(
+-            const SnackBar(
+-              content: Text(kCreateProductionTasksFailedMessage),
+-            ),
+-          );
+-        }
+-        return;
++        _queueBuildStatus = QueueBuildStatus.built;
++        _queueSignature = currentQueueSignature;
+       }
+-      createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
+-        queueBuildStatus: QueueBuildStatus.built,
+-        selectedVStage: _selectedVStage,
+-        selectedPStage: _selectedPStage,
+-        queueSignature: currentQueueSignature,
+-      );
+-      _queueBuildStatus = QueueBuildStatus.built;
+-      _queueSignature = currentQueueSignature;
+-    }
+-
+-    // Сначала синхронизируем список красок, чтобы в просмотре заказа
+-    // изменения были видны сразу после сохранения.
+-    await _persistPaints(createdOrUpdatedOrder.id);
+ 
+-    // === Обработка формы ===
+-    // _editingForm сбрасывается внутри _processFormAssignment — запоминаем
+-    // заранее, менялась ли форма в этом сохранении.
+-    final bool wasEditingForm = _editingForm;
+-    final String? assignedFormId = await _processFormAssignment(
+-      createdOrUpdatedOrder,
+-      isCreating: isCreating,
+-    );
+-    // Заливаем PDF, выбранные для новой формы (стейджились в памяти, т.к.
+-    // id формы был неизвестен до _processFormAssignment).
+-    if (assignedFormId != null && _newFormPdfs.isNotEmpty) {
+-      for (final f in _newFormPdfs) {
+-        try {
+-          await uploadPickedFormPdf(formId: assignedFormId, file: f);
+-        } catch (e) {
+-          debugPrint('❌ upload new form pdf ${f.name}: $e');
++      // Сначала синхронизируем список красок, чтобы в просмотре заказа
++      // изменения были видны сразу после сохранения.
++      await _persistPaints(createdOrUpdatedOrder.id);
++
++      // === Обработка формы ===
++      // _editingForm сбрасывается внутри _processFormAssignment — запоминаем
++      // заранее, менялась ли форма в этом сохранении.
++      final bool wasEditingForm = _editingForm;
++      final String? assignedFormId = await _processFormAssignment(
++        createdOrUpdatedOrder,
++        isCreating: isCreating,
++      );
++      // Заливаем PDF, выбранные для новой формы (стейджились в памяти, т.к.
++      // id формы был неизвестен до _processFormAssignment).
++      if (assignedFormId != null && _newFormPdfs.isNotEmpty) {
++        for (final f in _newFormPdfs) {
++          try {
++            await uploadPickedFormPdf(formId: assignedFormId, file: f);
++          } catch (e) {
++            debugPrint('❌ upload new form pdf ${f.name}: $e');
++          }
+         }
++        if (mounted) setState(() => _newFormPdfs = []);
+       }
+-      if (mounted) setState(() => _newFormPdfs = []);
+-    }
+-    // Двусторонняя связь: все PDF заказа должны быть видны у привязанной
+-    // формы (source='order'). Линкуем строго ПОСЛЕ записи реквизитов формы,
+-    // иначе при создании заказа форма ещё не найдена и связь терялась.
+-    if (assignedFormId != null &&
+-        (didUploadOrderPdfs || isCreating || wasEditingForm)) {
+-      await _syncOrderPdfsToForm(createdOrUpdatedOrder.id, assignedFormId);
+-    }
+-    // === Конец обработки формы ===
++      // Двусторонняя связь: все PDF заказа должны быть видны у привязанной
++      // формы (source='order'). Линкуем строго ПОСЛЕ записи реквизитов формы,
++      // иначе при создании заказа форма ещё не найдена и связь терялась.
++      if (assignedFormId != null &&
++          (didUploadOrderPdfs || isCreating || wasEditingForm)) {
++        await _syncOrderPdfsToForm(createdOrUpdatedOrder.id, assignedFormId);
++      }
++      // === Конец обработки формы ===
+ 
+-    // _processFormAssignment пишет в БД напрямую, минуя provider.
+-    // Обновляем provider, чтобы карточка деталей заказа сразу показала форму.
+-    await provider.refresh();
++      // _processFormAssignment пишет в БД напрямую, минуя provider.
++      // Обновляем provider, чтобы карточка деталей заказа сразу показала форму.
++      await provider.refresh();
+ 
+-    if (!mounted) return;
++      if (!mounted) return;
+ 
+-    // Бизнес-правило: в создании/редактировании заказа списание бумаги отключено полностью.
++      // Бизнес-правило: в создании/редактировании заказа списание бумаги отключено полностью.
+ 
+-    if (!createdOrUpdatedOrder.assignmentCreated &&
+-        nextQueueBuildStatus == QueueBuildStatus.outdated) {
+-      messenger.showSnackBar(
+-        const SnackBar(
+-          content: Text(
+-            'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
+-            'иначе заказ останется черновиком',
++      if (!createdOrUpdatedOrder.assignmentCreated &&
++          nextQueueBuildStatus == QueueBuildStatus.outdated) {
++        messenger.showSnackBar(
++          const SnackBar(
++            content: Text(
++              'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
++              'иначе заказ останется черновиком',
++            ),
+           ),
+-        ),
+-      );
+-    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+-        !hasQueueForStatus) {
+-      messenger.showSnackBar(
+-        const SnackBar(
+-          content: Text(
+-            'Очередь этапов пока не построена автоматически: выберите тип '
+-            'продукта и параметры заказа',
++        );
++      } else if (!createdOrUpdatedOrder.assignmentCreated &&
++          !hasQueueForStatus) {
++        messenger.showSnackBar(
++          const SnackBar(
++            content: Text(
++              'Очередь этапов пока не построена автоматически: выберите тип '
++              'продукта и параметры заказа',
++            ),
+           ),
+-        ),
+-      );
+-    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+-        !canLaunchProductionNow) {
+-      messenger.showSnackBar(
+-        const SnackBar(
+-          content: Text(
+-            'Заказ сохранён без запуска: недостаточно материала на складе. '
+-            'Запустите заказ позже кнопкой «Запустить».',
++        );
++      } else if (!createdOrUpdatedOrder.assignmentCreated &&
++          !canLaunchProductionNow) {
++        messenger.showSnackBar(
++          const SnackBar(
++            content: Text(
++              'Заказ сохранён без запуска: недостаточно материала на складе. '
++              'Запустите заказ позже кнопкой «Запустить».',
++            ),
+           ),
+-        ),
+-      );
+-    } else if (!createdOrUpdatedOrder.assignmentCreated &&
+-        canLaunchProductionNow) {
+-      messenger.showSnackBar(
+-        const SnackBar(
+-          content: Text('Заказ сохранён и готов к запуску. Нажмите «Запустить».'),
+-        ),
+-      );
+-    }
++        );
++      } else if (!createdOrUpdatedOrder.assignmentCreated &&
++          canLaunchProductionNow) {
++        messenger.showSnackBar(
++          const SnackBar(
++            content:
++                Text('Заказ сохранён и готов к запуску. Нажмите «Запустить».'),
++          ),
++        );
++      }
+ 
+-    // Списание лишнего выполняется на этапе отгрузки.
++      // Списание лишнего выполняется на этапе отгрузки.
+ 
+-    await _goToOrdersModuleHome();
++      await _goToOrdersModuleHome();
+     } catch (e) {
+       if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+@@ -3866,16 +3925,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       // Новое бизнес-правило: наличие формы управляется отдельной галочкой.
+       // Если галочка выключена — полностью сбрасываем выбранную форму.
+       if (!_hasForm) {
+-        await _sb
+-            .from('orders')
+-            .update({
+-              'has_form': false,
+-              'is_old_form': false,
+-              'new_form_no': null,
+-              'form_series': null,
+-              'form_code': null,
+-            })
+-            .eq('id', order.id);
++        await _sb.from('orders').update({
++          'has_form': false,
++          'is_old_form': false,
++          'new_form_no': null,
++          'form_series': null,
++          'form_code': null,
++        }).eq('id', order.id);
+         if (!mounted) return null;
+         setState(() {
+           _orderFormIsOld = null;
+@@ -4167,8 +4223,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       appBar: AppBar(
+         leading: IconButton(
+           icon: const Icon(Icons.arrow_back),
+-          onPressed:
+-              _isSavingOrder ? null : () => Navigator.of(context).pop(),
++          onPressed: _isSavingOrder ? null : () => Navigator.of(context).pop(),
+         ),
+         title: Text(isEditing
+             ? 'Редактирование заказа ${(widget.order!.assignmentId ?? widget.order!.id)}'
+@@ -4185,7 +4240,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                   isScrollControlled: true,
+                   builder: (_) => SizedBox(
+                     height: MediaQuery.of(context).size.height * 0.6,
+-                    child: OrderCommentsSection(orderId: order.id, legacyText: order.comments),
++                    child: OrderCommentsSection(
++                        orderId: order.id, legacyText: order.comments),
+                   ),
+                 );
+               },
+@@ -4196,7 +4252,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+               style: FilledButton.styleFrom(
+                 visualDensity: VisualDensity.compact,
+                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
++                padding:
++                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+               ),
+               onPressed: _isSavingOrder ? null : _saveOrder,
+               icon: _isSavingOrder
+@@ -4249,82 +4306,81 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+           child: Form(
+             key: _formKey,
+             child: LayoutBuilder(
+-            builder: (context, constraints) {
+-              final formList = LayoutBuilder(
+-                builder: (context, innerConstraints) {
+-                  final availableWidth = innerConstraints.maxWidth;
+-                  // Keep the form wide enough for multi-column rows on desktop.
+-                  const spacing = 12.0;
+-                  final maxWrapWidth = availableWidth;
+-                  final desiredColumns = maxWrapWidth >= 980
+-                  
+-                      ? 3
+-                      : maxWrapWidth >= 720
+-                          ? 2
+-                          : 1;
+-                  final columns =
+-                      math.min(desiredColumns, math.max(1, formSections.length));
+-                  final sectionWidth = columns == 1
+-                      ? maxWrapWidth
+-                      : (maxWrapWidth - spacing * (columns - 1)) / columns;
+-                  return Scrollbar(
+-                    controller: _formScrollController,
+-                    thumbVisibility: true,
+-                    child: SingleChildScrollView(
++              builder: (context, constraints) {
++                final formList = LayoutBuilder(
++                  builder: (context, innerConstraints) {
++                    final availableWidth = innerConstraints.maxWidth;
++                    // Keep the form wide enough for multi-column rows on desktop.
++                    const spacing = 12.0;
++                    final maxWrapWidth = availableWidth;
++                    final desiredColumns = maxWrapWidth >= 980
++                        ? 3
++                        : maxWrapWidth >= 720
++                            ? 2
++                            : 1;
++                    final columns = math.min(
++                        desiredColumns, math.max(1, formSections.length));
++                    final sectionWidth = columns == 1
++                        ? maxWrapWidth
++                        : (maxWrapWidth - spacing * (columns - 1)) / columns;
++                    return Scrollbar(
+                       controller: _formScrollController,
+-                      padding: const EdgeInsets.symmetric(
+-                        horizontal: 4,
+-                        vertical: 4,
+-                      ),
+-                      child: SizedBox(
+-                        width: maxWrapWidth,
+-                        child: Wrap(
+-                          spacing: spacing,
+-                          runSpacing: spacing,
+-                          children: formSections
+-                              .map(
+-                                (section) => SizedBox(
+-                                  width: sectionWidth,
+-                                  child: section,
+-                                ),
+-                              )
+-                              .toList(),
++                      thumbVisibility: true,
++                      child: SingleChildScrollView(
++                        controller: _formScrollController,
++                        padding: const EdgeInsets.symmetric(
++                          horizontal: 4,
++                          vertical: 4,
++                        ),
++                        child: SizedBox(
++                          width: maxWrapWidth,
++                          child: Wrap(
++                            spacing: spacing,
++                            runSpacing: spacing,
++                            children: formSections
++                                .map(
++                                  (section) => SizedBox(
++                                    width: sectionWidth,
++                                    child: section,
++                                  ),
++                                )
++                                .toList(),
++                          ),
+                         ),
+                       ),
+-                    ),
+-                  );
+-                },
+-              );
++                    );
++                  },
++                );
+ 
+-              if (constraints.maxWidth < 1200) {
+-                return formList;
+-              }
++                if (constraints.maxWidth < 1200) {
++                  return formList;
++                }
+ 
+-              return Row(
+-                crossAxisAlignment: CrossAxisAlignment.start,
+-                children: [
+-                  Expanded(
+-                    // Give more space to the form area for multi-column rows.
+-                    flex: 6,
+-                    child: SizedBox(
+-                      height: constraints.maxHeight,
+-                      child: formList,
++                return Row(
++                  crossAxisAlignment: CrossAxisAlignment.start,
++                  children: [
++                    Expanded(
++                      // Give more space to the form area for multi-column rows.
++                      flex: 6,
++                      child: SizedBox(
++                        height: constraints.maxHeight,
++                        child: formList,
++                      ),
+                     ),
+-                  ),
+-                  // Slightly reduce the warehouse panel width for better balance.
+-                  const SizedBox(width: 8),
+-                  Expanded(
+-                    flex: 2,
+-                    child: SizedBox(
+-                      height: constraints.maxHeight,
+-                      child: _buildWarehousePreviewPanel(),
++                    // Slightly reduce the warehouse panel width for better balance.
++                    const SizedBox(width: 8),
++                    Expanded(
++                      flex: 2,
++                      child: SizedBox(
++                        height: constraints.maxHeight,
++                        child: _buildWarehousePreviewPanel(),
++                      ),
+                     ),
+-                  ),
+-                ],
+-              );
+-            },
+-            ),
+-          ),
++                  ],
++                );
++              },
++            ),
++          ),
+         ),
+       ),
+     );
+@@ -4478,7 +4534,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                     _buildLabelRow(
+                       label: 'Комментарий',
+                       labelWidth: labelWidth,
+-                      child: _buildCommentsSection(context, wrapWithCard: false),
++                      child:
++                          _buildCommentsSection(context, wrapWithCard: false),
+                     ),
+                     _buildLabelRow(
+                       label: 'Очередь',
+@@ -4719,7 +4776,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                     displayStringForOption: (value) => value,
+                     fieldViewBuilder:
+                         (ctx, controller, focusNode, onFieldSubmitted) {
+-                      final currentFormat = _extraPaperMaterials[i].format ?? '';
++                      final currentFormat =
++                          _extraPaperMaterials[i].format ?? '';
+                       if (controller.text != currentFormat) {
+                         controller.value = TextEditingValue(
+                           text: currentFormat,
+@@ -4736,14 +4794,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                           'Формат',
+                           _activePaperSlotIndex == i + 1,
+                         ).copyWith(
+-                          helperText: _extraPaperMaterials[i].name.trim().isNotEmpty
+-                              ? null
+-                              : 'Сначала выберите материал',
++                          helperText:
++                              _extraPaperMaterials[i].name.trim().isNotEmpty
++                                  ? null
++                                  : 'Сначала выберите материал',
+                         ),
+                         onChanged: (value) {
+                           setState(() {
+                             _activePaperSlotIndex = i + 1;
+-                            _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
++                            _extraPaperMaterials[i] =
++                                _extraPaperMaterials[i].copyWith(
+                               format: value,
+                               grammage: null,
+                             );
+@@ -4769,7 +4829,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                   Autocomplete<String>(
+                     optionsBuilder: (text) {
+                       final name = _extraPaperMaterials[i].name.trim();
+-                      final format = (_extraPaperMaterials[i].format ?? '').trim();
++                      final format =
++                          (_extraPaperMaterials[i].format ?? '').trim();
+                       if (name.isEmpty || format.isEmpty) {
+                         return const Iterable<String>.empty();
+                       }
+@@ -4778,7 +4839,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                     displayStringForOption: (value) => value,
+                     fieldViewBuilder:
+                         (ctx, controller, focusNode, onFieldSubmitted) {
+-                      final currentGrammage = _extraPaperMaterials[i].grammage ?? '';
++                      final currentGrammage =
++                          _extraPaperMaterials[i].grammage ?? '';
+                       if (controller.text != currentGrammage) {
+                         controller.value = TextEditingValue(
+                           text: currentGrammage,
+@@ -4790,20 +4852,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                       return TextField(
+                         controller: controller,
+                         focusNode: focusNode,
+-                        enabled: _extraPaperMaterials[i].name.trim().isNotEmpty &&
+-                            (_extraPaperMaterials[i].format ?? '')
+-                                .trim()
+-                                .isNotEmpty,
++                        enabled:
++                            _extraPaperMaterials[i].name.trim().isNotEmpty &&
++                                (_extraPaperMaterials[i].format ?? '')
++                                    .trim()
++                                    .isNotEmpty,
+                         decoration: paperDecoration(
+                           'Грамаж',
+                           _activePaperSlotIndex == i + 1,
+                         ).copyWith(
+-                          helperText: _extraPaperMaterials[i].name.trim().isNotEmpty &&
+-                                  (_extraPaperMaterials[i].format ?? '')
+-                                      .trim()
+-                                      .isNotEmpty
+-                              ? null
+-                              : 'Сначала выберите формат',
++                          helperText:
++                              _extraPaperMaterials[i].name.trim().isNotEmpty &&
++                                      (_extraPaperMaterials[i].format ?? '')
++                                          .trim()
++                                          .isNotEmpty
++                                  ? null
++                                  : 'Сначала выберите формат',
+                         ),
+                         onChanged: (value) {
+                           setState(() {
+@@ -4842,8 +4906,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                               ? _formatDecimal(_paperExtraDouble(
+                                   _extraPaperMaterials[i], 'widthB')!)
+                               : '',
+-                          autovalidateMode:
+-                              AutovalidateMode.onUserInteraction,
++                          autovalidateMode: AutovalidateMode.onUserInteraction,
+                           decoration: const InputDecoration(
+                             labelText: 'Ширина b',
+                             border: OutlineInputBorder(),
+@@ -4851,8 +4914,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                           keyboardType: const TextInputType.numberWithOptions(
+                               decimal: true),
+                           validator: (value) {
+-                            final parsed =
+-                                double.tryParse((value ?? '').replaceAll(',', '.'));
++                            final parsed = double.tryParse(
++                                (value ?? '').replaceAll(',', '.'));
+                             return _validatePaperWidthB(
+                               widthB: parsed,
+                               paper: _extraPaperMaterials[i],
+@@ -4883,9 +4946,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                       const SizedBox(width: 8),
+                       Expanded(
+                         child: TextFormField(
+-                          initialValue:
+-                              _paperExtraString(_extraPaperMaterials[i], 'blQuantity') ??
+-                                  '',
++                          initialValue: _paperExtraString(
++                                  _extraPaperMaterials[i], 'blQuantity') ??
++                              '',
+                           decoration: const InputDecoration(
+                             labelText: 'Количество',
+                             border: OutlineInputBorder(),
+@@ -4925,9 +4988,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                             labelText: 'Длина L',
+                             border: OutlineInputBorder(),
+                           ).copyWith(
+-                            errorText: extraLengthExceeded(_extraPaperMaterials[i])
+-                                ? 'Недостаточно'
+-                                : null,
++                            errorText:
++                                extraLengthExceeded(_extraPaperMaterials[i])
++                                    ? 'Недостаточно'
++                                    : null,
+                           ),
+                           keyboardType: const TextInputType.numberWithOptions(
+                               decimal: true),
+@@ -5042,10 +5106,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+               setState(() {
+                 _stockExtraQtyTouched = true;
+                 _stockExtraSelectedQty = nextValue;
+-                _product.leftover =
+-                    _stockExtraSelectedQty != null && _stockExtraSelectedQty! > 0
+-                        ? _stockExtraSelectedQty
+-                        : null;
++                _product.leftover = _stockExtraSelectedQty != null &&
++                        _stockExtraSelectedQty! > 0
++                    ? _stockExtraSelectedQty
++                    : null;
+                 if (_writeOffStockExtra &&
+                     (_stockExtraSelectedQty == null ||
+                         _stockExtraSelectedQty! <= 0)) {
+@@ -5191,18 +5255,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                                   _matSelectedGrammage = null;
+                                   _matFormatCtl.text = '';
+                                   _matGramCtl.text = '';
+-                                  _matNameError = (_matNameCtl.text.trim().isEmpty ||
+-                                          allNames
+-                                              .map((e) => e.toLowerCase())
+-                                              .contains(_matNameCtl.text
+-                                                  .trim()
+-                                                  .toLowerCase()))
+-                                      ? null
+-                                      : 'Выберите материал из списка';
++                                  _matNameError =
++                                      (_matNameCtl.text.trim().isEmpty ||
++                                              allNames
++                                                  .map((e) => e.toLowerCase())
++                                                  .contains(_matNameCtl.text
++                                                      .trim()
++                                                      .toLowerCase()))
++                                          ? null
++                                          : 'Выберите материал из списка';
+                                   _matFormatError = null;
+                                   _matGramError = null;
+-                                  final lowerNames =
+-                                      allNames.map((e) => e.toLowerCase()).toList();
++                                  final lowerNames = allNames
++                                      .map((e) => e.toLowerCase())
++                                      .toList();
+                                   final typed =
+                                       _matNameCtl.text.trim().toLowerCase();
+                                   if (lowerNames.contains(typed)) {
+@@ -5243,7 +5309,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                         ),
+                         const SizedBox(height: 4),
+                         Autocomplete<String>(
+-                          optionsBuilder: (text) => filter(formatOptions, text.text),
++                          optionsBuilder: (text) =>
++                              filter(formatOptions, text.text),
+                           displayStringForOption: (s) => s,
+                           fieldViewBuilder:
+                               (ctx, controller, focusNode, onFieldSubmitted) {
+@@ -5254,7 +5321,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                                 setState(() {
+                                   _activePaperSlotIndex = 0;
+                                   _matFormatCtl.text = controller.text;
+-                                  _matFormatCtl.selection = controller.selection;
++                                  _matFormatCtl.selection =
++                                      controller.selection;
+                                   _matSelectedFormat = null;
+                                   _matSelectedGrammage = null;
+                                   _matGramCtl.text = '';
+@@ -5289,8 +5357,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                                 helperText: _matSelectedName != null
+                                     ? null
+                                     : 'Сначала выберите материал',
+-                                errorText:
+-                                    _matSelectedName != null ? _matFormatError : null,
++                                errorText: _matSelectedName != null
++                                    ? _matFormatError
++                                    : null,
+                               ),
+                               onSubmitted: (_) => onFieldSubmitted(),
+                             );
+@@ -5310,7 +5379,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                         ),
+                         const SizedBox(height: 4),
+                         Autocomplete<String>(
+-                          optionsBuilder: (text) => filter(gramOptions, text.text),
++                          optionsBuilder: (text) =>
++                              filter(gramOptions, text.text),
+                           displayStringForOption: (s) => s,
+                           fieldViewBuilder:
+                               (ctx, controller, focusNode, onFieldSubmitted) {
+@@ -5323,16 +5393,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                                   _matGramCtl.text = controller.text;
+                                   _matGramCtl.selection = controller.selection;
+                                   _matSelectedGrammage = null;
+-                                  _matGramError = (_matGramCtl.text.trim().isEmpty ||
+-                                          gramOptions
+-                                              .map((e) => e.toLowerCase())
+-                                              .contains(_matGramCtl.text
+-                                                  .trim()
+-                                                  .toLowerCase()))
+-                                      ? null
+-                                      : 'Выберите грамаж из списка';
+-                                  final lowerG =
+-                                      gramOptions.map((e) => e.toLowerCase()).toList();
++                                  _matGramError =
++                                      (_matGramCtl.text.trim().isEmpty ||
++                                              gramOptions
++                                                  .map((e) => e.toLowerCase())
++                                                  .contains(_matGramCtl.text
++                                                      .trim()
++                                                      .toLowerCase()))
++                                          ? null
++                                          : 'Выберите грамаж из списка';
++                                  final lowerG = gramOptions
++                                      .map((e) => e.toLowerCase())
++                                      .toList();
+                                   final typed =
+                                       _matGramCtl.text.trim().toLowerCase();
+                                   if (lowerG.contains(typed)) {
+@@ -5368,8 +5440,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                               _matGramCtl.text = value;
+                               _matSelectedGrammage = value;
+                               _matGramError = null;
+-                              final tmc = findExact(
+-                                  _matSelectedName!, _matSelectedFormat!, value);
++                              final tmc = findExact(_matSelectedName!,
++                                  _matSelectedFormat!, value);
+                               if (tmc != null) {
+                                 _selectMaterial(tmc);
+                               }
+@@ -5390,8 +5462,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                                 validator: (value) {
+                                   final parsed = double.tryParse(
+                                       (value ?? '').replaceAll(',', '.'));
+-                                  final paper =
+-                                      _selectedMaterial ?? const MaterialModel(name: '');
++                                  final paper = _selectedMaterial ??
++                                      const MaterialModel(name: '');
+                                   return _validatePaperWidthB(
+                                     widthB: parsed,
+                                     paper: paper,
+@@ -5408,12 +5480,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                             const SizedBox(width: 8),
+                             Expanded(
+                               child: TextFormField(
+-                                initialValue: product.blQuantity?.toString() ?? '',
++                                initialValue:
++                                    product.blQuantity?.toString() ?? '',
+                                 decoration: mainPaperDecoration('Количество'),
+                                 keyboardType: TextInputType.text,
+                                 onChanged: (val) {
+                                   final trimmed = val.trim();
+-                                  product.blQuantity = trimmed.isEmpty ? null : trimmed;
++                                  product.blQuantity =
++                                      trimmed.isEmpty ? null : trimmed;
+                                   _scheduleStagePreviewUpdate();
+                                 },
+                               ),
+@@ -5421,10 +5495,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                             const SizedBox(width: 8),
+                             Expanded(
+                               child: TextFormField(
+-                                initialValue:
+-                                    product.length != null ? _formatDecimal(product.length!) : '',
+-                                decoration: mainPaperDecoration('Длина L').copyWith(
+-                                  errorText: _lengthExceeded ? 'Недостаточно' : null,
++                                initialValue: product.length != null
++                                    ? _formatDecimal(product.length!)
++                                    : '',
++                                decoration:
++                                    mainPaperDecoration('Длина L').copyWith(
++                                  errorText:
++                                      _lengthExceeded ? 'Недостаточно' : null,
+                                 ),
+                                 keyboardType: TextInputType.number,
+                                 onChanged: (val) {
+@@ -5432,16 +5509,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+                                   final d = double.tryParse(normalized);
+                                   setState(() {
+                                     product.length = d;
+-                                    final materialTmc =
+-                                        _selectedMaterialTmc ?? _resolvePaperByText();
++                                    final materialTmc = _selectedMaterialTmc ??
++                                        _resolvePaperByText();
+                                     if (materialTmc != null && d != null) {
+                                       _lengthExceeded = () {
+-                                        final current = Provider.of<WarehouseProvider>(
+-                                                context,
+-                                                listen: false)
+-                                            .allTmc
+-                                            .where((t) => t.id == materialTmc.id)
+-                                            .toList();
++                                        final current =
++                                            Provider.of<WarehouseProvider>(
++                                                    context,
++                                                    listen: false)
++                                                .allTmc
++                                                .where((t) =>
++                                                    t.id == materialTmc.id)
++                                                .toList();
+                                         final available = current.isNotEmpty
+                                             ? current.first.quantity
+                                             : materialTmc.quantity;
+@@ -5721,20 +5800,34 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   Widget _buildProductTypeField() {
+     return Consumer<ProductsProvider>(
+       builder: (context, provider, _) {
+-        final items = _categoryTitles;
++        final items = _categoryOptions;
++        final selectedId = items.any(
++          (category) => category.id == _selectedProductTypeId,
++        )
++            ? _selectedProductTypeId
++            : null;
+         return DropdownButtonFormField<String>(
+-          value: items.contains(_product.type) ? _product.type : null,
++          value: selectedId,
+           decoration: const InputDecoration(
+             labelText: 'Наименование изделия',
+             border: OutlineInputBorder(),
+           ),
+           items: items
+-              .map((t) => DropdownMenuItem(value: t, child: Text(t)))
++              .map((category) => DropdownMenuItem(
++                    value: category.id,
++                    enabled: !category.isArchived,
++                    child: Text(category.displayTitle),
++                  ))
+               .toList(),
+           onChanged: (val) {
++            final selected = items.cast<WarehouseCategoryOption?>().firstWhere(
++                  (category) => category?.id == val,
++                  orElse: () => null,
++                );
+             var shouldUpdateStagePreview = false;
+             setState(() {
+-              _product.type = val ?? '';
++              _selectedProductTypeId = selected?.id;
++              _product.type = selected?.title ?? '';
+               if (!_supportsCardboard(_product.type)) {
+                 _cardboardChecked = false;
+                 _selectedCardboard = 'нет';
+@@ -5821,31 +5914,30 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     return Wrap(
+       spacing: 6,
+       runSpacing: 3,
+-      children: [
+-      ],
++      children: [],
+     );
+   }
+ 
+   Widget _buildOrderInfoSection(BuildContext context,
+       {bool wrapWithCard = true}) {
+     final content = [
+-        _buildFieldGrid([
+-          _buildManagerField(),
+-          _buildCustomerField(),
+-          _buildDatePickerField(
+-            label: 'Дата заказа',
+-            value: _orderDate,
+-            onTap: _pickOrderDate,
+-            emptyError: 'Укажите дату заказа',
+-          ),
+-          _buildDatePickerField(
+-            label: 'Срок выполнения',
+-            value: _dueDate,
+-            onTap: _pickDueDate,
+-            emptyError: 'Укажите срок',
+-          ),
+-        ], maxColumns: 2),
+-      ];
++      _buildFieldGrid([
++        _buildManagerField(),
++        _buildCustomerField(),
++        _buildDatePickerField(
++          label: 'Дата заказа',
++          value: _orderDate,
++          onTap: _pickOrderDate,
++          emptyError: 'Укажите дату заказа',
++        ),
++        _buildDatePickerField(
++          label: 'Срок выполнения',
++          value: _dueDate,
++          onTap: _pickDueDate,
++          emptyError: 'Укажите срок',
++        ),
++      ], maxColumns: 2),
++    ];
+ 
+     if (!wrapWithCard) {
+       return Column(
+@@ -5865,153 +5957,151 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       {bool wrapWithCard = true}) {
+     final content = Consumer<WarehouseProvider>(
+       builder: (context, warehouse, _) {
+-            final seen = <String>{};
+-            final List<TmcModel> handleItems = [
+-              ...warehouse.getTmcByType('Ручки'),
+-              ...warehouse.getTmcByType('ручки'),
+-            ].where((item) => seen.add(item.id)).toList(growable: true);
+-            handleItems.sort((a, b) => a.description
+-                .toLowerCase()
+-                .compareTo(b.description.toLowerCase()));
+-
+-            TmcModel? _findHandleMatch() {
+-              if (_selectedHandleDescription == '-' ||
+-                  _selectedHandleDescription.trim().isEmpty) {
+-                return null;
+-              }
+-              final target = _selectedHandleDescription.trim().toLowerCase();
+-              for (final item in handleItems) {
+-                final desc = item.description.trim().toLowerCase();
+-                if (desc == target) {
+-                  return item;
+-                }
+-              }
+-              return null;
++        final seen = <String>{};
++        final List<TmcModel> handleItems = [
++          ...warehouse.getTmcByType('Ручки'),
++          ...warehouse.getTmcByType('ручки'),
++        ].where((item) => seen.add(item.id)).toList(growable: true);
++        handleItems.sort((a, b) =>
++            a.description.toLowerCase().compareTo(b.description.toLowerCase()));
++
++        TmcModel? _findHandleMatch() {
++          if (_selectedHandleDescription == '-' ||
++              _selectedHandleDescription.trim().isEmpty) {
++            return null;
++          }
++          final target = _selectedHandleDescription.trim().toLowerCase();
++          for (final item in handleItems) {
++            final desc = item.description.trim().toLowerCase();
++            if (desc == target) {
++              return item;
+             }
++          }
++          return null;
++        }
+ 
+-            if (_selectedHandleId == null &&
+-                _selectedHandleDescription != '-' &&
+-                _selectedHandleDescription.trim().isNotEmpty) {
+-              final match = _findHandleMatch();
+-              if (match != null) {
+-                WidgetsBinding.instance.addPostFrameCallback((_) {
+-                  if (!mounted) return;
+-                  setState(() {
+-                    _selectedHandleId = match.id;
+-                    _selectedHandleDescription = match.description;
+-                  });
+-                });
+-              }
+-            }
++        if (_selectedHandleId == null &&
++            _selectedHandleDescription != '-' &&
++            _selectedHandleDescription.trim().isNotEmpty) {
++          final match = _findHandleMatch();
++          if (match != null) {
++            WidgetsBinding.instance.addPostFrameCallback((_) {
++              if (!mounted) return;
++              setState(() {
++                _selectedHandleId = match.id;
++                _selectedHandleDescription = match.description;
++              });
++            });
++          }
++        }
+ 
+-            final bool hasSelectedHandle = _selectedHandleId != null &&
+-                handleItems.any((item) => item.id == _selectedHandleId);
++        final bool hasSelectedHandle = _selectedHandleId != null &&
++            handleItems.any((item) => item.id == _selectedHandleId);
+ 
+-            final dropdownItems = <DropdownMenuItem<String?>>[
+-              const DropdownMenuItem<String?>(
+-                value: null,
+-                child: Text('-'),
+-              ),
+-              ...handleItems.map(
+-                (item) => DropdownMenuItem<String?>(
+-                  value: item.id,
+-                  child: Text(
+-                      item.description.isEmpty ? item.id : item.description),
+-                ),
+-              ),
+-              if (!hasSelectedHandle &&
+-                  _selectedHandleId != null &&
+-                  _selectedHandleDescription != '-')
+-                DropdownMenuItem<String?>(
+-                  value: _selectedHandleId,
+-                  child: Text(_selectedHandleDescription),
+-                ),
+-            ];
++        final dropdownItems = <DropdownMenuItem<String?>>[
++          const DropdownMenuItem<String?>(
++            value: null,
++            child: Text('-'),
++          ),
++          ...handleItems.map(
++            (item) => DropdownMenuItem<String?>(
++              value: item.id,
++              child:
++                  Text(item.description.isEmpty ? item.id : item.description),
++            ),
++          ),
++          if (!hasSelectedHandle &&
++              _selectedHandleId != null &&
++              _selectedHandleDescription != '-')
++            DropdownMenuItem<String?>(
++              value: _selectedHandleId,
++              child: Text(_selectedHandleDescription),
++            ),
++        ];
+ 
+-            final supportsCardboard = _supportsCardboard(_product.type);
+-            final extras = Wrap(
+-              // Reduce spacing to shrink the area used by the checkboxes.
+-              spacing: 6,
+-              runSpacing: 3,
+-              children: [
+-                _buildCompactCheckboxTile(
+-                  value: _cardboardChecked,
+-                  enabled: supportsCardboard,
+-                  onChanged: supportsCardboard
+-                      ? (val) => setState(() {
+-                            _cardboardChecked = val ?? false;
+-                            _selectedCardboard =
+-                                _cardboardChecked ? 'есть' : 'нет';
+-                            _scheduleStagePreviewUpdate(immediate: true);
+-                          })
+-                      : null,
+-                  label: 'Картон',
+-                  width: 100,
+-                ),
+-                _buildCompactCheckboxTile(
+-                  value: _trimming,
+-                  onChanged: (val) => setState(() {
+-                    _trimming = val ?? false;
+-                    _scheduleStagePreviewUpdate(immediate: true);
+-                  }),
+-                  label: 'Подрезка',
+-                  width: 100,
+-                ),
+-              ],
+-            );
++        final supportsCardboard = _supportsCardboard(_product.type);
++        final extras = Wrap(
++          // Reduce spacing to shrink the area used by the checkboxes.
++          spacing: 6,
++          runSpacing: 3,
++          children: [
++            _buildCompactCheckboxTile(
++              value: _cardboardChecked,
++              enabled: supportsCardboard,
++              onChanged: supportsCardboard
++                  ? (val) => setState(() {
++                        _cardboardChecked = val ?? false;
++                        _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
++                        _scheduleStagePreviewUpdate(immediate: true);
++                      })
++                  : null,
++              label: 'Картон',
++              width: 100,
++            ),
++            _buildCompactCheckboxTile(
++              value: _trimming,
++              onChanged: (val) => setState(() {
++                _trimming = val ?? false;
++                _scheduleStagePreviewUpdate(immediate: true);
++              }),
++              label: 'Подрезка',
++              width: 100,
++            ),
++          ],
++        );
+ 
+-            return _buildFieldGrid([
+-              DropdownButtonFormField<String?>(
+-                value: hasSelectedHandle
++        return _buildFieldGrid([
++          DropdownButtonFormField<String?>(
++            value: hasSelectedHandle
++                ? _selectedHandleId
++                : (_selectedHandleId != null &&
++                        _selectedHandleDescription != '-'
+                     ? _selectedHandleId
+-                    : (_selectedHandleId != null &&
+-                            _selectedHandleDescription != '-'
+-                        ? _selectedHandleId
+-                        : null),
+-                decoration: const InputDecoration(
+-                  labelText: 'Ручки',
+-                  border: OutlineInputBorder(),
+-                ),
+-                items: dropdownItems,
+-                onChanged: (val) {
+-                  setState(() {
+-                    _selectedHandleId = val;
+-                    if (val == null) {
+-                      _selectedHandleDescription = '-';
+-                    } else {
+-                      final matches =
+-                          handleItems.where((item) => item.id == val).toList();
+-                      if (matches.isEmpty) {
+-                        _selectedHandleDescription =
+-                            _selectedHandleDescription == '-'
+-                                ? '-'
+-                                : _selectedHandleDescription;
+-                      } else {
+-                        final desc = matches.first.description.trim();
+-                        _selectedHandleDescription =
+-                            desc.isEmpty ? '-' : matches.first.description;
+-                      }
+-                    }
+-                    _scheduleStagePreviewUpdate(immediate: true);
+-                  });
+-                },
+-              ),
+-              TextFormField(
+-                controller: _packagingController,
+-                decoration: const InputDecoration(
+-                  labelText: 'Упаковка',
+-                  hintText: 'Например: по 50 шт ',
+-                  border: OutlineInputBorder(),
+-                ),
+-              ),
+-              extras,
+-            ],
+-                breakpoint: 620,
+-                maxColumns: 2,
+-                minItemWidth: 220,
+-                runSpacing: 8,
+-                spacing: 8);
+-          },
++                    : null),
++            decoration: const InputDecoration(
++              labelText: 'Ручки',
++              border: OutlineInputBorder(),
++            ),
++            items: dropdownItems,
++            onChanged: (val) {
++              setState(() {
++                _selectedHandleId = val;
++                if (val == null) {
++                  _selectedHandleDescription = '-';
++                } else {
++                  final matches =
++                      handleItems.where((item) => item.id == val).toList();
++                  if (matches.isEmpty) {
++                    _selectedHandleDescription =
++                        _selectedHandleDescription == '-'
++                            ? '-'
++                            : _selectedHandleDescription;
++                  } else {
++                    final desc = matches.first.description.trim();
++                    _selectedHandleDescription =
++                        desc.isEmpty ? '-' : matches.first.description;
++                  }
++                }
++                _scheduleStagePreviewUpdate(immediate: true);
++              });
++            },
++          ),
++          TextFormField(
++            controller: _packagingController,
++            decoration: const InputDecoration(
++              labelText: 'Упаковка',
++              hintText: 'Например: по 50 шт ',
++              border: OutlineInputBorder(),
++            ),
++          ),
++          extras,
++        ],
++            breakpoint: 620,
++            maxColumns: 2,
++            minItemWidth: 220,
++            runSpacing: 8,
++            spacing: 8);
++      },
+     );
+ 
+     if (!wrapWithCard) return content;
+@@ -6043,6 +6133,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       },
+     );
+   }
++
+   // Scale factors for compact toggles (≈40% smaller).
+   static const double _kCompactCheckboxScale = 0.6;
+   static const double _kCompactSwitchScale = 0.6;
+@@ -6102,9 +6193,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+ 
+     final tile = InkWell(
+       borderRadius: BorderRadius.circular(10),
+-      onTap: effectiveOnChanged == null
+-          ? null
+-          : () => effectiveOnChanged(!value),
++      onTap:
++          effectiveOnChanged == null ? null : () => effectiveOnChanged(!value),
+       child: Padding(
+         padding: const EdgeInsets.symmetric(vertical: 1),
+         child: Row(
+@@ -6607,99 +6697,98 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+     children.add(
+       Consumer<TemplateProvider>(
+         builder: (context, provider, _) {
+-            final templates = provider.templates;
+-            if (_stageTemplateId != null && _stageTemplateId!.isNotEmpty) {
+-              final tpl = _findTemplateById(templates, _stageTemplateId);
+-              if (tpl != null && _selectedStageTemplateName != tpl.name) {
+-                WidgetsBinding.instance.addPostFrameCallback((_) {
+-                  if (!mounted) return;
+-                  setState(() {
+-                    _selectedStageTemplateName = tpl.name;
+-                    _setStageTemplateText(tpl.name);
+-                    if (!_stagePreviewInitialized) {
+-                      _stagePreviewInitialized = true;
+-                    }
+-                  });
+-                  _scheduleStagePreviewUpdate(immediate: true);
++          final templates = provider.templates;
++          if (_stageTemplateId != null && _stageTemplateId!.isNotEmpty) {
++            final tpl = _findTemplateById(templates, _stageTemplateId);
++            if (tpl != null && _selectedStageTemplateName != tpl.name) {
++              WidgetsBinding.instance.addPostFrameCallback((_) {
++                if (!mounted) return;
++                setState(() {
++                  _selectedStageTemplateName = tpl.name;
++                  _setStageTemplateText(tpl.name);
++                  if (!_stagePreviewInitialized) {
++                    _stagePreviewInitialized = true;
++                  }
+                 });
+-              }
++                _scheduleStagePreviewUpdate(immediate: true);
++              });
+             }
++          }
+ 
+-            return Column(
+-              crossAxisAlignment: CrossAxisAlignment.start,
+-              children: [
+-                RawAutocomplete<TemplateModel>(
+-                  textEditingController: _stageTemplateController,
+-                  focusNode: _stageTemplateFocusNode,
+-                  displayStringForOption: (tpl) => tpl.name,
+-                  optionsBuilder: (TextEditingValue textValue) {
+-                    final query = textValue.text.toLowerCase().trim();
+-                    if (query.isEmpty) return templates;
+-                    return templates
+-                        .where((tpl) => tpl.name.toLowerCase().contains(query));
+-                  },
+-                  fieldViewBuilder:
+-                      (context, controller, focusNode, onFieldSubmitted) {
+-                    return TextFormField(
+-                      controller: controller,
+-                      focusNode: focusNode,
+-                      decoration: const InputDecoration(
+-                        labelText: 'Выберите очередь',
+-                        border: OutlineInputBorder(),
+-                      ),
+-                      onFieldSubmitted: (value) {
+-                        try {
+-                          final tpl = templates.firstWhere(
+-                            (t) => t.name.toLowerCase() == value.toLowerCase(),
+-                          );
+-                          _onStageTemplateSelected(tpl);
+-                        } catch (_) {}
+-                      },
+-                    );
+-                  },
+-                  onSelected: _onStageTemplateSelected,
+-                  optionsViewBuilder:
+-                      (context, onSelected, Iterable<TemplateModel> options) {
+-                    return Align(
+-                      alignment: Alignment.topLeft,
+-                      child: Material(
+-                        elevation: 4,
+-                        borderRadius: BorderRadius.circular(8),
+-                        child: ConstrainedBox(
+-                          constraints: const BoxConstraints(maxHeight: 200),
+-                          child: ListView.builder(
+-                            padding: EdgeInsets.zero,
+-                            itemCount: options.length,
+-                            itemBuilder: (context, index) {
+-                              final option = options.elementAt(index);
+-                              return ListTile(
+-                                title: Text(option.name),
+-                                onTap: () => onSelected(option),
+-                              );
+-                            },
+-                          ),
++          return Column(
++            crossAxisAlignment: CrossAxisAlignment.start,
++            children: [
++              RawAutocomplete<TemplateModel>(
++                textEditingController: _stageTemplateController,
++                focusNode: _stageTemplateFocusNode,
++                displayStringForOption: (tpl) => tpl.name,
++                optionsBuilder: (TextEditingValue textValue) {
++                  final query = textValue.text.toLowerCase().trim();
++                  if (query.isEmpty) return templates;
++                  return templates
++                      .where((tpl) => tpl.name.toLowerCase().contains(query));
++                },
++                fieldViewBuilder:
++                    (context, controller, focusNode, onFieldSubmitted) {
++                  return TextFormField(
++                    controller: controller,
++                    focusNode: focusNode,
++                    decoration: const InputDecoration(
++                      labelText: 'Выберите очередь',
++                      border: OutlineInputBorder(),
++                    ),
++                    onFieldSubmitted: (value) {
++                      try {
++                        final tpl = templates.firstWhere(
++                          (t) => t.name.toLowerCase() == value.toLowerCase(),
++                        );
++                        _onStageTemplateSelected(tpl);
++                      } catch (_) {}
++                    },
++                  );
++                },
++                onSelected: _onStageTemplateSelected,
++                optionsViewBuilder:
++                    (context, onSelected, Iterable<TemplateModel> options) {
++                  return Align(
++                    alignment: Alignment.topLeft,
++                    child: Material(
++                      elevation: 4,
++                      borderRadius: BorderRadius.circular(8),
++                      child: ConstrainedBox(
++                        constraints: const BoxConstraints(maxHeight: 200),
++                        child: ListView.builder(
++                          padding: EdgeInsets.zero,
++                          itemCount: options.length,
++                          itemBuilder: (context, index) {
++                            final option = options.elementAt(index);
++                            return ListTile(
++                              title: Text(option.name),
++                              onTap: () => onSelected(option),
++                            );
++                          },
+                         ),
+                       ),
+-                    );
+-                  },
+-                ),
+-                if (_selectedStageTemplateName != null)
+-                  Padding(
+-                    padding: const EdgeInsets.only(top: 8.0),
+-                    child: Text(
+-                      'Выбрана очередь: ${_selectedStageTemplateName!}',
+-                      style: Theme.of(context).textTheme.bodyMedium,
+                     ),
++                  );
++                },
++              ),
++              if (_selectedStageTemplateName != null)
++                Padding(
++                  padding: const EdgeInsets.only(top: 8.0),
++                  child: Text(
++                    'Выбрана очередь: ${_selectedStageTemplateName!}',
++                    style: Theme.of(context).textTheme.bodyMedium,
+                   ),
+-                const SizedBox(height: 3),
+-                _buildStagePreviewSection(context),
+-              ],
+-            );
+-          },
+-        ),
++                ),
++              const SizedBox(height: 3),
++              _buildStagePreviewSection(context),
++            ],
++          );
++        },
++      ),
+     );
+ 
+-
+     if (wrapWithCard) {
+       return _buildSectionCard(
+         context: context,
+@@ -6712,7 +6801,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       crossAxisAlignment: CrossAxisAlignment.stretch,
+       children: children,
+     );
+-
+   }
+ 
+   Widget _buildCommentsSection(BuildContext context,
+@@ -6951,210 +7039,209 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+ 
+   Widget _buildPaintsSection({bool wrapWithCard = true}) {
+     final content = [
+-        TextFormField(
+-          controller: _paintInfoController,
+-          decoration: const InputDecoration(
+-            labelText: 'Информация для красок',
+-            hintText: 'Комментарий применяется ко всем краскам',
+-            border: OutlineInputBorder(),
+-          ),
+-          minLines: 1,
+-          maxLines: 3,
+-          onChanged: (value) {
+-            final normalized = value.trim();
+-            setState(() {
+-              _paintInfo = normalized;
+-              for (final paint in _paints) {
+-                paint.memo = normalized;
+-              }
+-            });
+-          },
++      TextFormField(
++        controller: _paintInfoController,
++        decoration: const InputDecoration(
++          labelText: 'Информация для красок',
++          hintText: 'Комментарий применяется ко всем краскам',
++          border: OutlineInputBorder(),
+         ),
+-        const SizedBox(height: 3),
+-        ...List.generate(_paints.length, (i) {
+-          final row = _paints[i];
+-          return Padding(
+-            padding: const EdgeInsets.only(bottom: 8.0),
+-            child: LayoutBuilder(
+-              builder: (context, constraints) {
+-                final isCompact = constraints.maxWidth < 520;
+-                final paintField = Autocomplete<TmcModel>(
+-                    optionsBuilder: (TextEditingValue text) {
+-                      final provider = Provider.of<WarehouseProvider>(context,
+-                          listen: false);
+-                      final list = provider.getTmcByType('Краска');
+-                      final query = text.text.toLowerCase();
+-                      if (query.isEmpty) return list;
+-                      return list.where(
+-                          (t) => t.description.toLowerCase().contains(query));
+-                    },
+-                    displayStringForOption: (tmc) => tmc.description,
+-                    fieldViewBuilder:
+-                        (context, controller, focusNode, onFieldSubmitted) {
+-                      final display = row.displayName;
+-                      if (controller.text != display) {
+-                        controller
+-                          ..text = display
+-                          ..selection = TextSelection.fromPosition(
+-                            TextPosition(offset: controller.text.length),
+-                          );
+-                      }
+-                      return TextFormField(
+-                        controller: controller,
+-                        focusNode: focusNode,
+-                        decoration: InputDecoration(
+-                          labelText: 'Краска (необязательно)',
+-                          border: const OutlineInputBorder(),
+-                          errorText: row.nameNotFound
+-                              ? 'Такой краски нет на складе'
+-                              : null,
+-                        ),
+-                        onChanged: (value) {
+-                          final trimmed = value.trim();
+-                          setState(() {
+-                            row.name = trimmed.isEmpty ? null : trimmed;
+-                            if (row.tmc != null &&
+-                                row.tmc!.description.toLowerCase() !=
+-                                    trimmed.toLowerCase()) {
+-                              row.tmc = null;
+-                              row.exceeded = false;
+-                            }
+-                          });
+-                          _validatePaintNames();
+-                          _handlePaintsChanged();
+-                        },
+-                      );
+-                    },
+-                    onSelected: (tmc) {
+-                      setState(() {
+-                        row.tmc = tmc;
+-                        row.name = tmc.description;
+-                        row.nameNotFound = false;
+-                        if (row.qtyGrams != null) {
+-                          final need = _gramsToStockUnit(row.qtyGrams!, tmc);
+-                          row.exceeded = need > _paintAvailableQty(tmc);
+-                        } else {
+-                          row.exceeded = false;
+-                        }
+-                      });
+-                      _handlePaintsChanged();
+-                    },
+-                    optionsViewBuilder: (context, onSelected, options) {
+-                      return Align(
+-                        alignment: Alignment.topLeft,
+-                        child: Material(
+-                          elevation: 6,
+-                          borderRadius: BorderRadius.circular(10),
+-                          clipBehavior: Clip.antiAlias,
+-                          child: ConstrainedBox(
+-                            constraints: const BoxConstraints(
+-                              minWidth: 280,
+-                              maxWidth: 520,
+-                              maxHeight: 260,
+-                            ),
+-                            child: ListView.builder(
+-                              padding: EdgeInsets.zero,
+-                              itemCount: options.length,
+-                              itemBuilder: (context, index) {
+-                                final tmc = options.elementAt(index);
+-                                return ListTile(
+-                                  dense: true,
+-                                  title: Text(
+-                                    tmc.description,
+-                                    maxLines: 1,
+-                                    overflow: TextOverflow.ellipsis,
+-                                  ),
+-                                  subtitle: Text(
+-                                      'Доступно: '
+-                                      '${_formatStockQty(_paintAvailableQty(tmc))} ${tmc.unit}'
+-                                      '${tmc.reservedQty > 0 ? ' • в резерве ${_formatStockQty(tmc.reservedQty)}' : ''}'),
+-                                  onTap: () => onSelected(tmc),
+-                                );
+-                              },
+-                            ),
+-                          ),
+-                        ),
++        minLines: 1,
++        maxLines: 3,
++        onChanged: (value) {
++          final normalized = value.trim();
++          setState(() {
++            _paintInfo = normalized;
++            for (final paint in _paints) {
++              paint.memo = normalized;
++            }
++          });
++        },
++      ),
++      const SizedBox(height: 3),
++      ...List.generate(_paints.length, (i) {
++        final row = _paints[i];
++        return Padding(
++          padding: const EdgeInsets.only(bottom: 8.0),
++          child: LayoutBuilder(
++            builder: (context, constraints) {
++              final isCompact = constraints.maxWidth < 520;
++              final paintField = Autocomplete<TmcModel>(
++                optionsBuilder: (TextEditingValue text) {
++                  final provider =
++                      Provider.of<WarehouseProvider>(context, listen: false);
++                  final list = provider.getTmcByType('Краска');
++                  final query = text.text.toLowerCase();
++                  if (query.isEmpty) return list;
++                  return list.where(
++                      (t) => t.description.toLowerCase().contains(query));
++                },
++                displayStringForOption: (tmc) => tmc.description,
++                fieldViewBuilder:
++                    (context, controller, focusNode, onFieldSubmitted) {
++                  final display = row.displayName;
++                  if (controller.text != display) {
++                    controller
++                      ..text = display
++                      ..selection = TextSelection.fromPosition(
++                        TextPosition(offset: controller.text.length),
+                       );
+-                    },
+-                  );
+-                final qtyField = SizedBox(
+-                  width: 130,
+-                  child: TextFormField(
+-                    key: ValueKey('qty_$i'),
++                  }
++                  return TextFormField(
++                    controller: controller,
++                    focusNode: focusNode,
+                     decoration: InputDecoration(
+-                      labelText: 'Кол-во (г)',
++                      labelText: 'Краска (необязательно)',
+                       border: const OutlineInputBorder(),
+-                      errorText: row.exceeded ? 'Недостаточно' : null,
++                      errorText: row.nameNotFound
++                          ? 'Такой краски нет на складе'
++                          : null,
+                     ),
+-                    initialValue: _formatGramsForInput(row.qtyGrams),
+-                    keyboardType: TextInputType.number,
+-                    onChanged: (val) {
+-                      final qty = _parseGrams(val);
++                    onChanged: (value) {
++                      final trimmed = value.trim();
+                       setState(() {
+-                        row.qtyGrams = qty;
+-                        if (row.tmc != null && qty != null) {
+-                          final need = _gramsToStockUnit(qty, row.tmc!);
+-                          row.exceeded = need > _paintAvailableQty(row.tmc!);
+-                        } else {
++                        row.name = trimmed.isEmpty ? null : trimmed;
++                        if (row.tmc != null &&
++                            row.tmc!.description.toLowerCase() !=
++                                trimmed.toLowerCase()) {
++                          row.tmc = null;
+                           row.exceeded = false;
+                         }
+                       });
++                      _validatePaintNames();
++                      _handlePaintsChanged();
+                     },
+-                  ),
+-                );
+-                final removeButton = _paints.length > 1
+-                    ? IconButton(
+-                        tooltip: 'Удалить краску',
+-                        onPressed: () {
+-                          setState(() => _paints.removeAt(i));
+-                          _handlePaintsChanged();
+-                        },
+-                        icon: const Icon(Icons.remove_circle_outline),
+-                      )
+-                    : const SizedBox.shrink();
+-
+-                if (isCompact) {
+-                  return Column(
+-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+-                    children: [
+-                      paintField,
+-                      const SizedBox(height: 6),
+-                      Row(
+-                        children: [
+-                          qtyField,
+-                          const SizedBox(width: 8),
+-                          removeButton,
+-                        ],
++                  );
++                },
++                onSelected: (tmc) {
++                  setState(() {
++                    row.tmc = tmc;
++                    row.name = tmc.description;
++                    row.nameNotFound = false;
++                    if (row.qtyGrams != null) {
++                      final need = _gramsToStockUnit(row.qtyGrams!, tmc);
++                      row.exceeded = need > _paintAvailableQty(tmc);
++                    } else {
++                      row.exceeded = false;
++                    }
++                  });
++                  _handlePaintsChanged();
++                },
++                optionsViewBuilder: (context, onSelected, options) {
++                  return Align(
++                    alignment: Alignment.topLeft,
++                    child: Material(
++                      elevation: 6,
++                      borderRadius: BorderRadius.circular(10),
++                      clipBehavior: Clip.antiAlias,
++                      child: ConstrainedBox(
++                        constraints: const BoxConstraints(
++                          minWidth: 280,
++                          maxWidth: 520,
++                          maxHeight: 260,
++                        ),
++                        child: ListView.builder(
++                          padding: EdgeInsets.zero,
++                          itemCount: options.length,
++                          itemBuilder: (context, index) {
++                            final tmc = options.elementAt(index);
++                            return ListTile(
++                              dense: true,
++                              title: Text(
++                                tmc.description,
++                                maxLines: 1,
++                                overflow: TextOverflow.ellipsis,
++                              ),
++                              subtitle: Text('Доступно: '
++                                  '${_formatStockQty(_paintAvailableQty(tmc))} ${tmc.unit}'
++                                  '${tmc.reservedQty > 0 ? ' • в резерве ${_formatStockQty(tmc.reservedQty)}' : ''}'),
++                              onTap: () => onSelected(tmc),
++                            );
++                          },
++                        ),
+                       ),
+-                    ],
++                    ),
+                   );
+-                }
++                },
++              );
++              final qtyField = SizedBox(
++                width: 130,
++                child: TextFormField(
++                  key: ValueKey('qty_$i'),
++                  decoration: InputDecoration(
++                    labelText: 'Кол-во (г)',
++                    border: const OutlineInputBorder(),
++                    errorText: row.exceeded ? 'Недостаточно' : null,
++                  ),
++                  initialValue: _formatGramsForInput(row.qtyGrams),
++                  keyboardType: TextInputType.number,
++                  onChanged: (val) {
++                    final qty = _parseGrams(val);
++                    setState(() {
++                      row.qtyGrams = qty;
++                      if (row.tmc != null && qty != null) {
++                        final need = _gramsToStockUnit(qty, row.tmc!);
++                        row.exceeded = need > _paintAvailableQty(row.tmc!);
++                      } else {
++                        row.exceeded = false;
++                      }
++                    });
++                  },
++                ),
++              );
++              final removeButton = _paints.length > 1
++                  ? IconButton(
++                      tooltip: 'Удалить краску',
++                      onPressed: () {
++                        setState(() => _paints.removeAt(i));
++                        _handlePaintsChanged();
++                      },
++                      icon: const Icon(Icons.remove_circle_outline),
++                    )
++                  : const SizedBox.shrink();
+ 
+-                return Row(
++              if (isCompact) {
++                return Column(
++                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                   children: [
+-                    Expanded(flex: 7, child: paintField),
+-                    const SizedBox(width: 12),
+-                    qtyField,
+-                    const SizedBox(width: 8),
+-                    removeButton,
++                    paintField,
++                    const SizedBox(height: 6),
++                    Row(
++                      children: [
++                        qtyField,
++                        const SizedBox(width: 8),
++                        removeButton,
++                      ],
++                    ),
+                   ],
+                 );
+-              },
+-            ),
+-          );
+-        }),
+-        Align(
+-          alignment: Alignment.centerLeft,
+-          child: TextButton.icon(
+-            onPressed: () {
+-              setState(() => _paints.add(_PaintEntry(memo: _paintInfo)));
+-              _handlePaintsChanged();
++              }
++
++              return Row(
++                children: [
++                  Expanded(flex: 7, child: paintField),
++                  const SizedBox(width: 12),
++                  qtyField,
++                  const SizedBox(width: 8),
++                  removeButton,
++                ],
++              );
+             },
+-            icon: const Icon(Icons.add),
+-            label: const Text('Добавить краску'),
+           ),
++        );
++      }),
++      Align(
++        alignment: Alignment.centerLeft,
++        child: TextButton.icon(
++          onPressed: () {
++            setState(() => _paints.add(_PaintEntry(memo: _paintInfo)));
++            _handlePaintsChanged();
++          },
++          icon: const Icon(Icons.add),
++          label: const Text('Добавить краску'),
+         ),
+-      ];
++      ),
++    ];
+ 
+     if (!wrapWithCard) {
+       return Column(
+@@ -7190,7 +7277,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+         for (final f in _pickedOrderPdfs)
+           _buildPdfTile(
+             name: f.name,
+-            onOpen: f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
++            onOpen:
++                f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
+             onRemove: () => setState(() => _pickedOrderPdfs.remove(f)),
+             removeTooltip: 'Убрать',
+           ),
+@@ -7450,7 +7538,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+       for (final f in _newFormPdfs) {
+         widgets.add(_buildPdfTile(
+           name: f.name,
+-          onOpen: f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
++          onOpen:
++              f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
+           onRemove: () => setState(() => _newFormPdfs.remove(f)),
+           removeTooltip: 'Убрать',
+         ));
+@@ -7769,4 +7858,4 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
+   String _formatDate(DateTime date) {
+     return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/modules/orders/order_model.dart b/lib/modules/orders/order_model.dart
+index fd621c9..762be5f 100644
+--- a/lib/modules/orders/order_model.dart
++++ b/lib/modules/orders/order_model.dart
+@@ -113,6 +113,7 @@ class OrderModel {
+   DateTime orderDate;
+   DateTime? dueDate;
+   ProductModel product;
++  String? productTypeId;
+   List<String> additionalParams;
+   String handle;
+   String cardboard;
+@@ -158,6 +159,7 @@ class OrderModel {
+     required this.orderDate,
+     required this.dueDate,
+     required this.product,
++    this.productTypeId,
+     List<String>? additionalParams,
+     String? handle,
+     String? cardboard,
+@@ -235,16 +237,20 @@ class OrderModel {
+     }
+   }
+ 
+-  OrderStatus get statusEnum => OrderStatus.values.firstWhere(
+-      (s) => s.name == normalizeStatus(status),
+-      orElse: () => OrderStatus.draft);
++  OrderStatus get statusEnum =>
++      OrderStatus.values.firstWhere((s) => s.name == normalizeStatus(status),
++          orElse: () => OrderStatus.draft);
+   set statusEnum(OrderStatus s) => status = s.name;
+ 
+   /// В БД пишем snake_case.
+   ///
+   /// [includeNulls] нужен для UPDATE-сценариев, когда необходимо явно
+   /// сбросить значение колонки в `null` (например, при удалении очереди этапов).
+-  Map<String, dynamic> toMap({bool includeNulls = false}) => {
++  Map<String, dynamic> toMap({
++    bool includeNulls = false,
++    bool includeProductTypeId = false,
++  }) =>
++      {
+         'id': id,
+         'manager': manager,
+         'customer': customer,
+@@ -252,12 +258,12 @@ class OrderModel {
+         if (includeNulls || dueDate != null)
+           'due_date': dueDate?.toIso8601String(),
+         'product': product.toMap(),
++        if (includeProductTypeId) 'product_type_id': productTypeId,
+         'additional_params':
+             additionalParams, // массив строк; БД примет и объект
+         'handle': handle,
+         'cardboard': cardboard,
+-        if (includeNulls || material != null)
+-          'material': material?.toMap(),
++        if (includeNulls || material != null) 'material': material?.toMap(),
+         if (includeNulls || paperMaterials.isNotEmpty)
+           // Колонка orders.material_list — NOT NULL, поэтому при пустом списке
+           // на UPDATE (includeNulls) шлём '[]', а не null (иначе 23502).
+@@ -349,8 +355,8 @@ class OrderModel {
+         (_pickAny(map, const ['form_code', 'formCode']) as String?);
+     final hasFormBool = _asBool(_pickAny(map, const ['has_form', 'hasForm'])) ??
+         isOldFormBool ||
+-        newFormNoVal != null ||
+-        ((formCodeVal ?? '').trim().isNotEmpty);
++            newFormNoVal != null ||
++            ((formCodeVal ?? '').trim().isNotEmpty);
+ 
+     double? _parseDouble(dynamic value) {
+       if (value == null) return null;
+@@ -377,6 +383,8 @@ class OrderModel {
+           DateTime.now(),
+       dueDate: _parseDate(_pickAny(map, const ['due_date', 'dueDate'])),
+       product: ProductModel.fromMap(productMap),
++      productTypeId:
++          _pickAny(map, const ['product_type_id', 'productTypeId'])?.toString(),
+       additionalParams: _asStringList(
+           _pickAny(map, const ['additional_params', 'additionalParams'])),
+       handle: (_pickAny(map, const ['handle']) as String?) ?? '-',
+@@ -404,10 +412,8 @@ class OrderModel {
+       comments: (_pickAny(map, const ['comments']) as String?) ?? '',
+       status:
+           normalizeStatus((_pickAny(map, const ['status']) as String?) ?? ''),
+-      hasMaterialShortage: _asBool(_pickAny(map, const [
+-            'has_material_shortage',
+-            'hasMaterialShortage'
+-          ])) ??
++      hasMaterialShortage: _asBool(_pickAny(
++              map, const ['has_material_shortage', 'hasMaterialShortage'])) ??
+           false,
+       materialShortageMessage: (_pickAny(map, const [
+             'material_shortage_message',
+@@ -419,8 +425,7 @@ class OrderModel {
+       assignmentCreated: assignmentCreatedBool,
+       actualQty: _parseDouble(
+           _pickAny(map, const ['actual_qty', 'actualQty', 'actualQuantity'])),
+-      shippedAt:
+-          _parseDate(_pickAny(map, const ['shipped_at', 'shippedAt'])),
++      shippedAt: _parseDate(_pickAny(map, const ['shipped_at', 'shippedAt'])),
+       shippedBy: (_pickAny(map, const ['shipped_by', 'shippedBy']) as String?),
+       shippedQty:
+           _parseDouble(_pickAny(map, const ['shipped_qty', 'shippedQty'])),
+@@ -439,9 +444,11 @@ class OrderModel {
+         return decoded.isEmpty ? null : decoded;
+       })(),
+       restartedFromOrderId: (_pickAny(
+-          map, const ['restarted_from_order_id', 'restartedFromOrderId']) as String?),
+-      restartRootOrderId: (_pickAny(
+-          map, const ['restart_root_order_id', 'restartRootOrderId']) as String?),
++              map, const ['restarted_from_order_id', 'restartedFromOrderId'])
++          as String?),
++      restartRootOrderId:
++          (_pickAny(map, const ['restart_root_order_id', 'restartRootOrderId'])
++              as String?),
+       restartGeneration:
+           ((_pickAny(map, const ['restart_generation', 'restartGeneration'])
+                       as num?)
+@@ -458,6 +465,7 @@ class OrderModel {
+     DateTime? orderDate,
+     DateTime? dueDate,
+     ProductModel? product,
++    String? productTypeId,
+     List<String>? additionalParams,
+     String? handle,
+     String? cardboard,
+@@ -499,6 +507,7 @@ class OrderModel {
+       orderDate: orderDate ?? this.orderDate,
+       dueDate: dueDate ?? this.dueDate,
+       product: product ?? this.product,
++      productTypeId: productTypeId ?? this.productTypeId,
+       additionalParams:
+           additionalParams ?? List<String>.from(this.additionalParams),
+       handle: handle ?? this.handle,
+@@ -540,4 +549,4 @@ class OrderModel {
+       restartGeneration: restartGeneration ?? this.restartGeneration,
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/modules/orders/orders_provider.dart b/lib/modules/orders/orders_provider.dart
+index c6a622e..d30a633 100644
+--- a/lib/modules/orders/orders_provider.dart
++++ b/lib/modules/orders/orders_provider.dart
+@@ -13,9 +13,11 @@ import 'orders_repository.dart';
+ import 'product_model.dart';
+ import '../tasks/task_model.dart' show normalizeEpochToMillis;
+ import '../../utils/auth_helper.dart';
++import '../../services/product_type_config_capability.dart';
+ 
+ class OrdersProvider with ChangeNotifier {
+   final SupabaseClient _supabase = Supabase.instance.client;
++  final ProductTypeConfigCapabilityProvider? _capabilityProvider;
+ 
+   final List<OrderModel> _orders = [];
+   List<OrderModel> get orders => List.unmodifiable(_orders);
+@@ -26,7 +28,8 @@ class OrdersProvider with ChangeNotifier {
+   Timer? _stockRecheckDebounce;
+   bool _stockRecheckInProgress = false;
+ 
+-  OrdersProvider() {
++  OrdersProvider({ProductTypeConfigCapabilityProvider? capabilityProvider})
++      : _capabilityProvider = capabilityProvider {
+     _listenToOrders();
+     _listenToStockChanges();
+   }
+@@ -68,7 +71,8 @@ class OrdersProvider with ChangeNotifier {
+   void _listenToStockChanges() {
+     void scheduleStockRecheck() {
+       _stockRecheckDebounce?.cancel();
+-      _stockRecheckDebounce = Timer(const Duration(milliseconds: 400), () async {
++      _stockRecheckDebounce =
++          Timer(const Duration(milliseconds: 400), () async {
+         await recheckMaterialAvailability(forceRefresh: true);
+       });
+     }
+@@ -201,7 +205,8 @@ class OrdersProvider with ChangeNotifier {
+       final requiredLength = _requiredPaperReserveQty(order, paper);
+       if (requiredLength <= 0) continue;
+       final available = await _fetchMaterialQty(paper.id);
+-      if (available == null) return 'Материал "${paper.name}" не найден на складе.';
++      if (available == null)
++        return 'Материал "${paper.name}" не найден на складе.';
+       final shortage = requiredLength - available;
+       if (shortage > 0) {
+         return 'Недостаточно материала "${paper.name}": требуется ${requiredLength.toStringAsFixed(2)}, '
+@@ -216,8 +221,11 @@ class OrdersProvider with ChangeNotifier {
+     if (id.isEmpty) return null;
+     Future<double?> fetchQty(String table) async {
+       try {
+-        final row =
+-            await _supabase.from(table).select('quantity').eq('id', id).maybeSingle();
++        final row = await _supabase
++            .from(table)
++            .select('quantity')
++            .eq('id', id)
++            .maybeSingle();
+         if (row == null) return null;
+         final value = row['quantity'];
+         if (value is num) return value.toDouble();
+@@ -305,7 +313,8 @@ class OrdersProvider with ChangeNotifier {
+     }
+ 
+     return rows
+-        .where((row) => activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
++        .where((row) =>
++            activeOrderIds.contains((row['order_id'] ?? '').toString().trim()))
+         .toList(growable: false);
+   }
+ 
+@@ -375,8 +384,9 @@ class OrdersProvider with ChangeNotifier {
+             if (oid.isEmpty) continue;
+             final status = (r['status'] ?? '').toString().toLowerCase().trim();
+             final shippedAt = r['shipped_at'];
+-            final isClosed =
+-                status == 'completed' || status == 'shipped' || shippedAt != null;
++            final isClosed = status == 'completed' ||
++                status == 'shipped' ||
++                shippedAt != null;
+             if (!isClosed) activeOrderIds.add(oid);
+           }
+         }
+@@ -540,6 +550,16 @@ class OrdersProvider with ChangeNotifier {
+ 
+   // ===== CRUD =====
+ 
++  Map<String, dynamic> _orderPayload(
++    OrderModel order, {
++    bool includeNulls = false,
++  }) {
++    return order.toMap(
++      includeNulls: includeNulls,
++      includeProductTypeId: _capabilityProvider?.useNewSchema ?? false,
++    );
++  }
++
+   /// Добавляет готовый заказ (оптимистично) и пишет в таблицу `orders`.
+   Future<void> addOrder(OrderModel order) async {
+     await _ensureAuthed();
+@@ -555,7 +575,7 @@ class OrdersProvider with ChangeNotifier {
+       );
+       final inserted = await _supabase
+           .from('orders')
+-          .insert(normalizedOrder.toMap())
++          .insert(_orderPayload(normalizedOrder))
+           .select()
+           .single() as Map<String, dynamic>;
+ 
+@@ -607,6 +627,7 @@ class OrdersProvider with ChangeNotifier {
+     required DateTime orderDate,
+     DateTime? dueDate,
+     required ProductModel product,
++    String? productTypeId,
+     List<String> additionalParams = const [],
+     String handle = '-',
+     String cardboard = 'нет',
+@@ -637,36 +658,37 @@ class OrdersProvider with ChangeNotifier {
+     final tempLocalId = 'local-${DateTime.now().microsecondsSinceEpoch}';
+     final localOrder = _applyOrderFormRulesForPersist(
+       OrderModel(
+-      id: tempLocalId,
+-      manager: manager,
+-      customer: customer,
+-      orderDate: orderDate,
+-      dueDate: dueDate,
+-      product: product,
+-      additionalParams: additionalParams,
+-      handle: handle,
+-      cardboard: cardboard,
+-      material: material,
+-      paperMaterials: paperMaterials,
+-      makeready: makeready,
+-      val: val,
+-      pdfUrl: pdfUrl,
+-      stageTemplateId: stageTemplateId,
+-      hasForm: hasForm,
+-      contractSigned: contractSigned,
+-      paymentDone: paymentDone,
+-      comments: comments,
+-      status: status,
+-      queueBuildStatus: queueBuildStatus,
+-      selectedVStage: selectedVStage,
+-      selectedPStage: selectedPStage,
+-      queueSignature: queueSignature,
+-      restartedFromOrderId: restartedFromOrderId,
+-      restartRootOrderId: restartRootOrderId,
+-      restartGeneration: restartGeneration,
+-      assignmentId: assignmentId,
+-      assignmentCreated: assignmentCreated,
+-    ),
++        id: tempLocalId,
++        manager: manager,
++        customer: customer,
++        orderDate: orderDate,
++        dueDate: dueDate,
++        product: product,
++        productTypeId: productTypeId,
++        additionalParams: additionalParams,
++        handle: handle,
++        cardboard: cardboard,
++        material: material,
++        paperMaterials: paperMaterials,
++        makeready: makeready,
++        val: val,
++        pdfUrl: pdfUrl,
++        stageTemplateId: stageTemplateId,
++        hasForm: hasForm,
++        contractSigned: contractSigned,
++        paymentDone: paymentDone,
++        comments: comments,
++        status: status,
++        queueBuildStatus: queueBuildStatus,
++        selectedVStage: selectedVStage,
++        selectedPStage: selectedPStage,
++        queueSignature: queueSignature,
++        restartedFromOrderId: restartedFromOrderId,
++        restartRootOrderId: restartRootOrderId,
++        restartGeneration: restartGeneration,
++        assignmentId: assignmentId,
++        assignmentCreated: assignmentCreated,
++      ),
+       hasPaints: product.parameters.toLowerCase().contains('краска:'),
+     );
+ 
+@@ -677,7 +699,7 @@ class OrdersProvider with ChangeNotifier {
+     try {
+       final inserted = await _supabase
+           .from('orders')
+-          .insert(localOrder.toMap()..remove('id')) // let DB generate id
++          .insert(_orderPayload(localOrder)..remove('id')) // let DB generate id
+           .select()
+           .single() as Map<String, dynamic>;
+ 
+@@ -738,7 +760,8 @@ class OrdersProvider with ChangeNotifier {
+       );
+       await _supabase
+           .from('orders')
+-          .update(normalizedUpdated.toMap(includeNulls: true)..remove('id'))
++          .update(_orderPayload(normalizedUpdated, includeNulls: true)
++            ..remove('id'))
+           .eq('id', updated.id);
+       if (updated.assignmentCreated ||
+           updated.statusEnum == OrderStatus.in_production) {
+@@ -841,7 +864,7 @@ class OrdersProvider with ChangeNotifier {
+     try {
+       await _supabase
+           .from('orders')
+-          .update(updated.toMap()..remove('id'))
++          .update(_orderPayload(updated)..remove('id'))
+           .eq('id', updated.id);
+       // Ключевое бизнес-правило рабочего пространства: при правке бумаги
+       // резерв должен пересчитываться всегда, чтобы детали ПЗ и склад
+@@ -1007,9 +1030,8 @@ class OrdersProvider with ChangeNotifier {
+         id.trim(),
+         if (assignmentId.isNotEmpty) assignmentId,
+       }..removeWhere((value) => value.isEmpty);
+-      final dbOrderRefs = relatedOrderIds
+-          .where(_looksLikeUuid)
+-          .toList(growable: false);
++      final dbOrderRefs =
++          relatedOrderIds.where(_looksLikeUuid).toList(growable: false);
+ 
+       // Фикс: логируем удаление до фактического удаления заказа, иначе
+       // вставка в order_events ломается по FK order_events_order_id_fkey.
+@@ -1114,8 +1136,8 @@ class OrdersProvider with ChangeNotifier {
+             .where((value) => !removedOrderIds.contains(value.trim()))
+             .toList(growable: false);
+ 
+-        final changed =
+-            nextSequence.length != originalSequence.length || nextHidden.length != originalHidden.length;
++        final changed = nextSequence.length != originalSequence.length ||
++            nextHidden.length != originalHidden.length;
+         if (!changed) continue;
+ 
+         await _supabase.from('production_queue_state').upsert({
+@@ -1219,7 +1241,7 @@ class OrdersProvider with ChangeNotifier {
+     notifyListeners();
+ 
+     try {
+-      final orderUpdate = updated.toMap()..remove('id');
++      final orderUpdate = _orderPayload(updated)..remove('id');
+       orderUpdate['completed_at'] = now.toIso8601String();
+       await _supabase.from('orders').update(orderUpdate).eq('id', order.id);
+       if (actualQtyForPens != null && actualQtyForPens > 0) {
+@@ -1280,8 +1302,8 @@ class OrdersProvider with ChangeNotifier {
+       return;
+     }
+ 
+-    final category = await _findWarehouseCategoryByProductName(
+-      productName,
++    final category = await _findWarehouseCategoryForOrder(
++      order,
+       columns: 'id, has_subtables',
+     );
+ 
+@@ -1328,8 +1350,9 @@ class OrdersProvider with ChangeNotifier {
+           .single();
+       item = Map<String, dynamic>.from(inserted);
+     } else {
+-      final double currentQty =
+-          (item['quantity'] is num) ? (item['quantity'] as num).toDouble() : 0.0;
++      final double currentQty = (item['quantity'] is num)
++          ? (item['quantity'] as num).toDouble()
++          : 0.0;
+       if (initialQty > currentQty) {
+         final Map<String, dynamic> updatePayload = {
+           'quantity': initialQty,
+@@ -1387,9 +1410,8 @@ class OrdersProvider with ChangeNotifier {
+     String formatDouble(double value) {
+       final String fixed = value.toStringAsFixed(2);
+       if (!fixed.contains('.')) return fixed;
+-      final String trimmed = fixed
+-          .replaceAll(RegExp(r'0+$'), '')
+-          .replaceAll(RegExp(r'[.]$'), '');
++      final String trimmed =
++          fixed.replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'[.]$'), '');
+       return trimmed.isEmpty ? '0' : trimmed;
+     }
+ 
+@@ -1421,8 +1443,8 @@ class OrdersProvider with ChangeNotifier {
+       return null;
+     }
+ 
+-    final dynamic category = await _findWarehouseCategoryByProductName(
+-      productName,
++    final dynamic category = await _findWarehouseCategoryForOrder(
++      order,
+       columns: 'id, title, code, has_subtables',
+     );
+ 
+@@ -1481,6 +1503,28 @@ class OrdersProvider with ChangeNotifier {
+     return null;
+   }
+ 
++  Future<Map<String, dynamic>?> _findWarehouseCategoryForOrder(
++    OrderModel order, {
++    required String columns,
++  }) async {
++    final productTypeId = order.productTypeId?.trim() ?? '';
++    if (productTypeId.isNotEmpty) {
++      final dynamic byId = await _supabase
++          .from('warehouse_categories')
++          .select(columns)
++          .eq('id', productTypeId)
++          .maybeSingle();
++      if (byId is Map && byId['id'] != null) {
++        return Map<String, dynamic>.from(byId);
++      }
++    }
++
++    return _findWarehouseCategoryByProductName(
++      order.product.type,
++      columns: columns,
++    );
++  }
++
+   Future<void> _handleActualQtyChange({
+     required OrderModel previous,
+     required OrderModel updated,
+@@ -1528,7 +1572,8 @@ class OrdersProvider with ChangeNotifier {
+     );
+   }
+ 
+-  Future<void> _applyImmediateMaterialAvailabilityState(OrderModel order) async {
++  Future<void> _applyImmediateMaterialAvailabilityState(
++      OrderModel order) async {
+     final queueBuilt = QueueBuildStatus.normalize(order.queueBuildStatus) ==
+         QueueBuildStatus.built;
+     final hasEnough = queueBuilt && await _hasEnoughMaterialForLaunch(order);
+@@ -1604,13 +1649,16 @@ class OrdersProvider with ChangeNotifier {
+     return 0;
+   }
+ 
+-  Future<MaterialModel> _normalizePaperForReservation(MaterialModel paper) async {
++  Future<MaterialModel> _normalizePaperForReservation(
++      MaterialModel paper) async {
+     final double? perPaperLength = _paperExtraLength(paper);
+     final double qty = paper.quantity > 0
+         ? paper.quantity
+         : (perPaperLength != null && perPaperLength > 0
+             ? perPaperLength
+-            : (paper.weight != null && paper.weight! > 0 ? paper.weight! : 0.0));
++            : (paper.weight != null && paper.weight! > 0
++                ? paper.weight!
++                : 0.0));
+     final normalized = paper.copyWith(quantity: qty);
+     final currentId = (normalized.id ?? '').trim();
+     if (currentId.isNotEmpty) {
+@@ -1713,7 +1761,8 @@ class OrdersProvider with ChangeNotifier {
+ 
+   Future<void> _releasePaintReservations({required String orderId}) async {
+     try {
+-      await OrdersRepository(supabaseClient: _supabase).releasePaintReservations(
++      await OrdersRepository(supabaseClient: _supabase)
++          .releasePaintReservations(
+         orderId: orderId,
+         reason: 'order_deleted',
+         actor: AuthHelper.currentUserName ?? '',
+@@ -1761,7 +1810,8 @@ class OrdersProvider with ChangeNotifier {
+   }) async {
+     final before = await _loadOrderReservationMap(orderId);
+     if (before.isEmpty) return;
+-    final normalizedOrderLabel = orderLabel.trim().isEmpty ? orderId : orderLabel.trim();
++    final normalizedOrderLabel =
++        orderLabel.trim().isEmpty ? orderId : orderLabel.trim();
+     final defaultReason = 'Списание после завершения заказа $orderId';
+     final humanReadableReason =
+         'Списание после завершения заказа $normalizedOrderLabel';
+@@ -1804,8 +1854,7 @@ class OrdersProvider with ChangeNotifier {
+       // приводим комментарий к человекочитаемому виду.
+       await _supabase
+           .from('papers_writeoffs')
+-          .update({'reason': humanReadableReason})
+-          .eq('reason', defaultReason);
++          .update({'reason': humanReadableReason}).eq('reason', defaultReason);
+     }
+ 
+     await _logOrderEvent(
+@@ -1921,9 +1970,9 @@ class OrdersProvider with ChangeNotifier {
+ 
+     final user = (AuthHelper.currentUserName ?? 'Сотрудник').trim();
+     final timestamp = fmtDate(DateTime.now());
+-    final maxCount = before.length > after.length ? before.length : after.length;
+-    final buffer = StringBuffer()
+-      ..writeln('$user изменил бумагу $timestamp');
++    final maxCount =
++        before.length > after.length ? before.length : after.length;
++    final buffer = StringBuffer()..writeln('$user изменил бумагу $timestamp');
+     for (var i = 0; i < maxCount; i++) {
+       final old = i < before.length ? before[i] : null;
+       final next = i < after.length ? after[i] : null;
+@@ -1976,8 +2025,10 @@ class OrdersProvider with ChangeNotifier {
+     for (var i = 0; i < before.length; i++) {
+       final beforeWidthB = _toDouble(before[i].extra?['widthB']);
+       final afterWidthB = _toDouble(after[i].extra?['widthB']);
+-      final beforeBlQuantity = (before[i].extra?['blQuantity'] ?? '').toString().trim();
+-      final afterBlQuantity = (after[i].extra?['blQuantity'] ?? '').toString().trim();
++      final beforeBlQuantity =
++          (before[i].extra?['blQuantity'] ?? '').toString().trim();
++      final afterBlQuantity =
++          (after[i].extra?['blQuantity'] ?? '').toString().trim();
+       if (before[i].id != after[i].id ||
+           textChanged(before[i].name, after[i].name) ||
+           textChanged(before[i].format, after[i].format) ||
+@@ -2152,10 +2203,8 @@ class OrdersProvider with ChangeNotifier {
+         final row = Map<String, dynamic>.from(raw as Map);
+         final name = (row['name'] ?? '').toString().trim();
+         final color = (row['color'] ?? '').toString().trim();
+-        final desc = [name, color]
+-            .where((part) => part.isNotEmpty)
+-            .join(' • ')
+-            .trim();
++        final desc =
++            [name, color].where((part) => part.isNotEmpty).join(' • ').trim();
+         if (desc.toLowerCase() == trimmed.toLowerCase()) {
+           return row;
+         }
+@@ -2373,8 +2422,7 @@ class OrdersProvider with ChangeNotifier {
+       return double.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
+     }
+ 
+-    final packsMatch = RegExp(r'(-?\d+(?:\.\d+)?)\s*пач',
+-            caseSensitive: false)
++    final packsMatch = RegExp(r'(-?\d+(?:\.\d+)?)\s*пач', caseSensitive: false)
+         .firstMatch(normalized);
+     final inPackMatch =
+         RegExp(r'[x×*]\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
+@@ -2440,7 +2488,8 @@ class OrdersProvider with ChangeNotifier {
+     DateTime? _parseTimestamp(dynamic value) {
+       if (value == null) return null;
+       if (value is int) {
+-        return DateTime.fromMillisecondsSinceEpoch(normalizeEpochToMillis(value));
++        return DateTime.fromMillisecondsSinceEpoch(
++            normalizeEpochToMillis(value));
+       }
+       if (value is num) {
+         final int intValue = value.toInt();
+@@ -2457,7 +2506,11 @@ class OrdersProvider with ChangeNotifier {
+     }
+ 
+     double? _extractQuantity(String type, String text) {
+-      const trackedTypes = {'quantity_done', 'quantity_team_total', 'quantity_share'};
++      const trackedTypes = {
++        'quantity_done',
++        'quantity_team_total',
++        'quantity_share'
++      };
+       if (!trackedTypes.contains(type)) return null;
+       final normalized = text.replaceAll(',', '.');
+       final match = RegExp(r'-?[0-9]+(?:\.[0-9]+)?').firstMatch(normalized);
+@@ -2486,14 +2539,15 @@ class OrdersProvider with ChangeNotifier {
+         for (final raw in eventRows) {
+           if (raw is! Map) continue;
+           final map = Map<String, dynamic>.from(raw as Map);
+-          final DateTime? ts =
+-              _parseTimestamp(map['created_at'] ?? map['timestamp'] ?? map['inserted_at']);
++          final DateTime? ts = _parseTimestamp(
++              map['created_at'] ?? map['timestamp'] ?? map['inserted_at']);
+           combined.add({
+             'source': 'order_event',
+             'timestamp': ts?.millisecondsSinceEpoch,
+             'event_type': _stringOrNull(map['event_type']) ?? '',
+-            'description':
+-                _stringOrNull(map['description']) ?? _stringOrNull(map['message']) ?? '',
++            'description': _stringOrNull(map['description']) ??
++                _stringOrNull(map['message']) ??
++                '',
+             'user_id': _stringOrNull(map['user_id']),
+             'payload': map['payload'],
+           });
+@@ -2540,7 +2594,8 @@ class OrdersProvider with ChangeNotifier {
+         for (final raw in taskRows) {
+           if (raw is! Map) continue;
+           final map = Map<String, dynamic>.from(raw as Map);
+-          final String? stageId = _stringOrNull(map['stage_id'] ?? map['stageId']);
++          final String? stageId =
++              _stringOrNull(map['stage_id'] ?? map['stageId']);
+           final commentsData = map['comments'];
+           final List<Map<String, dynamic>> commentsList = [];
+ 
+@@ -2589,8 +2644,10 @@ class OrdersProvider with ChangeNotifier {
+           final Map<String, dynamic> orderData =
+               Map<String, dynamic>.from(orderRowMap);
+           final DateTime? shippedAt = _parseTimestamp(orderData['shipped_at']);
+-          final double? shippedQty = _toDoubleNullable(orderData['shipped_qty']);
+-          final double? producedQty = _toDoubleNullable(orderData['actual_qty']);
++          final double? shippedQty =
++              _toDoubleNullable(orderData['shipped_qty']);
++          final double? producedQty =
++              _toDoubleNullable(orderData['actual_qty']);
+           if (producedQty != null) {
+             combined.add({
+               'source': 'order_event',
+@@ -2811,4 +2868,4 @@ class OrdersProvider with ChangeNotifier {
+     final next = (maxSeq + 1).toString();
+     return '$datePrefix$next';
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/modules/production/production_screen.dart b/lib/modules/production/production_screen.dart
+index 41f630a..a6dfb30 100644
+--- a/lib/modules/production/production_screen.dart
++++ b/lib/modules/production/production_screen.dart
+@@ -543,8 +543,10 @@ class _ProductionScreenState extends State<ProductionScreen>
+   Future<void> _loadProductTypes() async {
+     setState(() => _loadingProductTypes = true);
+     try {
+-      final rows =
+-          await Supabase.instance.client.from('warehouse_categories').select();
++      final rows = await Supabase.instance.client
++          .from('warehouse_categories')
++          .select()
++          .isFilter('archived_at', null);
+       final types = ((rows as List?) ?? [])
+           .map((row) => (row['title'] ?? '').toString().trim())
+           .where((title) => title.isNotEmpty)
+@@ -1605,4 +1607,4 @@ class _ProductionTabState extends State<_ProductionTab> {
+       ),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/modules/warehouse/categories_hub_screen.dart b/lib/modules/warehouse/categories_hub_screen.dart
+index 954257f..d1850ee 100644
+--- a/lib/modules/warehouse/categories_hub_screen.dart
++++ b/lib/modules/warehouse/categories_hub_screen.dart
+@@ -1,11 +1,52 @@
+ import 'package:flutter/material.dart';
++import 'package:provider/provider.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ 
++import '../../services/product_type_config_capability.dart';
+ import '../../utils/auth_helper.dart';
+ import '../../utils/kostanay_time.dart';
++import 'category_deletion_service.dart';
+ import 'deleted_records_repository.dart';
+ import 'deleted_records_screen.dart';
+ 
++class _SupabaseCategoryDeletionGateway implements CategoryDeletionGateway {
++  _SupabaseCategoryDeletionGateway(this._client);
++
++  final SupabaseClient _client;
++
++  @override
++  Future<void> hardDelete(String categoryId) async {
++    await _client.from('warehouse_categories').delete().eq('id', categoryId);
++  }
++
++  @override
++  Future<void> archiveAtomically({
++    required String categoryId,
++    String? reason,
++    String? deletedBy,
++  }) async {
++    await _client.rpc('archive_warehouse_category', params: {
++      'p_category_id': categoryId,
++      'p_reason': reason,
++      'p_deleted_by': deletedBy,
++    });
++  }
++
++  @override
++  Future<void> writeLegacyAudit({
++    required String categoryId,
++    required Map<String, dynamic> payload,
++    String? reason,
++  }) {
++    return DeletedRecordsRepository.archive(
++      entityType: 'category',
++      entityId: categoryId,
++      payload: payload,
++      reason: reason,
++    );
++  }
++}
++
+ class CategoriesHubScreen extends StatefulWidget {
+   const CategoriesHubScreen({super.key});
+   @override
+@@ -44,7 +85,10 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
+     setState(() => _loading = true);
+     await _ensureAuthed();
+ 
+-    final rows = await _sb.from('warehouse_categories').select();
++    final rows = await _sb
++        .from('warehouse_categories')
++        .select()
++        .isFilter('archived_at', null);
+     _items = ((rows as List?) ?? [])
+         .cast<Map<String, dynamic>>()
+         .map((r) => {
+@@ -130,16 +174,30 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
+   }
+ 
+   Future<void> _deleteCategory(Map<String, dynamic> it) async {
++    final capabilityProvider =
++        context.read<ProductTypeConfigCapabilityProvider>();
++    final capability = capabilityProvider.capability;
++    if (capability == ProductTypeConfigCapability.unknown) {
++      ScaffoldMessenger.of(context).showSnackBar(
++        const SnackBar(content: Text(productTypeCapabilityUnavailableMessage)),
++      );
++      return;
++    }
++
++    final isArchive = capability == ProductTypeConfigCapability.enabled;
+     final reasonC = TextEditingController();
+     final ok = await showDialog<bool>(
+       context: context,
+       builder: (_) => AlertDialog(
+-        title: const Text('Удалить категорию?'),
++        title:
++            Text(isArchive ? 'Архивировать категорию?' : 'Удалить категорию?'),
+         content: Column(
+           mainAxisSize: MainAxisSize.min,
+           crossAxisAlignment: CrossAxisAlignment.stretch,
+           children: [
+-            const Text('Все позиции внутри будут удалены (ON DELETE CASCADE).'),
++            Text(isArchive
++                ? 'Категория исчезнет из активных списков. Старые заказы сохранят ссылку и останутся читаемыми.'
++                : 'Все позиции внутри будут удалены (ON DELETE CASCADE).'),
+             const SizedBox(height: 12),
+             TextField(
+               controller: reasonC,
+@@ -156,28 +214,73 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
+               child: const Text('Отмена')),
+           FilledButton(
+               onPressed: () => Navigator.pop(context, true),
+-              child: const Text('Удалить')),
++              child: Text(isArchive ? 'Архивировать' : 'Удалить')),
+         ],
+       ),
+     );
+     if (ok != true) return;
+ 
+-    await DeletedRecordsRepository.archive(
+-      entityType: 'category',
+-      entityId: it['id']?.toString(),
+-      payload: {
+-        'id': it['id'],
+-        'code': it['code'],
+-        'title': it['title'],
+-        'has_subtables': it['has_subtables'],
+-      },
+-      reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
++    final id = it['id']?.toString() ?? '';
++    final reason = reasonC.text.trim().isEmpty ? null : reasonC.text.trim();
++    final payload = <String, dynamic>{
++      'id': it['id'],
++      'code': it['code'],
++      'title': it['title'],
++      'has_subtables': it['has_subtables'],
++    };
++    final service = CategoryDeletionService(
++      _SupabaseCategoryDeletionGateway(_sb),
+     );
+ 
+-    await _sb.from('warehouse_categories').delete().match({
+-      'id': it['id'],
+-    });
+-    await _load();
++    try {
++      await service.deleteOrArchive(
++        capability: capability,
++        categoryId: id,
++        payload: payload,
++        reason: reason,
++        deletedBy: AuthHelper.currentUserName,
++      );
++      await _load();
++    } on PostgrestException catch (error) {
++      if (!mounted) return;
++      if (error.code == '23503') {
++        final count = await _referencingOrderCount(it);
++        if (!mounted) return;
++        ScaffoldMessenger.of(context).showSnackBar(
++          SnackBar(
++            content: Text(
++              'Категорию нельзя удалить: на неё ссылаются $count заказов',
++            ),
++          ),
++        );
++      } else {
++        ScaffoldMessenger.of(context).showSnackBar(
++          SnackBar(
++              content: Text('Не удалось выполнить операцию: ${error.message}')),
++        );
++      }
++    } catch (error) {
++      if (!mounted) return;
++      ScaffoldMessenger.of(context).showSnackBar(
++        SnackBar(content: Text('Не удалось выполнить операцию: $error')),
++      );
++    }
++  }
++
++  Future<int> _referencingOrderCount(Map<String, dynamic> category) async {
++    final id = category['id']?.toString() ?? '';
++    try {
++      final rows = await _sb.from('orders').select('id').eq(
++            'product_type_id',
++            id,
++          );
++      return (rows as List?)?.length ?? 0;
++    } on PostgrestException {
++      final title = category['title']?.toString() ?? '';
++      final rows =
++          await _sb.from('orders').select('id').eq('product->>type', title);
++      return (rows as List?)?.length ?? 0;
++    }
+   }
+ 
+   void _openDeletedCategories() {
+@@ -207,6 +310,7 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    final capability = context.watch<ProductTypeConfigCapabilityProvider>();
+     return Scaffold(
+       appBar: AppBar(
+         title: const Text('Категории'),
+@@ -215,35 +319,75 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
+               tooltip: 'Удалённые записи',
+               onPressed: _openDeletedCategories,
+               icon: const Icon(Icons.delete_sweep_outlined)),
++          IconButton(
++            tooltip: 'Обновить возможности сервера',
++            onPressed: capability.isRefreshing
++                ? null
++                : () async {
++                    await capability.refresh();
++                    if (mounted) await _load();
++                  },
++            icon: const Icon(Icons.sync),
++          ),
+           IconButton(
+               onPressed: _addCategoryDialog, icon: const Icon(Icons.add)),
+         ],
+       ),
+       body: _loading
+           ? const Center(child: CircularProgressIndicator())
+-          : ListView.separated(
+-              padding: const EdgeInsets.symmetric(vertical: 8),
+-              itemCount: _items.length,
+-              separatorBuilder: (_, __) => const Divider(height: 1),
+-              itemBuilder: (_, i) {
+-                final it = _items[i];
+-                final title = (it['title'] ?? '').toString();
+-                return ListTile(
+-                  title: Text(title),
+-                  onTap: () => _open(it),
+-                  trailing: PopupMenuButton<String>(
+-                    onSelected: (v) {
+-                      if (v == 'rename') _renameCategory(it);
+-                      if (v == 'delete') _deleteCategory(it);
+-                    },
+-                    itemBuilder: (_) => const [
+-                      PopupMenuItem(
+-                          value: 'rename', child: Text('Переименовать')),
+-                      PopupMenuItem(value: 'delete', child: Text('Удалить')),
++          : Column(
++              children: [
++                if (capability.capability ==
++                    ProductTypeConfigCapability.unknown)
++                  MaterialBanner(
++                    content: const Text(
++                      productTypeCapabilityUnavailableMessage,
++                    ),
++                    actions: [
++                      TextButton(
++                        onPressed:
++                            capability.isRefreshing ? null : capability.refresh,
++                        child: const Text('Повторить'),
++                      ),
+                     ],
+                   ),
+-                );
+-              },
++                Expanded(
++                  child: ListView.separated(
++                    padding: const EdgeInsets.symmetric(vertical: 8),
++                    itemCount: _items.length,
++                    separatorBuilder: (_, __) => const Divider(height: 1),
++                    itemBuilder: (_, i) {
++                      final it = _items[i];
++                      final title = (it['title'] ?? '').toString();
++                      return ListTile(
++                        title: Text(title),
++                        onTap: () => _open(it),
++                        trailing: PopupMenuButton<String>(
++                          onSelected: (v) {
++                            if (v == 'rename') _renameCategory(it);
++                            if (v == 'delete') _deleteCategory(it);
++                          },
++                          itemBuilder: (_) => [
++                            const PopupMenuItem(
++                                value: 'rename', child: Text('Переименовать')),
++                            PopupMenuItem(
++                              value: 'delete',
++                              enabled:
++                                  capability.destructiveCategoryActionsEnabled,
++                              child: Text(
++                                capability.capability ==
++                                        ProductTypeConfigCapability.enabled
++                                    ? 'Архивировать'
++                                    : 'Удалить',
++                              ),
++                            ),
++                          ],
++                        ),
++                      );
++                    },
++                  ),
++                ),
++              ],
+             ),
+     );
+   }
+@@ -369,7 +513,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
+                 'reason': r['reason'],
+                 'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
+                 'created_at': r['created_at'],
+-                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
++                'size':
++                    r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                 'comment': r['comment'] ??
+                     r['reason'] ??
+                     itemMeta[r['item_id']?.toString()]?['comment'],
+@@ -389,7 +534,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
+                 'note': r['note'],
+                 'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
+                 'created_at': r['created_at'],
+-                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
++                'size':
++                    r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                 'comment': r['comment'] ??
+                     r['note'] ??
+                     itemMeta[r['item_id']?.toString()]?['comment'],
+@@ -827,7 +973,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
+                     final subtitleParts = <String>[];
+                     if (dt.trim().isNotEmpty) subtitleParts.add(dt);
+                     if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+-                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
++                    if (comment.isNotEmpty)
++                      subtitleParts.add('Комментарий: $comment');
+                     if (by.isNotEmpty) subtitleParts.add(by);
+                     return ListTile(
+                       title: Text('$title • −$qty'),
+@@ -852,7 +999,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
+                     final subtitleParts = <String>[];
+                     if (dt.trim().isNotEmpty) subtitleParts.add(dt);
+                     if (size.isNotEmpty) subtitleParts.add('Размер: $size');
+-                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
++                    if (comment.isNotEmpty)
++                      subtitleParts.add('Комментарий: $comment');
+                     if (by.isNotEmpty) subtitleParts.add(by);
+                     return ListTile(
+                       title: Text('$title • $qty'),
+@@ -864,4 +1012,4 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
+             ),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/modules/warehouse/deleted_records_repository.dart b/lib/modules/warehouse/deleted_records_repository.dart
+index a0f0816..b8df752 100644
+--- a/lib/modules/warehouse/deleted_records_repository.dart
++++ b/lib/modules/warehouse/deleted_records_repository.dart
+@@ -17,37 +17,29 @@ class DeletedRecordsRepository {
+     String? reason,
+     Map<String, dynamic>? extra,
+   }) async {
+-    try {
+-      final data = <String, dynamic>{
+-        'entity_type': entityType,
+-        if (entityId != null) 'entity_id': entityId,
+-        if (payload != null) 'payload': payload,
+-        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+-        if ((AuthHelper.currentUserName ?? '').isNotEmpty)
+-          'deleted_by': AuthHelper.currentUserName,
+-        if (extra != null && extra.isNotEmpty) 'extra': extra,
+-      };
+-      await _sb.from('warehouse_deleted_records').insert(data);
+-    } catch (_) {
+-      // Archiving should not break the main flow.
+-    }
++    final data = <String, dynamic>{
++      'entity_type': entityType,
++      if (entityId != null) 'entity_id': entityId,
++      if (payload != null) 'payload': payload,
++      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
++      if ((AuthHelper.currentUserName ?? '').isNotEmpty)
++        'deleted_by': AuthHelper.currentUserName,
++      if (extra != null && extra.isNotEmpty) 'extra': extra,
++    };
++    await _sb.from('warehouse_deleted_records').insert(data);
+   }
+ 
+   /// Loads deleted records for particular [entityType].
+   static Future<List<Map<String, dynamic>>> fetch(String entityType) async {
+-    try {
+-      final res = await _sb
+-          .from('warehouse_deleted_records')
+-          .select()
+-          .eq('entity_type', entityType)
+-          .order('deleted_at', ascending: false);
+-      final list = (res as List?) ?? const [];
+-      return list
+-          .whereType<Map<String, dynamic>>()
+-          .map((e) => Map<String, dynamic>.from(e))
+-          .toList();
+-    } catch (_) {
+-      return const [];
+-    }
++    final res = await _sb
++        .from('warehouse_deleted_records')
++        .select()
++        .eq('entity_type', entityType)
++        .order('deleted_at', ascending: false);
++    final list = (res as List?) ?? const [];
++    return list
++        .whereType<Map<String, dynamic>>()
++        .map((e) => Map<String, dynamic>.from(e))
++        .toList();
+   }
+ }
+diff --git a/lib/utils/auth_helper.dart b/lib/utils/auth_helper.dart
+index 2019895..bdb64cf 100644
+--- a/lib/utils/auth_helper.dart
++++ b/lib/utils/auth_helper.dart
+@@ -1,3 +1,5 @@
++import 'dart:async';
++
+ /// Helper class to store information about the currently logged in user.
+ ///
+ /// This class exposes static fields that are set during the login
+@@ -5,6 +7,11 @@
+ /// determine the current user identifier, display name and whether
+ /// they are the technical leader.
+ class AuthHelper {
++  static final StreamController<void> _userChanges =
++      StreamController<void>.broadcast(sync: true);
++
++  static Stream<void> get onUserChanged => _userChanges.stream;
++
+   /// Unique identifier of the currently logged‑in user. For regular
+   /// employees this corresponds to their Firebase key. For the
+   /// technical leader we use the special identifier `tech_leader`.
+@@ -25,6 +32,7 @@ class AuthHelper {
+     currentUserId = 'tech_leader';
+     currentUserName = name;
+     isTechLeader = true;
++    _userChanges.add(null);
+   }
+ 
+   /// Sets the current user as a regular employee. Pass both the
+@@ -33,6 +41,7 @@ class AuthHelper {
+     currentUserId = id;
+     currentUserName = name;
+     isTechLeader = false;
++    _userChanges.add(null);
+   }
+ 
+   /// Resets the stored user information. This can be used when
+@@ -41,5 +50,6 @@ class AuthHelper {
+     currentUserId = null;
+     currentUserName = null;
+     isTechLeader = false;
++    _userChanges.add(null);
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/modules/warehouse/category_deletion_service.dart b/lib/modules/warehouse/category_deletion_service.dart
+new file mode 100644
+index 0000000..0f65a62
+--- /dev/null
++++ b/lib/modules/warehouse/category_deletion_service.dart
+@@ -0,0 +1,58 @@
++import '../../services/product_type_config_capability.dart';
++
++class CategoryCapabilityUnavailableException implements Exception {
++  const CategoryCapabilityUnavailableException();
++
++  @override
++  String toString() => productTypeCapabilityUnavailableMessage;
++}
++
++abstract class CategoryDeletionGateway {
++  Future<void> hardDelete(String categoryId);
++
++  Future<void> archiveAtomically({
++    required String categoryId,
++    String? reason,
++    String? deletedBy,
++  });
++
++  Future<void> writeLegacyAudit({
++    required String categoryId,
++    required Map<String, dynamic> payload,
++    String? reason,
++  });
++}
++
++class CategoryDeletionService {
++  const CategoryDeletionService(this._gateway);
++
++  final CategoryDeletionGateway _gateway;
++
++  Future<void> deleteOrArchive({
++    required ProductTypeConfigCapability capability,
++    required String categoryId,
++    required Map<String, dynamic> payload,
++    String? reason,
++    String? deletedBy,
++  }) async {
++    switch (capability) {
++      case ProductTypeConfigCapability.unknown:
++        throw const CategoryCapabilityUnavailableException();
++      case ProductTypeConfigCapability.disabled:
++        await _gateway.hardDelete(categoryId);
++        await _gateway.writeLegacyAudit(
++          categoryId: categoryId,
++          payload: payload,
++          reason: reason,
++        );
++        return;
++      case ProductTypeConfigCapability.enabled:
++        await _gateway.archiveAtomically(
++          categoryId: categoryId,
++          reason: reason,
++          deletedBy: deletedBy,
++        );
++        return;
++    }
++  }
++}
+diff --git a/lib/modules/warehouse/warehouse_category_option.dart b/lib/modules/warehouse/warehouse_category_option.dart
+new file mode 100644
+index 0000000..b09cdc4
+--- /dev/null
++++ b/lib/modules/warehouse/warehouse_category_option.dart
+@@ -0,0 +1,49 @@
++class WarehouseCategoryOption {
++  const WarehouseCategoryOption({
++    required this.id,
++    required this.title,
++    required this.code,
++    this.archivedAt,
++  });
++
++  factory WarehouseCategoryOption.fromMap(Map<String, dynamic> map) {
++    final rawArchivedAt = map['archived_at'];
++    return WarehouseCategoryOption(
++      id: (map['id'] ?? '').toString(),
++      title: (map['title'] ?? map['code'] ?? '').toString().trim(),
++      code: (map['code'] ?? '').toString().trim(),
++      archivedAt: rawArchivedAt == null
++          ? null
++          : DateTime.tryParse(rawArchivedAt.toString()),
++    );
++  }
++
++  final String id;
++  final String title;
++  final String code;
++  final DateTime? archivedAt;
++
++  bool get isArchived => archivedAt != null;
++  String get displayTitle => isArchived ? '$title (Архивная)' : title;
++}
++
++List<WarehouseCategoryOption> activeCategoryOptions(
++  Iterable<WarehouseCategoryOption> categories,
++) =>
++    categories.where((category) => !category.isArchived).toList();
++
++List<WarehouseCategoryOption> categoryOptionsForOrder({
++  required Iterable<WarehouseCategoryOption> active,
++  WarehouseCategoryOption? current,
++}) {
++  final byId = <String, WarehouseCategoryOption>{
++    for (final category in active)
++      if (!category.isArchived) category.id: category,
++  };
++  if (current != null && !byId.containsKey(current.id)) {
++    byId[current.id] = current;
++  }
++  final result = byId.values.toList()
++    ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
++  return result;
++}
+diff --git a/lib/services/product_type_config_capability.dart b/lib/services/product_type_config_capability.dart
+new file mode 100644
+index 0000000..e20cf24
+--- /dev/null
++++ b/lib/services/product_type_config_capability.dart
+@@ -0,0 +1,134 @@
++import 'dart:async';
++
++import 'package:flutter/foundation.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++enum ProductTypeConfigCapability {
++  unknown,
++  disabled,
++  enabled,
++}
++
++const productTypeCapabilityUnavailableMessage =
++    'Не удалось проверить возможности сервера. Повторите после восстановления связи';
++
++bool usesProductTypeConfigSchema(ProductTypeConfigCapability capability) =>
++    capability == ProductTypeConfigCapability.enabled;
++
++bool allowsLegacyCategoryDelete(ProductTypeConfigCapability capability) =>
++    capability == ProductTypeConfigCapability.disabled;
++
++bool allowsCategoryArchive(ProductTypeConfigCapability capability) =>
++    capability == ProductTypeConfigCapability.enabled;
++
++bool allowsCategoryDestructiveAction(ProductTypeConfigCapability capability) =>
++    capability != ProductTypeConfigCapability.unknown;
++
++abstract class ProductTypeConfigCapabilityRepository {
++  Future<bool> fetchEnabled();
++}
++
++class SupabaseProductTypeConfigCapabilityRepository
++    implements ProductTypeConfigCapabilityRepository {
++  SupabaseProductTypeConfigCapabilityRepository(this._client);
++
++  final SupabaseClient _client;
++
++  @override
++  Future<bool> fetchEnabled() async {
++    final row = await _client
++        .from('app_capabilities')
++        .select('enabled')
++        .eq('code', 'product_type_form_blocks_v1')
++        .single();
++    return row['enabled'] == true;
++  }
++}
++
++class ProductTypeConfigCapabilityProvider extends ChangeNotifier {
++  ProductTypeConfigCapabilityProvider(
++    this._repository, {
++    Stream<AuthState>? authChanges,
++    Stream<void>? appUserChanges,
++  }) {
++    _authSubscription = authChanges?.listen(_handleAuthStateChange);
++    _appUserSubscription = appUserChanges?.listen((_) {
++      invalidateForUserChange();
++    });
++  }
++
++  final ProductTypeConfigCapabilityRepository _repository;
++  StreamSubscription<AuthState>? _authSubscription;
++  StreamSubscription<void>? _appUserSubscription;
++
++  ProductTypeConfigCapability _capability = ProductTypeConfigCapability.unknown;
++  ProductTypeConfigCapability? _lastConfirmed;
++  Object? _lastError;
++  bool _isRefreshing = false;
++  bool _isStale = false;
++  int _requestGeneration = 0;
++
++  ProductTypeConfigCapability get capability => _capability;
++  ProductTypeConfigCapability? get lastConfirmed => _lastConfirmed;
++  Object? get lastError => _lastError;
++  bool get isRefreshing => _isRefreshing;
++  bool get isStale => _isStale;
++  bool get useNewSchema => usesProductTypeConfigSchema(_capability);
++  bool get destructiveCategoryActionsEnabled =>
++      allowsCategoryDestructiveAction(_capability);
++
++  Future<void> refresh() async {
++    final generation = ++_requestGeneration;
++    _isRefreshing = true;
++    _lastError = null;
++    notifyListeners();
++
++    try {
++      final enabled = await _repository.fetchEnabled();
++      if (generation != _requestGeneration) return;
++      _capability = enabled
++          ? ProductTypeConfigCapability.enabled
++          : ProductTypeConfigCapability.disabled;
++      _lastConfirmed = _capability;
++      _isStale = false;
++    } catch (error) {
++      if (generation != _requestGeneration) return;
++      _lastError = error;
++      _capability = ProductTypeConfigCapability.unknown;
++      _isStale = _lastConfirmed != null;
++    } finally {
++      if (generation == _requestGeneration) {
++        _isRefreshing = false;
++        notifyListeners();
++      }
++    }
++  }
++
++  void invalidateForUserChange({bool refreshImmediately = true}) {
++    _requestGeneration++;
++    _capability = ProductTypeConfigCapability.unknown;
++    _lastConfirmed = null;
++    _lastError = null;
++    _isStale = false;
++    _isRefreshing = false;
++    notifyListeners();
++    if (refreshImmediately) unawaited(refresh());
++  }
++
++  void _handleAuthStateChange(AuthState state) {
++    final event = state.event.name;
++    if (event == 'signedIn' ||
++        event == 'signedOut' ||
++        event == 'userUpdated' ||
++        event == 'userDeleted') {
++      invalidateForUserChange();
++    }
++  }
++
++  @override
++  void dispose() {
++    _authSubscription?.cancel();
++    _appUserSubscription?.cancel();
++    super.dispose();
++  }
++}
+diff --git a/test/product_type_rollout_compatibility_test.dart b/test/product_type_rollout_compatibility_test.dart
+new file mode 100644
+index 0000000..3f2cc5f
+--- /dev/null
++++ b/test/product_type_rollout_compatibility_test.dart
+@@ -0,0 +1,216 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import 'package:sheet_clone/modules/orders/order_model.dart';
++import 'package:sheet_clone/modules/orders/product_model.dart';
++import 'package:sheet_clone/modules/warehouse/category_deletion_service.dart';
++import 'package:sheet_clone/modules/warehouse/warehouse_category_option.dart';
++import 'package:sheet_clone/services/product_type_config_capability.dart';
++
++class _QueueCapabilityRepository
++    implements ProductTypeConfigCapabilityRepository {
++  final List<Object> outcomes = <Object>[];
++
++  @override
++  Future<bool> fetchEnabled() async {
++    final outcome = outcomes.removeAt(0);
++    if (outcome is bool) return outcome;
++    throw outcome;
++  }
++}
++
++class _FakeDeletionGateway implements CategoryDeletionGateway {
++  Object? hardDeleteError;
++  int hardDeleteCalls = 0;
++  int archiveCalls = 0;
++  int auditCalls = 0;
++
++  @override
++  Future<void> hardDelete(String categoryId) async {
++    hardDeleteCalls++;
++    if (hardDeleteError != null) throw hardDeleteError!;
++  }
++
++  @override
++  Future<void> archiveAtomically({
++    required String categoryId,
++    String? reason,
++    String? deletedBy,
++  }) async {
++    archiveCalls++;
++  }
++
++  @override
++  Future<void> writeLegacyAudit({
++    required String categoryId,
++    required Map<String, dynamic> payload,
++    String? reason,
++  }) async {
++    auditCalls++;
++  }
++}
++
++OrderModel _order({String? productTypeId = 'category-a'}) => OrderModel(
++      id: 'order-a',
++      manager: 'manager',
++      customer: 'customer',
++      orderDate: DateTime.utc(2026, 8, 5),
++      dueDate: null,
++      product: ProductModel(
++        id: 'product-a',
++        type: 'Пакет',
++        quantity: 1,
++        width: 1,
++        height: 1,
++        depth: 1,
++        parameters: '',
++      ),
++      productTypeId: productTypeId,
++    );
++
++void main() {
++  test('capability disabled uses legacy order payload', () {
++    const capability = ProductTypeConfigCapability.disabled;
++    final payload = _order().toMap(
++      includeProductTypeId: usesProductTypeConfigSchema(capability),
++    );
++
++    expect(payload, isNot(contains('product_type_id')));
++    expect(allowsLegacyCategoryDelete(capability), isTrue);
++  });
++
++  test('capability enabled uses product_type_id payload', () {
++    const capability = ProductTypeConfigCapability.enabled;
++    final payload = _order().toMap(
++      includeProductTypeId: usesProductTypeConfigSchema(capability),
++    );
++
++    expect(payload['product_type_id'], 'category-a');
++    expect(allowsCategoryArchive(capability), isTrue);
++  });
++
++  test('capability unknown disables destructive controls', () {
++    expect(
++      allowsCategoryDestructiveAction(
++        ProductTypeConfigCapability.unknown,
++      ),
++      isFalse,
++    );
++    expect(
++      allowsLegacyCategoryDelete(ProductTypeConfigCapability.unknown),
++      isFalse,
++    );
++    expect(
++      allowsCategoryArchive(ProductTypeConfigCapability.unknown),
++      isFalse,
++    );
++  });
++
++  test('failed refresh after enabled becomes stale unknown', () async {
++    final repository = _QueueCapabilityRepository()
++      ..outcomes.addAll(<Object>[true, StateError('offline')]);
++    final provider = ProductTypeConfigCapabilityProvider(repository);
++    addTearDown(provider.dispose);
++
++    await provider.refresh();
++    expect(provider.capability, ProductTypeConfigCapability.enabled);
++
++    await provider.refresh();
++    expect(provider.capability, ProductTypeConfigCapability.unknown);
++    expect(provider.lastConfirmed, ProductTypeConfigCapability.enabled);
++    expect(provider.isStale, isTrue);
++    expect(provider.lastError, isA<StateError>());
++  });
++
++  test('active category list hides archived categories', () {
++    final categories = <WarehouseCategoryOption>[
++      const WarehouseCategoryOption(id: 'a', title: 'A', code: 'a'),
++      WarehouseCategoryOption(
++        id: 'b',
++        title: 'B',
++        code: 'b',
++        archivedAt: DateTime.utc(2026, 8, 5),
++      ),
++    ];
++
++    expect(activeCategoryOptions(categories).map((item) => item.id), ['a']);
++  });
++
++  test('old order keeps its archived category visible', () {
++    final archived = WarehouseCategoryOption(
++      id: 'b',
++      title: 'B',
++      code: 'b',
++      archivedAt: DateTime.utc(2026, 8, 5),
++    );
++    final options = categoryOptionsForOrder(
++      active: const [
++        WarehouseCategoryOption(id: 'a', title: 'A', code: 'a'),
++      ],
++      current: archived,
++    );
++
++    expect(options.map((item) => item.id), containsAll(['a', 'b']));
++    expect(
++      options.singleWhere((item) => item.id == 'b').displayTitle,
++      'B (Архивная)',
++    );
++  });
++
++  test('legacy delete 23503 does not create false audit', () async {
++    final gateway = _FakeDeletionGateway()
++      ..hardDeleteError = const PostgrestException(
++        message: 'foreign key violation',
++        code: '23503',
++      );
++    final service = CategoryDeletionService(gateway);
++
++    await expectLater(
++      service.deleteOrArchive(
++        capability: ProductTypeConfigCapability.disabled,
++        categoryId: 'a',
++        payload: const {'id': 'a'},
++      ),
++      throwsA(
++        isA<PostgrestException>().having(
++          (error) => error.code,
++          'code',
++          '23503',
++        ),
++      ),
++    );
++    expect(gateway.hardDeleteCalls, 1);
++    expect(gateway.auditCalls, 0);
++  });
++
++  test('unknown capability never calls hard delete', () async {
++    final gateway = _FakeDeletionGateway();
++    final service = CategoryDeletionService(gateway);
++
++    await expectLater(
++      service.deleteOrArchive(
++        capability: ProductTypeConfigCapability.unknown,
++        categoryId: 'a',
++        payload: const {'id': 'a'},
++      ),
++      throwsA(isA<CategoryCapabilityUnavailableException>()),
++    );
++    expect(gateway.hardDeleteCalls, 0);
++    expect(gateway.archiveCalls, 0);
++  });
++
++  test('enabled capability archives instead of deleting', () async {
++    final gateway = _FakeDeletionGateway();
++    final service = CategoryDeletionService(gateway);
++
++    await service.deleteOrArchive(
++      capability: ProductTypeConfigCapability.enabled,
++      categoryId: 'a',
++      payload: const {'id': 'a'},
++    );
++
++    expect(gateway.archiveCalls, 1);
++    expect(gateway.hardDeleteCalls, 0);
++    expect(gateway.auditCalls, 0);
++  });
++}
