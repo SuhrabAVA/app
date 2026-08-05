@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'personnel_provider.dart';
 import 'positions_screen.dart';
 import 'employees_screen.dart';
+import 'product_types_screen.dart';
 import 'statuses_screen.dart';
 import 'workplaces_screen.dart';
 import 'terminals_screen.dart';
@@ -57,6 +58,13 @@ class PersonnelScreen extends StatelessWidget {
               page: const TerminalsScreen(),
               color: const Color(0xFF81D4FA),
               icon: Icons.computer_outlined,
+            ),
+            _buildModuleCard(
+              context,
+              title: 'Типы продукта',
+              page: const ProductTypesScreen(),
+              color: const Color(0xFFA5D6A7),
+              icon: Icons.category_outlined,
             ),
           ],
         ),

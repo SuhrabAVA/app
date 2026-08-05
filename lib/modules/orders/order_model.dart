@@ -151,6 +151,13 @@ class OrderModel {
   String? restartRootOrderId;
   int restartGeneration;
 
+  /// `orders.product_type_id` — ссылка на `warehouse_categories`.
+  ///
+  /// Тип продукта до сих пор дублируется строкой в `product.type`; эта колонка
+  /// заменяет сверку по заголовку, которая ломалась при переименовании
+  /// категории. Заполняется только когда значение известно — см. [toMap].
+  String? productTypeId;
+
   OrderModel({
     required this.id,
     required this.manager,
@@ -192,6 +199,7 @@ class OrderModel {
     this.restartedFromOrderId,
     this.restartRootOrderId,
     this.restartGeneration = 0,
+    this.productTypeId,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -297,6 +305,14 @@ class OrderModel {
         if (includeNulls || restartRootOrderId != null)
           'restart_root_order_id': restartRootOrderId,
         'restart_generation': restartGeneration,
+        // ВНИМАНИЕ: условие намеренно НЕ включает includeNulls.
+        // updateOrder вызывает toMap(includeNulls: true), и по общему шаблону
+        // ключ ушёл бы со значением null — то есть сохранение заказа, у
+        // которого тип не выбран, стирало бы уже проставленный
+        // product_type_id. Ровно это и произошло в откачённой ветке. Правило:
+        // ключ отправляется только когда значение известно, иначе его в
+        // payload нет вовсе и колонка остаётся нетронутой.
+        if (productTypeId != null) 'product_type_id': productTypeId,
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -447,6 +463,12 @@ class OrderModel {
                       as num?)
                   ?.toInt()) ??
               0,
+      productTypeId: (() {
+        final raw = _pickAny(map, const ['product_type_id', 'productTypeId'])
+            ?.toString()
+            .trim();
+        return (raw == null || raw.isEmpty) ? null : raw;
+      })(),
     );
   }
 
@@ -491,6 +513,7 @@ class OrderModel {
     String? restartedFromOrderId,
     String? restartRootOrderId,
     int? restartGeneration,
+    String? productTypeId,
   }) {
     return OrderModel(
       id: id,
@@ -538,6 +561,7 @@ class OrderModel {
       restartedFromOrderId: restartedFromOrderId ?? this.restartedFromOrderId,
       restartRootOrderId: restartRootOrderId ?? this.restartRootOrderId,
       restartGeneration: restartGeneration ?? this.restartGeneration,
+      productTypeId: productTypeId ?? this.productTypeId,
     );
   }
 }

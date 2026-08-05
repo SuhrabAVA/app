@@ -23,6 +23,7 @@ import 'orders_repository.dart';
 import 'order_model.dart';
 import 'order_form_rules.dart';
 import 'product_model.dart';
+import 'product_type_settings.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
 import 'orders_screen.dart';
@@ -147,11 +148,14 @@ class _PaintEntry {
   set qtyKg(double? value) => qtyGrams = value == null ? null : value * 1000;
 }
 
-bool _supportsCardboard(String productTypeId) =>
-    supportsCardboardForProductType(productTypeId);
-
+/// Прежнее зашитое правило «нет картона у Листов и В-образных».
+///
+/// С миграции 20260806 оно живёт в данных (`product_type_form_blocks`), а здесь
+/// остаётся фолбэком на то время, пока настройки ещё не приехали из базы, —
+/// иначе на первом кадре чекбокс «Картон» мигал бы. Тесты
+/// `edit_order_screen_cardboard_test.dart` проверяют именно этот фолбэк.
 bool supportsCardboardForTesting(String productTypeId) =>
-    _supportsCardboard(productTypeId);
+    supportsCardboardForProductType(productTypeId);
 
 List<Map<String, dynamic>> _buildStageMapsForProductionPlanSave({
   required List<Map<String, dynamic>> stagePreviewStages,
@@ -754,19 +758,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Future<void> _loadCategoriesForProduct() async {
     setState(() => _catsLoading = true);
     try {
-      final rows = await _sb.from('warehouse_categories').select('title, code');
-      final names = <String>[];
-      for (final r in (rows as List)) {
-        final title = (r['title'] ?? r['code'] ?? '').toString().trim();
-        if (title.isNotEmpty) names.add(title);
-      }
-      names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-      setState(() => _categoryTitles = names);
+      // Справочник типов продукта и настройки блоков формы приезжают одним
+      // прогревом и живут в кэше на сессию, поэтому отдельного запроса при
+      // открытии заказа нет. Метод вызывается дважды из initState — второй
+      // вызов попадает в кэш и запроса не делает.
+      await ProductTypeSettings.instance.ensureLoaded();
+      final names = ProductTypeSettings.instance.productTypeTitles.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      if (!mounted) return;
+      setState(() {
+        _categoryTitles = names;
+        // Настройки приходят позже первого кадра, а картон мог быть скрыт не
+        // только прежним зашитым правилом, но и настройкой техлида. Поэтому
+        // зависимое поле пересчитывается здесь ещё раз.
+        if (!_isBlockVisible(kOrderFormBlockCardboard)) {
+          _cardboardChecked = false;
+          _selectedCardboard = 'нет';
+        }
+      });
     } catch (e) {
       debugPrint('load categories error: $e');
     } finally {
       if (mounted) setState(() => _catsLoading = false);
     }
+  }
+
+  /// Uuid выбранного типа продукта или null, если тип не выбран либо не найден
+  /// в справочнике.
+  ///
+  /// null означает «значение неизвестно», и тогда ключ `product_type_id` в
+  /// payload не попадает вовсе — см. комментарий в [OrderModel.toMap]. Слать
+  /// null нельзя: сохранение заказа стирало бы уже проставленный тип.
+  String? _currentProductTypeId() =>
+      ProductTypeSettings.instance.resolveProductTypeId(_product.type);
+
+  /// Активен ли блок формы для текущего типа продукта.
+  ///
+  /// Пока настройки не загружены, для картона держим прежнее зашитое правило —
+  /// иначе на первом кадре чекбокс мигал бы у Листов и В-образных. Остальные
+  /// блоки в этом окне видны, как и до появления настроек.
+  bool _isBlockVisible(String blockCode) {
+    final settings = ProductTypeSettings.instance;
+    if (!settings.isLoaded) {
+      return blockCode == kOrderFormBlockCardboard
+          ? supportsCardboardForProductType(_product.type)
+          : true;
+    }
+    return settings.isBlockVisible(_product.type, blockCode);
   }
 
   bool _dataLoaded = false;
@@ -970,7 +1008,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     _depthController = TextEditingController(
       text: _product.depth > 0 ? _formatDecimal(_product.depth) : '',
     );
-    if (!_supportsCardboard(_product.type)) {
+    if (!_isBlockVisible(kOrderFormBlockCardboard)) {
       _cardboardChecked = false;
       _selectedCardboard = 'нет';
     }
@@ -3249,6 +3287,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         restartedFromOrderId: widget.initialOrder?.restartedFromOrderId,
         restartRootOrderId: widget.initialOrder?.restartRootOrderId,
         restartGeneration: widget.initialOrder?.restartGeneration ?? 0,
+        productTypeId: _currentProductTypeId(),
       );
       if (_created == null) {
         if (mounted) {
@@ -3375,6 +3414,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         shippedAt: widget.order!.shippedAt,
         shippedBy: widget.order!.shippedBy,
         shippedQty: widget.order!.shippedQty,
+        // Если тип продукта не выбран, здесь остаётся null, и toMap не кладёт
+        // ключ в payload вовсе — прежнее значение колонки не затирается.
+        productTypeId: _currentProductTypeId() ?? widget.order!.productTypeId,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
@@ -5735,7 +5777,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             var shouldUpdateStagePreview = false;
             setState(() {
               _product.type = val ?? '';
-              if (!_supportsCardboard(_product.type)) {
+              if (!_isBlockVisible(kOrderFormBlockCardboard)) {
                 _cardboardChecked = false;
                 _selectedCardboard = 'нет';
                 shouldUpdateStagePreview = true;
@@ -5928,7 +5970,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
             ];
 
-            final supportsCardboard = _supportsCardboard(_product.type);
+            final supportsCardboard = _isBlockVisible(kOrderFormBlockCardboard);
             final extras = Wrap(
               // Reduce spacing to shrink the area used by the checkboxes.
               spacing: 6,

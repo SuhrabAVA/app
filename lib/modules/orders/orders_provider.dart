@@ -630,6 +630,7 @@ class OrdersProvider with ChangeNotifier {
     int restartGeneration = 0,
     String? assignmentId,
     bool assignmentCreated = false,
+    String? productTypeId,
   }) async {
     await _ensureAuthed();
 
@@ -666,6 +667,7 @@ class OrdersProvider with ChangeNotifier {
       restartGeneration: restartGeneration,
       assignmentId: assignmentId,
       assignmentCreated: assignmentCreated,
+      productTypeId: productTypeId,
     ),
       hasPaints: product.parameters.toLowerCase().contains('краска:'),
     );

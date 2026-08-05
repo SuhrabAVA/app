@@ -91,12 +91,16 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     final title = name.text.trim();
     if (title.isEmpty) return;
 
-    await _sb.from('warehouse_categories').insert({
-      'code': _slug(title),
-      'title': title,
-      'has_subtables': false,
-    });
-    await _load();
+    try {
+      await _sb.from('warehouse_categories').insert({
+        'code': _slug(title),
+        'title': title,
+        'has_subtables': false,
+      });
+      await _load();
+    } catch (e) {
+      _showSnack('Не удалось создать категорию: $e');
+    }
   }
 
   Future<void> _renameCategory(Map<String, dynamic> it) async {
@@ -123,10 +127,14 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     final title = ctrl.text.trim();
     if (title.isEmpty) return;
 
-    await _sb.from('warehouse_categories').update({'title': title}).match({
-      'id': it['id'],
-    });
-    await _load();
+    try {
+      await _sb.from('warehouse_categories').update({'title': title}).match({
+        'id': it['id'],
+      });
+      await _load();
+    } catch (e) {
+      _showSnack('Не удалось переименовать категорию: $e');
+    }
   }
 
   Future<void> _deleteCategory(Map<String, dynamic> it) async {
@@ -162,22 +170,96 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
     );
     if (ok != true) return;
 
-    await DeletedRecordsRepository.archive(
-      entityType: 'category',
-      entityId: it['id']?.toString(),
-      payload: {
-        'id': it['id'],
-        'code': it['code'],
-        'title': it['title'],
-        'has_subtables': it['has_subtables'],
-      },
-      reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
-    );
+    final reason = reasonC.text.trim().isEmpty ? null : reasonC.text.trim();
 
-    await _sb.from('warehouse_categories').delete().match({
-      'id': it['id'],
-    });
-    await _load();
+    try {
+      // Порядок важен: сначала удаление, архивная запись — только после успеха.
+      // Раньше архив писался первым, и любая неудача удаления (сеть, внешний
+      // ключ) оставляла в «Удалённых записях» фантом — отметку об удалении
+      // категории, которая на самом деле осталась на месте.
+      await _sb.from('warehouse_categories').delete().match({
+        'id': it['id'],
+      });
+
+      await DeletedRecordsRepository.archive(
+        entityType: 'category',
+        entityId: it['id']?.toString(),
+        payload: {
+          'id': it['id'],
+          'code': it['code'],
+          'title': it['title'],
+          'has_subtables': it['has_subtables'],
+        },
+        reason: reason,
+      );
+
+      await _load();
+    } on PostgrestException catch (e) {
+      await _showDeleteError(e, it);
+    } catch (e) {
+      _showSnack('Не удалось удалить категорию: $e');
+    }
+  }
+
+  /// Разбирает отказ удаления категории.
+  ///
+  /// На warehouse_categories ссылаются шесть внешних ключей, и пять из них
+  /// удаление блокируют. Заказы — единственная связь, по которой можно назвать
+  /// точное число, поэтому её сообщение отдельное; для остальных
+  /// (materials, paints, papers, stationery) текст общий.
+  ///
+  /// Имён у «заказной» связи два: orders_product_type_id_fkey и
+  /// orders_stage_config_id_fkey. Вторая появится, когда заполнится
+  /// orders.stage_config_id — product_type_configs удаляются вместе с
+  /// категорией каскадом, а заказы держат их с RESTRICT. Какое из ограничений
+  /// Postgres сообщит первым, не определено, поэтому оба считаются одним
+  /// случаем.
+  Future<void> _showDeleteError(
+    PostgrestException e,
+    Map<String, dynamic> it,
+  ) async {
+    if (e.code != '23503') {
+      _showSnack('Не удалось удалить категорию: ${e.message}');
+      return;
+    }
+
+    const orderConstraints = <String>[
+      'orders_product_type_id_fkey',
+      'orders_stage_config_id_fkey',
+    ];
+    final details = '${e.message} ${e.details ?? ''}';
+    final blockedByOrders =
+        orderConstraints.any((name) => details.contains(name));
+
+    if (!blockedByOrders) {
+      _showSnack(
+        'Категорию нельзя удалить: на неё есть ссылки в других данных.',
+      );
+      return;
+    }
+
+    var count = 0;
+    try {
+      final rows = await _sb
+          .from('orders')
+          .select('id')
+          .eq('product_type_id', it['id']);
+      count = (rows as List).length;
+    } catch (_) {
+      // Счётчик — украшение сообщения, а не его условие: если посчитать не
+      // удалось, показываем текст без числа.
+    }
+
+    _showSnack(
+      count > 0
+          ? 'Категорию нельзя удалить: на неё ссылаются $count заказов.'
+          : 'Категорию нельзя удалить: на неё ссылаются заказы.',
+    );
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _openDeletedCategories() {
@@ -232,9 +314,12 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
                   title: Text(title),
                   onTap: () => _open(it),
                   trailing: PopupMenuButton<String>(
-                    onSelected: (v) {
-                      if (v == 'rename') _renameCategory(it);
-                      if (v == 'delete') _deleteCategory(it);
+                    // unawaited-вызовы раньше уносили любую ошибку в глобальный
+                    // обработчик: она попадала в app_error_logs, а пользователь
+                    // не видел ничего.
+                    onSelected: (v) async {
+                      if (v == 'rename') await _renameCategory(it);
+                      if (v == 'delete') await _deleteCategory(it);
                     },
                     itemBuilder: (_) => const [
                       PopupMenuItem(
