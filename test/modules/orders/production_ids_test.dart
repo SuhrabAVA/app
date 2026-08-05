@@ -116,7 +116,6 @@ void main() {
       'lib/admin_panel.dart',
       'lib/modules/personnel/personnel_provider.dart',
       'lib/modules/personnel/workplaces_screen.dart',
-      'lib/modules/production_planning/form_editor_screen.dart',
       // Снимок справочника — это и есть эталон, uuid в нём обязаны быть.
       'test/fixtures/workplaces_snapshot.json',
     };
