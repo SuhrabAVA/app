@@ -12,6 +12,8 @@ library;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'product_type_route.dart';
+
 /// Коды блоков формы заказа. Совпадают с `order_form_blocks.code`.
 const String kOrderFormBlockCardboard = 'cardboard';
 const String kOrderFormBlockTrimming = 'trimming';
@@ -133,6 +135,13 @@ class ProductTypeSettings {
   final Map<String, Map<String, bool>> _visibilityByConfig =
       <String, Map<String, bool>>{};
 
+  /// product_type_id → маршрут опубликованной версии.
+  ///
+  /// Читается тем же прогревом, что и блоки формы: сборщику очереди отдельный
+  /// запрос при открытии заказа не нужен.
+  final Map<String, ProductTypeRoute> _routesByType =
+      <String, ProductTypeRoute>{};
+
   bool get isLoaded => _loaded;
 
   List<ProductTypeRef> get productTypes => List.unmodifiable(_types);
@@ -203,7 +212,83 @@ class ProductTypeSettings {
           map['is_visible'] != false;
     }
 
+    await _loadRoutes();
     _loaded = true;
+  }
+
+  /// Маршруты опубликованных версий: этапы обоих уровней, их рабочие места и
+  /// условия. Три запроса вместо N+1 — строки собираются в граф здесь.
+  Future<void> _loadRoutes() async {
+    _routesByType.clear();
+    final configIds = _publishedByType.values.map((c) => c.id).toList();
+    if (configIds.isEmpty) return;
+
+    final stages = await _sb
+        .from('product_type_stages')
+        .select('id, config_id, parent_variant_id, level, stage_group_key, '
+            'title, position, selection_mode, is_enabled, is_pinned_last')
+        .inFilter('config_id', configIds);
+    final stageRows = <Map<String, dynamic>>[
+      for (final row in (stages as List)) Map<String, dynamic>.from(row as Map),
+    ];
+    final stageIds =
+        stageRows.map((r) => r['id'].toString()).toList(growable: false);
+    if (stageIds.isEmpty) return;
+
+    final workplaces = await _sb
+        .from('product_type_stage_workplaces')
+        .select('id, stage_id, workplace_id, variant_title, is_default, sort_order')
+        .inFilter('stage_id', stageIds);
+    final conditions = await _sb
+        .from('product_type_stage_conditions')
+        .select('stage_id, predicate, negate, param_text')
+        .inFilter('stage_id', stageIds);
+
+    final workplacesByStage = <String, List<Map<String, dynamic>>>{};
+    for (final row in (workplaces as List)) {
+      final map = Map<String, dynamic>.from(row as Map);
+      workplacesByStage
+          .putIfAbsent(map['stage_id'].toString(), () => [])
+          .add(map);
+    }
+    final conditionsByStage = <String, List<Map<String, dynamic>>>{};
+    for (final row in (conditions as List)) {
+      final map = Map<String, dynamic>.from(row as Map);
+      conditionsByStage
+          .putIfAbsent(map['stage_id'].toString(), () => [])
+          .add(map);
+    }
+
+    final stagesByConfig = <String, List<RouteStage>>{};
+    for (final row in stageRows) {
+      final stageId = row['id'].toString();
+      stagesByConfig
+          .putIfAbsent(row['config_id'].toString(), () => [])
+          .add(RouteStage.fromMap(<String, dynamic>{
+            ...row,
+            'rowId': stageId,
+            'key': row['stage_group_key'],
+            'workplaces': workplacesByStage[stageId] ?? const [],
+            'conditions': conditionsByStage[stageId] ?? const [],
+          }));
+    }
+
+    for (final type in _types) {
+      final config = _publishedByType[type.id];
+      if (config == null) continue;
+      _routesByType[type.id] = ProductTypeRoute(
+        productTypeId: type.id,
+        title: type.title,
+        configId: config.id,
+        stages: stagesByConfig[config.id] ?? const <RouteStage>[],
+      );
+    }
+  }
+
+  /// Маршрут типа продукта; принимает и uuid, и заголовок.
+  ProductTypeRoute? routeFor(String productTypeIdOrTitle) {
+    final id = resolveProductTypeId(productTypeIdOrTitle);
+    return id == null ? null : _routesByType[id];
   }
 
   /// Сбрасывает кэш — вызывается после публикации новой версии настроек.
@@ -253,6 +338,8 @@ class ProductTypeSettings {
         const <String, ProductTypeConfig>{},
     Map<String, Map<String, bool>> visibilityByConfig =
         const <String, Map<String, bool>>{},
+    Map<String, ProductTypeRoute> routesByType =
+        const <String, ProductTypeRoute>{},
   }) {
     _types = types;
     _blocks = blocks;
@@ -262,6 +349,9 @@ class ProductTypeSettings {
     _visibilityByConfig
       ..clear()
       ..addAll(visibilityByConfig);
+    _routesByType
+      ..clear()
+      ..addAll(routesByType);
     _loaded = true;
   }
 
@@ -271,6 +361,7 @@ class ProductTypeSettings {
     _blocks = const <OrderFormBlock>[];
     _publishedByType.clear();
     _visibilityByConfig.clear();
+    _routesByType.clear();
     _loaded = false;
     _loading = null;
   }
