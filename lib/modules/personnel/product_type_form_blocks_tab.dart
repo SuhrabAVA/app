@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/product_type_settings.dart';
-import 'product_type_settings_shell.dart';
 
 /// Вкладка «Блоки формы»: какие блоки формы заказа доступны оператору.
 ///
@@ -13,14 +12,15 @@ class ProductTypeFormBlocksTab extends StatefulWidget {
   const ProductTypeFormBlocksTab({
     super.key,
     required this.activeConfigId,
-    required this.ensureDraft,
+    required this.isDraft,
   });
 
   /// Версия, которую показываем: черновик, если он есть, иначе публикация.
   final String? activeConfigId;
 
-  /// Создаёт черновик перед первой записью и возвращает его id.
-  final EnsureDraft ensureDraft;
+  /// Есть ли черновик. Правки без него не бывает — её включает кнопка
+  /// «Начать правку» в оболочке.
+  final bool isDraft;
 
   @override
   State<ProductTypeFormBlocksTab> createState() =>
@@ -34,6 +34,20 @@ class _ProductTypeFormBlocksTabState extends State<ProductTypeFormBlocksTab> {
   bool _busy = false;
   String? _error;
   Map<String, bool> _visibility = <String, bool>{};
+
+  /// Версия, ИЗ КОТОРОЙ реально загружены показанные значения.
+  ///
+  /// Правку включаем только когда она совпала с текущей и это черновик:
+  /// пока перезагрузка после создания черновика не завершилась, в состоянии
+  /// лежат данные опубликованной версии, и писать по ним нельзя.
+  String? _loadedConfigId;
+
+  bool get _canEdit =>
+      widget.isDraft &&
+      !_loading &&
+      !_busy &&
+      _loadedConfigId != null &&
+      _loadedConfigId == widget.activeConfigId;
 
   @override
   void initState() {
@@ -60,6 +74,7 @@ class _ProductTypeFormBlocksTabState extends State<ProductTypeFormBlocksTab> {
       if (!mounted) return;
       setState(() {
         _visibility = visibility;
+        _loadedConfigId = configId;
         _loading = false;
       });
     } catch (e) {
@@ -91,9 +106,12 @@ class _ProductTypeFormBlocksTabState extends State<ProductTypeFormBlocksTab> {
   bool _isVisible(String code) => _visibility[code] ?? true;
 
   Future<void> _toggleBlock(OrderFormBlock block, bool visible) async {
+    // Двойная защита: контролы уже неактивны, но запись без подтверждённого
+    // черновика не должна быть возможна и программно.
+    final configId = widget.activeConfigId;
+    if (!_canEdit || configId == null) return;
     setState(() => _busy = true);
     try {
-      final configId = await widget.ensureDraft();
 
       // Пишем строку всегда, в том числе при значении «виден». Удалять её на
       // true нельзя: вместе с ней ушёл бы и флаг is_required, который этот
@@ -156,7 +174,7 @@ class _ProductTypeFormBlocksTabState extends State<ProductTypeFormBlocksTab> {
             )
           : null,
       value: _isVisible(block.code),
-      onChanged: _busy ? null : (value) => _toggleBlock(block, value),
+      onChanged: _canEdit ? (value) => _toggleBlock(block, value) : null,
     );
   }
 }

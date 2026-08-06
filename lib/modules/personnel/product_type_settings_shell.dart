@@ -6,6 +6,9 @@ import 'product_type_form_blocks_tab.dart';
 import 'product_type_stages_tab.dart';
 
 /// Создаёт черновик, если его ещё нет, и возвращает id версии для записи.
+///
+/// Осталась внутренней: вкладки черновик больше не создают. Правка включается
+/// явной кнопкой в оболочке — см. [_startEditing].
 typedef EnsureDraft = Future<String> Function();
 
 /// Оболочка редактора настроек типа продукта.
@@ -18,6 +21,18 @@ typedef EnsureDraft = Future<String> Function();
 /// опубликует. Каждый жест пишется в черновик сразу — это безопасно по
 /// построению: черновик никем не читается, пока не опубликован. Диффовать
 /// большую модель в памяти против базы не нужно.
+///
+/// ПОЧЕМУ ПРАВКА ВКЛЮЧАЕТСЯ ЯВНОЙ КНОПКОЙ
+/// Раньше черновик создавался неявно, первой же правкой. Это давало дефект:
+/// вкладка читала опубликованную версию (черновика ещё нет), и объекты в её
+/// состоянии были СТРОКАМИ PUBLISHED. Запись адресовала строку по её id —
+/// значит уходила в опубликованную версию, хотя черновик к тому моменту уже
+/// создавался. Перезагрузка не помогала: захваченный объект оставался старым.
+///
+/// Теперь до нажатия «Начать правку» обе вкладки только читают, а кнопка
+/// сначала создаёт черновик и дожидается перезагрузки. Контролы включаются
+/// лишь тогда, когда вкладка подтвердит, что её данные загружены ИМЕННО из
+/// черновика, — держать в руках строку чужой версии становится невозможно.
 ///
 /// Два случая, ради которых черновик ищется в базе, а не заводится заново:
 ///   * техлид ушёл, не опубликовав — при следующем открытии черновик
@@ -246,25 +261,67 @@ class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
               'настройкам.',
               style: TextStyle(color: Color(0xFF8A5A00)),
             ),
-          ),
+          )
+        else
+          _buildReadOnlyBar(),
         Expanded(
           child: TabBarView(
             children: [
               ProductTypeFormBlocksTab(
                 activeConfigId: _activeConfigId,
-                ensureDraft: _ensureDraft,
+                isDraft: _hasDraft,
               ),
               ProductTypeStagesTab(
                 productType: widget.productType,
                 activeConfigId: _activeConfigId,
                 isDraft: _hasDraft,
-                ensureDraft: _ensureDraft,
               ),
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// До начала правки экран только читает.
+  ///
+  /// Кнопка создаёт черновик и дожидается перезагрузки; вкладки включат свои
+  /// контролы сами, когда убедятся, что читают именно его.
+  Widget _buildReadOnlyBar() {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFEEF1F7),
+      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Только чтение. Правка создаст черновик и не затронет '
+              'действующие настройки, пока вы её не опубликуете.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF44506B)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: _busy ? null : _startEditing,
+            child: const Text('Начать правку'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startEditing() async {
+    setState(() => _busy = true);
+    try {
+      // _ensureDraft сам перезагружает состояние оболочки; вкладки получат
+      // новый activeConfigId и перечитают маршрут прежде, чем что-то включат.
+      await _ensureDraft();
+    } catch (e) {
+      _showError('Не удалось начать правку: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Widget _buildDraftBar() {
