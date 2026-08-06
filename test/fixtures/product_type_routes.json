@@ -1,5 +1,6 @@
 {
-  "note": "Снимок опубликованных маршрутов типов продукта. Источник паритетного теста Ф3.2.",
+  "note": "Снимок опубликованных маршрутов типов продукта. Вход паритетного теста test/product_type_route_parity_test.dart. Обновлять только скриптом scripts/refresh_product_type_routes.dart и обязательно после публикации новой версии настроек типа продукта — иначе тест останется зелёным на устаревших маршрутах.",
+  "source": "product_type_configs (status=published) + product_type_stages + product_type_stage_workplaces + product_type_stage_conditions",
   "productTypes": [
     {
       "id": "448b731a-eafe-40f1-9268-bc5dd6ba57bc",
