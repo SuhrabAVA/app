@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../orders/product_type_route.dart';
 import '../orders/product_type_settings.dart';
+import '../orders/product_type_stage_guards.dart';
 import 'product_type_stage_dialogs.dart';
 
 /// Панель рабочих мест этапа.
@@ -49,41 +50,9 @@ class ProductTypeStageWorkplacesPanel extends StatelessWidget {
           stage.workplaces.any((w) => w.rowId == s.parentVariantId))
       .toList(growable: false);
 
-  /// Почему удалять это рабочее место нельзя; null — можно.
-  ///
-  /// Порядок правил важен. Проверка «вариантов меньше двух» идёт ПЕРВОЙ и не
-  /// смотрит на признак по умолчанию: при ровно двух вариантах подсказка
-  /// «назначьте по умолчанию другой» вела бы в тупик — после переназначения
-  /// удаление всё равно осталось бы заблокированным.
-  String? _deleteBlockedReason(RouteStageWorkplace workplace) {
-    final count = stage.workplaces.length;
-    if (stage.isSwitchable) {
-      if (count <= 2) {
-        return 'Переключаемому этапу нужно не меньше двух вариантов. '
-            'Чтобы оставить один — переключите этап в режим «все рабочие места»';
-      }
-      if (workplace.isDefault) {
-        return 'Сначала назначьте вариантом по умолчанию другой';
-      }
-      return null;
-    }
-    if (count <= 1) {
-      return 'Этап без рабочего места не попадёт в план — удалите этап целиком';
-    }
-    return null;
-  }
-
-  /// Почему нельзя сменить режим; null — можно.
-  String? _modeChangeBlockedReason() {
-    if (!stage.isSwitchable && stage.workplaces.length < 2) {
-      return 'Добавьте второе рабочее место, чтобы сделать этап переключаемым';
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final modeBlocked = _modeChangeBlockedReason();
+    final modeBlocked = selectionModeChangeBlockedReason(stage);
 
     return Container(
       color: const Color(0xFFF8F9FC),
@@ -131,7 +100,7 @@ class ProductTypeStageWorkplacesPanel extends StatelessWidget {
 
   Widget _buildRow(BuildContext context, RouteStageWorkplace workplace) {
     final name = ProductTypeSettings.instance.workplaceName(workplace.workplaceId);
-    final blocked = _deleteBlockedReason(workplace);
+    final blocked = workplaceDeleteBlockedReason(stage, workplace);
     final subStages = _subStagesOf(workplace);
 
     return Padding(
