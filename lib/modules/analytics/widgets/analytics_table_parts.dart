@@ -46,8 +46,8 @@ class TableHScrollGestures extends StatelessWidget {
     if (target == controller.offset) return;
     controller.position.animateTo(
       target,
-      duration: Duration(
-          milliseconds: (vx.abs() * 0.25).clamp(180.0, 500.0).round()),
+      duration:
+          Duration(milliseconds: (vx.abs() * 0.25).clamp(180.0, 500.0).round()),
       curve: Curves.decelerate,
     );
   }
@@ -187,7 +187,7 @@ class StickyScrollArea extends StatelessWidget {
                     end: Alignment.centerRight,
                     colors: [
                       AnalyticsColors.stickyShadow,
-                      Color(0x00020617),
+                      Color(0x00FFFFFF),
                     ],
                   ),
                 ),

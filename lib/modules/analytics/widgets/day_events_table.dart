@@ -95,8 +95,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
               }
             }),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               child: Row(
                 children: [
                   Icon(
@@ -116,7 +115,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
                                 ? AnalyticsColors.muted
                                 : AnalyticsColors.text,
                             fontSize: 13,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 2),
@@ -203,8 +202,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
             children: [
               Container(
                 margin: const EdgeInsets.only(bottom: 4),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: row.badgeColor.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(999),
@@ -214,7 +212,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
                   style: TextStyle(
                     color: row.badgeColor,
                     fontSize: 10,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
@@ -223,7 +221,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
                 style: const TextStyle(
                   color: AnalyticsColors.text,
                   fontSize: 12,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
@@ -248,9 +246,9 @@ class _DayEventsTableState extends State<DayEventsTable> {
           const Text(
             'СОБЫТИЯ',
             style: TextStyle(
-              color: Color(0xFFCBD5E1),
+              color: AnalyticsColors.tableHeaderText,
               fontSize: 10,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w600,
               letterSpacing: 0.04,
             ),
           ),
@@ -348,9 +346,9 @@ class _DayEventsTableState extends State<DayEventsTable> {
         child: Text(
           s.toUpperCase(),
           style: const TextStyle(
-            color: Color(0xFFCBD5E1),
+            color: AnalyticsColors.tableHeaderText,
             fontSize: 10,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w600,
             letterSpacing: 0.04,
           ),
         ),
@@ -407,9 +405,8 @@ class _DayEventsTableState extends State<DayEventsTable> {
       final customer = (e.customer ?? '').trim();
       final hasOrder = orderId.isNotEmpty;
       final key = hasOrder ? orderId : _noOrderKey;
-      final title = hasOrder
-          ? (customer.isNotEmpty ? customer : '—')
-          : 'Без заказа';
+      final title =
+          hasOrder ? (customer.isNotEmpty ? customer : '—') : 'Без заказа';
 
       groupFor(key, title, !hasOrder).rows.add(_DayRow(
             startSort: start,
@@ -461,9 +458,8 @@ class _DayEventsTableState extends State<DayEventsTable> {
       final hasOrder = orderId.isNotEmpty;
       final key = hasOrder ? orderId : _noOrderKey;
       final customer = (c.customer ?? '').trim();
-      final title = hasOrder
-          ? (customer.isNotEmpty ? customer : '—')
-          : 'Без заказа';
+      final title =
+          hasOrder ? (customer.isNotEmpty ? customer : '—') : 'Без заказа';
       groupFor(key, title, !hasOrder).comments.add(c);
     }
 
@@ -541,8 +537,7 @@ class _OrderGroup {
       ? DateTime.fromMillisecondsSinceEpoch(0)
       : rows.first.startSort;
 
-  int get totalMinutes =>
-      rows.fold(0, (sum, r) => sum + r.durationMinutes);
+  int get totalMinutes => rows.fold(0, (sum, r) => sum + r.durationMinutes);
 
   /// Краткая сводка свёрнутой группы: число записей + суммарная длительность.
   String summaryLabel() =>

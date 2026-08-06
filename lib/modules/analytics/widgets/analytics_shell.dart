@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../utils/analytics_colors.dart';
 
-/// Базовая оболочка экрана аналитики: тёмный фон с градиентом
+/// Базовая оболочка экрана аналитики: светлый фон
 /// и контейнер с максимальной шириной (1600px), как в HTML-прототипе.
 ///
 /// ВАЖНО: дочернему виджету передаются tight-constraints
@@ -32,7 +32,8 @@ class AnalyticsShell extends StatelessWidget {
       appBar: appBar,
       endDrawer: endDrawer,
       body: Container(
-        decoration: const BoxDecoration(gradient: AnalyticsColors.appBgGradient),
+        decoration:
+            const BoxDecoration(gradient: AnalyticsColors.appBgGradient),
         child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -86,8 +87,8 @@ class AnalyticsFilterGroup extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: const TextStyle(
-                  color: AnalyticsColors.muted, fontSize: 12)),
+              style:
+                  const TextStyle(color: AnalyticsColors.muted, fontSize: 12)),
           const SizedBox(height: 8),
           child,
         ],
@@ -96,8 +97,7 @@ class AnalyticsFilterGroup extends StatelessWidget {
   }
 }
 
-/// Поле-обёртка для контролов (`input`/`select`) из эталона: тёмный фон,
-/// скругление 14, граница line, высота 42.
+/// Поле-обёртка для контролов (`input`/`select`), высота 42.
 class AnalyticsInputShell extends StatelessWidget {
   const AnalyticsInputShell({super.key, required this.child});
 
@@ -109,8 +109,8 @@ class AnalyticsInputShell extends StatelessWidget {
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 13),
       decoration: BoxDecoration(
-        color: const Color(0xB3020617),
-        borderRadius: BorderRadius.circular(14),
+        color: AnalyticsColors.bg2,
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AnalyticsColors.line),
       ),
       alignment: Alignment.centerLeft,
@@ -135,7 +135,7 @@ class AnalyticsCardHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
+      padding: const EdgeInsets.fromLTRB(16, 10, 12, 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -146,15 +146,15 @@ class AnalyticsCardHeader extends StatelessWidget {
                 Text(title,
                     style: const TextStyle(
                       color: AnalyticsColors.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
                     )),
                 if (subtitle != null) ...[
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 2),
                   Text(subtitle!,
                       style: const TextStyle(
                         color: AnalyticsColors.muted,
-                        fontSize: 13,
+                        fontSize: 12,
                       )),
                 ],
               ],
@@ -191,13 +191,13 @@ class AnalyticsCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: AnalyticsColors.card,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AnalyticsColors.line),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x52000000),
-            blurRadius: 42,
-            offset: Offset(0, 12),
+            color: Color(0x12000000),
+            blurRadius: 10,
+            offset: Offset(0, 2),
           ),
         ],
       ),
@@ -217,7 +217,7 @@ class AnalyticsCard extends StatelessWidget {
                           Text(title!,
                               style: const TextStyle(
                                 color: AnalyticsColors.text,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w600,
                                 fontSize: 18,
                               )),
                         if (subtitle != null) ...[
@@ -267,8 +267,7 @@ class AnalyticsDetailLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final wide =
-            side != null && constraints.maxWidth >= breakpoint;
+        final wide = side != null && constraints.maxWidth >= breakpoint;
         if (!wide) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -315,24 +314,22 @@ class AnalyticsSummaryCard extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: AnalyticsColors.card,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: green
-              ? const Color(0x5222C55E)
-              : AnalyticsColors.line,
+          color: green ? const Color(0x5234C759) : AnalyticsColors.line,
         ),
         gradient: green
             ? const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0x2E22C55E), Color(0x1438BDF8)],
+                colors: [Color(0xFFE8FAF0), Color(0xFFF0EEFF)],
               )
             : null,
         boxShadow: const [
           BoxShadow(
-            color: Color(0x29000000),
-            blurRadius: 42,
-            offset: Offset(0, 12),
+            color: Color(0x12000000),
+            blurRadius: 10,
+            offset: Offset(0, 2),
           ),
         ],
       ),
@@ -342,7 +339,7 @@ class AnalyticsSummaryCard extends StatelessWidget {
           Text(title,
               style: const TextStyle(
                 color: AnalyticsColors.text,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w600,
                 fontSize: 18,
               )),
           if (subtitle != null) ...[
@@ -375,15 +372,15 @@ class AnalyticsStatRow extends StatelessWidget {
         children: [
           Expanded(
             child: Text(label,
-                style:
-                    const TextStyle(color: AnalyticsColors.muted, fontSize: 13)),
+                style: const TextStyle(
+                    color: AnalyticsColors.muted, fontSize: 13)),
           ),
           const SizedBox(width: 12),
           Text(value,
               textAlign: TextAlign.right,
               style: const TextStyle(
                 color: AnalyticsColors.text,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w600,
                 fontSize: 13,
               )),
         ],
@@ -411,11 +408,11 @@ class AnalyticsTotalBox extends StatelessWidget {
       margin: const EdgeInsets.only(top: 14),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF86EFAC), Color(0xFF22C55E)],
+          colors: [Color(0xFFE8FAF0), Color(0xFFDDF7E7)],
         ),
       ),
       child: Column(
@@ -423,15 +420,15 @@ class AnalyticsTotalBox extends StatelessWidget {
         children: [
           Text(label,
               style: const TextStyle(
-                color: Color(0xFF052E16),
-                fontWeight: FontWeight.w800,
+                color: Color(0xFF248A3D),
+                fontWeight: FontWeight.w500,
                 fontSize: 13,
               )),
           const SizedBox(height: 7),
           Text(value,
               style: const TextStyle(
-                color: Color(0xFF052E16),
-                fontWeight: FontWeight.w900,
+                color: Color(0xFF1F6F32),
+                fontWeight: FontWeight.w600,
                 fontSize: 30,
                 letterSpacing: -1,
               )),
@@ -439,7 +436,7 @@ class AnalyticsTotalBox extends StatelessWidget {
             const SizedBox(height: 5),
             Text(note!,
                 style: const TextStyle(
-                  color: Color(0xC7052E16),
+                  color: Color(0xFF4D7E58),
                   fontSize: 11,
                 )),
           ],
@@ -451,7 +448,8 @@ class AnalyticsTotalBox extends StatelessWidget {
 
 /// «← Назад» в стиле `.back-link` (синяя плоская ссылка).
 class AnalyticsBackLink extends StatelessWidget {
-  const AnalyticsBackLink({super.key, required this.label, required this.onTap});
+  const AnalyticsBackLink(
+      {super.key, required this.label, required this.onTap});
 
   final String label;
   final VoidCallback onTap;
@@ -469,7 +467,7 @@ class AnalyticsBackLink extends StatelessWidget {
       child: Text('← $label',
           style: const TextStyle(
             color: AnalyticsColors.blue,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w500,
             fontSize: 13,
           )),
     );
@@ -494,13 +492,13 @@ class AnalyticsPdfButton extends StatelessWidget {
     return TextButton.icon(
       onPressed: loading ? null : onPressed,
       style: TextButton.styleFrom(
-        minimumSize: const Size(0, 42),
-        padding: const EdgeInsets.symmetric(horizontal: 18),
-        foregroundColor: const Color(0xFFBBF7D0),
-        backgroundColor: const Color(0x1F22C55E),
-        side: const BorderSide(color: Color(0x5922C55E)),
+        minimumSize: const Size(0, 36),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        foregroundColor: AnalyticsColors.greenDark,
+        backgroundColor: const Color(0xFFE8FAF0),
+        side: const BorderSide(color: Color(0x5234C759)),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(12),
         ),
       ),
       icon: loading
@@ -509,7 +507,7 @@ class AnalyticsPdfButton extends StatelessWidget {
               height: 16,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Color(0xFFBBF7D0),
+                color: AnalyticsColors.greenDark,
               ),
             )
           : const Icon(Icons.picture_as_pdf_outlined, size: 18),
@@ -538,7 +536,7 @@ class AnalyticsKpiCard extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: AnalyticsColors.card,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AnalyticsColors.line),
       ),
       child: Stack(
@@ -551,7 +549,7 @@ class AnalyticsKpiCard extends StatelessWidget {
               height: 90,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0x2238BDF8),
+                color: Color(0x146A6CF7),
               ),
             ),
           ),
@@ -573,7 +571,7 @@ class AnalyticsKpiCard extends StatelessWidget {
               Text(value,
                   style: const TextStyle(
                     color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w600,
                     fontSize: 26,
                   )),
               if (sub != null) ...[

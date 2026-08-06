@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../services/storage_service.dart' as storage;
 import '../common/pdf_view_screen.dart';
+import '../tasks/workspace_design.dart';
 import 'material_model.dart';
 import 'order_model.dart';
 
@@ -18,6 +19,7 @@ class OrderDetailsCard extends StatelessWidget {
     this.formImageUrl,
     this.formDetails,
     this.extraSections = const <Widget>[],
+    this.workspaceStyle = false,
   });
 
   final OrderModel order;
@@ -33,6 +35,7 @@ class OrderDetailsCard extends StatelessWidget {
   final String? formImageUrl;
   final Map<String, dynamic>? formDetails;
   final List<Widget> extraSections;
+  final bool workspaceStyle;
 
   String _fmtDate(DateTime? d) =>
       d == null ? '—' : DateFormat('dd.MM.yyyy').format(d);
@@ -161,7 +164,6 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
-
   String _formDetailValue(String key) {
     final value = formDetails?[key];
     if (value == null) return '';
@@ -176,10 +178,7 @@ class OrderDetailsCard extends StatelessWidget {
 
   List<Widget> _formDetailWidgets({bool compact = false}) {
     final details = <String, String>{
-      
       'Серия': _formDetailValue('series'),
-      
-      
     };
     return details.entries
         .where((entry) => entry.value.isNotEmpty)
@@ -207,7 +206,8 @@ class OrderDetailsCard extends StatelessWidget {
       return Text(
         '—',
         textAlign: TextAlign.right,
-        style: compact ? const TextStyle(fontSize: 14 * _compactTextScale) : null,
+        style:
+            compact ? const TextStyle(fontSize: 14 * _compactTextScale) : null,
       );
     }
 
@@ -259,11 +259,13 @@ class OrderDetailsCard extends StatelessWidget {
   /// and value. When a value is not provided it falls back to an em dash.
   Widget _buildCardboardTrimRow({bool compact = false}) {
     final cardboardValue = order.cardboard.isEmpty ? '—' : order.cardboard;
-    final trimValue = order.additionalParams.contains('Подрезка') ? 'есть' : 'нет';
+    final trimValue =
+        order.additionalParams.contains('Подрезка') ? 'есть' : 'нет';
     final rowPadding = compact ? 6 * _compactCellScale : 6.0;
     final splitGap = compact ? 12 * _compactCellScale : 12.0;
     final textGap = compact ? 4 * _compactCellScale : 4.0;
-    final textStyle = TextStyle(fontSize: compact ? 14 * _compactTextScale : null);
+    final textStyle =
+        TextStyle(fontSize: compact ? 14 * _compactTextScale : null);
     return Padding(
       padding: EdgeInsets.symmetric(vertical: rowPadding),
       child: Row(
@@ -402,8 +404,7 @@ class OrderDetailsCard extends StatelessWidget {
       caseSensitive: false,
     ).firstMatch(p.parameters);
     final fallbackPaintInfo = (paintInfoFromParams?.group(1) ?? '').trim();
-    final paintInfoValue =
-        paintInfo.isNotEmpty ? paintInfo : fallbackPaintInfo;
+    final paintInfoValue = paintInfo.isNotEmpty ? paintInfo : fallbackPaintInfo;
     final paintsWidget = paints.isEmpty
         ? const Text('—')
         : Column(
@@ -435,10 +436,19 @@ class OrderDetailsCard extends StatelessWidget {
             ],
           );
 
+    if (workspaceStyle) {
+      return _buildWorkspaceLayout(
+        context,
+        materials: materials,
+        paintInfoValue: paintInfoValue,
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final media = MediaQuery.of(context);
-        final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+        final bool isTablet =
+            media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
         const spacing = 16.0;
         final maxWidth = constraints.maxWidth;
         final columns = isTablet
@@ -473,17 +483,22 @@ class OrderDetailsCard extends StatelessWidget {
                           '${_fmtDate(o.orderDate)} - ${_fmtDate(o.dueDate)}',
                           compact: true,
                         ),
-                        _buildInfoRow('Заказчик', o.customer.isEmpty ? '—' : o.customer,
+                        _buildInfoRow(
+                            'Заказчик', o.customer.isEmpty ? '—' : o.customer,
                             compact: true),
-                        _buildInfoRow('Тип продукта', p.type.isEmpty ? '—' : p.type,
+                        _buildInfoRow(
+                            'Тип продукта', p.type.isEmpty ? '—' : p.type,
                             compact: true),
-                        _buildInfoRow('Тираж', p.quantity > 0 ? p.quantity.toString() : '—',
+                        _buildInfoRow('Тираж',
+                            p.quantity > 0 ? p.quantity.toString() : '—',
                             compact: true),
-                        _buildInfoRowWidget('Размеры', _buildDimensionsValue(compact: true),
+                        _buildInfoRowWidget(
+                            'Размеры', _buildDimensionsValue(compact: true),
                             compact: true),
                         _buildInfoRowWidget(
                           'Ручки',
-                          _buildSingleLineValue(o.handle.isEmpty ? '—' : o.handle),
+                          _buildSingleLineValue(
+                              o.handle.isEmpty ? '—' : o.handle),
                           compact: true,
                         ),
                         _buildInfoRowWidget(
@@ -508,7 +523,8 @@ class OrderDetailsCard extends StatelessWidget {
                     accentColor: const Color(0xFFF4A12F),
                     child: Column(
                       children: [
-                        _buildInfoRowWidget('Краски', paintsWidget, compact: true),
+                        _buildInfoRowWidget('Краски', paintsWidget,
+                            compact: true),
                         _buildInfoRowWidget(
                           'Форма',
                           Column(
@@ -531,20 +547,24 @@ class OrderDetailsCard extends StatelessWidget {
                                   child: SizedBox(
                                     width: 16,
                                     height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   ),
                                 )
                               else if (formFiles
                                   .where((f) =>
-                                      (f['source'] ?? 'form').toString() == 'form')
+                                      (f['source'] ?? 'form').toString() ==
+                                      'form')
                                   .isEmpty)
                                 const Text('Нет файлов формы',
                                     style: TextStyle(color: Colors.grey))
                               else
                                 ...formFiles
                                     .where((f) =>
-                                        (f['source'] ?? 'form').toString() == 'form')
-                                    .map((f) => _fileTile(context, f, compact: true)),
+                                        (f['source'] ?? 'form').toString() ==
+                                        'form')
+                                    .map((f) =>
+                                        _fileTile(context, f, compact: true)),
                             ],
                           ),
                           alignEnd: false,
@@ -561,22 +581,24 @@ class OrderDetailsCard extends StatelessWidget {
                                   child: SizedBox(
                                     width: 16,
                                     height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   ),
                                 )
                               else if (_orderFilesDeduped().isEmpty)
                                 const Text('Нет приложенных файлов',
                                     style: TextStyle(color: Colors.grey))
                               else
-                                ..._orderFilesDeduped().map(
-                                    (f) => _fileTile(context, f, compact: true)),
+                                ..._orderFilesDeduped().map((f) =>
+                                    _fileTile(context, f, compact: true)),
                             ],
                           ),
                           alignEnd: false,
                           compact: true,
                         ),
                         if (paintInfoValue.isNotEmpty)
-                          _buildInfoRow('Комментарий', paintInfoValue, compact: true),
+                          _buildInfoRow('Комментарий', paintInfoValue,
+                              compact: true),
                       ],
                     ),
                   ),
@@ -597,7 +619,8 @@ class OrderDetailsCard extends StatelessWidget {
                             final index = entry.key;
                             final material = entry.value;
                             final parts = <String>[];
-                            if (material.name.isNotEmpty) parts.add(material.name);
+                            if (material.name.isNotEmpty)
+                              parts.add(material.name);
                             if (material.format != null &&
                                 material.format!.isNotEmpty) {
                               parts.add(material.format!);
@@ -615,8 +638,10 @@ class OrderDetailsCard extends StatelessWidget {
                             }
                             final materialLine =
                                 parts.isEmpty ? '—' : parts.join(' ');
-                            final widthValue = _paperWidthValue(material, index);
-                            final qtyValue = _paperQuantityValue(material, index);
+                            final widthValue =
+                                _paperWidthValue(material, index);
+                            final qtyValue =
+                                _paperQuantityValue(material, index);
                             final lenValue = _paperLengthValue(material, index);
                             final details = <String>[materialLine];
                             if (widthValue.isNotEmpty) {
@@ -644,13 +669,11 @@ class OrderDetailsCard extends StatelessWidget {
                             compact: true),
                         _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—',
                             compact: true),
-                        _buildInfoRow(
-                            'Комментарий',
+                        _buildInfoRow('Комментарий',
                             o.comments.isEmpty ? '—' : o.comments,
                             compact: true),
                         _buildInfoRow(
-                            'Менеджер',
-                            o.manager.isEmpty ? '—' : o.manager,
+                            'Менеджер', o.manager.isEmpty ? '—' : o.manager,
                             compact: true),
                       ],
                     ),
@@ -674,6 +697,325 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
+  Widget _buildWorkspaceLayout(
+    BuildContext context, {
+    required List<MaterialModel> materials,
+    required String paintInfoValue,
+  }) {
+    final o = order;
+    final p = o.product;
+    final formOnlyFiles = formFiles
+        .where((file) => (file['source'] ?? 'form').toString() == 'form')
+        .toList(growable: false);
+    final orderFiles = _orderFilesDeduped();
+
+    final dimensionParts = <String>[
+      if (p.width > 0) 'Д ${_fmtNum(p.width)}',
+      if (p.height > 0) 'Ш ${_fmtNum(p.height)}',
+      if (p.depth > 0) 'Г ${_fmtNum(p.depth)}',
+    ];
+
+    final quantity = p.quantity > 0
+        ? NumberFormat.decimalPattern('ru')
+            .format(p.quantity)
+            .replaceAll('\u00A0', ' ')
+        : '—';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _workspaceSection(
+          title: 'Основная информация',
+          icon: Icons.description_outlined,
+          accentColor: WorkspaceColors.success,
+          iconBackground: WorkspaceColors.successBackground,
+          children: [
+            _workspaceInfoRow(
+              'Дата',
+              '${_fmtDate(o.orderDate)} – ${_fmtDate(o.dueDate)}',
+            ),
+            _workspaceInfoRow(
+              'Заказчик',
+              o.customer.isEmpty ? '—' : o.customer,
+            ),
+            _workspaceInfoRow(
+              'Продукт',
+              p.type.isEmpty ? '—' : p.type,
+            ),
+            _workspaceInfoRow('Тираж', quantity),
+            _workspaceInfoRow(
+              'Размеры',
+              dimensionParts.isEmpty ? '—' : dimensionParts.join(' · '),
+            ),
+            _workspaceInfoRow(
+              'Ручки',
+              o.handle.isEmpty ? '—' : o.handle,
+            ),
+            _workspaceInfoRow('Упаковка', _packagingValue()),
+            _workspaceCardboardTrimRow(),
+          ],
+        ),
+        _workspaceDivider(),
+        _workspaceSection(
+          title: 'Печать',
+          icon: Icons.print_outlined,
+          accentColor: WorkspaceColors.warning,
+          iconBackground: const Color(0xFFFFF4E5),
+          children: [
+            if (paints.isEmpty)
+              _workspaceInfoRow('Краски', '—')
+            else
+              for (final entry in paints.asMap().entries)
+                _workspaceInfoRow(
+                  'Краска ${entry.key + 1}',
+                  _workspacePaintValue(entry.value),
+                ),
+            _workspaceInfoWidget(
+              'Форма',
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_formDisplayText(o)),
+                  ..._formDetailWidgets(),
+                ],
+              ),
+            ),
+            _workspaceInfoWidget(
+              'Файлы формы',
+              _workspaceFilesValue(
+                context,
+                formOnlyFiles,
+                emptyText: 'Нет',
+              ),
+              alignEnd: false,
+            ),
+            _workspaceInfoWidget(
+              'Файлы заказа',
+              _workspaceFilesValue(
+                context,
+                orderFiles,
+                emptyText: 'Нет',
+              ),
+              alignEnd: false,
+            ),
+            if (paintInfoValue.isNotEmpty)
+              _workspaceInfoRow('Комментарий', paintInfoValue),
+          ],
+        ),
+        _workspaceDivider(),
+        _workspaceSection(
+          title: 'Бобинорезка',
+          icon: Icons.content_cut,
+          accentColor: WorkspaceColors.setup,
+          iconBackground: WorkspaceColors.setupBackground,
+          children: [
+            if (materials.isEmpty)
+              _workspaceInfoRow('Материал', '—')
+            else
+              for (final entry in materials.asMap().entries) ...[
+                _workspaceInfoRow(
+                  'Бумага №${entry.key + 1}',
+                  _workspaceMaterialValue(entry.value),
+                ),
+                if (_paperWidthValue(entry.value, entry.key).isNotEmpty)
+                  _workspaceInfoRow(
+                    'Ширина',
+                    _paperWidthValue(entry.value, entry.key),
+                  ),
+                if (_workspaceMaterialLength(entry.value, entry.key).isNotEmpty)
+                  _workspaceInfoRow(
+                    'Длина',
+                    _workspaceMaterialLength(entry.value, entry.key),
+                  ),
+              ],
+            _workspaceInfoRow(
+              'Приладка',
+              o.makeready > 0 ? _fmtNum(o.makeready) : '—',
+            ),
+            _workspaceInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—'),
+            if (o.comments.isNotEmpty)
+              _workspaceInfoRow('Комментарий', o.comments),
+            _workspaceInfoRow(
+              'Менеджер',
+              o.manager.isEmpty ? '—' : o.manager,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _workspaceSection({
+    required String title,
+    required IconData icon,
+    required Color accentColor,
+    required Color iconBackground,
+    required List<Widget> children,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        WorkspaceSectionHeading(
+          title: title,
+          icon: icon,
+          accentColor: accentColor,
+          iconBackground: iconBackground,
+        ),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    );
+  }
+
+  Widget _workspaceDivider() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 10),
+      child: Divider(height: 1, color: WorkspaceColors.border),
+    );
+  }
+
+  Widget _workspaceInfoRow(String label, String value) {
+    return _workspaceInfoWidget(label, Text(value));
+  }
+
+  Widget _workspaceInfoWidget(
+    String label,
+    Widget child, {
+    bool alignEnd = true,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: WorkspaceColors.mutedForeground,
+                fontSize: 16,
+                height: 1.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          Expanded(
+            child: DefaultTextStyle(
+              style: const TextStyle(
+                color: WorkspaceColors.foreground,
+                fontSize: 16,
+                height: 1.3,
+                fontWeight: FontWeight.w600,
+              ),
+              child: alignEnd
+                  ? Align(alignment: Alignment.centerLeft, child: child)
+                  : child,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _workspaceCardboardTrimRow() {
+    final cardboardValue = order.cardboard.isEmpty ? '—' : order.cardboard;
+    final trimValue =
+        order.additionalParams.contains('Подрезка') ? 'есть' : 'нет';
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Row(
+        children: [
+          Expanded(child: _workspaceInlinePair('Картон', cardboardValue)),
+          const SizedBox(width: 12),
+          Expanded(child: _workspaceInlinePair('Подрезка', trimValue)),
+        ],
+      ),
+    );
+  }
+
+  Widget _workspaceInlinePair(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: WorkspaceColors.mutedForeground,
+            fontSize: 16,
+            height: 1.3,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: WorkspaceColors.foreground,
+              fontSize: 16,
+              height: 1.3,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _workspacePaintValue(Map<String, dynamic> paint) {
+    final name = (paint['name'] ?? '').toString().trim();
+    final qty = paint['qty_kg'];
+    double? grams;
+    if (qty is num) {
+      grams = qty.toDouble() * 1000;
+    } else if (qty is String && qty.trim().isNotEmpty) {
+      grams = double.tryParse(qty.trim().replaceAll(',', '.'));
+      if (grams != null) grams *= 1000;
+    }
+    final parts = <String>[
+      if (name.isNotEmpty) name,
+      if (grams != null) _formatGrams(grams),
+    ];
+    return parts.isEmpty ? '—' : parts.join(' ');
+  }
+
+  Widget _workspaceFilesValue(
+    BuildContext context,
+    List<Map<String, dynamic>> source, {
+    required String emptyText,
+  }) {
+    if (filesLoading) {
+      return const SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    if (source.isEmpty) return Text(emptyText);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final file in source) _fileTile(context, file, compact: true),
+      ],
+    );
+  }
+
+  String _workspaceMaterialValue(MaterialModel material) {
+    final parts = <String>[
+      if (material.name.trim().isNotEmpty) material.name.trim(),
+      if ((material.format ?? '').trim().isNotEmpty) material.format!.trim(),
+      if ((material.grammage ?? '').trim().isNotEmpty)
+        '${material.grammage!.trim()} гр',
+    ];
+    return parts.isEmpty ? '—' : parts.join(' ');
+  }
+
+  String _workspaceMaterialLength(MaterialModel material, int index) {
+    final quantity = _paperQuantityValue(material, index);
+    final length = _paperLengthValue(material, index);
+    if (quantity.isNotEmpty && length.isNotEmpty) return '$quantity × $length';
+    return quantity.isNotEmpty ? quantity : length;
+  }
 
   Widget _buildSingleLineValue(String value) {
     return SizedBox(
@@ -696,7 +1038,8 @@ class OrderDetailsCard extends StatelessWidget {
       Text(
         value,
         textAlign: TextAlign.right,
-        style: compact ? const TextStyle(fontSize: 14 * _compactTextScale) : null,
+        style:
+            compact ? const TextStyle(fontSize: 14 * _compactTextScale) : null,
       ),
       compact: compact,
     );
@@ -823,15 +1166,18 @@ class OrderDetailsCard extends StatelessWidget {
               fileName.isEmpty ? 'Файл.pdf' : fileName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style:
-                  compact ? const TextStyle(fontSize: 14 * _compactTextScale) : null,
+              style: compact
+                  ? const TextStyle(fontSize: 14 * _compactTextScale)
+                  : null,
             ),
           ),
           TextButton.icon(
             style: compact
                 ? TextButton.styleFrom(
-                    textStyle: const TextStyle(fontSize: 14 * _compactTextScale),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    textStyle:
+                        const TextStyle(fontSize: 14 * _compactTextScale),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                     minimumSize: const Size(0, 24),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: const VisualDensity(

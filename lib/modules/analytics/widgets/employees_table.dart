@@ -114,8 +114,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
     final activeEmployees = widget.personnel.employees
         .where((e) => !e.isFired && widget.permission.canViewEmployee(e.id))
         .toList()
-          ..sort((a, b) => ('${a.lastName} ${a.firstName}')
-              .compareTo('${b.lastName} ${b.firstName}'));
+      ..sort((a, b) => ('${a.lastName} ${a.firstName}')
+          .compareTo('${b.lastName} ${b.firstName}'));
 
     return activeEmployees.map((emp) {
       final list = eventsByEmployee[emp.id] ?? const <AnalyticsEvent>[];
@@ -233,10 +233,14 @@ class _EmployeesTableState extends State<EmployeesTable> {
           : restMinWidth;
 
       Widget stickyCell(Widget child,
-          {Color? bg, Gradient? gradient, BoxBorder? border, EdgeInsets? padding}) {
+          {Color? bg,
+          Gradient? gradient,
+          BoxBorder? border,
+          EdgeInsets? padding}) {
         return Container(
           width: stickyWidth,
-          decoration: BoxDecoration(color: bg, gradient: gradient, border: border),
+          decoration:
+              BoxDecoration(color: bg, gradient: gradient, border: border),
           padding: padding ??
               const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: child,
@@ -250,7 +254,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
           style: const TextStyle(
             color: AnalyticsColors.tableHeaderText,
             fontSize: 11,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w600,
             letterSpacing: 0.4,
           ),
         ),
@@ -263,7 +267,11 @@ class _EmployeesTableState extends State<EmployeesTable> {
       int pauseCount = 0, pauseM = 0, problemCount = 0, problemM = 0;
       int claimsAll = 0;
       double salarySum = 0;
-      double pieceSum = 0, earnedSum = 0, nightSum = 0, compSum = 0, socialSum = 0;
+      double pieceSum = 0,
+          earnedSum = 0,
+          nightSum = 0,
+          compSum = 0,
+          socialSum = 0;
       double mealSum = 0, advSum = 0, cashSum = 0, discSum = 0, defSum = 0;
       double setupPaySum = 0;
       int usefulM = 0;
@@ -324,7 +332,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
             'Общий итог',
             style: TextStyle(
                 color: AnalyticsColors.text,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w600,
                 fontSize: 12),
           ),
         ),
@@ -352,8 +360,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
                     measureWidth: restWidth,
                     child: SizedBox(
                       width: restWidth,
-                      child: _buildScrollableHeader(
-                          canViewFinance, restWidth),
+                      child: _buildScrollableHeader(canViewFinance, restWidth),
                     ),
                   ),
                 ),
@@ -445,8 +452,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
                     measureWidth: restWidth,
                     child: SizedBox(
                       width: restWidth,
-                      child:
-                          _buildScrollableFooter(canViewFinance, totals),
+                      child: _buildScrollableFooter(canViewFinance, totals),
                     ),
                   ),
                 ),
@@ -516,7 +522,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
       if (finance) 'Ведомость',
     ];
     return Container(
-      decoration: const BoxDecoration(gradient: AnalyticsColors.tableHeaderGradient),
+      decoration:
+          const BoxDecoration(gradient: AnalyticsColors.tableHeaderGradient),
       child: Row(
         children: cols.map((label) {
           final flex =
@@ -524,14 +531,13 @@ class _EmployeesTableState extends State<EmployeesTable> {
           return Expanded(
             flex: flex,
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               child: Text(
                 label.toUpperCase(),
                 style: const TextStyle(
                   color: AnalyticsColors.tableHeaderText,
                   fontSize: 11,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w600,
                   letterSpacing: 0.4,
                 ),
               ),
@@ -553,18 +559,25 @@ class _EmployeesTableState extends State<EmployeesTable> {
           gradient: hovered
               ? AnalyticsColors.tableStickyHoverGradient
               : AnalyticsColors.tableStickyColumnGradient,
-          border: const Border(
-              bottom: BorderSide(color: AnalyticsColors.line)),
+          border: const Border(bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: _EmployeeCell(
-            employee: r.employee, status: r.statusName, position: r.positionNames),
+            employee: r.employee,
+            status: r.statusName,
+            position: r.positionNames),
       ),
     );
   }
 
-  Widget _buildScrollableDataRow(BuildContext context, _Row r, bool finance,
-      bool canEdit, int index, bool hovered, double nightPercent,
+  Widget _buildScrollableDataRow(
+      BuildContext context,
+      _Row r,
+      bool finance,
+      bool canEdit,
+      int index,
+      bool hovered,
+      double nightPercent,
       double mealAmount) {
     // Все агрегаты предвычислены в _buildRows (см. _Row) — build ячеек
     // не должен трогать AnalyticsCalculator.
@@ -578,8 +591,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
       child: Container(
         decoration: BoxDecoration(
           color: rowColor,
-          border: const Border(
-              bottom: BorderSide(color: AnalyticsColors.line)),
+          border: const Border(bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -592,8 +604,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
             ),
             _cell(child: Text('${r.breakdown.dayShifts}', style: _cellStyle())),
             _cell(
-                child:
-                    Text('${r.breakdown.nightShifts}', style: _cellStyle())),
+                child: Text('${r.breakdown.nightShifts}', style: _cellStyle())),
             // Рабочие места: общее время, сделанное количество, приладки.
             _cell(
               flex: 2,
@@ -603,8 +614,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
                     ? [Text('—', style: _mutedStyle())]
                     : r.workplaceStats
                         .map((s) => Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 2),
+                              padding: const EdgeInsets.symmetric(vertical: 2),
                               child: Text(
                                 '${s.name}: '
                                 '${AnalyticsFormat.hoursMinutes(s.totalMinutes)} · '
@@ -625,8 +635,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
                     ? [Text('—', style: _mutedStyle())]
                     : r.workplaceStats
                         .map((s) => Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 2),
+                              padding: const EdgeInsets.symmetric(vertical: 2),
                               child: Text(
                                 '${s.name}: '
                                 '${_perUnit(s)} · ${_perSetup(s)}',
@@ -711,8 +720,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
             if (finance)
               _cell(
                   child: Text(AnalyticsFormat.money(r.breakdown.total),
-                      style: _cellStyle()
-                          .copyWith(fontWeight: FontWeight.w900))),
+                      style:
+                          _cellStyle().copyWith(fontWeight: FontWeight.w600))),
             if (finance)
               _cell(
                   child: Align(
@@ -803,10 +812,8 @@ class _EmployeesTableState extends State<EmployeesTable> {
     final month = state.month;
     showClaimsListDialog(
       context,
-      employeeName:
-          '${r.employee.lastName} ${r.employee.firstName}'.trim(),
-      monthLabel:
-          '${month.month.toString().padLeft(2, '0')}.${month.year}',
+      employeeName: '${r.employee.lastName} ${r.employee.firstName}'.trim(),
+      monthLabel: '${month.month.toString().padLeft(2, '0')}.${month.year}',
       claims: claims,
     );
   }
@@ -865,16 +872,16 @@ class _EmployeesTableState extends State<EmployeesTable> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0x1A38BDF8),
+          color: const Color(0x146A6CF7),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: const Color(0x3338BDF8)),
+          border: Border.all(color: const Color(0x336A6CF7)),
         ),
         child: Text(
           '$label: ${AnalyticsFormat.money(amount)}',
           style: const TextStyle(
-            color: Color(0xFF7DD3FC),
+            color: AnalyticsColors.blueDeep,
             fontSize: 11,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),
@@ -900,8 +907,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
           // Суммарное qty здесь не показываем — рабочие места считают в
           // разных единицах измерения, их сумма не имеет смысла (та же
           // причина, по которой убрана колонка «Сделано»).
-          c(
-              'всего',
+          c('всего',
               'приладка ${AnalyticsFormat.decimal(t.setupAll)} / ${AnalyticsFormat.hoursMinutes(t.usefulM)}',
               flex: 2),
           // Средние скорости считаются по рабочим местам в разных единицах,
@@ -952,11 +958,11 @@ class _EmployeesTableState extends State<EmployeesTable> {
           Text(value,
               style: const TextStyle(
                   color: AnalyticsColors.text,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w600,
                   fontSize: 12)),
           Text(label,
-              style: const TextStyle(
-                  color: AnalyticsColors.muted, fontSize: 10)),
+              style:
+                  const TextStyle(color: AnalyticsColors.muted, fontSize: 10)),
         ),
       );
 
@@ -982,7 +988,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
   TextStyle _cellStyle() => const TextStyle(
         color: AnalyticsColors.text,
         fontSize: 12,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w500,
       );
 
   TextStyle _mutedStyle() =>
@@ -1101,7 +1107,10 @@ class _InlineMoneyFieldState extends State<_InlineMoneyField> {
 
   void _commit() {
     final parsed = double.tryParse(
-          _ctrl.text.replaceAll(' ', '').replaceAll(' ', '').replaceAll(',', '.'),
+          _ctrl.text
+              .replaceAll(' ', '')
+              .replaceAll(' ', '')
+              .replaceAll(',', '.'),
         ) ??
         0;
     if (parsed != _lastCommitted) {
@@ -1135,13 +1144,13 @@ class _InlineMoneyFieldState extends State<_InlineMoneyField> {
         style: const TextStyle(
             color: AnalyticsColors.text,
             fontSize: 12,
-            fontWeight: FontWeight.w700),
+            fontWeight: FontWeight.w500),
         decoration: InputDecoration(
           isDense: true,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           filled: true,
-          fillColor: const Color(0x1102061B),
+          fillColor: AnalyticsColors.bg2,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: AnalyticsColors.line),
@@ -1216,8 +1225,7 @@ class _WorkplaceStat {
 
   /// Средняя длительность одной приладки: время наладки ÷ количество приладок.
   /// null — приладок не было, делить не на что.
-  double? get minutesPerSetup =>
-      setupQty > 0 ? setupMinutes / setupQty : null;
+  double? get minutesPerSetup => setupQty > 0 ? setupMinutes / setupQty : null;
 
   /// Средняя выработка: количество ÷ время производства (единиц в минуту).
   /// null — производственного времени не было, делить не на что.
@@ -1253,8 +1261,8 @@ class _EmployeeCell extends StatelessWidget {
           child: Text(
             initials,
             style: const TextStyle(
-              color: Color(0xFF00121C),
-              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
               fontSize: 16,
             ),
           ),
@@ -1269,7 +1277,7 @@ class _EmployeeCell extends StatelessWidget {
                 style: const TextStyle(
                   color: AnalyticsColors.text,
                   fontSize: 13,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
               if (position != null && position!.isNotEmpty)
@@ -1289,17 +1297,16 @@ class _EmployeeCell extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                   decoration: BoxDecoration(
-                    border:
-                        Border.all(color: const Color(0x4F38BDF8)),
+                    border: Border.all(color: const Color(0x4F6A6CF7)),
                     borderRadius: BorderRadius.circular(999),
-                    color: const Color(0x261A8FB5),
+                    color: const Color(0x146A6CF7),
                   ),
                   child: Text(
                     status!,
                     style: const TextStyle(
-                      color: Color(0xFF7DD3FC),
+                      color: AnalyticsColors.blueDeep,
                       fontSize: 10,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),

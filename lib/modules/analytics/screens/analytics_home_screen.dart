@@ -160,7 +160,7 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
       children: [
         const Text('Месяц',
             style: TextStyle(color: AnalyticsColors.muted, fontSize: 12)),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         AnalyticsMonthPicker(
           month: month,
           onChanged: (m) => _service.loadMonth(m),
@@ -172,13 +172,13 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
         ? TextButton.icon(
             onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
             style: TextButton.styleFrom(
-              minimumSize: const Size(0, 42),
-              padding: const EdgeInsets.symmetric(horizontal: 18),
+              minimumSize: const Size(0, 36),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               foregroundColor: AnalyticsColors.text,
-              backgroundColor: const Color(0xBF0F172A),
+              backgroundColor: AnalyticsColors.bg2,
               side: const BorderSide(color: AnalyticsColors.line),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
             icon: const Icon(Icons.tune, size: 18),
@@ -187,13 +187,20 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
         : null;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xB80F172A),
-          borderRadius: BorderRadius.circular(22),
+          color: AnalyticsColors.card,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AnalyticsColors.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x12000000),
+              blurRadius: 10,
+              offset: Offset(0, 2),
+            ),
+          ],
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -203,7 +210,7 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
                 children: [
                   monthGroup,
                   if (settingsButton != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     settingsButton,
                   ],
                 ],

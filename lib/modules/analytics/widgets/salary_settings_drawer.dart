@@ -36,8 +36,10 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
   void initState() {
     super.initState();
     final s = widget.service.state.settings;
-    _nightCtrl = TextEditingController(text: AnalyticsFormat.decimal(s.nightPercent));
-    _mealCtrl = TextEditingController(text: AnalyticsFormat.decimal(s.mealAmount));
+    _nightCtrl =
+        TextEditingController(text: AnalyticsFormat.decimal(s.nightPercent));
+    _mealCtrl =
+        TextEditingController(text: AnalyticsFormat.decimal(s.mealAmount));
     _socialCtrl =
         TextEditingController(text: AnalyticsFormat.decimal(s.socialDefault));
   }
@@ -87,13 +89,12 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                       style: TextStyle(
                         color: AnalyticsColors.text,
                         fontSize: 20,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close,
-                        color: AnalyticsColors.text),
+                    icon: const Icon(Icons.close, color: AnalyticsColors.text),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -103,8 +104,8 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                 widget.canEdit
                     ? 'Ночные смены, питание, соц. отчисления и коэффициенты рабочих мест.'
                     : 'Просмотр настроек оплаты. Изменения доступны только техническому лидеру.',
-                style: const TextStyle(
-                    color: AnalyticsColors.muted, fontSize: 12),
+                style:
+                    const TextStyle(color: AnalyticsColors.muted, fontSize: 12),
               ),
               const SizedBox(height: 16),
               _section(
@@ -143,13 +144,11 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                      child: _coefficientsColumn(coeffs, workplaces)),
+                  Expanded(child: _coefficientsColumn(coeffs, workplaces)),
                   const SizedBox(width: 24),
                   Expanded(child: _setupPricesColumn(workplaces)),
                   const SizedBox(width: 24),
-                  Expanded(
-                      child: _statusRatesColumn(statusRates, statuses)),
+                  Expanded(child: _statusRatesColumn(statusRates, statuses)),
                 ],
               ),
               const SizedBox(height: 24),
@@ -169,7 +168,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
           'Коэффициенты рабочих мест',
           style: TextStyle(
             color: AnalyticsColors.text,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w600,
             fontSize: 14,
           ),
         ),
@@ -198,7 +197,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                         w.name,
                         style: const TextStyle(
                           color: AnalyticsColors.text,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       Text(
@@ -221,7 +220,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                     textAlign: TextAlign.right,
                     style: const TextStyle(
                         color: AnalyticsColors.text,
-                        fontWeight: FontWeight.w800),
+                        fontWeight: FontWeight.w500),
                     decoration: const InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(),
@@ -256,7 +255,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
           'Оплата приладки',
           style: TextStyle(
             color: AnalyticsColors.text,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w600,
             fontSize: 14,
           ),
         ),
@@ -290,7 +289,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                         w.name,
                         style: const TextStyle(
                           color: AnalyticsColors.text,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       Text(
@@ -317,7 +316,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                     textAlign: TextAlign.right,
                     style: const TextStyle(
                         color: AnalyticsColors.text,
-                        fontWeight: FontWeight.w800),
+                        fontWeight: FontWeight.w500),
                     decoration: const InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(),
@@ -349,7 +348,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
           'Оплата по статусам',
           style: TextStyle(
             color: AnalyticsColors.text,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w600,
             fontSize: 14,
           ),
         ),
@@ -383,7 +382,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                         s.name,
                         style: const TextStyle(
                           color: AnalyticsColors.text,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       const Text(
@@ -406,7 +405,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                     textAlign: TextAlign.right,
                     style: const TextStyle(
                         color: AnalyticsColors.text,
-                        fontWeight: FontWeight.w800),
+                        fontWeight: FontWeight.w500),
                     decoration: const InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(),
@@ -446,7 +445,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                 Text(title,
                     style: const TextStyle(
                       color: AnalyticsColors.text,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w500,
                     )),
                 Text(subtitle,
                     style: const TextStyle(
@@ -472,7 +471,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       textAlign: TextAlign.right,
       style: const TextStyle(
-          color: AnalyticsColors.text, fontWeight: FontWeight.w900),
+          color: AnalyticsColors.text, fontWeight: FontWeight.w500),
       decoration: InputDecoration(
         isDense: true,
         suffixText: suffix,

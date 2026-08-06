@@ -22,15 +22,18 @@ class AnalyticsMonthPicker extends StatelessWidget {
           tooltip: 'Предыдущий месяц',
           icon: const Icon(Icons.chevron_left, color: AnalyticsColors.text),
           onPressed: () => onChanged(month.previous),
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
         ),
         InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           onTap: () => _pickMonth(context),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
-              color: const Color(0xB30B1226),
-              borderRadius: BorderRadius.circular(14),
+              color: AnalyticsColors.bg2,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AnalyticsColors.line),
             ),
             child: Row(
@@ -43,7 +46,7 @@ class AnalyticsMonthPicker extends StatelessWidget {
                   month.humanTitle,
                   style: const TextStyle(
                     color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
@@ -53,6 +56,9 @@ class AnalyticsMonthPicker extends StatelessWidget {
         IconButton(
           tooltip: 'Следующий месяц',
           icon: const Icon(Icons.chevron_right, color: AnalyticsColors.text),
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
           onPressed: () {
             final next = AnalyticsMonth.fromYearMonth(
               month.month == 12 ? month.year + 1 : month.year,
@@ -75,7 +81,7 @@ class AnalyticsMonthPicker extends StatelessWidget {
       helpText: 'Выберите любой день месяца',
       builder: (context, child) {
         return Theme(
-          data: ThemeData.dark(),
+          data: Theme.of(context),
           child: child ?? const SizedBox.shrink(),
         );
       },

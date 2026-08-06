@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'quantity_status_service.dart';
 import 'task_model.dart';
+import 'workspace_design.dart';
 
 /// Общее представление комментариев `tasks.comments` для всех экранов.
 ///
@@ -35,8 +36,7 @@ const Set<String> kTaskCommentQuantityTypes = <String>{
 String formatTaskCommentTimestamp(int? ts, {DateTime? reference}) {
   if (ts == null || ts <= 0) return '';
   try {
-    final dt =
-        DateTime.fromMillisecondsSinceEpoch(normalizeEpochToMillis(ts));
+    final dt = DateTime.fromMillisecondsSinceEpoch(normalizeEpochToMillis(ts));
     String two(int n) => n.toString().padLeft(2, '0');
     final currentYear = (reference ?? DateTime.now()).year;
     final date = dt.year == currentYear
@@ -269,6 +269,7 @@ class TaskCommentTile extends StatelessWidget {
     this.iconOverride,
     this.textColor,
     this.resolveUserName,
+    this.workspaceStyle = false,
   });
 
   final TaskComment comment;
@@ -288,6 +289,7 @@ class TaskCommentTile extends StatelessWidget {
 
   /// Резолвер имён для описаний time_event.
   final String Function(String userId)? resolveUserName;
+  final bool workspaceStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -308,6 +310,71 @@ class TaskCommentTile extends StatelessWidget {
       comment.text,
       resolveUserName: resolveUserName,
     );
+
+    if (workspaceStyle) {
+      final initial = author.isEmpty ? '•' : author[0].toUpperCase();
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              margin: const EdgeInsets.only(top: 2),
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: WorkspaceColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (header.isNotEmpty)
+                    Text(
+                      header,
+                      style: const TextStyle(
+                        color: WorkspaceColors.mutedForeground,
+                        fontSize: 12,
+                        height: 1.25,
+                      ),
+                    ),
+                  const SizedBox(height: 2),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      color: textColor ?? WorkspaceColors.foreground,
+                      fontSize: 14,
+                      height: 1.25,
+                    ),
+                  ),
+                  if (attachments.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: attachments,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Padding(
       padding: EdgeInsets.symmetric(vertical: scale * 3),

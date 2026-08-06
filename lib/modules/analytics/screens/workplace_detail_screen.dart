@@ -53,8 +53,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
     int daySelected,
     AnalyticsState state,
   ) {
-    final midnight =
-        DateTime(state.month.year, state.month.month, daySelected);
+    final midnight = DateTime(state.month.year, state.month.month, daySelected);
     String hhmm(DateTime dt) =>
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return [
@@ -129,8 +128,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
         // выбранный день (на цифры зарплаты/КПД не влияет).
         final dayComments = state.dayComments
             .where((c) =>
-                c.workplaceId == _workplaceId &&
-                c.timestamp.day == daySelected)
+                c.workplaceId == _workplaceId && c.timestamp.day == daySelected)
             .toList();
         final timeline = TimelineCalculator.build(
           day: DateTime(state.month.year, state.month.month, daySelected),
@@ -186,8 +184,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                     personnel.workplaceById(id)?.name ?? id,
                 employeeNameOf: (id) {
                   try {
-                    final e =
-                        personnel.employees.firstWhere((x) => x.id == id);
+                    final e = personnel.employees.firstWhere((x) => x.id == id);
                     return '${e.lastName} ${e.firstName}'.trim();
                   } catch (_) {
                     return id;
@@ -201,14 +198,11 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
               child: DayEventsTable(
                 events: dayEvents,
                 timeline: timeline,
-                workplaceById: {
-                  for (final w in personnel.workplaces) w.id: w
-                },
+                workplaceById: {for (final w in personnel.workplaces) w.id: w},
                 comments: dayComments,
                 employeeNameOf: (id) {
                   try {
-                    final e =
-                        personnel.employees.firstWhere((x) => x.id == id);
+                    final e = personnel.employees.firstWhere((x) => x.id == id);
                     return '${e.lastName} ${e.firstName}'.trim();
                   } catch (_) {
                     return id;
@@ -305,15 +299,14 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
           style: const TextStyle(
             color: AnalyticsColors.text,
             fontSize: 30,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w600,
             letterSpacing: -1,
             height: 1.05,
           ),
         ),
         const SizedBox(height: 8),
         Text('единица измерения: $unit',
-            style: const TextStyle(
-                color: AnalyticsColors.muted, fontSize: 13)),
+            style: const TextStyle(color: AnalyticsColors.muted, fontSize: 13)),
       ],
     );
 
@@ -331,8 +324,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
               dropdownColor: AnalyticsColors.card2,
               style: const TextStyle(color: AnalyticsColors.text),
               underline: const SizedBox.shrink(),
-              icon:
-                  const Icon(Icons.expand_more, color: AnalyticsColors.muted),
+              icon: const Icon(Icons.expand_more, color: AnalyticsColors.muted),
               items: personnel.workplaces
                   .map((w) => DropdownMenuItem(
                         value: w.id,
@@ -376,7 +368,8 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
     );
   }
 
-  Widget _activityCalendar(int days, Map<int, List<AnalyticsEvent>> eventsByDay) {
+  Widget _activityCalendar(
+      int days, Map<int, List<AnalyticsEvent>> eventsByDay) {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -398,9 +391,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                 : const Color(0xFFFACC15);
         final fg = list.isEmpty
             ? AnalyticsColors.text
-            : (hasNight && !hasDay
-                ? Colors.white
-                : const Color(0xFF1F2937));
+            : (hasNight && !hasDay ? Colors.white : const Color(0xFF1F2937));
         return InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: () => setState(() => _selectedDay = day),
@@ -424,7 +415,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                 Text('$day',
                     style: TextStyle(
                       color: fg,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w600,
                       fontSize: 16,
                     )),
                 Text(list.isEmpty ? 'нет' : '${list.length} событ.',
@@ -460,7 +451,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
-            color: const Color(0x0FFFFFFF),
+            color: AnalyticsColors.bg2,
             border: Border.all(color: AnalyticsColors.line),
           ),
           child: Row(
@@ -471,12 +462,12 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  color: const Color(0x2422C55E),
+                  color: const Color(0x1F34C759),
                 ),
                 child: Text('#${i + 1}',
                     style: const TextStyle(
-                        color: Color(0xFFBBF7D0),
-                        fontWeight: FontWeight.w900,
+                        color: AnalyticsColors.greenDark,
+                        fontWeight: FontWeight.w600,
                         fontSize: 12)),
               ),
               const SizedBox(width: 10),
@@ -487,7 +478,7 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                     Text(name,
                         style: const TextStyle(
                             color: AnalyticsColors.text,
-                            fontWeight: FontWeight.w800)),
+                            fontWeight: FontWeight.w500)),
                     Text(
                       '${AnalyticsFormat.hoursMinutes(row.usefulMinutes)} / ${AnalyticsFormat.decimal(row.qty)} $unit',
                       style: const TextStyle(
@@ -499,8 +490,8 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
               Text(
                 '${AnalyticsFormat.decimal(row.speed)} $unit/мин',
                 style: const TextStyle(
-                  color: Color(0xFF86EFAC),
-                  fontWeight: FontWeight.w900,
+                  color: AnalyticsColors.greenDark,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],

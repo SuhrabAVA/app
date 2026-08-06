@@ -2,10 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb, ValueListenable;
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
@@ -24,7 +22,6 @@ import '../../services/audit_log_service.dart';
 import '../production/production_queue_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
-import '../production_planning/planned_stage_model.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../orders/production_ids.dart' as production_ids;
@@ -39,13 +36,13 @@ import '../../services/error_log_service.dart';
 import 'task_visibility.dart';
 import 'quantity_status_service.dart';
 import 'stage_sequence_utils.dart' as stage_sequence;
-import '../common/pdf_view_screen.dart';
+import 'workspace_design.dart';
 import '../../services/storage_service.dart';
 import '../../services/attachment_service.dart';
 import '../../utils/media_viewer.dart';
+
 // Additional helpers for time formatting and aggregated timers
-const String kCardboardCuttingStageId =
-    stage_sequence.kCardboardCuttingStageId;
+const String kCardboardCuttingStageId = stage_sequence.kCardboardCuttingStageId;
 const String kPackagingStageId = stage_sequence.kPackagingStageId;
 
 String formatTaskInitialQuantity(double value) {
@@ -262,15 +259,12 @@ List<TaskTimeEvent> _taskTimeEvents(TaskModel task) {
 }
 
 List<TaskTimeEvent> _timeEventsForUser(TaskModel task, String userId) {
-  return _taskTimeEvents(task)
-      .where((e) => e.subjectUserId == userId)
-      .toList();
+  return _taskTimeEvents(task).where((e) => e.subjectUserId == userId).toList();
 }
 
 TaskTimeEvent? _openEventForUser(TaskModel task, String userId) {
-  final events = _timeEventsForUser(task, userId)
-      .where((e) => e.endTime == null)
-      .toList();
+  final events =
+      _timeEventsForUser(task, userId).where((e) => e.endTime == null).toList();
   if (events.isEmpty) return null;
   events.sort((a, b) => a.startTime.compareTo(b.startTime));
   return events.last;
@@ -289,8 +283,7 @@ Map<TaskTimeType, Duration> _timeTotalsForUser(TaskModel task, String userId) {
   return totals;
 }
 
-Duration _timeForUser(
-    TaskModel task, String userId, Set<TaskTimeType> types) {
+Duration _timeForUser(TaskModel task, String userId, Set<TaskTimeType> types) {
   final now = DateTime.now().toUtc();
   Duration total = Duration.zero;
   for (final event in _timeEventsForUser(task, userId)) {
@@ -309,7 +302,8 @@ Duration _totalTimeForUser(TaskModel task, String userId) {
 Duration _totalStageTime(TaskModel task) {
   final events = _taskTimeEvents(task)
       .where((event) =>
-          event.type == TaskTimeType.production || event.type == TaskTimeType.setup)
+          event.type == TaskTimeType.production ||
+          event.type == TaskTimeType.setup)
       .toList();
   if (events.isEmpty) return Duration(seconds: task.spentSeconds);
 
@@ -351,8 +345,7 @@ Duration _setupElapsedFromTimeEvents(TaskModel task) {
   if (events.isEmpty) return Duration.zero;
   final now = DateTime.now().toUtc();
   final intervals = events
-      .map((e) =>
-          MapEntry(e.startTime, e.endTime ?? now))
+      .map((e) => MapEntry(e.startTime, e.endTime ?? now))
       .toList()
     ..sort((a, b) => a.key.compareTo(b.key));
   Duration total = Duration.zero;
@@ -625,8 +618,8 @@ bool _hasStartedForStageSequence(TaskModel task) {
   );
 }
 
-bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
-    TaskModel task,
+bool _isFirstPendingStage(
+    TaskProvider tasks, PersonnelProvider personnel, TaskModel task,
     {stage_sequence.StageGroupingResolver? groupResolver}) {
   if (_canRunOutOfStageSequence(task)) return true;
 
@@ -668,7 +661,6 @@ bool _isFirstPendingStage(TaskProvider tasks, PersonnelProvider personnel,
   );
 }
 
-
 bool _isPackagingAvailableByEmployeeAccess(
   PersonnelProvider personnel,
   String employeeId,
@@ -684,8 +676,7 @@ bool _isPackagingAvailableByEmployeeAccess(
   final emp = employee;
   final packagingWorkplace = personnel.workplaceById(kPackagingStageId);
   if (packagingWorkplace == null) return false;
-  return packagingWorkplace.positionIds
-      .any((p) => emp.positionIds.contains(p));
+  return packagingWorkplace.positionIds.any((p) => emp.positionIds.contains(p));
 }
 
 bool canStartPackagingOutOfQueue({
@@ -715,7 +706,8 @@ bool canStartPackagingOutOfQueue({
         started: _hasStartedForStageSequence(t),
       ),
     ),
-    orderedStages: tasks.stageSequenceForOrder(task.orderId) ?? const <String>[],
+    orderedStages:
+        tasks.stageSequenceForOrder(task.orderId) ?? const <String>[],
     groupResolver: groupResolver,
     currentStageName: _stageDisplayName(personnel, task.stageId),
     currentStageGroupKey: task.stageGroupKey,
@@ -863,7 +855,8 @@ class _TasksScreenState extends State<TasksScreen>
 
   /// Общие «часы» для счётчиков времени: тикают раз в секунду и перестраивают
   /// только подписанные ValueListenableBuilder, а не всё дерево экрана.
-  final ValueNotifier<DateTime> _clock = ValueNotifier<DateTime>(DateTime.now());
+  final ValueNotifier<DateTime> _clock =
+      ValueNotifier<DateTime>(DateTime.now());
   Timer? _clockTicker;
 
   /// Поиск по списку заданий.
@@ -883,17 +876,20 @@ class _TasksScreenState extends State<TasksScreen>
     _selection.workplaceId = normalized;
     _selection.notifyListeners();
   }
+
   TaskModel? get _selectedTask => _selection.task;
   set _selectedTask(TaskModel? value) {
     if (identical(_selection.task, value)) return;
     _selection.task = value;
     _selection.notifyListeners();
   }
+
   bool _detailsExpanded = true;
   final Map<String, _FormImageCacheEntry> _formImageCache = {};
   final Map<String, Future<String?>> _formImagePending = {};
   final Map<String, List<Map<String, dynamic>>> _orderPaintsCache = {};
-  final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending = {};
+  final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending =
+      {};
   final Map<String, List<Map<String, dynamic>>> _orderFilesCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderFilesPending = {};
   final Map<String, List<Map<String, dynamic>>> _formFilesCache = {};
@@ -923,8 +919,8 @@ class _TasksScreenState extends State<TasksScreen>
   @override
   void initState() {
     super.initState();
-    _selection =
-        _selectionCache.putIfAbsent(widget.employeeId, () => _TaskSelectionState());
+    _selection = _selectionCache.putIfAbsent(
+        widget.employeeId, () => _TaskSelectionState());
     _selection.addListener(_onSelectionChanged);
     // Один тикер на весь экран. Раньше каждый счётчик времени создавал
     // Stream.periodic прямо в build(): на каждой пересборке рождался новый
@@ -963,12 +959,11 @@ class _TasksScreenState extends State<TasksScreen>
     });
   }
 
-  String _commentsSignature(List<_StageComment> comments) => comments
-      .map((entry) {
+  String _commentsSignature(List<_StageComment> comments) =>
+      comments.map((entry) {
         final c = entry.comment;
         return '${entry.taskId}-${c.id}-${c.timestamp}-${c.type}-${c.userId}-${c.text}';
-      })
-      .join('|');
+      }).join('|');
 
   void _maybeAutoScrollComments(String taskId, List<_StageComment> comments) {
     final signature = _commentsSignature(comments);
@@ -1081,7 +1076,8 @@ class _TasksScreenState extends State<TasksScreen>
     required Iterable<WorkplaceQueueEntry> entries,
   }) {
     final entryList = entries.toList(growable: false);
-    final nextSignature = _queueIdsSignature(entryList.map((entry) => entry.queueKey));
+    final nextSignature =
+        _queueIdsSignature(entryList.map((entry) => entry.queueKey));
     if (_lastQueueSyncGroupId == groupId &&
         _lastQueueSyncIdsSignature == nextSignature) {
       return;
@@ -1174,7 +1170,9 @@ class _TasksScreenState extends State<TasksScreen>
 
   OrderModel? _orderById(String orderId) {
     try {
-      return context.read<OrdersProvider>().orders
+      return context
+          .read<OrdersProvider>()
+          .orders
           .firstWhere((o) => o.id == orderId);
     } catch (_) {
       return null;
@@ -1290,7 +1288,6 @@ class _TasksScreenState extends State<TasksScreen>
     return candidates;
   }
 
-
   List<TmcModel> _workspacePaintItems() {
     final warehouse = context.read<WarehouseProvider>();
     bool isPaintType(TmcModel item) {
@@ -1300,7 +1297,8 @@ class _TasksScreenState extends State<TasksScreen>
 
     final paints = warehouse.allTmc.where(isPaintType).toList();
     paints.sort(
-      (a, b) => a.description.toLowerCase().compareTo(b.description.toLowerCase()),
+      (a, b) =>
+          a.description.toLowerCase().compareTo(b.description.toLowerCase()),
     );
     return paints;
   }
@@ -1314,9 +1312,8 @@ class _TasksScreenState extends State<TasksScreen>
   bool _matchPaintSearch(TmcModel paint, String query) {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return true;
-    final searchable = [paint.description, paint.note ?? '', paint.id]
-        .join(' ')
-        .toLowerCase();
+    final searchable =
+        [paint.description, paint.note ?? '', paint.id].join(' ').toLowerCase();
     return normalized
         .split(RegExp(r'[\s,;]+'))
         .where((token) => token.isNotEmpty)
@@ -1351,7 +1348,8 @@ class _TasksScreenState extends State<TasksScreen>
                       suffixIcon: search.isEmpty
                           ? null
                           : IconButton(
-                              onPressed: () => setPickerState(() => search = ''),
+                              onPressed: () =>
+                                  setPickerState(() => search = ''),
                               icon: const Icon(Icons.clear),
                             ),
                     ),
@@ -1363,7 +1361,8 @@ class _TasksScreenState extends State<TasksScreen>
                         ? const Center(child: Text('Ничего не найдено.'))
                         : ListView.separated(
                             itemCount: filtered.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
                             itemBuilder: (context, index) {
                               final paint = filtered[index];
                               final available = paint.availableQty < 0
@@ -1374,7 +1373,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 subtitle: Text(
                                   'Доступно: ${available.toStringAsFixed(2)} ${paint.unit.isEmpty ? 'ед.' : paint.unit}',
                                 ),
-                                onTap: () => Navigator.of(pickerContext).pop(paint),
+                                onTap: () =>
+                                    Navigator.of(pickerContext).pop(paint),
                               );
                             },
                           ),
@@ -1407,8 +1407,9 @@ class _TasksScreenState extends State<TasksScreen>
         final byName =
             a.description.toLowerCase().compareTo(b.description.toLowerCase());
         if (byName != 0) return byName;
-        final byFormat =
-            (a.format ?? '').toLowerCase().compareTo((b.format ?? '').toLowerCase());
+        final byFormat = (a.format ?? '')
+            .toLowerCase()
+            .compareTo((b.format ?? '').toLowerCase());
         if (byFormat != 0) return byFormat;
         return (a.grammage ?? '')
             .toLowerCase()
@@ -1445,9 +1446,8 @@ class _TasksScreenState extends State<TasksScreen>
       }
     }
     final numericTokenRegex = RegExp(r'^\d+(?:[.,]\d+)?$');
-    final tokens = normalized
-        .split(RegExp(r'[\s,;]+'))
-        .where((token) => token.isNotEmpty);
+    final tokens =
+        normalized.split(RegExp(r'[\s,;]+')).where((token) => token.isNotEmpty);
     for (final token in tokens) {
       if (numericTokenRegex.hasMatch(token)) {
         if (!exactTokens.contains(token.replaceAll(',', '.'))) return false;
@@ -1483,7 +1483,8 @@ class _TasksScreenState extends State<TasksScreen>
               orElse: () => null,
             );
     final matchedByName = papers.cast<TmcModel?>().firstWhere(
-          (paper) => paper?.description.trim().toLowerCase() ==
+          (paper) =>
+              paper?.description.trim().toLowerCase() ==
               selected.name.trim().toLowerCase(),
           orElse: () => null,
         );
@@ -1632,12 +1633,15 @@ class _TasksScreenState extends State<TasksScreen>
 
       final parsedWidthB = asDouble(material.extra?['widthB']) ?? 0;
       final widthB = parsedWidthB > 0 ? parsedWidthB : (fallbackWidthB ?? 0);
-      final blQuantity = (material.extra?['blQuantity'] ?? fallbackBlQuantity ?? '')
-          .toString()
-          .trim();
+      final blQuantity =
+          (material.extra?['blQuantity'] ?? fallbackBlQuantity ?? '')
+              .toString()
+              .trim();
       final widthText = widthB <= 0
           ? '—'
-          : (widthB % 1 == 0 ? widthB.toStringAsFixed(0) : widthB.toStringAsFixed(2));
+          : (widthB % 1 == 0
+              ? widthB.toStringAsFixed(0)
+              : widthB.toStringAsFixed(2));
       final quantityText = blQuantity.isEmpty ? '—' : blQuantity;
       return 'Ш $widthText, К $quantityText, L ${material.quantity.toStringAsFixed(2)} м';
     }
@@ -1681,7 +1685,8 @@ class _TasksScreenState extends State<TasksScreen>
     required String text,
   }) async {
     final taskProvider = context.read<TaskProvider>();
-    final candidates = taskProvider.tasks.where((task) => task.orderId == orderId).toList();
+    final candidates =
+        taskProvider.tasks.where((task) => task.orderId == orderId).toList();
     if (candidates.isEmpty) return;
     candidates.sort((a, b) {
       final aPriority = (a.stageId == _selectedWorkplaceId ? 0 : 1) +
@@ -1699,7 +1704,6 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-
   String _paintNameFromRow(Map<String, dynamic> row) => _stringFromRow(
         row,
         const ['paint_name', 'name', 'paintName'],
@@ -1713,9 +1717,9 @@ class _TasksScreenState extends State<TasksScreen>
   double? _paintQtyKgFromRow(Map<String, dynamic> row) {
     final value = row['qty_kg'] ?? row['qtyKg'] ?? row['planned_qty_kg'];
     if (value is num) return value.toDouble();
-    return double.tryParse((value ?? '').toString().trim().replaceAll(',', '.'));
+    return double.tryParse(
+        (value ?? '').toString().trim().replaceAll(',', '.'));
   }
-
 
   String _formatPaintGramsFromKg(double? valueKg) {
     if (valueKg == null || valueKg <= 0) return '';
@@ -1726,7 +1730,10 @@ class _TasksScreenState extends State<TasksScreen>
   String _formatPaintKg(double? value) {
     if (value == null || value <= 0) return '';
     if (value == value.roundToDouble()) return value.toStringAsFixed(0);
-    return value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+    return value
+        .toStringAsFixed(3)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
   }
 
   String _buildWorkspacePaintChangeComment({
@@ -1739,9 +1746,8 @@ class _TasksScreenState extends State<TasksScreen>
       final info = (row['info'] ?? '').toString().trim();
       final qtyKg = _paintQtyKgFromRow(row) ?? 0;
       final qtyGrams = qtyKg * 1000;
-      final qtyText = qtyGrams <= 0
-          ? '— г'
-          : '${_formatAmountForDialog(qtyGrams)} г';
+      final qtyText =
+          qtyGrams <= 0 ? '— г' : '${_formatAmountForDialog(qtyGrams)} г';
       return '${name.isEmpty ? 'Краска' : name} • $qtyText${info.isEmpty ? '' : ' • $info'}';
     }
 
@@ -1752,7 +1758,8 @@ class _TasksScreenState extends State<TasksScreen>
       final newRow = i < after.length ? after[i] : null;
       final slot = i + 1;
       if (oldRow != null && newRow != null) {
-        lines.add('Краска №$slot Было: ${label(oldRow)}. Стало: ${label(newRow)}.');
+        lines.add(
+            'Краска №$slot Было: ${label(oldRow)}. Стало: ${label(newRow)}.');
       } else if (oldRow == null && newRow != null) {
         lines.add('Краска №$slot Добавлена: ${label(newRow)}.');
       } else if (oldRow != null) {
@@ -1768,7 +1775,8 @@ class _TasksScreenState extends State<TasksScreen>
     required String text,
   }) async {
     final taskProvider = context.read<TaskProvider>();
-    final candidates = taskProvider.tasks.where((task) => task.orderId == orderId).toList();
+    final candidates =
+        taskProvider.tasks.where((task) => task.orderId == orderId).toList();
     if (candidates.isEmpty) return;
     candidates.sort((a, b) {
       final aPriority = (a.stageId == _selectedWorkplaceId ? 0 : 1) +
@@ -1843,10 +1851,13 @@ class _TasksScreenState extends State<TasksScreen>
             }
           ];
     final qtyControllers = <TextEditingController>[
-      for (final row in selected) TextEditingController(text: _formatPaintGramsFromKg(_paintQtyKgFromRow(row))),
+      for (final row in selected)
+        TextEditingController(
+            text: _formatPaintGramsFromKg(_paintQtyKgFromRow(row))),
     ];
     final infoControllers = <TextEditingController>[
-      for (final row in selected) TextEditingController(text: (row['info'] ?? '').toString()),
+      for (final row in selected)
+        TextEditingController(text: (row['info'] ?? '').toString()),
     ];
     final reasonController = TextEditingController();
     final formKey = GlobalKey<FormState>();
@@ -1873,7 +1884,8 @@ class _TasksScreenState extends State<TasksScreen>
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text('Изменить краски: ${latest.customer.isEmpty ? latest.id : latest.customer}'),
+          title: Text(
+              'Изменить краски: ${latest.customer.isEmpty ? latest.id : latest.customer}'),
           content: SizedBox(
             width: 760,
             child: Form(
@@ -1889,9 +1901,10 @@ class _TasksScreenState extends State<TasksScreen>
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final compact = constraints.maxWidth < 640;
-                            final protectedOrderLabel = protectedPaintOrderLabels[
-                                _normalizePaintNameKey(
-                                    _paintNameFromRow(selected[i]))];
+                            final protectedOrderLabel =
+                                protectedPaintOrderLabels[
+                                    _normalizePaintNameKey(
+                                        _paintNameFromRow(selected[i]))];
                             final protectedHint = protectedOrderLabel == null
                                 ? null
                                 : 'Краска перешла из заказа «$protectedOrderLabel» и ещё не списана';
@@ -1901,8 +1914,10 @@ class _TasksScreenState extends State<TasksScreen>
                                     onPressed: (saving || protectedHint != null)
                                         ? null
                                         : () {
-                                            final removedQty = qtyControllers[i];
-                                            final removedInfo = infoControllers[i];
+                                            final removedQty =
+                                                qtyControllers[i];
+                                            final removedInfo =
+                                                infoControllers[i];
                                             setDialogState(() {
                                               selected.removeAt(i);
                                               qtyControllers.removeAt(i);
@@ -1946,16 +1961,17 @@ class _TasksScreenState extends State<TasksScreen>
                               decoration:
                                   const InputDecoration(labelText: 'Кол-во, г'),
                               validator: (value) {
-                                final qty = double.tryParse((value ?? '')
-                                    .trim()
-                                    .replaceAll(',', '.'));
-                                if (qty == null || qty <= 0) return 'Введите > 0';
+                                final qty = double.tryParse(
+                                    (value ?? '').trim().replaceAll(',', '.'));
+                                if (qty == null || qty <= 0)
+                                  return 'Введите > 0';
                                 return null;
                               },
                             );
                             final infoField = TextFormField(
                               controller: infoControllers[i],
-                              decoration: const InputDecoration(labelText: 'Инфо'),
+                              decoration:
+                                  const InputDecoration(labelText: 'Инфо'),
                             );
 
                             if (compact) {
@@ -2003,7 +2019,8 @@ class _TasksScreenState extends State<TasksScreen>
                                     'qty_kg': null,
                                   });
                                   qtyControllers.add(TextEditingController());
-                                  infoControllers.add(TextEditingController(text: paints.first.note ?? ''));
+                                  infoControllers.add(TextEditingController(
+                                      text: paints.first.note ?? ''));
                                 }),
                         icon: const Icon(Icons.add),
                         label: const Text('Добавить краску'),
@@ -2023,7 +2040,8 @@ class _TasksScreenState extends State<TasksScreen>
                     ),
                     if (errorText != null) ...[
                       const SizedBox(height: 8),
-                      Text(errorText!, style: const TextStyle(color: Colors.red)),
+                      Text(errorText!,
+                          style: const TextStyle(color: Colors.red)),
                     ],
                   ],
                 ),
@@ -2032,7 +2050,8 @@ class _TasksScreenState extends State<TasksScreen>
           ),
           actions: [
             TextButton(
-              onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+              onPressed:
+                  saving ? null : () => Navigator.of(dialogContext).pop(),
               child: const Text('Отмена'),
             ),
             FilledButton(
@@ -2046,7 +2065,8 @@ class _TasksScreenState extends State<TasksScreen>
                       });
                       final nextRows = <Map<String, dynamic>>[];
                       for (var i = 0; i < selected.length; i++) {
-                        final paintId = (selected[i]['paint_id'] ?? '').toString().trim();
+                        final paintId =
+                            (selected[i]['paint_id'] ?? '').toString().trim();
                         final paintName = _paintNameFromRow(selected[i]).trim();
                         if (paintId.isEmpty && paintName.isEmpty) {
                           setDialogState(() {
@@ -2055,7 +2075,8 @@ class _TasksScreenState extends State<TasksScreen>
                           });
                           return;
                         }
-                        final qtyGrams = double.parse(qtyControllers[i].text.trim().replaceAll(',', '.'));
+                        final qtyGrams = double.parse(
+                            qtyControllers[i].text.trim().replaceAll(',', '.'));
                         final qtyKg = qtyGrams / 1000;
                         nextRows.add({
                           'order_id': latest.id,
@@ -2104,7 +2125,8 @@ class _TasksScreenState extends State<TasksScreen>
                         if (!mounted) return;
                         Navigator.of(dialogContext).pop();
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Краски успешно обновлены.')),
+                          const SnackBar(
+                              content: Text('Краски успешно обновлены.')),
                         );
                       } catch (error) {
                         setDialogState(() {
@@ -2218,7 +2240,9 @@ class _TasksScreenState extends State<TasksScreen>
 
     String _formatEditableDouble(double value) {
       if (value <= 0) return '';
-      return value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+      return value % 1 == 0
+          ? value.toStringAsFixed(0)
+          : value.toStringAsFixed(2);
     }
 
     final reasonController = TextEditingController();
@@ -2313,11 +2337,12 @@ class _TasksScreenState extends State<TasksScreen>
                                                 weight: paper.weight,
                                               );
                                               formatControllers[i].text =
-                                                  _paperFormatText(paper.format);
+                                                  _paperFormatText(
+                                                      paper.format);
                                               grammageControllers[i].text =
                                                   _paperGrammageText(
-                                                    paper.grammage,
-                                                  );
+                                                paper.grammage,
+                                              );
                                             });
                                           },
                                     child: InputDecorator(
@@ -2362,7 +2387,8 @@ class _TasksScreenState extends State<TasksScreen>
                                 Expanded(
                                   child: TextFormField(
                                     controller: widthBControllers[i],
-                                    keyboardType: const TextInputType.numberWithOptions(
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
                                       decimal: true,
                                     ),
                                     decoration: const InputDecoration(
@@ -2383,15 +2409,17 @@ class _TasksScreenState extends State<TasksScreen>
                                 Expanded(
                                   child: TextFormField(
                                     controller: qtyControllers[i],
-                                    keyboardType: const TextInputType.numberWithOptions(
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
                                       decimal: true,
                                     ),
                                     decoration: const InputDecoration(
                                       labelText: 'Длина L (м)',
                                     ),
                                     validator: (value) {
-                                      final normalized =
-                                          (value ?? '').trim().replaceAll(',', '.');
+                                      final normalized = (value ?? '')
+                                          .trim()
+                                          .replaceAll(',', '.');
                                       final qty = double.tryParse(normalized);
                                       if (qty == null || qty <= 0) {
                                         return 'Введите > 0';
@@ -2439,9 +2467,8 @@ class _TasksScreenState extends State<TasksScreen>
                         Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
-                            onPressed: saving
-                                ? null
-                                : () => addSlot(setDialogState),
+                            onPressed:
+                                saving ? null : () => addSlot(setDialogState),
                             icon: const Icon(Icons.add),
                             label: const Text('Добавить бумагу'),
                           ),
@@ -2472,7 +2499,8 @@ class _TasksScreenState extends State<TasksScreen>
               ),
               actions: [
                 TextButton(
-                  onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+                  onPressed:
+                      saving ? null : () => Navigator.of(dialogContext).pop(),
                   child: const Text('Отмена'),
                 ),
                 FilledButton(
@@ -2490,7 +2518,10 @@ class _TasksScreenState extends State<TasksScreen>
                           String? primaryBlQuantity;
                           for (var i = 0; i < selected.length; i++) {
                             final qty = double.parse(
-                              qtyControllers[i].text.trim().replaceAll(',', '.'),
+                              qtyControllers[i]
+                                  .text
+                                  .trim()
+                                  .replaceAll(',', '.'),
                             );
                             final editedFormat =
                                 formatControllers[i].text.trim();
@@ -2511,7 +2542,10 @@ class _TasksScreenState extends State<TasksScreen>
                               return;
                             }
                             final parsedWidthB = double.tryParse(
-                              widthBControllers[i].text.trim().replaceAll(',', '.'),
+                              widthBControllers[i]
+                                  .text
+                                  .trim()
+                                  .replaceAll(',', '.'),
                             );
                             final parsedBlQuantity =
                                 blQuantityControllers[i].text.trim();
@@ -2556,7 +2590,8 @@ class _TasksScreenState extends State<TasksScreen>
                           // Бизнес-логика рабочего пространства: изменение бумаги
                           // обязательно сопровождается причиной и сразу
                           // синхронизируется с заказом/управлением/резервом.
-                          final error = await orders.updateOrderPapersFromWorkspace(
+                          final error =
+                              await orders.updateOrderPapersFromWorkspace(
                             orderId: latest.id,
                             paperMaterials: nextMaterials,
                             reason: reasonController.text,
@@ -2574,13 +2609,15 @@ class _TasksScreenState extends State<TasksScreen>
                             });
                             return;
                           }
-                          final paperComment = _buildWorkspacePaperChangeComment(
+                          final paperComment =
+                              _buildWorkspacePaperChangeComment(
                             before: currentMaterials,
                             after: nextMaterials,
                             reason: reasonController.text,
                             beforePrimaryWidthB: latest.product.widthB,
                             beforePrimaryBlQuantity: latest.product.blQuantity,
-                            afterPrimaryWidthB: primaryWidthB ?? latest.product.widthB,
+                            afterPrimaryWidthB:
+                                primaryWidthB ?? latest.product.widthB,
                             afterPrimaryBlQuantity:
                                 primaryBlQuantity ?? latest.product.blQuantity,
                           );
@@ -2637,8 +2674,8 @@ class _TasksScreenState extends State<TasksScreen>
 
   String _stageGroupKey(String orderId, String stageId) {
     final taskProvider = Provider.of<TaskProvider?>(context, listen: false);
-    final savedKey = taskProvider?.stageGroupMapForOrder(orderId)?[stageId.trim()]
-        ?.trim();
+    final savedKey =
+        taskProvider?.stageGroupMapForOrder(orderId)?[stageId.trim()]?.trim();
     if (savedKey != null && savedKey.isNotEmpty) return savedKey;
     return _stageGroupMembers(orderId, stageId).join('|');
   }
@@ -2649,8 +2686,8 @@ class _TasksScreenState extends State<TasksScreen>
     final hasAlternatives = groupMembers.toSet().length > 1;
     if (!hasAlternatives) return false;
 
-    final related = provider.tasks.where((t) =>
-        t.orderId == task.orderId && groupMembers.contains(t.stageId));
+    final related = provider.tasks.where(
+        (t) => t.orderId == task.orderId && groupMembers.contains(t.stageId));
     final capturedWorkplace = related
         .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
         .firstWhere((id) => id.isNotEmpty, orElse: () => '');
@@ -2659,8 +2696,8 @@ class _TasksScreenState extends State<TasksScreen>
       return true;
     }
 
-    final anyActive = related.any(
-        (t) => t.id != task.id && t.status == TaskStatus.inProgress);
+    final anyActive = related
+        .any((t) => t.id != task.id && t.status == TaskStatus.inProgress);
     final anyDone =
         related.any((t) => t.id != task.id && t.status == TaskStatus.completed);
 
@@ -2681,11 +2718,12 @@ class _TasksScreenState extends State<TasksScreen>
     final personnel = context.read<PersonnelProvider>();
     final stage = personnel.workplaces.firstWhere(
       (w) => w.id == task.stageId,
-      orElse: () =>
-          WorkplaceModel(id: task.stageId, name: task.stageId, positionIds: const []),
+      orElse: () => WorkplaceModel(
+          id: task.stageId, name: task.stageId, positionIds: const []),
     );
     final defaultMode = _workplaceDefaultMode(stage);
-    final bool isOwner = task.assignees.isNotEmpty && task.assignees.first == userId;
+    final bool isOwner =
+        task.assignees.isNotEmpty && task.assignees.first == userId;
 
     final resolvedStageMode = stageMode ?? defaultMode;
 
@@ -2694,7 +2732,8 @@ class _TasksScreenState extends State<TasksScreen>
         !isOwner) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Добавлять помощников может только основной исполнитель.')));
+            content: Text(
+                'Добавлять помощников может только основной исполнитель.')));
       }
       return;
     }
@@ -2715,8 +2754,7 @@ class _TasksScreenState extends State<TasksScreen>
       await provider.updateAssignees(task.id, newAssignees);
     }
 
-    if (stageMode != null &&
-        _needsExecModeRecord(task, userId, stageMode)) {
+    if (stageMode != null && _needsExecModeRecord(task, userId, stageMode)) {
       await provider.addComment(
         taskId: task.id,
         type: 'exec_mode',
@@ -2800,7 +2838,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final media = MediaQuery.of(context);
     final bool isTablet =
-        media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+        media.size.width < 1100 && media.size.shortestSide >= 600;
     final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
     final bool isTablet1280x800 = isTablet &&
         ((media.size.width == 1280 && media.size.height == 800) ||
@@ -2822,8 +2860,8 @@ class _TasksScreenState extends State<TasksScreen>
                 ? 0.88 // компактные планшеты — ещё аккуратнее базового масштаба
                 : (isTablet
                     ? 1.0 // обычные планшеты — без увеличения
-                    : 1.08))); // десктопы/веб — умеренное увеличение
-    final double layoutScale = baseLayoutScale * 0.7;
+                    : 1.0))); // desktop reference is authored at logical pixels
+    final double layoutScale = baseLayoutScale;
 
     // Поддерживаем читаемость текста, но без лишнего укрупнения на
     // маленьких планшетах.
@@ -2833,11 +2871,7 @@ class _TasksScreenState extends State<TasksScreen>
             ? media.textScaleFactor * 0.94
             : math.max(
                 media.textScaleFactor,
-                isCompactTablet
-                    ? 1.03
-                    : (isTablet
-                        ? 1.1
-                        : 1.18),
+                isCompactTablet ? 1.03 : (isTablet ? 1.1 : 1.0),
               ));
 
     final double scale = layoutScale;
@@ -2845,25 +2879,22 @@ class _TasksScreenState extends State<TasksScreen>
     double scaled(double value) => value * layoutScale;
     final double compactTightness = isTablet1280x800
         ? 0.8
-        : (isTablet1000x700
-            ? 0.72
-            : (isCompactTablet
-                ? 0.9
-                : 1.0));
-    final double outerPadding = scaled(10 * compactTightness);
-    final double columnGap = scaled(isCompactTablet ? 8 : 10);
-    final double cardPadding = scaled(widget.compactList
-        ? 6
-        : (isCompactTablet
-            ? 10
-            : 12));
-    final double cardRadius = scaled(12);
-    final double sectionSpacing =
-        scaled(widget.compactList ? 6 : (isCompactTablet ? 8 : 10));
+        : (isTablet1000x700 ? 0.72 : (isCompactTablet ? 0.9 : 1.0));
+    final double outerPadding = isTablet
+        ? scaled(10 * compactTightness)
+        : WorkspaceMetrics.outerPadding;
+    final double columnGap = isTablet
+        ? scaled(isCompactTablet ? 8 : 10)
+        : WorkspaceMetrics.columnGap;
+    final double cardPadding = isTablet
+        ? scaled(widget.compactList ? 6 : (isCompactTablet ? 10 : 12))
+        : 16;
+    final double cardRadius =
+        isTablet ? scaled(12) : WorkspaceMetrics.cardRadius;
+    final double sectionSpacing = isTablet
+        ? scaled(widget.compactList ? 6 : (isCompactTablet ? 8 : 10))
+        : 12;
     final double smallSpacing = scaled(4);
-    final double largeSpacing =
-        scaled(widget.compactList ? 10 : (isCompactTablet ? 14 : 18));
-    final double chipSpacing = scaled(isCompactTablet ? 4 : 6);
 
     final EmployeeModel employee = personnel.employees.firstWhere(
       (e) => e.id == widget.employeeId,
@@ -2881,19 +2912,17 @@ class _TasksScreenState extends State<TasksScreen>
         .where(
             (w) => w.positionIds.any((p) => employee.positionIds.contains(p)))
         .toList();
-    final workplaces = filteredWorkplaces.isEmpty
-        ? personnel.workplaces
-        : filteredWorkplaces;
+    final workplaces =
+        filteredWorkplaces.isEmpty ? personnel.workplaces : filteredWorkplaces;
 
     final hasValidSelectedWorkplace = _selectedWorkplaceId != null &&
         workplaces.any((w) => w.id == _selectedWorkplaceId);
 
     if (!hasValidSelectedWorkplace && workplaces.isNotEmpty) {
-      final desiredWorkplaceId =
-          savedWid?.trim().isNotEmpty == true &&
-                  workplaces.any((w) => w.id == savedWid)
-              ? savedWid!.trim()
-              : workplaces.first.id.trim();
+      final desiredWorkplaceId = savedWid?.trim().isNotEmpty == true &&
+              workplaces.any((w) => w.id == savedWid)
+          ? savedWid!.trim()
+          : workplaces.first.id.trim();
       _scheduleSelectionUpdate(() {
         final stillValid = _selectedWorkplaceId != null &&
             workplaces.any((w) => w.id == _selectedWorkplaceId);
@@ -3013,41 +3042,85 @@ class _TasksScreenState extends State<TasksScreen>
           ? ''
           : 'Задания для рабочего места: '
               '${workplaces.firstWhere(
-                (w) => w.id == _selectedWorkplaceId,
-                orElse: () => WorkplaceModel(
-                  id: '',
-                  name: '',
-                  positionIds: const [],
-                ),
-              ).name}';
+                    (w) => w.id == _selectedWorkplaceId,
+                    orElse: () => WorkplaceModel(
+                      id: '',
+                      name: '',
+                      positionIds: const [],
+                    ),
+                  ).name}';
 
       Widget buildWorkplaceSelector() {
         final uniqueWorkplacesById = <String, WorkplaceModel>{
           for (final workplace in workplaces) workplace.id: workplace,
         };
-        final uniqueWorkplaces = uniqueWorkplacesById.values.toList(growable: false);
-        final selectedWorkplaceId = uniqueWorkplacesById.containsKey(_selectedWorkplaceId)
-            ? _selectedWorkplaceId
-            : null;
+        final uniqueWorkplaces =
+            uniqueWorkplacesById.values.toList(growable: false);
+        final selectedWorkplaceId =
+            uniqueWorkplacesById.containsKey(_selectedWorkplaceId)
+                ? _selectedWorkplaceId
+                : null;
 
         return ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: scaled(isCompactTablet ? 220 : 260)),
+          constraints:
+              BoxConstraints(maxWidth: scaled(isCompactTablet ? 220 : 272)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '🏷️ Рабочее место',
-                style: TextStyle(
-                  fontSize: scaled(12),
-                  fontWeight: FontWeight.w600,
-                ),
+              Row(
+                children: [
+                  Icon(
+                    Icons.location_on_outlined,
+                    size: scaled(15),
+                    color: WorkspaceColors.primary,
+                  ),
+                  SizedBox(width: scaled(5)),
+                  Text(
+                    'РАБОЧЕЕ МЕСТО',
+                    style: TextStyle(
+                      color: WorkspaceColors.primary,
+                      fontSize: scaled(10.5),
+                      letterSpacing: 0.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
               SizedBox(height: scaled(4)),
-              DropdownButton<String>(
-                value: selectedWorkplaceId,
+              DropdownButtonFormField<String>(
+                initialValue: selectedWorkplaceId,
                 isDense: true,
                 isExpanded: true,
-                style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
+                icon: Icon(Icons.expand_more, size: scaled(19)),
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: true,
+                  fillColor: WorkspaceColors.secondaryBackground,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: scaled(11),
+                    vertical: scaled(10),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(scaled(11)),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(scaled(11)),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(scaled(11)),
+                    borderSide: const BorderSide(
+                      color: WorkspaceColors.primary,
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                style: TextStyle(
+                  fontSize: scaled(12.5),
+                  color: WorkspaceColors.foreground,
+                  fontWeight: FontWeight.w500,
+                ),
                 itemHeight: math.max(
                   scaled(48),
                   kMinInteractiveDimension,
@@ -3068,7 +3141,10 @@ class _TasksScreenState extends State<TasksScreen>
                   for (final w in uniqueWorkplaces)
                     Text(
                       w.name,
-                      style: TextStyle(fontSize: scaled(12.5), color: Colors.black87),
+                      style: TextStyle(
+                        fontSize: scaled(12.5),
+                        color: WorkspaceColors.foreground,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -3088,97 +3164,174 @@ class _TasksScreenState extends State<TasksScreen>
 
       Widget buildActiveTaskShortcuts() {
         if (activeTasks.isEmpty) return const SizedBox.shrink();
-        return Column(
-          children: [
-            for (final activeTask in activeTasks)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  onPressed: () {
-                    _persistWorkplace(activeTask.stageId);
-                    _persistTask(activeTask.id);
-                    setState(() {
-                      _selectedWorkplaceId = activeTask.stageId;
-                      _selectedTask = activeTask;
-                      _selectedStatus = _sectionForTask(activeTask);
-                    });
-                  },
-                  child: Text(
-                    () {
-                      final workplace = personnel.workplaceById(activeTask.stageId);
-                      final workplaceName = workplace?.name.trim().isNotEmpty == true
-                          ? workplace!.name.trim()
-                          : activeTask.stageId;
+        return SizedBox(
+          height: scaled(40),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var index = 0; index < activeTasks.length; index++) ...[
+                  if (index > 0) SizedBox(width: scaled(8)),
+                  Builder(
+                    builder: (context) {
+                      final activeTask = activeTasks[index];
+                      final workplace =
+                          personnel.workplaceById(activeTask.stageId);
+                      final workplaceName =
+                          workplace?.name.trim().isNotEmpty == true
+                              ? workplace!.name.trim()
+                              : activeTask.stageId;
                       final customerName =
                           _customerNameForTask(activeTask, ordersProvider);
-                      return '↩ $workplaceName · заказчик $customerName';
-                    }(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: scaled(11.5),
-                      fontWeight: FontWeight.w600,
-                    ),
+                      final label = 'Вернуться: $workplaceName · $customerName';
+
+                      return Tooltip(
+                        message: label,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            _persistWorkplace(activeTask.stageId);
+                            _persistTask(activeTask.id);
+                            setState(() {
+                              _selectedWorkplaceId = activeTask.stageId;
+                              _selectedTask = activeTask;
+                              _selectedStatus = _sectionForTask(activeTask);
+                            });
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: WorkspaceColors.primary,
+                            backgroundColor: WorkspaceColors.setupBackground,
+                            side: BorderSide(
+                              color: WorkspaceColors.primary
+                                  .withValues(alpha: 0.22),
+                            ),
+                            minimumSize: Size(0, scaled(40)),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: scaled(14),
+                              vertical: scaled(9),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(scaled(11)),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: Icon(
+                            Icons.keyboard_return_rounded,
+                            size: scaled(18),
+                          ),
+                          label: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: scaled(12),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ),
-              ),
-          ],
+                ],
+              ],
+            ),
+          ),
         );
       }
 
       Widget content = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '🗂️ Список заданий',
-                      style: TextStyle(
-                        fontSize: scaled(widget.compactList ? 14 : 15),
-                        fontWeight: FontWeight.w700,
-                      ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final heading = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Список заданий',
+                    style: TextStyle(
+                      color: WorkspaceColors.foreground,
+                      fontSize: scaled(widget.compactList ? 16 : 17),
+                      fontWeight: FontWeight.w600,
                     ),
-                    SizedBox(height: smallSpacing * 0.5),
-                    Text(
-                      workplaceLabel,
-                      style: TextStyle(
-                        color: Colors.grey[700],
-                        fontSize: scaled(12),
-                      ),
+                  ),
+                  SizedBox(height: smallSpacing * 0.5),
+                  Text(
+                    workplaceLabel,
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontSize: scaled(12),
+                    ),
+                  ),
+                ],
+              );
+
+              final shortcut = Padding(
+                padding: EdgeInsets.only(top: scaled(19)),
+                child: buildActiveTaskShortcuts(),
+              );
+
+              if (constraints.maxWidth < 720) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    heading,
+                    SizedBox(height: scaled(8)),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (activeTasks.isNotEmpty) ...[
+                          Expanded(child: shortcut),
+                          SizedBox(width: scaled(8)),
+                        ],
+                        Expanded(child: buildWorkplaceSelector()),
+                      ],
                     ),
                   ],
-                ),
-              ),
-              SizedBox(width: scaled(12)),
-              buildWorkplaceSelector(),
-            ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: heading),
+                  if (activeTasks.isNotEmpty) ...[
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: scaled(340)),
+                      child: shortcut,
+                    ),
+                    SizedBox(width: scaled(12)),
+                  ],
+                  buildWorkplaceSelector(),
+                ],
+              );
+            },
           ),
-          if (activeTasks.isNotEmpty) ...[
-            SizedBox(height: smallSpacing),
-            buildActiveTaskShortcuts(),
-          ],
           SizedBox(height: sectionSpacing * 0.6),
           // Поиск по заданиям: заказчик, номер задания, изделие, форма,
           // менеджер. Список рабочего места бывает длинным, прокручивать его
           // до нужного заказа неудобно.
           TextField(
             controller: _taskSearchController,
-            style: TextStyle(fontSize: scaled(12.5)),
+            style: TextStyle(
+              color: WorkspaceColors.foreground,
+              fontSize: scaled(13),
+            ),
             decoration: InputDecoration(
               isDense: true,
               hintText: 'Поиск: заказчик, номер, изделие',
-              hintStyle: TextStyle(fontSize: scaled(12)),
-              prefixIcon: Icon(Icons.search, size: scaled(18)),
+              hintStyle: TextStyle(
+                color: WorkspaceColors.mutedForeground,
+                fontSize: scaled(12.5),
+              ),
+              filled: true,
+              fillColor: WorkspaceColors.secondaryBackground,
+              prefixIcon: Icon(
+                Icons.search,
+                size: scaled(18),
+                color: WorkspaceColors.mutedForeground,
+              ),
               prefixIconConstraints: BoxConstraints(
                 minWidth: scaled(34),
                 minHeight: scaled(34),
@@ -3197,7 +3350,21 @@ class _TasksScreenState extends State<TasksScreen>
                 horizontal: scaled(8),
                 vertical: scaled(8),
               ),
-              border: const OutlineInputBorder(),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(scaled(12)),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(scaled(12)),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(scaled(12)),
+                borderSide: const BorderSide(
+                  color: WorkspaceColors.primary,
+                  width: 1.5,
+                ),
+              ),
             ),
             onChanged: (value) => setState(() => _taskSearch = value),
           ),
@@ -3236,11 +3403,12 @@ class _TasksScreenState extends State<TasksScreen>
                     final readyForStage = task.status == TaskStatus.waiting &&
                         unlockedByQueue &&
                         (_isFirstPendingStage(
-                          taskProvider,
-                          personnel,
-                          task,
-                          groupResolver: _stageGroupKey,
-                        ) || canStartEarlyPackaging);
+                              taskProvider,
+                              personnel,
+                              task,
+                              groupResolver: _stageGroupKey,
+                            ) ||
+                            canStartEarlyPackaging);
                     const canOpen = true;
                     return _TaskCard(
                       task: task,
@@ -3291,7 +3459,9 @@ class _TasksScreenState extends State<TasksScreen>
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
+          if (currentTask != null &&
+              selectedWorkplace != null &&
+              selectedOrder != null)
             _buildTaskHeaderPanel(
               selectedOrder,
               selectedWorkplace,
@@ -3299,7 +3469,8 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
             ),
           if (currentTask != null) SizedBox(height: scaled(6)),
-          if (currentTask != null) _buildPerformersPanel(currentTask, scale, isTablet),
+          if (currentTask != null)
+            _buildPerformersPanel(currentTask, scale, isTablet),
           if (currentTask != null && selectedOrder != null)
             SizedBox(height: scaled(6)),
           if (currentTask != null && selectedOrder != null)
@@ -3312,7 +3483,9 @@ class _TasksScreenState extends State<TasksScreen>
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (currentTask != null && selectedWorkplace != null && selectedOrder != null)
+          if (currentTask != null &&
+              selectedWorkplace != null &&
+              selectedOrder != null)
             _buildDetailsPanel(
               selectedOrder,
               selectedWorkplace,
@@ -3333,53 +3506,38 @@ class _TasksScreenState extends State<TasksScreen>
       );
     }
 
-    final PreferredSizeWidget? appBar = widget.showListOnly
-        ? null
-        : AppBar(
-            title: const SizedBox.shrink(),
-            toolbarHeight: scaled(44),
-            titleSpacing: 0,
-            automaticallyImplyLeading: false,
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-            elevation: 0.5,
-          );
+    const PreferredSizeWidget? appBar = null;
 
     final scaffold = Scaffold(
       key: PageStorageKey('TasksScreen-${widget.employeeId}'),
-      backgroundColor: Colors.grey[100],
+      backgroundColor: WorkspaceColors.background,
       appBar: appBar,
       body: SafeArea(
         top: appBar == null,
         bottom: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final bool isNarrow = constraints.maxWidth < (isTablet ? 700 : 1000);
+            final bool isNarrow =
+                constraints.maxWidth < (isTablet ? 700 : 1000);
             final bool showList = !widget.hideListPanel;
             final bool showDetails = !widget.showListOnly;
 
             final Widget leftPanel = Container(
               padding: EdgeInsets.all(cardPadding),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(cardRadius),
-                border: Border.all(color: const Color(0xFFE6E7EC)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x14000000),
-                    blurRadius: 8,
-                    offset: Offset(0, 3),
-                  )
-                ],
-              ),
+              decoration: workspaceCardDecoration(radius: cardRadius),
               child: buildLeftPanel(scrollable: true),
             );
 
             final Widget rightPanel = buildRightPanel(scrollable: true);
 
             if (widget.showListOnly && showList) {
-              return SingleChildScrollView(
-                padding: EdgeInsets.all(outerPadding),
+              return Padding(
+                padding: EdgeInsets.fromLTRB(
+                  outerPadding,
+                  0,
+                  outerPadding,
+                  outerPadding,
+                ),
                 child: leftPanel,
               );
             }
@@ -3452,83 +3610,93 @@ class _TasksScreenState extends State<TasksScreen>
               );
             }
 
-            final Widget detailsPanel = buildDetailsPanel();
-            final Widget controlCommentsPanel = Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (currentTask != null && selectedWorkplace != null)
-                  _buildControlPanel(
-                    currentTask,
-                    selectedWorkplace,
-                    taskProvider,
-                    scale,
-                    isTablet,
-                  ),
-                if (currentTask != null) SizedBox(height: scaled(6)),
-                if (currentTask != null) _buildCommentsPanel(currentTask, scale),
-              ],
-            );
-
-            if (!isNarrow) {
-              const int detailsPanelFlex = 1;
-              const int controlPanelFlex = 1;
-              return SingleChildScrollView(
+            if (currentTask == null ||
+                selectedWorkplace == null ||
+                selectedOrder == null) {
+              return Padding(
                 padding: EdgeInsets.all(outerPadding),
+                child: Container(
+                  decoration: workspaceCardDecoration(),
+                  child: const WorkspaceEmptyState(
+                    icon: Icons.assignment_outlined,
+                    title: 'Задание не выбрано',
+                    message:
+                        'Откройте «Список заданий» и выберите производственный этап.',
+                  ),
+                ),
+              );
+            }
+
+            Widget detailsCard({required bool independentlyScrollable}) {
+              final content = Padding(
+                padding: const EdgeInsets.all(16),
+                child: buildDetailsPanel(),
+              );
+              return Container(
+                decoration: workspaceCardDecoration(),
+                clipBehavior: Clip.antiAlias,
+                child: independentlyScrollable
+                    ? SingleChildScrollView(child: content)
+                    : content,
+              );
+            }
+
+            final controlPanel = _buildControlPanel(
+              currentTask,
+              selectedWorkplace,
+              taskProvider,
+              scale,
+            );
+            final commentsPanel = _buildCommentsPanel(currentTask, scale);
+
+            if (constraints.maxWidth >= 900) {
+              return Padding(
+                padding: EdgeInsets.fromLTRB(
+                  outerPadding,
+                  0,
+                  outerPadding,
+                  outerPadding,
+                ),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      flex: detailsPanelFlex,
-                      child: detailsPanel,
+                    SizedBox(
+                      width: 392,
+                      child: detailsCard(independentlyScrollable: true),
                     ),
                     SizedBox(width: columnGap),
                     Expanded(
-                      flex: controlPanelFlex,
-                      child: controlCommentsPanel,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          controlPanel,
+                          const SizedBox(height: 12),
+                          Expanded(child: commentsPanel),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               );
             }
 
-            return LayoutBuilder(
-              builder: (context, scrollConstraints) {
-                const double minDetailsPanelWidth = 560;
-                const double minControlPanelWidth = 560;
-                final double totalMinWidth =
-                    minDetailsPanelWidth + columnGap + minControlPanelWidth;
-                final double contentWidth = math.max(
-                  scrollConstraints.maxWidth,
-                  totalMinWidth,
-                );
-                final double controlPanelWidth =
-                    contentWidth - minDetailsPanelWidth - columnGap;
-                return SingleChildScrollView(
-                  padding: EdgeInsets.all(outerPadding),
-                  scrollDirection: Axis.horizontal,
-                  child: SizedBox(
-                    width: contentWidth,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: minDetailsPanelWidth,
-                          height: scrollConstraints.maxHeight,
-                          child: SingleChildScrollView(
-                              child: detailsPanel),
-                        ),
-                        SizedBox(width: columnGap),
-                        SizedBox(
-                          width: controlPanelWidth,
-                          height: scrollConstraints.maxHeight,
-                          child:
-                              SingleChildScrollView(child: controlCommentsPanel),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                outerPadding,
+                0,
+                outerPadding,
+                outerPadding,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  detailsCard(independentlyScrollable: false),
+                  SizedBox(height: columnGap),
+                  controlPanel,
+                  SizedBox(height: columnGap),
+                  SizedBox(height: 520, child: commentsPanel),
+                ],
+              ),
             );
           },
         ),
@@ -3584,8 +3752,8 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-  Widget _buildTaskHeaderPanel(OrderModel order, WorkplaceModel stage,
-      TaskModel task, double scale) {
+  Widget _buildTaskHeaderPanel(
+      OrderModel order, WorkplaceModel stage, TaskModel task, double scale) {
     final personnel = context.read<PersonnelProvider>();
     final orderTitle = order.product.type.isNotEmpty
         ? order.product.type
@@ -3601,8 +3769,9 @@ class _TasksScreenState extends State<TasksScreen>
         .toList();
     final executorLabel = names.isEmpty ? '—' : names.join(', ');
     final helperLabel = helpers.isEmpty ? '—' : helpers.join(', ');
-    final workplaceLabel =
-        stage.name.isNotEmpty ? stage.name : _workplaceName(personnel, stage.id);
+    final workplaceLabel = stage.name.isNotEmpty
+        ? stage.name
+        : _workplaceName(personnel, stage.id);
 
     return _sectionCard(
       '📌 Задание',
@@ -3610,11 +3779,10 @@ class _TasksScreenState extends State<TasksScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(orderTitle,
-              style: TextStyle(
-                  fontSize: scale * 15, fontWeight: FontWeight.w600)),
+              style:
+                  TextStyle(fontSize: scale * 15, fontWeight: FontWeight.w600)),
           SizedBox(height: scale * 4),
-          Text('Статус: $status',
-              style: TextStyle(fontSize: scale * 12)),
+          Text('Статус: $status', style: TextStyle(fontSize: scale * 12)),
           Text('Рабочее место: $workplaceLabel',
               style: TextStyle(fontSize: scale * 12)),
           Text('Исполнитель(и): $executorLabel',
@@ -3631,7 +3799,9 @@ class _TasksScreenState extends State<TasksScreen>
     final String modeLabel = () {
       final open = _openEventForUser(task, widget.employeeId);
       if (open != null) return _timeTypeLabel(open.type);
-      return task.status == TaskStatus.waiting ? 'Ожидание' : _statusText(task.status);
+      return task.status == TaskStatus.waiting
+          ? 'Ожидание'
+          : _statusText(task.status);
     }();
     return _sectionCard(
       '⏱️ Таймер и статус',
@@ -3729,7 +3899,8 @@ class _TasksScreenState extends State<TasksScreen>
     final saved = quantityStatusFromText(comment.text);
     if (saved != null) return saved;
     final actual = _parseQuantity(comment.text);
-    final unit = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId) ?? '';
+    final unit =
+        _workplaceUnit(context.read<PersonnelProvider>(), task.stageId) ?? '';
     final expected = getExpectedQuantity(order: order, task: task, unit: unit);
     return getQuantityStatus(actual: actual, expected: expected);
   }
@@ -3765,7 +3936,8 @@ class _TasksScreenState extends State<TasksScreen>
   Widget _buildResultPanel(OrderModel order, TaskModel task, double scale) {
     final totalQty = _sumQuantities(task);
     final lastQty = _latestQuantityLabel(task);
-    final unit = _workplaceUnit(context.read<PersonnelProvider>(), task.stageId) ?? '';
+    final unit =
+        _workplaceUnit(context.read<PersonnelProvider>(), task.stageId) ?? '';
     final expected = getExpectedQuantity(order: order, task: task, unit: unit);
     final totalStatus = totalQty > 0
         ? getQuantityStatus(actual: totalQty, expected: expected)
@@ -3782,7 +3954,8 @@ class _TasksScreenState extends State<TasksScreen>
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Фактическое количество (заказ): '
+          Text(
+              'Фактическое количество (заказ): '
               '${order.actualQty?.toStringAsFixed(0) ?? '—'}',
               style: TextStyle(fontSize: scale * 12)),
           Text(
@@ -3805,7 +3978,6 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
-
   bool get _shouldUseFilePickerForMedia =>
       AttachmentService.shouldUseFilePickerForMedia;
 
@@ -3816,18 +3988,19 @@ class _TasksScreenState extends State<TasksScreen>
     TextEditingController? captionController,
   }) async {
     try {
-      final draft = await AttachmentService().pickAttachmentDraft(source: source);
+      final draft =
+          await AttachmentService().pickAttachmentDraft(source: source);
       if (draft == null) return;
       final targetTask = sendImmediatelyForTask;
       if (targetTask != null) {
         final text = captionController?.text.trim() ?? '';
         await context.read<TaskProvider>().createCommentWithAttachments(
-              taskId: targetTask.id,
-              type: 'msg',
-              text: text.isEmpty ? 'Вложение' : text,
-              userId: widget.employeeId,
-              attachments: [draft],
-            );
+          taskId: targetTask.id,
+          type: 'msg',
+          text: text.isEmpty ? 'Вложение' : text,
+          userId: widget.employeeId,
+          attachments: [draft],
+        );
         captionController?.clear();
         updateDialogState(() => _pendingCommentAttachments.clear());
         return;
@@ -3847,11 +4020,18 @@ class _TasksScreenState extends State<TasksScreen>
     required VoidCallback? onPressed,
     required double scale,
   }) {
-    return IconButton(
-      visualDensity: VisualDensity.compact,
-      tooltip: tooltip,
-      onPressed: onPressed,
-      icon: Icon(icon, size: scale * 18),
+    return SizedBox(
+      width: scale * 40,
+      height: scale * 40,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        tooltip: tooltip,
+        color: WorkspaceColors.mutedForeground,
+        disabledColor: WorkspaceColors.disabledForeground,
+        onPressed: onPressed,
+        icon: Icon(icon, size: scale * 20),
+      ),
     );
   }
 
@@ -3867,7 +4047,8 @@ class _TasksScreenState extends State<TasksScreen>
         for (var i = 0; i < _pendingCommentAttachments.length; i++)
           Chip(
             avatar: Icon(
-              _iconForAttachmentType(_fileTypeFromMime(_pendingCommentAttachments[i].mimeType)),
+              _iconForAttachmentType(
+                  _fileTypeFromMime(_pendingCommentAttachments[i].mimeType)),
               size: scale * 16,
             ),
             label: Text(
@@ -3973,8 +4154,8 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Widget _buildCommentsPanel(TaskModel task, double scale) {
-    final isAssignee = task.assignees.contains(widget.employeeId) ||
-        task.assignees.isEmpty;
+    final isAssignee =
+        task.assignees.contains(widget.employeeId) || task.assignees.isEmpty;
     final personnel = context.watch<PersonnelProvider>();
     final taskProvider = context.watch<TaskProvider>();
     final currentOrderId = task.orderId.trim();
@@ -3989,9 +4170,11 @@ class _TasksScreenState extends State<TasksScreen>
             (candidate) => candidate.orderId == selectedOrderId,
             orElse: () => task,
           );
-    final aggregated = _collectOrderCommentsByOrderId(taskProvider, selectedOrderId);
-    final isSelectedHistoryUnavailable =
-        isHistoryReadOnly && aggregated.isEmpty && selectedPivotTask.orderId != selectedOrderId;
+    final aggregated =
+        _collectOrderCommentsByOrderId(taskProvider, selectedOrderId);
+    final isSelectedHistoryUnavailable = isHistoryReadOnly &&
+        aggregated.isEmpty &&
+        selectedPivotTask.orderId != selectedOrderId;
     Future.microtask(
       () => taskProvider.loadAttachmentsForComments(
         aggregated.map((entry) => entry.comment.id),
@@ -4031,6 +4214,7 @@ class _TasksScreenState extends State<TasksScreen>
               return TaskCommentTile(
                 comment: c,
                 scale: scale,
+                workspaceStyle: true,
                 authorName: _employeeDisplayName(personnel, c.userId),
                 stageName: _workplaceName(personnel, entry.stageId),
                 accentColor: accentColor,
@@ -4049,175 +4233,262 @@ class _TasksScreenState extends State<TasksScreen>
       );
     }
 
-    final double inputRadius = scale * 12;
-    return _sectionCard(
-      '💬 Комментарии',
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final canCompose = isAssignee && !isHistoryReadOnly;
+
+    Future<void> sendComment() async {
+      final txt = _chatController.text.trim();
+      final attachments = List<AttachmentDraft>.from(
+        _pendingCommentAttachments,
+      );
+      if (txt.isEmpty && attachments.isEmpty) return;
+      await context.read<TaskProvider>().createCommentWithAttachments(
+            taskId: task.id,
+            type: 'msg',
+            text: txt.isEmpty ? 'Вложение' : txt,
+            userId: widget.employeeId,
+            attachments: attachments,
+          );
+      if (!mounted) return;
+      _chatController.clear();
+      setState(() => _pendingCommentAttachments.clear());
+    }
+
+    Widget attachmentActions() {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          OrderGenerationSwitcher(
-            generations: restartHistory,
-            currentOrderId: currentOrderId,
-            selectedOrderId: selectedOrderId,
-            loading: _loadingRestartHistoryOrderIds.contains(currentOrderId),
-            // Пометку «только просмотр» рисуем ниже сами: тут есть особый
-            // случай недоступной истории.
-            readOnlyNotice: null,
-            bottomSpacing: scale * 6,
-            onSelected: (orderId) => setState(
-              () => _selectedCommentsOrderByTaskId[task.id] = orderId,
+          _attachmentActionButton(
+            icon: Icons.photo_outlined,
+            tooltip: 'Фото',
+            scale: scale,
+            onPressed: canCompose
+                ? () => _pickCommentAttachment(
+                      source: 'photo',
+                      updateDialogState: setState,
+                      sendImmediatelyForTask: task,
+                      captionController: _chatController,
+                    )
+                : null,
+          ),
+          _attachmentActionButton(
+            icon: Icons.videocam_outlined,
+            tooltip: 'Видео',
+            scale: scale,
+            onPressed: canCompose
+                ? () => _pickCommentAttachment(
+                      source: 'video',
+                      updateDialogState: setState,
+                      sendImmediatelyForTask: task,
+                      captionController: _chatController,
+                    )
+                : null,
+          ),
+          _attachmentActionButton(
+            icon: Icons.photo_camera_outlined,
+            tooltip: _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
+            scale: scale,
+            onPressed: canCompose
+                ? () => _pickCommentAttachment(
+                      source: 'camera',
+                      updateDialogState: setState,
+                      sendImmediatelyForTask: task,
+                      captionController: _chatController,
+                    )
+                : null,
+          ),
+          _attachmentActionButton(
+            icon: Icons.attach_file,
+            tooltip: 'Файл',
+            scale: scale,
+            onPressed: canCompose
+                ? () => _pickCommentAttachment(
+                      source: 'file',
+                      updateDialogState: setState,
+                      sendImmediatelyForTask: task,
+                      captionController: _chatController,
+                    )
+                : null,
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Отправить',
+            child: Material(
+              color: canCompose
+                  ? WorkspaceColors.primary
+                  : WorkspaceColors.disabledForeground,
+              borderRadius: BorderRadius.circular(13),
+              child: InkWell(
+                onTap: canCompose ? sendComment : null,
+                borderRadius: BorderRadius.circular(13),
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Icon(
+                    Icons.send_outlined,
+                    color: Colors.white,
+                    size: scale * 20,
+                  ),
+                ),
+              ),
             ),
           ),
-          if (isHistoryReadOnly) ...[
-            Text(
-              isSelectedHistoryUnavailable
-                  ? 'История предыдущего заказа недоступна'
-                  : 'Только просмотр: история предыдущего заказа',
-              style: const TextStyle(color: Colors.orange),
+        ],
+      );
+    }
+
+    final input = TextField(
+      controller: _chatController,
+      maxLines: 1,
+      readOnly: !canCompose,
+      onSubmitted: canCompose ? (_) => sendComment() : null,
+      style: const TextStyle(
+        color: WorkspaceColors.foreground,
+        fontSize: 14,
+      ),
+      decoration: InputDecoration(
+        hintText: 'Написать комментарий…',
+        hintStyle: const TextStyle(
+          color: WorkspaceColors.mutedForeground,
+          fontSize: 14,
+        ),
+        isDense: true,
+        filled: true,
+        fillColor: WorkspaceColors.secondaryBackground,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 13,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(
+            color: WorkspaceColors.primary,
+            width: 1.5,
+          ),
+        ),
+      ),
+    );
+
+    return Container(
+      decoration: workspaceCardDecoration(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.chat_bubble_outline,
+                  size: 20,
+                  color: WorkspaceColors.mutedForeground,
+                ),
+                const SizedBox(width: 9),
+                const Text(
+                  'Комментарии',
+                  style: TextStyle(
+                    color: WorkspaceColors.foreground,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
-            SizedBox(height: scale * 4),
-          ],
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: scale * 220),
+          ),
+          const Divider(height: 1, color: WorkspaceColors.border),
+          if (restartHistory.isNotEmpty ||
+              _loadingRestartHistoryOrderIds.contains(currentOrderId))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: OrderGenerationSwitcher(
+                generations: restartHistory,
+                currentOrderId: currentOrderId,
+                selectedOrderId: selectedOrderId,
+                loading:
+                    _loadingRestartHistoryOrderIds.contains(currentOrderId),
+                readOnlyNotice: null,
+                bottomSpacing: 6,
+                onSelected: (orderId) => setState(
+                  () => _selectedCommentsOrderByTaskId[task.id] = orderId,
+                ),
+              ),
+            ),
+          if (isHistoryReadOnly)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                isSelectedHistoryUnavailable
+                    ? 'История предыдущего заказа недоступна'
+                    : 'Только просмотр: история предыдущего заказа',
+                style: const TextStyle(
+                  color: WorkspaceColors.warning,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          Expanded(
             child: Scrollbar(
               controller: _commentsScrollController,
               thumbVisibility: aggregated.length > 4,
               child: SingleChildScrollView(
                 controller: _commentsScrollController,
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                 child: commentList(),
               ),
             ),
           ),
-          SizedBox(height: scale * 6),
-          if (!isHistoryReadOnly && _pendingCommentAttachments.isNotEmpty) ...[
-            _pendingAttachmentsPreview(scale, updateDialogState: setState),
-            SizedBox(height: scale * 6),
-          ],
-          if (!isHistoryReadOnly)
-            Row(
-              children: [
-              Expanded(
-                child: TextField(
-                  controller: _chatController,
-                  maxLines: 1,
-                  readOnly: !isAssignee || isHistoryReadOnly,
-                  style: TextStyle(fontSize: scale * 12.5),
-                  decoration: InputDecoration(
-                    hintText: 'Написать комментарий…',
-                    hintStyle: TextStyle(fontSize: scale * 12.5),
-                    isDense: true,
-                    filled: true,
-                    fillColor: const Color(0xFFF4F5F7),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: scale * 10,
-                      vertical: scale * 8,
+          if (!isHistoryReadOnly) ...[
+            const Divider(height: 1, color: WorkspaceColors.border),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_pendingCommentAttachments.isNotEmpty) ...[
+                    _pendingAttachmentsPreview(
+                      scale,
+                      updateDialogState: setState,
                     ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(inputRadius),
-                      borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(inputRadius),
-                      borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(inputRadius),
-                      borderSide: const BorderSide(color: Color(0xFF111827)),
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: scale * 4),
-              _attachmentActionButton(
-                icon: Icons.photo_outlined,
-                tooltip: 'Фото',
-                scale: scale,
-                onPressed: (isAssignee && !isHistoryReadOnly)
-                    ? () => _pickCommentAttachment(
-                          source: 'photo',
-                          updateDialogState: setState,
-                          sendImmediatelyForTask: task,
-                          captionController: _chatController,
-                        )
-                    : null,
-              ),
-              _attachmentActionButton(
-                icon: Icons.videocam_outlined,
-                tooltip: 'Видео',
-                scale: scale,
-                onPressed: (isAssignee && !isHistoryReadOnly)
-                    ? () => _pickCommentAttachment(
-                          source: 'video',
-                          updateDialogState: setState,
-                          sendImmediatelyForTask: task,
-                          captionController: _chatController,
-                        )
-                    : null,
-              ),
-              _attachmentActionButton(
-                icon: Icons.photo_camera_outlined,
-                tooltip: _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
-                scale: scale,
-                onPressed: (isAssignee && !isHistoryReadOnly)
-                    ? () => _pickCommentAttachment(
-                          source: 'camera',
-                          updateDialogState: setState,
-                          sendImmediatelyForTask: task,
-                          captionController: _chatController,
-                        )
-                    : null,
-              ),
-              _attachmentActionButton(
-                icon: Icons.attach_file,
-                tooltip: 'Файл',
-                scale: scale,
-                onPressed: (isAssignee && !isHistoryReadOnly)
-                    ? () => _pickCommentAttachment(
-                          source: 'file',
-                          updateDialogState: setState,
-                          sendImmediatelyForTask: task,
-                          captionController: _chatController,
-                        )
-                    : null,
-              ),
-              SizedBox(width: scale * 4),
-              InkResponse(
-                onTap: (isAssignee && !isHistoryReadOnly)
-                    ? () async {
-                        final txt = _chatController.text.trim();
-                        final attachments = List<AttachmentDraft>.from(
-                          _pendingCommentAttachments,
+                    const SizedBox(height: 8),
+                  ],
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 660) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            input,
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: attachmentActions(),
+                            ),
+                          ],
                         );
-                        if (txt.isEmpty && attachments.isEmpty) return;
-                        await context.read<TaskProvider>().createCommentWithAttachments(
-                              taskId: task.id,
-                              type: 'msg',
-                              text: txt.isEmpty ? 'Вложение' : txt,
-                              userId: widget.employeeId,
-                              attachments: attachments,
-                            );
-                        if (!mounted) return;
-                        _chatController.clear();
-                        setState(() => _pendingCommentAttachments.clear());
                       }
-                    : null,
-                child: Container(
-                  width: scale * 40,
-                  height: scale * 40,
-                  decoration: BoxDecoration(
-                    color: isAssignee
-                        ? const Color(0xFF111827)
-                        : const Color(0xFF9CA3AF),
-                    borderRadius: BorderRadius.circular(scale * 12),
+                      return Row(
+                        children: [
+                          Expanded(child: input),
+                          const SizedBox(width: 8),
+                          attachmentActions(),
+                        ],
+                      );
+                    },
                   ),
-                  child: Icon(Icons.send, color: Colors.white, size: scale * 18),
-                ),
+                ],
               ),
-              ],
             ),
+          ],
         ],
       ),
-      scale,
     );
   }
 
@@ -4260,76 +4531,59 @@ class _TasksScreenState extends State<TasksScreen>
 
   Widget _buildDetailsPanel(OrderModel order, WorkplaceModel _,
       List<TemplateModel> templates, double scale) {
-    final templateName = (order.stageTemplateId != null &&
-            order.stageTemplateId!.isNotEmpty)
-        ? _resolveTemplateName(order.stageTemplateId, templates)
-        : null;
+    final templateName =
+        (order.stageTemplateId != null && order.stageTemplateId!.isNotEmpty)
+            ? _resolveTemplateName(order.stageTemplateId, templates)
+            : null;
 
     final cachedFormImageUrl = _formImageCache[order.id]?.url;
 
-    return Container(
-      padding: EdgeInsets.all(10 * scale),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10 * scale),
-        border: Border.all(color: const Color(0xFFE6E7EC)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 8,
-            offset: Offset(0, 3),
-          )
-        ],
-      ),
-      child: FutureBuilder<List<dynamic>>(
-        future: Future.wait<dynamic>([
-          _getFormImageFuture(order),
-          _getOrderPaintsFuture(order.id),
-          _getOrderFilesFuture(order.id),
-          _getFormFilesFuture(order),
-        ]),
-        initialData: <dynamic>[
-          cachedFormImageUrl,
-          _orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[],
-          _orderFilesCache[order.id] ?? const <Map<String, dynamic>>[],
-          _formFilesCache[order.id] ?? const <Map<String, dynamic>>[],
-        ],
-        builder: (context, snapshot) {
-          final data = snapshot.data;
-          final resolvedFormDetails = _formImageCache[order.id]?.details;
-          final resolvedPaints =
-              (data != null && data.length > 1
-                      ? data[1] as List<Map<String, dynamic>>
-                      : null) ??
-                  (_orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[]);
-          final resolvedFiles =
-              (data != null && data.length > 2
-                      ? data[2] as List<Map<String, dynamic>>
-                      : null) ??
-                  (_orderFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
-          final resolvedFormFiles =
-              (data != null && data.length > 3
-                      ? data[3] as List<Map<String, dynamic>>
-                      : null) ??
-                  (_formFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              OrderDetailsCard(
-                order: order,
-                paints: resolvedPaints,
-                files: resolvedFiles,
-                formFiles: resolvedFormFiles,
-                stageTemplateName: templateName,
-                formDetails: resolvedFormDetails,
-                extraSections: [
-                  _buildStageList(order, scale),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
+    return FutureBuilder<List<dynamic>>(
+      future: Future.wait<dynamic>([
+        _getFormImageFuture(order),
+        _getOrderPaintsFuture(order.id),
+        _getOrderFilesFuture(order.id),
+        _getFormFilesFuture(order),
+      ]),
+      initialData: <dynamic>[
+        cachedFormImageUrl,
+        _orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[],
+        _orderFilesCache[order.id] ?? const <Map<String, dynamic>>[],
+        _formFilesCache[order.id] ?? const <Map<String, dynamic>>[],
+      ],
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final resolvedFormDetails = _formImageCache[order.id]?.details;
+        final resolvedPaints = (data != null && data.length > 1
+                ? data[1] as List<Map<String, dynamic>>
+                : null) ??
+            (_orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[]);
+        final resolvedFiles = (data != null && data.length > 2
+                ? data[2] as List<Map<String, dynamic>>
+                : null) ??
+            (_orderFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
+        final resolvedFormFiles = (data != null && data.length > 3
+                ? data[3] as List<Map<String, dynamic>>
+                : null) ??
+            (_formFilesCache[order.id] ?? const <Map<String, dynamic>>[]);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            OrderDetailsCard(
+              order: order,
+              paints: resolvedPaints,
+              files: resolvedFiles,
+              formFiles: resolvedFormFiles,
+              stageTemplateName: templateName,
+              formDetails: resolvedFormDetails,
+              workspaceStyle: true,
+              extraSections: [
+                _buildStageList(order, scale),
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -4344,12 +4598,14 @@ class _TasksScreenState extends State<TasksScreen>
       return pending;
     }
 
-    final future = OrdersRepository().getPaints(normalizedOrderId).then((paints) {
+    final future =
+        OrdersRepository().getPaints(normalizedOrderId).then((paints) {
       final normalizedPaints = List<Map<String, dynamic>>.from(paints);
       _orderPaintsCache[normalizedOrderId] = normalizedPaints;
       return normalizedPaints;
     }).catchError((_) {
-      return _orderPaintsCache[normalizedOrderId] ?? const <Map<String, dynamic>>[];
+      return _orderPaintsCache[normalizedOrderId] ??
+          const <Map<String, dynamic>>[];
     }).whenComplete(() {
       _orderPaintsPending.remove(normalizedOrderId);
     });
@@ -4369,19 +4625,16 @@ class _TasksScreenState extends State<TasksScreen>
       return pending;
     }
 
-    final future = listOrderFiles(normalizedOrderId)
-        .then((files) {
-          final normalizedFiles = List<Map<String, dynamic>>.from(files);
-          _orderFilesCache[normalizedOrderId] = normalizedFiles;
-          return normalizedFiles;
-        })
-        .catchError((_) {
-          return _orderFilesCache[normalizedOrderId] ??
-              const <Map<String, dynamic>>[];
-        })
-        .whenComplete(() {
-          _orderFilesPending.remove(normalizedOrderId);
-        });
+    final future = listOrderFiles(normalizedOrderId).then((files) {
+      final normalizedFiles = List<Map<String, dynamic>>.from(files);
+      _orderFilesCache[normalizedOrderId] = normalizedFiles;
+      return normalizedFiles;
+    }).catchError((_) {
+      return _orderFilesCache[normalizedOrderId] ??
+          const <Map<String, dynamic>>[];
+    }).whenComplete(() {
+      _orderFilesPending.remove(normalizedOrderId);
+    });
 
     _orderFilesPending[normalizedOrderId] = future;
     return future;
@@ -4409,16 +4662,14 @@ class _TasksScreenState extends State<TasksScreen>
       return await listFormFiles(formId);
     }()
         .then((files) {
-          final normalized = List<Map<String, dynamic>>.from(files);
-          _formFilesCache[key] = normalized;
-          return normalized;
-        })
-        .catchError((_) {
-          return _formFilesCache[key] ?? const <Map<String, dynamic>>[];
-        })
-        .whenComplete(() {
-          _formFilesPending.remove(key);
-        });
+      final normalized = List<Map<String, dynamic>>.from(files);
+      _formFilesCache[key] = normalized;
+      return normalized;
+    }).catchError((_) {
+      return _formFilesCache[key] ?? const <Map<String, dynamic>>[];
+    }).whenComplete(() {
+      _formFilesPending.remove(key);
+    });
 
     _formFilesPending[key] = future;
     return future;
@@ -4796,8 +5047,7 @@ class _TasksScreenState extends State<TasksScreen>
       task.orderId,
       task.stageId,
     ).toLowerCase();
-    return label.contains('флекс') ||
-        label.contains('flexo');
+    return label.contains('флекс') || label.contains('flexo');
   }
 
   String _fallbackOrderLabelById(String orderId) {
@@ -4820,7 +5070,9 @@ class _TasksScreenState extends State<TasksScreen>
   String _orderReferenceForWriteoff(OrderModel order) {
     return _orderDisplayNameForWriteoff(order);
   }
-  String _buildReadableOrderLabel(Map<String, dynamic> row, {String? fallbackId}) {
+
+  String _buildReadableOrderLabel(Map<String, dynamic> row,
+      {String? fallbackId}) {
     String pick(List<String> keys) => _stringFromRow(row, keys);
 
     final customer = pick(const ['customer_name', 'client_name', 'customer']);
@@ -4848,7 +5100,8 @@ class _TasksScreenState extends State<TasksScreen>
   Future<Map<String, String>> _loadReadableOrderLabelsByIds(
     Set<String> orderIds,
   ) async {
-    final normalizedIds = orderIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+    final normalizedIds =
+        orderIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
     if (normalizedIds.isEmpty) return const <String, String>{};
     final ids = normalizedIds.toList(growable: false);
 
@@ -4886,7 +5139,10 @@ class _TasksScreenState extends State<TasksScreen>
 
   String _normalizeInkUnit(String? unitCandidate) {
     final normalized = (unitCandidate ?? '').trim().toLowerCase();
-    if (normalized == 'м' || normalized == 'm' || normalized == 'метры' || normalized == 'метр') {
+    if (normalized == 'м' ||
+        normalized == 'm' ||
+        normalized == 'метры' ||
+        normalized == 'метр') {
       return 'гр';
     }
     if (normalized.isEmpty) return 'гр';
@@ -4894,12 +5150,11 @@ class _TasksScreenState extends State<TasksScreen>
     return 'гр';
   }
 
-
-
   bool _looksLikeOrderCode(String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.isEmpty) return true;
-    if (RegExp(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+    if (RegExp(
+            r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
         .hasMatch(normalized)) {
       return true;
     }
@@ -4933,7 +5188,8 @@ class _TasksScreenState extends State<TasksScreen>
 
   double _paintQtyKilogramsToDisplayGrams(dynamic value) {
     if (value is num) return value.toDouble() * 1000;
-    final parsed = double.tryParse(value?.toString().replaceAll(',', '.') ?? '');
+    final parsed =
+        double.tryParse(value?.toString().replaceAll(',', '.') ?? '');
     return (parsed ?? 0) * 1000;
   }
 
@@ -5005,14 +5261,16 @@ class _TasksScreenState extends State<TasksScreen>
             )
           : (() {
               final localOrder = _orderById(orderId);
-              if (localOrder != null) return _orderReferenceForWriteoff(localOrder);
+              if (localOrder != null)
+                return _orderReferenceForWriteoff(localOrder);
               return _fallbackOrderLabelById(orderId);
             })(),
-      paintId: _stringFromRow(row, const ['paint_id', 'material_id', 'paintId']),
+      paintId:
+          _stringFromRow(row, const ['paint_id', 'material_id', 'paintId']),
       paintName:
           _stringFromRow(row, const ['paint_name', 'name', 'paintName']).isEmpty
-          ? 'Краска'
-          : _stringFromRow(row, const ['paint_name', 'name', 'paintName']),
+              ? 'Краска'
+              : _stringFromRow(row, const ['paint_name', 'name', 'paintName']),
       plannedAmount: plannedGrams,
       unit: _normalizeInkUnit(
         _stringFromRow(row, const ['unit']).isEmpty
@@ -5020,8 +5278,7 @@ class _TasksScreenState extends State<TasksScreen>
             : _stringFromRow(row, const ['unit']),
       ),
       actualUsedText: actualUsedText,
-      carryOver:
-          row['carry_over'] == true ||
+      carryOver: row['carry_over'] == true ||
           row['carryOver'] == true ||
           row['write_off_now'] == false ||
           row['writeOffNow'] == false,
@@ -5098,7 +5355,8 @@ class _TasksScreenState extends State<TasksScreen>
                                     labelText: 'Фактический расход',
                                     border: OutlineInputBorder(),
                                   ),
-                                  onChanged: (value) => row.actualUsedText = value,
+                                  onChanged: (value) =>
+                                      row.actualUsedText = value,
                                 ),
                               ),
                               Padding(
@@ -5358,7 +5616,8 @@ class _TasksScreenState extends State<TasksScreen>
         if (order == null) {
           messenger.showSnackBar(
             const SnackBar(
-              content: Text('Не удалось найти заказ для редактирования бумаги.'),
+              content:
+                  Text('Не удалось найти заказ для редактирования бумаги.'),
             ),
           );
           return false;
@@ -5377,108 +5636,106 @@ class _TasksScreenState extends State<TasksScreen>
       List<Map<String, dynamic>> mergedDisplayItems =
           const <Map<String, dynamic>>[];
       Future<List<Map<String, dynamic>>> loadCurrentOrderPaints() async {
-          final rawCurrentPaints = await repo.getPaints(task.orderId);
-          final reservations = await repo.getPaintReservations(task.orderId);
-          final order = _orderById(task.orderId);
-          final orderLabel =
-              order != null ? _orderReferenceForWriteoff(order) : task.orderId;
-          final reservationsByKey = <String, Map<String, dynamic>>{};
-          for (final reservation in reservations) {
-            final id = (reservation['paint_id'] ?? '').toString().trim();
-            final name = (reservation['paint_name'] ?? '')
-                .toString()
-                .trim()
-                .toLowerCase();
-            if (id.isNotEmpty) reservationsByKey['id:$id'] = reservation;
-            if (name.isNotEmpty) reservationsByKey['name:$name'] = reservation;
-          }
-          return rawCurrentPaints.map((paint) {
-            final merged = Map<String, dynamic>.from(paint);
-            final id = (merged['paint_id'] ?? merged['material_id'] ?? '')
-                .toString()
-                .trim();
-            final name = (merged['paint_name'] ?? merged['name'] ?? '')
-                .toString()
-                .trim()
-                .toLowerCase();
-            final reservation =
-                (id.isNotEmpty ? reservationsByKey['id:$id'] : null) ??
-                    (name.isNotEmpty ? reservationsByKey['name:$name'] : null);
+        final rawCurrentPaints = await repo.getPaints(task.orderId);
+        final reservations = await repo.getPaintReservations(task.orderId);
+        final order = _orderById(task.orderId);
+        final orderLabel =
+            order != null ? _orderReferenceForWriteoff(order) : task.orderId;
+        final reservationsByKey = <String, Map<String, dynamic>>{};
+        for (final reservation in reservations) {
+          final id = (reservation['paint_id'] ?? '').toString().trim();
+          final name =
+              (reservation['paint_name'] ?? '').toString().trim().toLowerCase();
+          if (id.isNotEmpty) reservationsByKey['id:$id'] = reservation;
+          if (name.isNotEmpty) reservationsByKey['name:$name'] = reservation;
+        }
+        return rawCurrentPaints.map((paint) {
+          final merged = Map<String, dynamic>.from(paint);
+          final id = (merged['paint_id'] ?? merged['material_id'] ?? '')
+              .toString()
+              .trim();
+          final name = (merged['paint_name'] ?? merged['name'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          final reservation =
+              (id.isNotEmpty ? reservationsByKey['id:$id'] : null) ??
+                  (name.isNotEmpty ? reservationsByKey['name:$name'] : null);
+          merged.addAll({
+            'source': 'current_order',
+            'order_id': task.orderId,
+            'source_order_id': task.orderId,
+            'source_task_id': task.id,
+            'order_label': orderLabel,
+          });
+          if (reservation != null) {
             merged.addAll({
-              'source': 'current_order',
-              'order_id': task.orderId,
-              'source_order_id': task.orderId,
-              'source_task_id': task.id,
-              'order_label': orderLabel,
+              'paint_id': reservation['paint_id'],
+              'paint_name': reservation['paint_name'] ??
+                  merged['paint_name'] ??
+                  merged['name'],
+              'reserved_qty': reservation['reserved_qty'],
+              'used_qty': reservation['used_qty'],
+              'released_qty': reservation['released_qty'],
             });
-            if (reservation != null) {
-              merged.addAll({
-                'paint_id': reservation['paint_id'],
-                'paint_name': reservation['paint_name'] ??
-                    merged['paint_name'] ??
-                    merged['name'],
-                'reserved_qty': reservation['reserved_qty'],
-                'used_qty': reservation['used_qty'],
-                'released_qty': reservation['released_qty'],
-              });
-            }
-            return merged;
-          }).toList(growable: false);
+          }
+          return merged;
+        }).toList(growable: false);
       }
 
       Future<List<Map<String, dynamic>>> loadPendingPreviousOrderPaints(
-          List<Map<String, dynamic>> loadedCurrentOrderPaints,
-        ) async {
-          final currentPaintIds = loadedCurrentOrderPaints
-              .map((paint) => _stringFromRow(paint, const [
-                    'paint_id',
-                    'material_id',
-                    'paintId',
-                  ]))
-              .where((id) => id.isNotEmpty)
-              .toList(growable: false);
-          final currentPaintNames = loadedCurrentOrderPaints
-              .map((paint) => _stringFromRow(paint, const [
-                    'paint_name',
-                    'name',
-                    'paintName',
-                  ]))
-              .where((name) => name.isNotEmpty)
-              .toList(growable: false);
-          final pendingWriteoffs = await repo.getPendingFlexPaintWriteoffs(
-            currentOrderId: task.orderId,
-            currentPaintIds: currentPaintIds,
-            currentPaintNames: currentPaintNames,
-          );
-          final pendingOrderIds = pendingWriteoffs
-              .map((pending) => pending.orderId.trim())
-              .where((id) => id.isNotEmpty)
-              .toSet();
-          final pendingOrderLabels =
-              await _loadReadableOrderLabelsByIds(pendingOrderIds);
-          return pendingWriteoffs.map((pending) {
-            final row = pending.toMap();
-            final readableOrderLabel =
-                pendingOrderLabels[pending.orderId.trim()] ??
-                    _buildReadableOrderLabel(row, fallbackId: pending.orderId);
-            final pendingWriteoffId = pending.id.trim();
-            final sourceOrderId = pending.orderId.trim();
-            final paintId = pending.paintId.trim();
-            return row
-              ..addAll({
-                'source': 'pending',
-                'pending_writeoff_id': pendingWriteoffId,
-                'order_id': pending.orderId,
-                'source_order_id': pending.orderId,
-                'source_task_id': pending.taskId,
-                'order_label': readableOrderLabel,
-                'planned_amount': pending.plannedAmount,
-                'actual_used_amount': pending.actualUsedAmount,
-                'actual_used_text': pending.actualUsedAmount?.toString() ?? '',
-                'ui_identity':
-                    'pending:$pendingWriteoffId:$sourceOrderId:$paintId',
-              });
-          }).toList(growable: false);
+        List<Map<String, dynamic>> loadedCurrentOrderPaints,
+      ) async {
+        final currentPaintIds = loadedCurrentOrderPaints
+            .map((paint) => _stringFromRow(paint, const [
+                  'paint_id',
+                  'material_id',
+                  'paintId',
+                ]))
+            .where((id) => id.isNotEmpty)
+            .toList(growable: false);
+        final currentPaintNames = loadedCurrentOrderPaints
+            .map((paint) => _stringFromRow(paint, const [
+                  'paint_name',
+                  'name',
+                  'paintName',
+                ]))
+            .where((name) => name.isNotEmpty)
+            .toList(growable: false);
+        final pendingWriteoffs = await repo.getPendingFlexPaintWriteoffs(
+          currentOrderId: task.orderId,
+          currentPaintIds: currentPaintIds,
+          currentPaintNames: currentPaintNames,
+        );
+        final pendingOrderIds = pendingWriteoffs
+            .map((pending) => pending.orderId.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        final pendingOrderLabels =
+            await _loadReadableOrderLabelsByIds(pendingOrderIds);
+        return pendingWriteoffs.map((pending) {
+          final row = pending.toMap();
+          final readableOrderLabel =
+              pendingOrderLabels[pending.orderId.trim()] ??
+                  _buildReadableOrderLabel(row, fallbackId: pending.orderId);
+          final pendingWriteoffId = pending.id.trim();
+          final sourceOrderId = pending.orderId.trim();
+          final paintId = pending.paintId.trim();
+          return row
+            ..addAll({
+              'source': 'pending',
+              'pending_writeoff_id': pendingWriteoffId,
+              'order_id': pending.orderId,
+              'source_order_id': pending.orderId,
+              'source_task_id': pending.taskId,
+              'order_label': readableOrderLabel,
+              'planned_amount': pending.plannedAmount,
+              'actual_used_amount': pending.actualUsedAmount,
+              'actual_used_text': pending.actualUsedAmount?.toString() ?? '',
+              'ui_identity':
+                  'pending:$pendingWriteoffId:$sourceOrderId:$paintId',
+            });
+        }).toList(growable: false);
       }
 
       try {
@@ -5561,9 +5818,7 @@ class _TasksScreenState extends State<TasksScreen>
           currentOrderRows: paints
               .where((row) => !_isPendingPaintRow(row))
               .toList(growable: false),
-          pendingRows: paints
-              .where(_isPendingPaintRow)
-              .toList(growable: false),
+          pendingRows: paints.where(_isPendingPaintRow).toList(growable: false),
           quantityDone: qtyInput?.commentText,
           comment: note,
         );
@@ -5608,7 +5863,7 @@ class _TasksScreenState extends State<TasksScreen>
     return true;
   }
 
-bool _hasRealStartConflict({
+  bool _hasRealStartConflict({
     required TaskProvider provider,
     required TaskModel task,
     required String employeeId,
@@ -5641,7 +5896,8 @@ bool _hasRealStartConflict({
       final startingPackaging = stage_sequence.isPackagingStage(
         stageId: task.stageId,
         stageGroupKey: task.stageGroupKey,
-        stageName: _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+        stageName:
+            _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
       );
 
       final canPairWithPackagingInSameOrder = startingPackaging &&
@@ -5664,7 +5920,8 @@ bool _hasRealStartConflict({
     final isPackagingNow = stage_sequence.isPackagingStage(
       stageId: task.stageId,
       stageGroupKey: task.stageGroupKey,
-      stageName: _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+      stageName:
+          _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
     );
 
     final canStartEarlyPackaging = canStartPackagingOutOfQueue(
@@ -5747,24 +6004,22 @@ bool _hasRealStartConflict({
             ))
         .where((t) => !_isEffectivelyCompleted(t))
         .where((task) {
-          final groupKey = taskGroupKey(task);
-          final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
-          final capturedWorkplace = groupTasks
-              .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
-              .firstWhere((id) => id.isNotEmpty, orElse: () => '');
-          if (capturedWorkplace.isNotEmpty &&
-              capturedWorkplace != task.stageId) {
-            // После захвата этап отображается только у рабочего места-захватчика.
-            return false;
-          }
-          final groupHasActive =
-              groupTasks.any((t) => t.status != TaskStatus.waiting);
-          if (groupHasActive && task.status == TaskStatus.waiting) {
-            return false;
-          }
-          return true;
-        })
-        .toList();
+      final groupKey = taskGroupKey(task);
+      final groupTasks = tasksByGroup[groupKey] ?? const <TaskModel>[];
+      final capturedWorkplace = groupTasks
+          .map((t) => t.capturedByWorkplaceId?.trim() ?? '')
+          .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+      if (capturedWorkplace.isNotEmpty && capturedWorkplace != task.stageId) {
+        // После захвата этап отображается только у рабочего места-захватчика.
+        return false;
+      }
+      final groupHasActive =
+          groupTasks.any((t) => t.status != TaskStatus.waiting);
+      if (groupHasActive && task.status == TaskStatus.waiting) {
+        return false;
+      }
+      return true;
+    }).toList();
   }
 
   bool _isUnlockedByWorkplaceQueue(
@@ -5790,8 +6045,8 @@ bool _hasRealStartConflict({
     final index = queued.indexWhere((t) => t.id == task.id);
     if (index <= 0) return true;
 
-    final bool strictSequentialByPreviousCompletion =
-        workplace != null && workplace.executionMode != WorkplaceExecutionMode.separate;
+    final bool strictSequentialByPreviousCompletion = workplace != null &&
+        workplace.executionMode != WorkplaceExecutionMode.separate;
     final canStartPackagingEarlyNow = canStartPackagingOutOfQueue(
       task: task,
       tasks: taskProvider,
@@ -5803,7 +6058,8 @@ bool _hasRealStartConflict({
     final isPackagingNow = stage_sequence.isPackagingStage(
       stageId: task.stageId,
       stageGroupKey: task.stageGroupKey,
-      stageName: _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+      stageName:
+          _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
     );
 
     if (isPackagingNow) {
@@ -5840,7 +6096,7 @@ bool _hasRealStartConflict({
   }
 
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
-      TaskProvider provider, double scale, bool isTablet) {
+      TaskProvider provider, double scale) {
     // === Derived state & permissions ===
     final bool shiftPaused = _isShiftPausedForStage(provider, task);
     final ExecutionMode? explicitStageMode = _stageExecutionMode(task);
@@ -5849,12 +6105,10 @@ bool _hasRealStartConflict({
     final bool groupLocked = _isStageGroupLocked(provider, task);
 
     double scaled(double value) => value * scale;
-    final double panelPadding = scaled(8);
-    final double gapSmall = scaled(4);
-    final double gapMedium = scaled(10);
+    final double panelPadding = scaled(16);
+    final double gapSmall = scaled(8);
     final double buttonSpacing = scaled(6);
-    final double mediumSpacing = scaled(12);
-    final double radius = scaled(12);
+    final double radius = scaled(16);
 
     // === Входные флаги для computeTaskButtons ===============================
     // Всё считается ОТНОСИТЕЛЬНО СТРОКИ (её сотрудника), а не текущего
@@ -5883,9 +6137,8 @@ bool _hasRealStartConflict({
           stageMode == ExecutionMode.separate;
       final bool hasAccessToTask =
           noAssignees || alreadyAssigned || canAutoAssign;
-      final bool stageModeAllowsJoin = stageMode != ExecutionMode.joint ||
-          alreadyAssigned ||
-          noAssignees;
+      final bool stageModeAllowsJoin =
+          stageMode != ExecutionMode.joint || alreadyAssigned || noAssignees;
       const startableStatuses = {
         TaskStatus.waiting,
         TaskStatus.paused,
@@ -5951,8 +6204,7 @@ bool _hasRealStartConflict({
         taskStatus: task.status,
         rowState: rowState,
         isMyRow: isMyRow,
-        isOwner:
-            task.assignees.isNotEmpty && task.assignees.first == rowUserId,
+        isOwner: task.assignees.isNotEmpty && task.assignees.first == rowUserId,
         isAssignee: isAssigneeForRow(rowUserId),
         mode: stageMode,
         hasMachine: _hasMachineForStage(stage),
@@ -5981,26 +6233,100 @@ bool _hasRealStartConflict({
     final bool canStart = !startBlockedForRow(
         widget.employeeId, _userRunState(task, widget.employeeId));
 
+    final panelPersonnel = context.read<PersonnelProvider>();
+    final executorNames = task.assignees
+        .map((id) => _employeeDisplayName(panelPersonnel, id))
+        .where((name) => name.trim().isNotEmpty)
+        .toList(growable: false);
+    final executorLabel = executorNames.isEmpty
+        ? _employeeDisplayName(panelPersonnel, widget.employeeId)
+        : executorNames.join(', ');
+
     final Widget panel = Container(
       padding: EdgeInsets.all(panelPadding),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(radius),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
-          )
-        ],
-      ),
+      decoration: workspaceCardDecoration(radius: radius),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('🧭 Управление заданием',
-              style:
-                  TextStyle(fontSize: scaled(14), fontWeight: FontWeight.bold)),
-          SizedBox(height: gapSmall),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final title = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.bolt,
+                    size: scaled(22),
+                    color: const Color(0xFFFF7448),
+                  ),
+                  SizedBox(width: scaled(8)),
+                  Text(
+                    'Управление заданием',
+                    style: TextStyle(
+                      color: WorkspaceColors.foreground,
+                      fontSize: scaled(16),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              );
+              final timer = ValueListenableBuilder<DateTime>(
+                valueListenable: _clock,
+                builder: (context, _, __) => Text(
+                  _formatDuration(_totalStageTime(task)),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: WorkspaceColors.foreground,
+                    fontSize: scaled(19),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              );
+              final executor = Text(
+                'Исполнитель: ${executorLabel.isEmpty ? '—' : executorLabel}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: WorkspaceColors.mutedForeground,
+                  fontSize: scaled(14),
+                  fontWeight: FontWeight.w500,
+                ),
+              );
+
+              if (constraints.maxWidth < 760) {
+                return Row(
+                  children: [
+                    Expanded(child: title),
+                    SizedBox(width: scaled(8)),
+                    timer,
+                    SizedBox(width: scaled(8)),
+                    Expanded(child: executor),
+                  ],
+                );
+              }
+
+              return SizedBox(
+                height: scaled(24),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Align(alignment: Alignment.centerLeft, child: title),
+                    Center(child: timer),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: constraints.maxWidth * 0.34,
+                        ),
+                        child: executor,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          SizedBox(height: scaled(14)),
           Column(
             children: [
               SizedBox(height: gapSmall),
@@ -6008,12 +6334,10 @@ bool _hasRealStartConflict({
               Builder(
                 builder: (context) {
                   final ExecutionMode stageExecMode = stageMode;
-                  final separateUsers = task.assignees
-                      .where((id) {
-                        final mode = _execModeForUser(task, id);
-                        return mode == ExecutionMode.separate;
-                      })
-                      .toList();
+                  final separateUsers = task.assignees.where((id) {
+                    final mode = _execModeForUser(task, id);
+                    return mode == ExecutionMode.separate;
+                  }).toList();
                   final jointUsers = task.assignees
                       .where((id) =>
                           _execModeForUser(task, id) != ExecutionMode.separate)
@@ -6042,6 +6366,9 @@ bool _hasRealStartConflict({
                   Widget buildControlsFor(String? label,
                       {List<String>? jointGroup, String? userId}) {
                     final tp = context.read<TaskProvider>();
+                    final showControlLabel = label != null &&
+                        (separateUsers.length + (jointUsers.isEmpty ? 0 : 1) >
+                            1);
 
                     // Determine whether this row belongs to the current user.
                     bool isMyRow;
@@ -6131,7 +6458,8 @@ bool _hasRealStartConflict({
                         final taskProvider = context.read<TaskProvider>();
                         final personnelProvider = personnel;
                         // Sequential stage guard
-                        final canStartEarlyPackaging = canStartPackagingOutOfQueue(
+                        final canStartEarlyPackaging =
+                            canStartPackagingOutOfQueue(
                           task: task,
                           tasks: taskProvider,
                           personnel: personnelProvider,
@@ -6141,7 +6469,8 @@ bool _hasRealStartConflict({
                         final isPackagingNow = stage_sequence.isPackagingStage(
                           stageId: task.stageId,
                           stageGroupKey: task.stageGroupKey,
-                          stageName: _stageDisplayName(personnelProvider, task.stageId),
+                          stageName: _stageDisplayName(
+                              personnelProvider, task.stageId),
                         );
                         // Упаковка подчиняется последовательности этапов:
                         // старт разрешён только после начала предпоследнего
@@ -6152,8 +6481,7 @@ bool _hasRealStartConflict({
                                 groupResolver: _stageGroupKey) &&
                             !canStartEarlyPackaging) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context)
-                                .showSnackBar(SnackBar(
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(isPackagingNow
                                   ? 'Упаковку можно начать только после '
                                       'старта предыдущего этапа заказа'
@@ -6170,17 +6498,20 @@ bool _hasRealStartConflict({
                           stage,
                         )) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                                content: Text(
-                                    'Сначала начните предыдущие задания в очереди')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Сначала начните предыдущие задания в очереди')));
                           }
                           return;
                         }
 
                         if (_isStageGroupLocked(tp, task)) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                                content: Text('Уже выполняется альтернативный этап')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Уже выполняется альтернативный этап')));
                           }
                           return;
                         }
@@ -6190,16 +6521,16 @@ bool _hasRealStartConflict({
                             !_isSetupCompletedForStage(task) &&
                             !_hasProductionStartedForStage(task)) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                                content: Text(
-                                    'Сначала начните наладку, затем запускайте этап')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Сначала начните наладку, затем запускайте этап')));
                           }
                           return;
                         }
 
-
-                        final startedAtTs =
-                            task.startedAt ?? DateTime.now().millisecondsSinceEpoch;
+                        final startedAtTs = task.startedAt ??
+                            DateTime.now().millisecondsSinceEpoch;
                         final started = await taskProvider.updateStatus(
                           task.id,
                           TaskStatus.inProgress,
@@ -6207,7 +6538,8 @@ bool _hasRealStartConflict({
                         );
                         if (!started) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(const SnackBar(
                               content: Text(
                                   'Этап уже запущен другим сотрудником. Обновите список и продолжите работу в активном этапе.'),
                             ));
@@ -6229,7 +6561,8 @@ bool _hasRealStartConflict({
                         if (!alreadyAssigned) {
                           final newAssignees = List<String>.from(task.assignees)
                             ..add(widget.employeeId);
-                          await taskProvider.updateAssignees(task.id, newAssignees);
+                          await taskProvider.updateAssignees(
+                              task.id, newAssignees);
                         }
 
                         if (selectedMode != null &&
@@ -6254,8 +6587,9 @@ bool _hasRealStartConflict({
                                 task, widget.employeeId)) {
                           await _finishSetup(task, provider);
                         }
-                        final isResumeAction = stateRowUser == UserRunState.paused ||
-                            stateRowUser == UserRunState.problem;
+                        final isResumeAction =
+                            stateRowUser == UserRunState.paused ||
+                                stateRowUser == UserRunState.problem;
                         await taskProvider.addCommentAutoUser(
                           taskId: task.id,
                           type: isResumeAction ? 'resume' : 'start',
@@ -6389,12 +6723,10 @@ bool _hasRealStartConflict({
                             .where((id) => id.isNotEmpty)
                             .toSet();
                         doneUsers.add(widget.employeeId);
-                        final separateIds = latestTask.assignees
-                            .where((id) {
-                              final mode = _execModeForUser(latestTask, id);
-                              return mode == ExecutionMode.separate;
-                            })
-                            .toList();
+                        final separateIds = latestTask.assignees.where((id) {
+                          final mode = _execModeForUser(latestTask, id);
+                          return mode == ExecutionMode.separate;
+                        }).toList();
                         // Ensure current user is included (in case he wasn't listed yet)
                         if (!separateIds.contains(widget.employeeId)) {
                           separateIds.add(widget.employeeId);
@@ -6537,8 +6869,10 @@ bool _hasRealStartConflict({
                           .toList();
                       if (available.isEmpty) {
                         if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('Нет свободных сотрудников для помощи.')));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Нет свободных сотрудников для помощи.')));
                         }
                         return;
                       }
@@ -6563,7 +6897,8 @@ bool _hasRealStartConflict({
                                         ),
                                       ))
                                   .toList(),
-                              onChanged: (value) => setState(() => selectedId = value),
+                              onChanged: (value) =>
+                                  setState(() => selectedId = value),
                             ),
                             actions: [
                               TextButton(
@@ -6683,7 +7018,8 @@ bool _hasRealStartConflict({
                       final updatedAssignees = List<String>.from(
                         latestTask.assignees.where((id) => id != helperId),
                       );
-                      await taskProvider.updateAssignees(task.id, updatedAssignees);
+                      await taskProvider.updateAssignees(
+                          task.id, updatedAssignees);
 
                       await taskProvider.addCommentAutoUser(
                         taskId: task.id,
@@ -6802,16 +7138,17 @@ bool _hasRealStartConflict({
                         );
                         final stageProductionStarted =
                             _hasProductionStartedForStage(latestTask);
-                        final shiftResumeState = stateRowUser == UserRunState.problem
-                            ? 'problem'
-                            : stateRowUser == UserRunState.paused
-                                ? 'paused'
-                                : (!stageProductionStarted &&
-                                        (isSetupActiveForRow ||
-                                            isSetupInProgress ||
-                                            hasPendingSetup))
-                                    ? 'setup'
-                                    : 'production';
+                        final shiftResumeState =
+                            stateRowUser == UserRunState.problem
+                                ? 'problem'
+                                : stateRowUser == UserRunState.paused
+                                    ? 'paused'
+                                    : (!stageProductionStarted &&
+                                            (isSetupActiveForRow ||
+                                                isSetupInProgress ||
+                                                hasPendingSetup))
+                                        ? 'setup'
+                                        : 'production';
 
                         // Количество на пересмене фиксируется ОДИН раз — за
                         // инициатором. Помощникам оно не дублируется, иначе
@@ -6873,8 +7210,8 @@ bool _hasRealStartConflict({
                         final assignees = latestTask.assignees;
                         if (assignees.length != 1 ||
                             assignees.first != widget.employeeId) {
-                          await taskProvider.updateAssignees(
-                              task.id, [widget.employeeId]);
+                          await taskProvider
+                              .updateAssignees(task.id, [widget.employeeId]);
                         }
                         final related = _relatedTasks(taskProvider, latestTask);
                         for (final rel in related) {
@@ -6893,7 +7230,8 @@ bool _hasRealStartConflict({
                           }
                         }
                         final shiftStateComment = latestTask.comments
-                            .where((comment) => comment.type == 'shift_pause_state')
+                            .where((comment) =>
+                                comment.type == 'shift_pause_state')
                             .toList();
                         final shiftResumeState = shiftStateComment.isNotEmpty
                             ? shiftStateComment.last.text.trim().toLowerCase()
@@ -6902,8 +7240,8 @@ bool _hasRealStartConflict({
                                 : 'production');
                         final startedAtTs = latestTask.startedAt ??
                             DateTime.now().millisecondsSinceEpoch;
-                        final participants =
-                            _participantsSnapshot(latestTask, widget.employeeId);
+                        final participants = _participantsSnapshot(
+                            latestTask, widget.employeeId);
                         final execMode = _stageExecutionMode(latestTask);
 
                         if (shiftResumeState == 'setup') {
@@ -6936,7 +7274,8 @@ bool _hasRealStartConflict({
                             note: 'shift_resume_setup',
                           );
                         } else if (shiftResumeState == 'paused') {
-                          await taskProvider.updateStatus(task.id, TaskStatus.paused);
+                          await taskProvider.updateStatus(
+                              task.id, TaskStatus.paused);
                           await taskProvider.recordTimeEvent(
                             task: latestTask,
                             type: TaskTimeType.pause,
@@ -6950,7 +7289,8 @@ bool _hasRealStartConflict({
                             note: 'shift_resume_pause',
                           );
                         } else if (shiftResumeState == 'problem') {
-                          await taskProvider.updateStatus(task.id, TaskStatus.problem);
+                          await taskProvider.updateStatus(
+                              task.id, TaskStatus.problem);
                           await taskProvider.recordTimeEvent(
                             task: latestTask,
                             type: TaskTimeType.problem,
@@ -6986,9 +7326,10 @@ bool _hasRealStartConflict({
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
-                        final resumeDetails = updated.status == TaskStatus.inProgress
-                            ? 'Пересмена: работа возобновлена'
-                            : 'Пересмена: состояние восстановлено';
+                        final resumeDetails =
+                            updated.status == TaskStatus.inProgress
+                                ? 'Пересмена: работа возобновлена'
+                                : 'Пересмена: состояние восстановлено';
                         await taskProvider.addCommentAutoUser(
                             taskId: task.id,
                             type: 'shift_resume',
@@ -7007,207 +7348,233 @@ bool _hasRealStartConflict({
                       }
                     }
 
-                    String timeText() {
-                      final hasShiftHistory = _taskTimeEvents(task)
-                              .any((event) => event.type == TaskTimeType.shiftChange) ||
-                          task.comments.any((c) =>
-                              c.type == 'shift_pause' || c.type == 'shift_resume');
-                      final d = (jointGroup != null || hasShiftHistory)
-                          ? _totalStageTime(task)
-                          : _userElapsed(task, userId!);
-                      String two(int n) => n.toString().padLeft(2, '0');
-                      final s =
-                          '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
-                      return s;
+                    String cleanLabel(
+                      TaskButtonState state, {
+                      bool setup = false,
+                      bool compactHelper = false,
+                    }) {
+                      var value = state.label.trim();
+                      for (final prefix in const ['▶', '✓', '⏸', '⚠']) {
+                        if (value.startsWith(prefix)) {
+                          value = value.substring(prefix.length).trimLeft();
+                        }
+                      }
+                      if (setup &&
+                          !value.toLowerCase().startsWith('продолжить')) {
+                        return 'Наладку';
+                      }
+                      if (compactHelper &&
+                          value.toLowerCase() == 'добавить помощника') {
+                        return 'Доб. помощника';
+                      }
+                      return value;
                     }
 
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Wrap(
-                                spacing: buttonSpacing,
-                                runSpacing: buttonSpacing,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  if (label != null)
-                                    Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 8),
-                                        child: Text(label,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: scaled(12),
-                                            ))),
-                                  if (buttons.setup.visible) ...[
-                                    ElevatedButton.icon(
-                                      onPressed: buttons.setup.enabled
-                                          ? () => _startSetup(task, provider)
-                                          : null,
-                                      style: ElevatedButton.styleFrom(
-                                        textStyle:
-                                            TextStyle(fontSize: scaled(11.5)),
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: scaled(12),
-                                          vertical: scaled(10),
-                                        ),
-                                        minimumSize:
-                                            Size(scaled(90), scaled(36)),
-                                        visualDensity: isTablet
-                                            ? const VisualDensity(
-                                                horizontal: -1, vertical: -1)
-                                            : null,
-                                      ),
-                                      icon: const Icon(Icons.build),
-                                      label: Text(buttons.setup.label),
-                                    ),
-                                    SizedBox(width: buttonSpacing),
-                                  ],
-                                  if (buttons.start.visible)
-                                    ExplainOnTap(
-                                      enabled: buttons.start.enabled,
-                                      explain: isMyRow
-                                          ? () => _explainStartBlocked(
-                                                task: task,
-                                                stage: stage,
-                                                state: stateRowUser,
-                                                shiftPaused: shiftPaused,
-                                              )
-                                          : null,
-                                      child: ElevatedButton(
-                                          onPressed: buttons.start.enabled
-                                              ? onStart
-                                              : null,
-                                          style: ElevatedButton.styleFrom(
-                                            textStyle: TextStyle(
-                                                fontSize: scaled(11.5)),
-                                          ),
-                                          child: Text(buttons.start.label)),
-                                    ),
-                                  if (buttons.pause.visible)
-                                    ElevatedButton(
-                                        onPressed: buttons.pause.enabled
-                                            ? onPause
-                                            : null,
-                                        style: ElevatedButton.styleFrom(
-                                          textStyle:
-                                              TextStyle(fontSize: scaled(11.5)),
-                                        ),
-                                        child: Text(buttons.pause.label)),
-                                  if (buttons.finish.visible)
-                                    ExplainOnTap(
-                                      enabled: buttons.finish.enabled,
-                                      explain: isMyRow
-                                          ? () => _explainFinishBlocked(
-                                                task: task,
-                                                state: stateRowUser,
-                                                shiftPaused: shiftPaused,
-                                                isSetupActive:
-                                                    isSetupActiveForRow,
-                                              )
-                                          : null,
-                                      child: ElevatedButton(
-                                          onPressed: buttons.finish.enabled
-                                              ? onFinish
-                                              : null,
-                                          style: ElevatedButton.styleFrom(
-                                            textStyle: TextStyle(
-                                                fontSize: scaled(11.5)),
-                                          ),
-                                          child: Text(buttons.finish.label)),
-                                    ),
-                                  if (buttons.problem.visible)
-                                    ElevatedButton(
-                                        onPressed: buttons.problem.enabled
-                                            ? onProblem
-                                            : null,
-                                        style: ElevatedButton.styleFrom(
-                                          textStyle:
-                                              TextStyle(fontSize: scaled(11.5)),
-                                        ),
-                                        child: Text(buttons.problem.label)),
-                                  if (buttons.helpers.visible)
-                                    ElevatedButton.icon(
-                                      onPressed: buttons.helpers.enabled
-                                          ? onAddHelper
-                                          : null,
-                                      style: ElevatedButton.styleFrom(
-                                        textStyle:
-                                            TextStyle(fontSize: scaled(11.5)),
-                                      ),
-                                      icon: const Icon(Icons.person_add_alt_1),
-                                      label: Text(buttons.helpers.label),
-                                    ),
-                                  if (buttons.helpers.visible)
-                                    ...[
-                                      for (final helperId in _helperIds(task))
-                                        ElevatedButton.icon(
-                                          onPressed: buttons.helpers.enabled
-                                              ? () => onRemoveHelper(helperId)
-                                              : null,
-                                          style: ElevatedButton.styleFrom(
-                                            textStyle: TextStyle(
-                                                fontSize: scaled(11.5)),
-                                          ),
-                                          icon: const Icon(Icons.person_remove),
-                                          label: Text(
-                                            'Удалить ${nameFor(helperId)}',
-                                          ),
-                                        ),
-                                    ],
-                                  SizedBox(width: gapMedium),
-                                  // Обновляем отображение времени для каждой строки каждую секунду
-                                  ValueListenableBuilder<DateTime>(
-                                    valueListenable: _clock,
-                                    builder: (context, _, __) {
-                                      return Text(
-                                        'Время: ' + timeText(),
-                                        style: TextStyle(fontSize: scaled(12)),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (buttons.shift.visible) ...[
-                              SizedBox(width: buttonSpacing),
-                              ElevatedButton.icon(
-                                onPressed:
-                                    buttons.shift.enabled ? onShift : null,
-                                icon: const Icon(Icons.autorenew),
-                                style: ElevatedButton.styleFrom(
-                                  textStyle:
-                                      TextStyle(fontSize: scaled(11.5)),
-                                ),
-                                label: Text(buttons.shift.label),
-                              ),
+                    Widget actionRow(List<Widget> controls) {
+                      if (controls.isEmpty) return const SizedBox.shrink();
+                      return LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < 560 &&
+                              controls.length > 2) {
+                            final itemWidth =
+                                (constraints.maxWidth - buttonSpacing) / 2;
+                            return Wrap(
+                              spacing: buttonSpacing,
+                              runSpacing: buttonSpacing,
+                              children: [
+                                for (final control in controls)
+                                  SizedBox(width: itemWidth, child: control),
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (var index = 0;
+                                  index < controls.length;
+                                  index++) ...[
+                                if (index > 0) SizedBox(width: buttonSpacing),
+                                Expanded(child: controls[index]),
+                              ],
                             ],
-                          ],
+                          );
+                        },
+                      );
+                    }
+
+                    final primaryControls = <Widget>[
+                      if (buttons.setup.visible)
+                        WorkspaceActionButton(
+                          primary: true,
+                          icon: Icons.build_outlined,
+                          label: cleanLabel(buttons.setup, setup: true),
+                          accentColor: WorkspaceColors.setup,
+                          backgroundColor: WorkspaceColors.setupBackground,
+                          onPressed: buttons.setup.enabled
+                              ? () => _startSetup(task, provider)
+                              : null,
                         ),
+                      if (buttons.start.visible)
+                        ExplainOnTap(
+                          enabled: buttons.start.enabled,
+                          explain: isMyRow
+                              ? () => _explainStartBlocked(
+                                    task: task,
+                                    stage: stage,
+                                    state: stateRowUser,
+                                    shiftPaused: shiftPaused,
+                                  )
+                              : null,
+                          child: WorkspaceActionButton(
+                            primary: true,
+                            icon: Icons.play_arrow_outlined,
+                            label: cleanLabel(buttons.start),
+                            accentColor: WorkspaceColors.success,
+                            backgroundColor: WorkspaceColors.successBackground,
+                            onPressed: buttons.start.enabled ? onStart : null,
+                          ),
+                        ),
+                      if (buttons.finish.visible)
+                        ExplainOnTap(
+                          enabled: buttons.finish.enabled,
+                          explain: isMyRow
+                              ? () => _explainFinishBlocked(
+                                    task: task,
+                                    state: stateRowUser,
+                                    shiftPaused: shiftPaused,
+                                    isSetupActive: isSetupActiveForRow,
+                                  )
+                              : null,
+                          child: WorkspaceActionButton(
+                            primary: true,
+                            icon: Icons.check_circle_outline,
+                            label: cleanLabel(buttons.finish),
+                            accentColor: WorkspaceColors.blue,
+                            backgroundColor: WorkspaceColors.blueBackground,
+                            onPressed: buttons.finish.enabled ? onFinish : null,
+                          ),
+                        ),
+                      if (buttons.shift.visible)
+                        WorkspaceActionButton(
+                          primary: true,
+                          icon: Icons.autorenew,
+                          label: cleanLabel(buttons.shift),
+                          accentColor: WorkspaceColors.warning,
+                          backgroundColor: WorkspaceColors.warningBackground,
+                          onPressed: buttons.shift.enabled ? onShift : null,
+                        ),
+                    ];
+
+                    final secondaryControls = <Widget>[
+                      if (buttons.pause.visible)
+                        WorkspaceActionButton(
+                          icon: Icons.pause_circle_outline,
+                          label: cleanLabel(buttons.pause),
+                          accentColor: WorkspaceColors.warning,
+                          backgroundColor: WorkspaceColors.secondaryBackground,
+                          onPressed: buttons.pause.enabled ? onPause : null,
+                        ),
+                      if (buttons.problem.visible)
+                        WorkspaceActionButton(
+                          icon: Icons.warning_amber_rounded,
+                          label: cleanLabel(buttons.problem),
+                          accentColor: WorkspaceColors.danger,
+                          backgroundColor: WorkspaceColors.secondaryBackground,
+                          onPressed: buttons.problem.enabled ? onProblem : null,
+                        ),
+                      if (buttons.helpers.visible)
+                        WorkspaceActionButton(
+                          icon: Icons.person_add_alt_1_outlined,
+                          label: cleanLabel(
+                            buttons.helpers,
+                            compactHelper: true,
+                          ),
+                          accentColor: WorkspaceColors.blue,
+                          backgroundColor: WorkspaceColors.secondaryBackground,
+                          onPressed:
+                              buttons.helpers.enabled ? onAddHelper : null,
+                        ),
+                    ];
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (showControlLabel) ...[
+                          Text(
+                            label!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: WorkspaceColors.mutedForeground,
+                              fontWeight: FontWeight.w500,
+                              fontSize: scaled(12),
+                            ),
+                          ),
+                          SizedBox(height: gapSmall),
+                        ],
+                        actionRow(primaryControls),
+                        if (secondaryControls.isNotEmpty) ...[
+                          SizedBox(height: buttonSpacing),
+                          actionRow(secondaryControls),
+                        ],
+                        if (buttons.helpers.visible &&
+                            _helperIds(task).isNotEmpty) ...[
+                          SizedBox(height: gapSmall),
+                          Wrap(
+                            spacing: buttonSpacing,
+                            runSpacing: buttonSpacing,
+                            children: [
+                              for (final helperId in _helperIds(task))
+                                OutlinedButton.icon(
+                                  onPressed: buttons.helpers.enabled
+                                      ? () => onRemoveHelper(helperId)
+                                      : null,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: WorkspaceColors.danger,
+                                    side: const BorderSide(
+                                      color: WorkspaceColors.border,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.person_remove_outlined,
+                                    size: 17,
+                                  ),
+                                  label: Text(
+                                    'Удалить ${nameFor(helperId)}',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                       ],
                     );
                   }
 
                   final rows = <Widget>[];
-                  final shouldShowOnlyCurrentUserRow =
-                      shiftPaused && !task.assignees.contains(widget.employeeId);
+                  final shouldShowOnlyCurrentUserRow = shiftPaused &&
+                      !task.assignees.contains(widget.employeeId);
 
                   if (shouldShowOnlyCurrentUserRow) {
                     rows.add(buildControlsFor('Вы', userId: widget.employeeId));
                   } else {
                     if (separateUsers.isNotEmpty) {
                       for (final uid in separateUsers) {
-                        rows.add(buildControlsFor('Исполнитель: ' + nameFor(uid),
+                        rows.add(buildControlsFor(
+                            'Исполнитель: ' + nameFor(uid),
                             userId: uid));
                         rows.add(SizedBox(height: scaled(8)));
                       }
                     }
                     if (jointUsers.isNotEmpty) {
                       final helperIds = _helperIds(task);
-                      final ownerId =
-                          task.assignees.isNotEmpty ? task.assignees.first : null;
+                      final ownerId = task.assignees.isNotEmpty
+                          ? task.assignees.first
+                          : null;
                       final labels = helperIds.map(nameFor).toList();
                       final label = labels.isEmpty
                           ? (ownerId != null
@@ -7217,7 +7584,8 @@ bool _hasRealStartConflict({
                       if (label == 'Одиночная или совместная работа') {
                         // скрываем строку с кнопками для "одиночной/совместной" работы
                       } else if (separateUsers.isEmpty) {
-                        rows.add(buildControlsFor(label, jointGroup: jointUsers));
+                        rows.add(
+                            buildControlsFor(label, jointGroup: jointUsers));
                       } else {
                         rows.add(Padding(
                           padding: EdgeInsets.symmetric(vertical: scaled(4)),
@@ -7233,10 +7601,11 @@ bool _hasRealStartConflict({
                         !task.assignees.contains(widget.employeeId) &&
                             (canStart || shiftPaused);
                     if (shouldShowCurrentUserRow) {
-                      rows.add(buildControlsFor('Вы', userId: widget.employeeId));
+                      rows.add(
+                          buildControlsFor('Вы', userId: widget.employeeId));
                     }
                   }
-              return Column(
+                  return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: rows);
                 },
@@ -7250,23 +7619,22 @@ bool _hasRealStartConflict({
                   ),
                 ),
               if (panelButtons.finishTask.visible)
-                Align(
-                  alignment: Alignment.centerRight,
+                Padding(
+                  padding: EdgeInsets.only(top: scaled(8)),
                   // Зелёной и активной кнопка становится только когда ВСЕ
                   // исполнители завершили участие. Пока кто-то не отметился,
                   // кнопка выключена, а нажатие объясняет, кого ждём.
                   child: ExplainOnTap(
                     enabled: panelButtons.finishTask.enabled,
                     explain: () => _explainFinalizeBlocked(task),
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                      ),
+                    child: WorkspaceActionButton(
+                      icon: Icons.check_circle_outline,
+                      label: panelButtons.finishTask.label,
+                      accentColor: WorkspaceColors.success,
+                      backgroundColor: WorkspaceColors.successBackground,
                       onPressed: panelButtons.finishTask.enabled
                           ? () => _finalizeTask(task)
                           : null,
-                      icon: const Icon(Icons.check_circle_outline),
-                      label: Text(panelButtons.finishTask.label),
                     ),
                   ),
                 ),
@@ -7463,7 +7831,8 @@ bool _hasRealStartConflict({
     bool allowAttachments = false,
   }) async {
     final controller = TextEditingController();
-    final previousPending = List<AttachmentDraft>.from(_pendingCommentAttachments);
+    final previousPending =
+        List<AttachmentDraft>.from(_pendingCommentAttachments);
     _pendingCommentAttachments.clear();
     try {
       return await showDialog<_CommentDraft?>(
@@ -7478,7 +7847,8 @@ bool _hasRealStartConflict({
                 children: [
                   TextField(
                     controller: controller,
-                    decoration: const InputDecoration(hintText: 'Укажите причину'),
+                    decoration:
+                        const InputDecoration(hintText: 'Укажите причину'),
                     maxLines: 3,
                   ),
                   if (allowAttachments) ...[
@@ -7506,7 +7876,8 @@ bool _hasRealStartConflict({
                         ),
                         _attachmentActionButton(
                           icon: Icons.photo_camera_outlined,
-                          tooltip: _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
+                          tooltip:
+                              _shouldUseFilePickerForMedia ? 'Файл' : 'Камера',
                           scale: 1,
                           onPressed: () => _pickCommentAttachment(
                             source: 'camera',
@@ -7525,7 +7896,8 @@ bool _hasRealStartConflict({
                       ],
                     ),
                     const SizedBox(height: 8),
-                    _pendingAttachmentsPreview(1, updateDialogState: setDialogState),
+                    _pendingAttachmentsPreview(1,
+                        updateDialogState: setDialogState),
                   ],
                 ],
               ),
@@ -7538,7 +7910,8 @@ bool _hasRealStartConflict({
               TextButton(
                 onPressed: () {
                   final text = controller.text.trim();
-                  final attachments = List<AttachmentDraft>.from(_pendingCommentAttachments);
+                  final attachments =
+                      List<AttachmentDraft>.from(_pendingCommentAttachments);
                   if (text.isEmpty && attachments.isEmpty) {
                     Navigator.of(ctx).pop(null);
                     return;
@@ -7979,13 +8352,15 @@ bool _hasRealStartConflict({
       participantsSnapshot: _participantsSnapshot(task, widget.employeeId),
       subjectUserIds: [widget.employeeId],
       workplaceId: task.stageId,
-      executionMode: _executionModeCode(_execModeForUser(task, widget.employeeId)),
+      executionMode:
+          _executionModeCode(_execModeForUser(task, widget.employeeId)),
       attachments: problemDraft.attachments,
     );
     if (!saved && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Проблему можно зафиксировать только для этапа в работе.'),
+          content:
+              Text('Проблему можно зафиксировать только для этапа в работе.'),
         ),
       );
       return;
@@ -8002,7 +8377,6 @@ bool _hasRealStartConflict({
     );
   }
 
-
   List<_StageComment> _collectOrderComments(
       TaskProvider provider, TaskModel pivot) {
     return _collectOrderCommentsByOrderId(provider, pivot.orderId);
@@ -8010,17 +8384,16 @@ bool _hasRealStartConflict({
 
   List<_StageComment> _collectOrderCommentsByOrderId(
       TaskProvider provider, String orderId) {
-    final cache =
-        _orderCommentsCache.putIfAbsent(orderId, () => <String, _StageComment>{});
-    final related =
-        provider.tasks.where((t) => t.orderId == orderId).toList();
+    final cache = _orderCommentsCache.putIfAbsent(
+        orderId, () => <String, _StageComment>{});
+    final related = provider.tasks.where((t) => t.orderId == orderId).toList();
     for (final task in related) {
       for (final comment in task.comments) {
         if (comment.type == 'time_event') continue;
         final key =
             '${task.id}-${comment.id}-${comment.timestamp}-${comment.type}-${comment.userId}-${comment.text}';
-        cache[key] =
-            _StageComment(comment: comment, stageId: task.stageId, taskId: task.id);
+        cache[key] = _StageComment(
+            comment: comment, stageId: task.stageId, taskId: task.id);
       }
     }
     final result = cache.values.toList();
@@ -8065,11 +8438,8 @@ bool _hasRealStartConflict({
       final client = Supabase.instance.client;
       final code = order.formCode?.trim();
       if (code != null && code.isNotEmpty) {
-        final res = await client
-            .from('forms')
-            .select()
-            .eq('code', code)
-            .maybeSingle();
+        final res =
+            await client.from('forms').select().eq('code', code).maybeSingle();
         if (res != null && res is Map) {
           row = Map<String, dynamic>.from(res);
         }
@@ -8119,7 +8489,8 @@ bool _hasRealStartConflict({
 
     String resolvedUrl = trimmed;
     if (!(trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
-      resolvedUrl = Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
+      resolvedUrl =
+          Supabase.instance.client.storage.from('tmc').getPublicUrl(trimmed);
     }
 
     final dt = DateTime.tryParse(updatedAt ?? '');
@@ -8170,7 +8541,6 @@ bool _hasRealStartConflict({
       ),
     );
   }
-
 }
 
 class _FormImageCacheEntry {
@@ -8241,60 +8611,101 @@ class _TaskCard extends StatelessWidget {
     final Color stageHintColor =
         readyForStage ? readyColor : Colors.grey.shade600;
     final Color disabledColor = const Color(0xFF9CA3AF);
+    final badge = _taskListBadge(
+      task: task,
+      readyForStage: readyForStage,
+      shiftPaused: shiftPaused,
+    );
+    final meta = <String>[
+      if (displayId.trim().isNotEmpty) displayId.trim(),
+      if (name.trim().isNotEmpty && name.trim() != displayTitle.trim())
+        name.trim(),
+    ].join(' · ');
 
     return Card(
       margin: EdgeInsets.symmetric(vertical: scaled(compact ? 3 : 5)),
-      elevation: 0.5,
-      shadowColor: const Color(0x14000000),
+      elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(scaled(12)),
+        borderRadius: BorderRadius.circular(scaled(13)),
         side: BorderSide(
           color: selected
-              ? const Color(0xFF1D4ED8)
+              ? WorkspaceColors.primary
               : (readyForStage ? readyColor : const Color(0xFFE2E4EA)),
+          width: selected ? 1.5 : 1,
         ),
       ),
       color: !enabled
           ? const Color(0xFFF3F4F6)
-          : (readyForStage ? readyColor.withOpacity(0.05) : Colors.white),
+          : (selected
+              ? const Color(0xFFF3F2FF)
+              : (readyForStage
+                  ? readyColor.withValues(alpha: 0.05)
+                  : Colors.white)),
       child: ListTile(
         onTap: enabled ? onTap : null,
+        hoverColor: WorkspaceColors.primary.withValues(alpha: 0.05),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(scaled(13)),
+        ),
         dense: compact,
         visualDensity: compact
             ? const VisualDensity(horizontal: -2, vertical: -2)
             : (scale < 1
                 ? const VisualDensity(horizontal: -1, vertical: -1)
                 : null),
-        isThreeLine: stageHint != null && name.isNotEmpty,
+        isThreeLine: stageHint != null,
         contentPadding: contentPadding,
+        leading: Container(
+          width: scaled(30),
+          height: scaled(30),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected
+                ? WorkspaceColors.primary
+                : WorkspaceColors.secondaryBackground,
+            shape: BoxShape.circle,
+          ),
+          child: Text(
+            sequenceNumber > 0 ? sequenceNumber.toString() : '•',
+            style: TextStyle(
+              color: selected ? Colors.white : WorkspaceColors.mutedForeground,
+              fontWeight: FontWeight.w700,
+              fontSize: statusSize,
+            ),
+          ),
+        ),
         title: Text(
           displayTitle,
           style: TextStyle(
             fontSize: titleSize,
             fontWeight: FontWeight.w600,
-            color: enabled ? Colors.black87 : disabledColor,
+            color: enabled
+                ? (selected
+                    ? WorkspaceColors.primary
+                    : WorkspaceColors.foreground)
+                : disabledColor,
           ),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: (name.isNotEmpty || stageHint != null)
+        subtitle: (meta.isNotEmpty || stageHint != null)
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (name.isNotEmpty)
+                  if (meta.isNotEmpty)
                     Text(
-                      name,
+                      meta,
                       style: TextStyle(
                         fontSize: subtitleSize,
-                        color: Colors.grey[600],
+                        color: WorkspaceColors.mutedForeground,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   if (stageHint != null)
                     Padding(
-                      padding: EdgeInsets.only(top: name.isNotEmpty ? 2 : 0),
+                      padding: EdgeInsets.only(top: meta.isNotEmpty ? 2 : 0),
                       child: Text(
                         stageHint,
                         style: TextStyle(
@@ -8311,19 +8722,22 @@ class _TaskCard extends StatelessWidget {
               )
             : null,
         trailing: Container(
-          width: scaled(28),
-          height: scaled(28),
-          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(
+            horizontal: scaled(8),
+            vertical: scaled(5),
+          ),
           decoration: BoxDecoration(
-            color: enabled ? const Color(0xFFDBEAFE) : const Color(0xFFE5E7EB),
-            shape: BoxShape.circle,
+            color: enabled
+                ? badge.color.withValues(alpha: 0.1)
+                : const Color(0xFFE5E7EB),
+            borderRadius: BorderRadius.circular(scaled(20)),
           ),
           child: Text(
-            sequenceNumber > 0 ? sequenceNumber.toString() : '•',
+            badge.label,
             style: TextStyle(
-              color: enabled ? const Color(0xFF1D4ED8) : const Color(0xFF6B7280),
-              fontWeight: FontWeight.w700,
-              fontSize: statusSize,
+              color: enabled ? badge.color : const Color(0xFF6B7280),
+              fontWeight: FontWeight.w600,
+              fontSize: scaled(10.5),
             ),
           ),
         ),
@@ -8387,8 +8801,8 @@ class _AssignedEmployeesRow extends StatelessWidget {
     final taskProvider = context.read<TaskProvider>();
     final stage = personnel.workplaces.firstWhere(
       (w) => w.id == task.stageId,
-      orElse: () =>
-          WorkplaceModel(id: task.stageId, name: task.stageId, positionIds: const []),
+      orElse: () => WorkplaceModel(
+          id: task.stageId, name: task.stageId, positionIds: const []),
     );
     final ExecutionMode? explicitStageMode = _stageExecutionMode(task);
     final stageMode = explicitStageMode ?? _workplaceDefaultMode(stage);
@@ -8593,8 +9007,7 @@ class _AssignedEmployeesRow extends StatelessWidget {
           Padding(
             padding: EdgeInsets.only(left: scaled(6)),
             child: IconButton(
-              visualDensity:
-                  const VisualDensity(horizontal: -2, vertical: -2),
+              visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
               icon: const Icon(Icons.add_circle_outline),
               tooltip: 'Добавить помощника',
               onPressed: _addHelper,
@@ -8646,7 +9059,8 @@ Future<_QuantityInput?> _askQuantity(
             content: TextField(
               controller: totalController,
               autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
                 hintText: unitLabel.isNotEmpty
                     ? 'Введите количество в $unitLabel'
@@ -8684,7 +9098,8 @@ Future<_QuantityInput?> _askQuantity(
                   }
                   final n = double.tryParse(raw.replaceAll(',', '.'));
                   if (n == null) {
-                    setState(() => errorText = 'Количество должно быть числом.');
+                    setState(
+                        () => errorText = 'Количество должно быть числом.');
                     return;
                   }
                   if (n < 0) {
@@ -8693,8 +9108,8 @@ Future<_QuantityInput?> _askQuantity(
                     return;
                   }
                   if (n == 0) {
-                    setState(() =>
-                        errorText = 'Количество должно быть больше 0.');
+                    setState(
+                        () => errorText = 'Количество должно быть больше 0.');
                     return;
                   }
                   final expected = order != null && task != null

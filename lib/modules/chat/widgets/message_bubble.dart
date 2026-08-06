@@ -4,18 +4,21 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import '../../../utils/media_viewer.dart';
 
+import '../../tasks/workspace_design.dart';
 import '../chat_message.dart';
 
 class MessageBubble extends StatefulWidget {
   final ChatMessage m;
   final bool isMine;
   final String? meId;
+  final bool workspaceStyle;
 
   const MessageBubble({
     super.key,
     required this.m,
     required this.isMine,
     this.meId,
+    this.workspaceStyle = true,
   });
 
   @override
@@ -92,9 +95,20 @@ class _MessageBubbleState extends State<MessageBubble> {
 
     final media = MediaQuery.of(context);
     final bool isTablet =
-        media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
+        media.size.width < 1100 && media.size.shortestSide >= 600;
     final double scale = isTablet ? 0.9 : 1.0;
     double scaled(double value) => value * scale;
+
+    if (widget.workspaceStyle) {
+      return _buildWorkspaceBubble(
+        context: context,
+        message: m,
+        displayName: displayName,
+        parsedBody: parsedBody,
+        highlightsMention: highlightsMention,
+        scale: scale,
+      );
+    }
 
     final radius = BorderRadius.only(
       topLeft: Radius.circular(scaled(16)),
@@ -119,7 +133,7 @@ class _MessageBubbleState extends State<MessageBubble> {
             displayName,
             style: TextStyle(
               fontSize: scaled(12),
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
               color: Colors.black.withOpacity(.55),
             ),
           ),
@@ -185,6 +199,131 @@ class _MessageBubbleState extends State<MessageBubble> {
     );
   }
 
+  Widget _buildWorkspaceBubble({
+    required BuildContext context,
+    required ChatMessage message,
+    required String displayName,
+    required _ParsedSegments parsedBody,
+    required bool highlightsMention,
+    required double scale,
+  }) {
+    final mediaWidth = MediaQuery.sizeOf(context).width;
+    final maxWidth = mediaWidth < 900 ? mediaWidth * 0.78 : 680.0 * scale;
+    final initial = displayName.isEmpty ? '•' : displayName[0].toUpperCase();
+    final bubbleColor = widget.isMine
+        ? WorkspaceColors.setupBackground
+        : WorkspaceColors.secondaryBackground;
+    final borderColor = highlightsMention
+        ? WorkspaceColors.danger.withValues(alpha: 0.42)
+        : widget.isMine
+            ? WorkspaceColors.primary.withValues(alpha: 0.2)
+            : WorkspaceColors.border;
+    final radius = BorderRadius.only(
+      topLeft: Radius.circular(14 * scale),
+      topRight: Radius.circular(14 * scale),
+      bottomLeft: Radius.circular((widget.isMine ? 14 : 5) * scale),
+      bottomRight: Radius.circular((widget.isMine ? 5 : 14) * scale),
+    );
+
+    final bubble = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: 12 * scale,
+          vertical: 10 * scale,
+        ),
+        decoration: BoxDecoration(
+          color: bubbleColor,
+          borderRadius: radius,
+          border: Border.all(color: borderColor),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: widget.isMine
+                          ? WorkspaceColors.primary
+                          : WorkspaceColors.foreground,
+                      fontSize: 12 * scale,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                SizedBox(width: 8 * scale),
+                Text(
+                  _formatTime(message.createdAt),
+                  style: TextStyle(
+                    color: WorkspaceColors.mutedForeground,
+                    fontSize: 11 * scale,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                if (highlightsMention) ...[
+                  SizedBox(width: 4 * scale),
+                  Icon(
+                    Icons.priority_high_rounded,
+                    size: 14 * scale,
+                    color: WorkspaceColors.danger,
+                  ),
+                ],
+              ],
+            ),
+            SizedBox(height: 5 * scale),
+            if (message.hasClaim) ...[
+              _ClaimBadge(targets: message.claimTargets, scale: scale),
+              SizedBox(height: 6 * scale),
+            ],
+            _buildContent(context, message, scale, parsedBody),
+          ],
+        ),
+      ),
+    );
+
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: 16 * scale,
+        vertical: 5 * scale,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment:
+            widget.isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!widget.isMine) ...[
+            Container(
+              width: 30 * scale,
+              height: 30 * scale,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: WorkspaceColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                initial,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12 * scale,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            SizedBox(width: 8 * scale),
+          ],
+          Flexible(child: bubble),
+        ],
+      ),
+    );
+  }
+
   String _formatTime(DateTime dt) {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
@@ -195,10 +334,17 @@ class _MessageBubbleState extends State<MessageBubble> {
       _ParsedSegments parsed) {
     switch (m.kind) {
       case 'text':
-        final baseStyle = TextStyle(fontSize: 15 * scale, height: 1.25);
+        final baseStyle = TextStyle(
+          color: widget.workspaceStyle ? WorkspaceColors.foreground : null,
+          fontSize: 15 * scale,
+          fontWeight: FontWeight.w400,
+          height: 1.25,
+        );
         final mentionStyle = baseStyle.copyWith(
-          color: Theme.of(context).colorScheme.primary,
-          fontWeight: FontWeight.w600,
+          color: widget.workspaceStyle
+              ? WorkspaceColors.primary
+              : Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w500,
         );
         final spans = parsed.segments
             .map((segment) => TextSpan(
@@ -221,10 +367,19 @@ class _MessageBubbleState extends State<MessageBubble> {
               mime: m.fileMime,
               title: caption.isNotEmpty ? caption : 'Фото',
               scale: scale,
+              compactDisplay: widget.workspaceStyle,
             ),
             if (caption.isNotEmpty) ...[
               SizedBox(height: 6 * scale),
-              Text(caption, style: TextStyle(fontSize: 14 * scale)),
+              Text(
+                caption,
+                style: TextStyle(
+                  color:
+                      widget.workspaceStyle ? WorkspaceColors.foreground : null,
+                  fontSize: 14 * scale,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
             ]
           ],
         );
@@ -266,10 +421,10 @@ class _ClaimBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final names = targets.map((t) => t.name).where((n) => n.isNotEmpty).join(', ');
+    final names =
+        targets.map((t) => t.name).where((n) => n.isNotEmpty).join(', ');
     return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: 8 * scale, vertical: 4 * scale),
+      padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 4 * scale),
       decoration: BoxDecoration(
         color: theme.colorScheme.errorContainer.withOpacity(.7),
         borderRadius: BorderRadius.circular(8 * scale),
@@ -288,7 +443,7 @@ class _ClaimBadge extends StatelessWidget {
               names.isEmpty ? 'Претензия' : 'Претензия: $names',
               style: TextStyle(
                 fontSize: 12 * scale,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w500,
                 color: theme.colorScheme.onErrorContainer,
               ),
             ),
@@ -327,11 +482,13 @@ class _ImageWidget extends StatelessWidget {
   final String? mime;
   final String? title;
   final double scale;
+  final bool compactDisplay;
   const _ImageWidget({
     required this.url,
     this.mime,
     this.title,
     this.scale = 1.0,
+    this.compactDisplay = false,
   });
 
   @override
@@ -340,7 +497,8 @@ class _ImageWidget extends StatelessWidget {
     final baseWidth = mediaWidth * 0.55;
     final minWidth = 140.0 * scale;
     final maxWidth = mediaWidth * 0.65;
-    final double w = baseWidth.clamp(minWidth, maxWidth).toDouble();
+    final currentWidth = baseWidth.clamp(minWidth, maxWidth).toDouble();
+    final double w = compactDisplay ? currentWidth * 0.45 : currentWidth;
     final double h = w * 0.66;
     double scaled(double value) => value * scale;
     return ClipRRect(
@@ -586,7 +744,7 @@ class _AudioTileState extends State<_AudioTile> {
                 'Голосовое сообщение',
                 style: TextStyle(
                   fontSize: 13 * widget.scale,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w500,
                   color: theme.colorScheme.onSurface.withOpacity(.75),
                 ),
               ),

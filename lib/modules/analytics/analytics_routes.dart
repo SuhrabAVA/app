@@ -4,6 +4,7 @@ import 'analytics_module.dart';
 import 'screens/analytics_access_denied_screen.dart';
 import 'screens/analytics_home_screen.dart';
 import 'services/analytics_permission_service.dart';
+import 'utils/analytics_theme.dart';
 import 'widgets/analytics_topbar.dart';
 
 class AnalyticsRoutes {
@@ -19,7 +20,10 @@ class AnalyticsRoutes {
   static Route<dynamic> buildAccessDeniedRoute() {
     return MaterialPageRoute(
       settings: const RouteSettings(name: accessDenied),
-      builder: (_) => const AnalyticsAccessDeniedScreen(),
+      builder: (context) => Theme(
+        data: buildAnalyticsTheme(Theme.of(context)),
+        child: const AnalyticsAccessDeniedScreen(),
+      ),
     );
   }
 
@@ -30,12 +34,15 @@ class AnalyticsRoutes {
   static Route<dynamic> buildSelfViewRoute({required String employeeId}) {
     return MaterialPageRoute(
       settings: const RouteSettings(name: employeeSelf),
-      builder: (_) => AnalyticsHomeScreen(
-        permission: AnalyticsPermissionService(
-          isTechLeader: false,
-          currentEmployeeId: employeeId,
+      builder: (context) => Theme(
+        data: buildAnalyticsTheme(Theme.of(context)),
+        child: AnalyticsHomeScreen(
+          permission: AnalyticsPermissionService(
+            isTechLeader: false,
+            currentEmployeeId: employeeId,
+          ),
+          selfViewCanGoBack: true,
         ),
-        selfViewCanGoBack: true,
       ),
     );
   }

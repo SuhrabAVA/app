@@ -150,8 +150,8 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
     final incidents = events
         .where((e) => e.workplaceId == workplaceId && e.type == type)
         .toList();
-    final workplaceName = personnel.workplaceById(workplaceId)?.name ??
-        workplaceId;
+    final workplaceName =
+        personnel.workplaceById(workplaceId)?.name ?? workplaceId;
     showDialog<void>(
       context: context,
       builder: (_) => IncidentOrdersDialog(
@@ -182,8 +182,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
     int daySelected,
     AnalyticsState state,
   ) {
-    final midnight =
-        DateTime(state.month.year, state.month.month, daySelected);
+    final midnight = DateTime(state.month.year, state.month.month, daySelected);
     String hhmm(DateTime dt) =>
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return [
@@ -207,8 +206,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
       builder: (context, _) {
         final state = widget.service.state;
         if (state.loading && state.events.isEmpty) {
-          return const AnalyticsShell(
-              child: AnalyticsLoadingState());
+          return const AnalyticsShell(child: AnalyticsLoadingState());
         }
         if (state.error != null) {
           return AnalyticsShell(
@@ -230,17 +228,18 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
               child: AnalyticsEmptyState(message: 'Сотрудник не найден'));
         }
 
-        final allEvents = state.events.where((e) => e.employeeId == _employeeId).toList();
+        final allEvents =
+            state.events.where((e) => e.employeeId == _employeeId).toList();
         // workplace filter
         final filtered = _workplaceFilter == AnalyticsConstants.allWorkplaces
             ? allEvents
-            : allEvents.where((e) => e.workplaceId == _workplaceFilter).toList();
+            : allEvents
+                .where((e) => e.workplaceId == _workplaceFilter)
+                .toList();
 
         final eventsByDay = <int, List<AnalyticsEvent>>{};
         for (final e in filtered) {
-          eventsByDay
-              .putIfAbsent(e.startTime.day, () => [])
-              .add(e);
+          eventsByDay.putIfAbsent(e.startTime.day, () => []).add(e);
         }
         // Если selectedDay не задан — берём первый день с активностью или 1.
         _selectedDay ??= eventsByDay.keys.isEmpty
@@ -292,7 +291,8 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
         // В selfView оклад не подставляем даже из PersonnelProvider —
         // финансовые данные не должны участвовать в расчёте на экране.
         final baseDaySalary = widget.permission.canViewFinance
-            ? (state.employeeBaseSalaries[_employeeId] ?? employee.baseDaySalary)
+            ? (state.employeeBaseSalaries[_employeeId] ??
+                employee.baseDaySalary)
             : 0.0;
         final breakdown = SalaryCalculator.compute(
           events: allEvents,
@@ -331,8 +331,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
               child: EmployeeWorkplaceStrip(
                 rows: summaries,
                 activeFilter: _workplaceFilter,
-                onChangeFilter: (id) =>
-                    setState(() => _workplaceFilter = id),
+                onChangeFilter: (id) => setState(() => _workplaceFilter = id),
                 onOpenIncidents: (workplaceId, type) => _openIncidents(
                   context: context,
                   workplaceId: workplaceId,
@@ -378,8 +377,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
                     personnel.workplaceById(id)?.name ?? id,
                 employeeNameOf: (id) {
                   try {
-                    final e =
-                        personnel.employees.firstWhere((x) => x.id == id);
+                    final e = personnel.employees.firstWhere((x) => x.id == id);
                     return '${e.lastName} ${e.firstName}'.trim();
                   } catch (_) {
                     return id;
@@ -393,14 +391,11 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
               child: DayEventsTable(
                 events: dayEvents,
                 timeline: timeline,
-                workplaceById: {
-                  for (final w in personnel.workplaces) w.id: w
-                },
+                workplaceById: {for (final w in personnel.workplaces) w.id: w},
                 comments: dayComments,
                 employeeNameOf: (id) {
                   try {
-                    final e =
-                        personnel.employees.firstWhere((x) => x.id == id);
+                    final e = personnel.employees.firstWhere((x) => x.id == id);
                     return '${e.lastName} ${e.firstName}'.trim();
                   } catch (_) {
                     return id;
@@ -437,8 +432,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
                     value:
                         '$problemCount · ${AnalyticsFormat.hoursMinutes(problemMin)}'),
                 AnalyticsStatRow(
-                    label: 'Сделано',
-                    value: AnalyticsFormat.decimal(qty)),
+                    label: 'Сделано', value: AnalyticsFormat.decimal(qty)),
                 if (widget.permission.canViewFinance)
                   AnalyticsTotalBox(
                     label: 'К выплате',
@@ -471,12 +465,15 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
     );
   }
 
-  Widget _toolbar(BuildContext context, PersonnelProvider personnel,
-      EmployeeModel employee, List<AnalyticsEvent> events, SalaryBreakdown brk) {
+  Widget _toolbar(
+      BuildContext context,
+      PersonnelProvider personnel,
+      EmployeeModel employee,
+      List<AnalyticsEvent> events,
+      SalaryBreakdown brk) {
     final state = widget.service.state;
     final statusName = state.statuses
-        .where((s) =>
-            s.id == (state.employeeStatusIds[employee.id] ?? ''))
+        .where((s) => s.id == (state.employeeStatusIds[employee.id] ?? ''))
         .map((s) => s.name)
         .firstWhere((_) => true, orElse: () => '');
     final fullName = '${employee.lastName} ${employee.firstName}'.trim();
@@ -502,7 +499,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           style: const TextStyle(
             color: AnalyticsColors.text,
             fontSize: 30,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w600,
             letterSpacing: -1,
             height: 1.05,
           ),
@@ -539,8 +536,8 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
                 dropdownColor: AnalyticsColors.card2,
                 style: const TextStyle(color: AnalyticsColors.text),
                 underline: const SizedBox.shrink(),
-                icon: const Icon(Icons.expand_more,
-                    color: AnalyticsColors.muted),
+                icon:
+                    const Icon(Icons.expand_more, color: AnalyticsColors.muted),
                 items: personnel.employees
                     .where((e) => !e.isFired)
                     .map((e) => DropdownMenuItem(
@@ -621,7 +618,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
       children: [
         Text(
           'Всего: ${claims.length}',
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
         ),
         const SizedBox(width: 12),
         TextButton.icon(
@@ -629,8 +626,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           label: const Text('Показать список'),
           onPressed: () => showClaimsListDialog(
             context,
-            employeeName:
-                '${employee.lastName} ${employee.firstName}'.trim(),
+            employeeName: '${employee.lastName} ${employee.firstName}'.trim(),
             monthLabel:
                 '${month.month.toString().padLeft(2, '0')}.${month.year}',
             claims: claims,
@@ -645,13 +641,13 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0x4F38BDF8)),
-        color: const Color(0x261A8FB5),
+        border: Border.all(color: const Color(0x4F6A6CF7)),
+        color: const Color(0x146A6CF7),
       ),
       child: Text(name,
           style: const TextStyle(
-              color: Color(0xFF7DD3FC),
-              fontWeight: FontWeight.w800,
+              color: AnalyticsColors.blueDeep,
+              fontWeight: FontWeight.w500,
               fontSize: 11)),
     );
   }
@@ -690,7 +686,8 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           }),
           const Divider(color: AnalyticsColors.line),
           _salaryRow('Сдельно', AnalyticsFormat.money(brk.pieceSalary)),
-          _salaryRow('Оклад за смены', AnalyticsFormat.money(brk.baseSalaryPay)),
+          _salaryRow(
+              'Оклад за смены', AnalyticsFormat.money(brk.baseSalaryPay)),
           for (final line in brk.statusPayBreakdown)
             _salaryRow(
               'По статусу «${line.statusName}»: ${line.shifts} смен × ${AnalyticsFormat.money(line.rate)}',
@@ -710,8 +707,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           _salaryRow('КПД', '$kpdPercent%'),
           const Divider(color: AnalyticsColors.line),
           _adjustmentField('Компенсация', adj.compensation, (v) {
-            widget.service.saveSalaryAdjustments(
-                adj.copyWith(compensation: v));
+            widget.service.saveSalaryAdjustments(adj.copyWith(compensation: v));
           }),
           _adjustmentField('Соц. отчисления', adj.social, (v) {
             widget.service.saveSalaryAdjustments(adj.copyWith(social: v));
@@ -723,8 +719,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
             widget.service.saveSalaryAdjustments(adj.copyWith(cashless: v));
           }),
           _adjustmentField('Дисциплина', adj.discipline, (v) {
-            widget.service
-                .saveSalaryAdjustments(adj.copyWith(discipline: v));
+            widget.service.saveSalaryAdjustments(adj.copyWith(discipline: v));
           }),
           _adjustmentField('Браки', adj.defect, (v) {
             widget.service.saveSalaryAdjustments(adj.copyWith(defect: v));
@@ -744,16 +739,15 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
             ),
             Text(value,
                 style: const TextStyle(
-                    color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w900)),
+                    color: AnalyticsColors.text, fontWeight: FontWeight.w600)),
           ],
         ),
       );
 
   Widget _adjustmentField(
       String label, double value, ValueChanged<double> onChanged) {
-    final ctrl =
-        TextEditingController(text: AnalyticsFormat.decimal(value, precision: 0));
+    final ctrl = TextEditingController(
+        text: AnalyticsFormat.decimal(value, precision: 0));
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -771,7 +765,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
                   const TextInputType.numberWithOptions(decimal: true),
               textAlign: TextAlign.right,
               style: const TextStyle(
-                  color: AnalyticsColors.text, fontWeight: FontWeight.w800),
+                  color: AnalyticsColors.text, fontWeight: FontWeight.w500),
               decoration: const InputDecoration(
                 isDense: true,
                 border: OutlineInputBorder(),

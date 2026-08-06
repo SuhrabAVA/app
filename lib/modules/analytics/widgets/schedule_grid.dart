@@ -58,10 +58,11 @@ class _ScheduleGridState extends State<ScheduleGrid> {
           .add(e);
     }
 
-    final activeEmployees =
-        widget.personnel.employees.where((e) => !e.isFired).toList()
-          ..sort((a, b) => ('${a.lastName} ${a.firstName}')
-              .compareTo('${b.lastName} ${b.firstName}'));
+    final activeEmployees = widget.personnel.employees
+        .where((e) => !e.isFired)
+        .toList()
+      ..sort((a, b) => ('${a.lastName} ${a.firstName}')
+          .compareTo('${b.lastName} ${b.firstName}'));
 
     // Тащить график мышью: по умолчанию Flutter принимает drag только от
     // пальца, поэтому на ПК сетка дней не прокручивалась вбок.
@@ -75,72 +76,72 @@ class _ScheduleGridState extends State<ScheduleGrid> {
         },
       ),
       child: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // ── Header row ───────────────────────────────────────────────────
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Sticky "Сотрудник" label
-              Container(
-                width: _employeeColumnWidth,
-                decoration: const BoxDecoration(color: Color(0xFF121A2E)),
-                padding: const EdgeInsets.all(12),
-                child: const Text(
-                  'Сотрудник',
-                  style: TextStyle(
-                    color: Color(0xFFCBD5E1),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 11,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Header row ───────────────────────────────────────────────────
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Sticky "Сотрудник" label
+                Container(
+                  width: _employeeColumnWidth,
+                  decoration: const BoxDecoration(color: AnalyticsColors.bg2),
+                  padding: const EdgeInsets.all(12),
+                  child: const Text(
+                    'Сотрудник',
+                    style: TextStyle(
+                      color: AnalyticsColors.tableHeaderText,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
                   ),
                 ),
-              ),
-              // Scrollable day-number headers
-              Expanded(
-                child: SingleChildScrollView(
-                  controller: _ctrl(-1),
-                  scrollDirection: Axis.horizontal,
-                  physics: const ClampingScrollPhysics(),
-                  child: Row(
-                    children: days
-                        .map((d) => Container(
-                              width: _dayColumnWidth,
-                              color: const Color(0xFF121A2E),
-                              padding: const EdgeInsets.all(8),
-                              child: Text(
-                                '$d',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFFCBD5E1),
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 11,
+                // Scrollable day-number headers
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: _ctrl(-1),
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: Row(
+                      children: days
+                          .map((d) => Container(
+                                width: _dayColumnWidth,
+                                color: AnalyticsColors.bg2,
+                                padding: const EdgeInsets.all(8),
+                                child: Text(
+                                  '$d',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: AnalyticsColors.tableHeaderText,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 11,
+                                  ),
                                 ),
-                              ),
-                            ))
-                        .toList(),
+                              ))
+                          .toList(),
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        // ── Data rows ────────────────────────────────────────────────────
-        ...activeEmployees.asMap().entries.map((entry) {
-          final i = entry.key;
-          final emp = entry.value;
-          return _buildRow(
-            context,
-            month,
-            emp,
-            days,
-            state.schedules,
-            activityByEmpDay,
-            rowIndex: i,
-          );
-        }),
-      ],
+          // ── Data rows ────────────────────────────────────────────────────
+          ...activeEmployees.asMap().entries.map((entry) {
+            final i = entry.key;
+            final emp = entry.value;
+            return _buildRow(
+              context,
+              month,
+              emp,
+              days,
+              state.schedules,
+              activityByEmpDay,
+              rowIndex: i,
+            );
+          }),
+        ],
       ),
     );
   }
@@ -172,7 +173,7 @@ class _ScheduleGridState extends State<ScheduleGrid> {
               '${employee.lastName} ${employee.firstName}'.trim(),
               style: const TextStyle(
                 color: AnalyticsColors.text,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ),
@@ -200,8 +201,8 @@ class _ScheduleGridState extends State<ScheduleGrid> {
                               activityForDay:
                                   activity[employee.id]?[d] ?? const [],
                               onCycle: widget.canEdit
-                                  ? () => _cycle(
-                                      month, employee.id, d, byDay[d])
+                                  ? () =>
+                                      _cycle(month, employee.id, d, byDay[d])
                                   : null,
                               onEditTime: widget.canEdit
                                   ? (field, value) => _editTime(month,
@@ -227,8 +228,8 @@ class _ScheduleGridState extends State<ScheduleGrid> {
           String empId, int day, WorkScheduleEntry? fallback) =>
       widget.service.state.schedules[empId]?[day] ?? fallback;
 
-  Future<void> _cycle(
-      AnalyticsMonth month, String empId, int day, WorkScheduleEntry? stale) async {
+  Future<void> _cycle(AnalyticsMonth month, String empId, int day,
+      WorkScheduleEntry? stale) async {
     final existing = _freshEntry(empId, day, stale);
     final current = existing?.shiftType ?? DayShiftType.off;
     DayShiftType next;
@@ -277,8 +278,8 @@ class _ScheduleGridState extends State<ScheduleGrid> {
     String value,
   ) async {
     final existing = _freshEntry(empId, day, stale);
-    final defaults = WorkScheduleEntry.defaultsFor(
-        existing?.shiftType ?? DayShiftType.day);
+    final defaults =
+        WorkScheduleEntry.defaultsFor(existing?.shiftType ?? DayShiftType.day);
     // Пустой ввод = «очистить время»: в колонку TIME должен уйти null,
     // пустая строка не пройдёт кастинг на стороне Postgres.
     final String? normalized = value.isEmpty ? null : value;
@@ -326,7 +327,8 @@ class _Cell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shift = entry?.shiftType ?? DayShiftType.off;
-    final hasWorkOnOffDay = shift == DayShiftType.off && activityForDay.isNotEmpty;
+    final hasWorkOnOffDay =
+        shift == DayShiftType.off && activityForDay.isNotEmpty;
     final arrival = entry?.arrivalTime ?? '';
     final departure = entry?.departureTime ?? '';
 
@@ -350,9 +352,8 @@ class _Cell extends StatelessWidget {
             color: bg,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: hasWorkOnOffDay
-                  ? AnalyticsColors.red
-                  : AnalyticsColors.line,
+              color:
+                  hasWorkOnOffDay ? AnalyticsColors.red : AnalyticsColors.line,
               width: hasWorkOnOffDay ? 2 : 1,
             ),
           ),
@@ -364,7 +365,7 @@ class _Cell extends StatelessWidget {
                 '$day',
                 style: TextStyle(
                   color: fg,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w600,
                   fontSize: 16,
                 ),
               ),
@@ -502,7 +503,7 @@ class _TimePillState extends State<_TimePill> {
               widget.hint,
               style: TextStyle(
                 color: widget.color,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w600,
                 fontSize: 9,
               ),
             ),
@@ -515,7 +516,7 @@ class _TimePillState extends State<_TimePill> {
                 style: TextStyle(
                   color: widget.color,
                   fontSize: 10,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w600,
                 ),
                 decoration: const InputDecoration(
                   isDense: true,

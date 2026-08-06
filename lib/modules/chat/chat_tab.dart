@@ -1,16 +1,15 @@
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'chat_screen.dart';    
+import 'chat_screen.dart';
 import 'chat_provider.dart';
-
 
 class ChatTab extends StatelessWidget {
   final String currentUserId;
   final String? currentUserName;
   final String roomId;
   final bool isLead;
+  final bool workspaceStyle;
 
   /// Тех-лидер/менеджер: может оформлять претензии из медиа-сообщений.
   /// Флаг вычисляется на экране-владельце (admin_panel / manager workspace).
@@ -22,6 +21,7 @@ class ChatTab extends StatelessWidget {
     this.currentUserName,
     this.roomId = 'general',
     this.isLead = false,
+    this.workspaceStyle = true,
     this.canCreateClaim = false,
   });
 
@@ -34,6 +34,7 @@ class ChatTab extends StatelessWidget {
         meId: currentUserId,
         meName: currentUserName,
         isLead: isLead,
+        workspaceStyle: workspaceStyle,
         canCreateClaim: canCreateClaim,
       ),
     );

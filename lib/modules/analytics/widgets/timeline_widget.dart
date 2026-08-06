@@ -195,8 +195,8 @@ class _TimelineBar extends StatelessWidget {
                 if (m.minutes >= layout.startMinutes &&
                     m.minutes <= layout.endMinutes)
                   Positioned(
-                    left: ((m.minutes - layout.startMinutes) / total) * width -
-                        5,
+                    left:
+                        ((m.minutes - layout.startMinutes) / total) * width - 5,
                     top: 3,
                     child: Tooltip(
                       message: m.tooltip,
@@ -321,7 +321,7 @@ class _Segment extends StatelessWidget {
                       color: segment.type == AnalyticsEventType.pause
                           ? const Color(0xFF111827)
                           : Colors.white,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w600,
                       fontSize: 11,
                     ),
                   ),

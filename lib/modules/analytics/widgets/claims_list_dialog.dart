@@ -14,7 +14,8 @@ Future<void> showClaimsListDialog(
   required String monthLabel,
   required List<ClaimModel> claims,
 }) {
-  final sorted = [...claims]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  final sorted = [...claims]
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   return showDialog<void>(
     context: context,
     builder: (_) => Dialog(
@@ -28,8 +29,8 @@ Future<void> showClaimsListDialog(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
               child: Text(
                 'Претензии за $monthLabel — $employeeName',
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
             ),
             Flexible(
@@ -44,8 +45,7 @@ Future<void> showClaimsListDialog(
                           horizontal: 8, vertical: 8),
                       itemCount: sorted.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, i) =>
-                          _ClaimTile(claim: sorted[i]),
+                      itemBuilder: (context, i) => _ClaimTile(claim: sorted[i]),
                     ),
             ),
             Align(
@@ -164,9 +164,7 @@ class _ClaimTile extends StatelessWidget {
               width: 44,
               height: 44,
               child: Icon(
-                mime.startsWith('video/')
-                    ? Icons.videocam
-                    : Icons.attachment,
+                mime.startsWith('video/') ? Icons.videocam : Icons.attachment,
                 size: 26,
               ),
             ),

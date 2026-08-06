@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/analytics_home_screen.dart';
 import 'services/analytics_permission_service.dart';
+import 'utils/analytics_theme.dart';
 import 'widgets/analytics_states.dart';
 import 'widgets/analytics_topbar.dart';
 
@@ -54,19 +55,22 @@ class _AnalyticsEntryState extends State<AnalyticsEntry> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<AnalyticsPermissionService>(
-      future: _permissionFuture,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: AnalyticsLoadingState(label: 'Проверяем права доступа…'),
+    return Theme(
+      data: buildAnalyticsTheme(Theme.of(context)),
+      child: FutureBuilder<AnalyticsPermissionService>(
+        future: _permissionFuture,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Scaffold(
+              body: AnalyticsLoadingState(label: 'Проверяем права доступа…'),
+            );
+          }
+          return AnalyticsHomeScreen(
+            permission: snapshot.requireData,
+            initialTab: widget.initialTab,
           );
-        }
-        return AnalyticsHomeScreen(
-          permission: snapshot.requireData,
-          initialTab: widget.initialTab,
-        );
-      },
+        },
+      ),
     );
   }
 }

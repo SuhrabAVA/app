@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -14,6 +13,7 @@ import 'package:record/record.dart';
 import 'package:mime/mime.dart';
 import '../../analytics/models/claim_model.dart';
 import '../../analytics/repositories/claims_repository.dart';
+import '../../tasks/workspace_design.dart';
 import '../chat_mention_candidate.dart';
 import '../chat_message.dart';
 import '../chat_provider.dart';
@@ -25,6 +25,7 @@ class ChatInputBar extends StatefulWidget {
   final String? senderName;
   final double scale;
   final bool compact;
+  final bool workspaceStyle;
 
   /// Тех-лидер/менеджер: фото и видео уходят через превью с возможностью
   /// оформить претензию. Для остальных ролей поведение прежнее.
@@ -37,6 +38,7 @@ class ChatInputBar extends StatefulWidget {
     required this.senderName,
     this.scale = 1.0,
     this.compact = false,
+    this.workspaceStyle = true,
     this.canCreateClaim = false,
   });
 
@@ -75,10 +77,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
     if (_isDisposed || !mounted) return;
     final picker = ImagePicker();
     try {
-      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+      final XFile? image =
+          await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
       if (image == null) return;
       final bytes = await image.readAsBytes();
-      final mime = lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
+      final mime =
+          lookupMimeType(image.path, headerBytes: _mimeHeader(bytes)) ??
+              'image/jpeg';
       if (_isDisposed || !mounted) return;
       await _handlePickedMedia(
         bytes: bytes,
@@ -208,8 +213,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
         createdClaims = await _claimsRepo.createForChatMessage(
           employeeIds: [for (final c in _claimSelection) c.id],
           messageId: messageId,
-          fileUrl: chat.mediaPublicUrl(
-              widget.roomId, messageId, pending.filename),
+          fileUrl:
+              chat.mediaPublicUrl(widget.roomId, messageId, pending.filename),
           fileMime: pending.mime,
           description: plainCaption.isEmpty ? null : plainCaption,
           createdBy: widget.senderId,
@@ -319,7 +324,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
       final display = mention.display;
       final available = countsInText[display] ?? 0;
       if (available <= 0) continue;
-      final current = used.update(display, (value) => value + 1, ifAbsent: () => 1);
+      final current =
+          used.update(display, (value) => value + 1, ifAbsent: () => 1);
       if (current <= available) {
         filtered.add(mention);
       }
@@ -425,7 +431,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
       return;
     }
     final chat = context.read<ChatProvider>();
-    final suggestions = await chat.mentionCandidates(query: querySegment.trimLeft());
+    final suggestions =
+        await chat.mentionCandidates(query: querySegment.trimLeft());
     if (_isDisposed || !mounted || requestId != _mentionRequestId) return;
     if (suggestions.isEmpty) {
       _hideMentionOverlay();
@@ -463,12 +470,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
     if (_isDisposed || !mounted || _mentionSuggestions.isEmpty) {
       return const SizedBox.shrink();
     }
-    final renderBox = _fieldKey.currentContext?.findRenderObject() as RenderBox?;
+    final renderBox =
+        _fieldKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox == null || !renderBox.attached) {
       return const SizedBox.shrink();
     }
     final size = renderBox.size;
-    final width = size.width > 0 ? size.width : MediaQuery.of(context).size.width * 0.6;
+    final width =
+        size.width > 0 ? size.width : MediaQuery.of(context).size.width * 0.6;
     final offsetY = size.height + 4 * widget.scale;
     final density = widget.compact
         ? const VisualDensity(horizontal: -2, vertical: -2)
@@ -531,9 +540,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final updated = '$before$insertion$after';
     _controller.value = TextEditingValue(
       text: updated,
-      selection: TextSelection.collapsed(offset: before.length + insertion.length),
+      selection:
+          TextSelection.collapsed(offset: before.length + insertion.length),
     );
-    _selectedMentions.add(_PendingMention(display: mentionText, id: candidate.id));
+    _selectedMentions
+        .add(_PendingMention(display: mentionText, id: candidate.id));
     _hideMentionOverlay();
     _cleanupObsoleteMentions();
   }
@@ -592,17 +603,20 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   void _showErrorSnackBar(String message) {
     if (_isDisposed || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _pickImage() async {
     if (_isDisposed || !mounted) return;
     final picker = ImagePicker();
     try {
-      final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      final x =
+          await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
       if (x == null) return;
       final bytes = await x.readAsBytes();
-      final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'image/jpeg';
+      final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ??
+          'image/jpeg';
       if (_isDisposed || !mounted) return;
       await _handlePickedMedia(
         bytes: bytes,
@@ -621,7 +635,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
       final x = await picker.pickVideo(source: ImageSource.gallery);
       if (x == null) return;
       final bytes = await x.readAsBytes();
-      final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ?? 'video/mp4';
+      final mime = lookupMimeType(x.path, headerBytes: _mimeHeader(bytes)) ??
+          'video/mp4';
       if (_isDisposed || !mounted) return;
       await _handlePickedMedia(
         bytes: bytes,
@@ -685,8 +700,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
         await _stopRecordingIfNeeded();
       } else {
         final dir = Directory.systemTemp.createTempSync('chat_audio_');
-        final path = p.join(dir.path, 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
-        await _recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+        final path = p.join(
+            dir.path, 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a');
+        await _recorder!
+            .start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
         if (_isDisposed || !mounted) return;
         setState(() => _recording = true);
       }
@@ -746,11 +763,171 @@ class _ChatInputBarState extends State<ChatInputBar> {
   Widget build(BuildContext context) {
     double scaled(double value) => value * widget.scale;
     final double iconSize = scaled(widget.compact ? 22 : 24);
-    final VisualDensity density =
-        widget.compact ? const VisualDensity(horizontal: -2, vertical: -2) : VisualDensity.standard;
+    final VisualDensity density = widget.compact
+        ? const VisualDensity(horizontal: -2, vertical: -2)
+        : VisualDensity.standard;
     final double gap = scaled(6);
-    final EdgeInsets inputPadding =
-        EdgeInsets.symmetric(horizontal: scaled(12), vertical: scaled(widget.compact ? 8 : 10));
+    final EdgeInsets inputPadding = EdgeInsets.symmetric(
+        horizontal: scaled(12), vertical: scaled(widget.compact ? 8 : 10));
+
+    if (widget.workspaceStyle) {
+      final input = CompositedTransformTarget(
+        link: _mentionLink,
+        child: TextField(
+          key: _fieldKey,
+          focusNode: _focusNode,
+          controller: _controller,
+          textInputAction: TextInputAction.newline,
+          minLines: 1,
+          maxLines: 5,
+          style: TextStyle(
+            color: WorkspaceColors.foreground,
+            fontSize: scaled(14),
+            fontWeight: FontWeight.w400,
+          ),
+          decoration: InputDecoration(
+            hintText: 'Написать сообщение…',
+            hintStyle: TextStyle(
+              color: WorkspaceColors.mutedForeground,
+              fontSize: scaled(14),
+              fontWeight: FontWeight.w400,
+            ),
+            isDense: true,
+            filled: true,
+            fillColor: WorkspaceColors.secondaryBackground,
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: scaled(14),
+              vertical: scaled(13),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(scaled(13)),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(scaled(13)),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(scaled(13)),
+              borderSide: const BorderSide(
+                color: WorkspaceColors.primary,
+                width: 1.5,
+              ),
+            ),
+          ),
+          onTap: () => unawaited(_refreshMentionSuggestions()),
+        ),
+      );
+
+      Widget actionButton({
+        required String tooltip,
+        required IconData icon,
+        required VoidCallback onPressed,
+        bool primary = false,
+        bool danger = false,
+      }) {
+        final foreground = primary
+            ? Colors.white
+            : danger
+                ? WorkspaceColors.danger
+                : WorkspaceColors.mutedForeground;
+        return Tooltip(
+          message: tooltip,
+          child: Material(
+            color: primary ? WorkspaceColors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(scaled(12)),
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(scaled(12)),
+              hoverColor: WorkspaceColors.primary.withValues(alpha: 0.07),
+              focusColor: WorkspaceColors.primary.withValues(alpha: 0.1),
+              child: SizedBox(
+                width: scaled(primary ? 44 : 40),
+                height: scaled(44),
+                child: Icon(icon, size: scaled(20), color: foreground),
+              ),
+            ),
+          ),
+        );
+      }
+
+      final actions = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          actionButton(
+            tooltip: 'Камера',
+            icon: Icons.camera_alt_outlined,
+            onPressed: _takePhoto,
+          ),
+          actionButton(
+            tooltip: 'Фото',
+            icon: Icons.image_outlined,
+            onPressed: _pickImage,
+          ),
+          actionButton(
+            tooltip: 'Видео',
+            icon: Icons.videocam_outlined,
+            onPressed: _pickVideo,
+          ),
+          actionButton(
+            tooltip: 'Файл',
+            icon: Icons.attach_file,
+            onPressed: _pickAnyFile,
+          ),
+          actionButton(
+            tooltip: _recording ? 'Стоп' : 'Голосовое',
+            icon: _recording ? Icons.stop_circle : Icons.mic_none,
+            onPressed: _toggleRecord,
+            danger: _recording,
+          ),
+          SizedBox(width: scaled(4)),
+          actionButton(
+            tooltip: 'Отправить',
+            icon: Icons.send_outlined,
+            onPressed: _sendText,
+            primary: true,
+          ),
+        ],
+      );
+
+      return SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_pending != null) _buildPendingPanel(context),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < 720) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      input,
+                      SizedBox(height: scaled(8)),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: actions,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: input),
+                    SizedBox(width: scaled(8)),
+                    actions,
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    }
 
     return SafeArea(
       top: false,
@@ -843,9 +1020,17 @@ class _ChatInputBarState extends State<ChatInputBar> {
       margin: EdgeInsets.only(bottom: scaled(6)),
       padding: EdgeInsets.all(scaled(8)),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant.withOpacity(.5),
-        borderRadius: BorderRadius.circular(scaled(10)),
-        border: Border.all(color: theme.dividerColor),
+        color: widget.workspaceStyle
+            ? WorkspaceColors.secondaryBackground
+            : theme.colorScheme.surfaceVariant.withOpacity(.5),
+        borderRadius: BorderRadius.circular(
+          scaled(widget.workspaceStyle ? 13 : 10),
+        ),
+        border: Border.all(
+          color: widget.workspaceStyle
+              ? WorkspaceColors.border
+              : theme.dividerColor,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -862,9 +1047,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
                         width: scaled(64),
                         height: scaled(64),
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Icon(
-                            Icons.broken_image,
-                            size: scaled(40)),
+                        errorBuilder: (_, __, ___) =>
+                            Icon(Icons.broken_image, size: scaled(40)),
                       )
                     : Container(
                         width: scaled(64),
@@ -890,7 +1074,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: scaled(13),
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                     SizedBox(height: scaled(2)),

@@ -22,17 +22,17 @@ class AnalyticsTopbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xD10B1020),
-        borderRadius: BorderRadius.circular(22),
+        color: AnalyticsColors.card,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AnalyticsColors.line),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x59000000),
-            blurRadius: 70,
-            offset: Offset(0, 22),
+            color: Color(0x12000000),
+            blurRadius: 10,
+            offset: Offset(0, 2),
           ),
         ],
       ),
@@ -53,7 +53,7 @@ class AnalyticsTopbar extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 brandBlock,
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 tabsBlock,
               ],
             );
@@ -90,27 +90,33 @@ class _BrandBlock extends StatelessWidget {
               icon: const Icon(Icons.arrow_back, color: AnalyticsColors.text),
               onPressed: onBack,
               tooltip: 'Назад',
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: 36,
+                height: 36,
+              ),
             ),
             const SizedBox(width: 6),
           ],
           Container(
-            width: 44,
-            height: 44,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(10),
               gradient: AnalyticsColors.accentGradient,
             ),
             alignment: Alignment.center,
             child: const Text(
               'A',
               style: TextStyle(
-                color: Color(0xFF00121C),
-                fontWeight: FontWeight.w900,
-                fontSize: 22,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 18,
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -122,17 +128,17 @@ class _BrandBlock extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
                     height: 1.1,
                   ),
                 ),
-                SizedBox(height: 4),
+                SizedBox(height: 2),
                 Text(
                   'сотрудники · рабочие места · графики работы · зарплата',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: AnalyticsColors.muted, fontSize: 12),
+                  style: TextStyle(color: AnalyticsColors.muted, fontSize: 11),
                 ),
               ],
             ),
@@ -190,14 +196,14 @@ class _Tab extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
+            borderRadius: BorderRadius.circular(12),
             gradient: isActive ? AnalyticsColors.accentGradient : null,
-            color: isActive ? null : const Color(0xBF0F172A),
+            color: isActive ? null : AnalyticsColors.bg2,
             border: Border.all(
               color: isActive ? Colors.transparent : AnalyticsColors.line,
             ),
@@ -205,10 +211,8 @@ class _Tab extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: isActive
-                  ? const Color(0xFF00121C)
-                  : AnalyticsColors.text,
-              fontWeight: isActive ? FontWeight.w900 : FontWeight.w600,
+              color: isActive ? Colors.white : AnalyticsColors.text,
+              fontWeight: FontWeight.w500,
               fontSize: 13,
             ),
           ),

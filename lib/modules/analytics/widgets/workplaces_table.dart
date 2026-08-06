@@ -98,8 +98,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
       final currentSpeed = AnalyticsCalculator.speedQtyPerMinute(list);
       final kpd = KpdCalculator.compute(
         currentSpeed: currentSpeed,
-        previousMonthsSpeeds:
-            state.workplacePreviousSpeeds[wp.id] ?? const [],
+        previousMonthsSpeeds: state.workplacePreviousSpeeds[wp.id] ?? const [],
       );
 
       final ordersCount = <String>{};
@@ -284,7 +283,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
         style: TextStyle(
           color: AnalyticsColors.tableHeaderText,
           fontSize: 11,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0.4,
         ),
       ),
@@ -295,14 +294,13 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
     Widget cell(String s, {int flex = 1}) => Expanded(
           flex: flex,
           child: Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Text(
               s.toUpperCase(),
               style: const TextStyle(
                 color: AnalyticsColors.tableHeaderText,
                 fontSize: 11,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w600,
                 letterSpacing: 0.4,
               ),
             ),
@@ -336,15 +334,14 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
           gradient: hovered
               ? AnalyticsColors.tableStickyHoverGradient
               : AnalyticsColors.tableStickyColumnGradient,
-          border:
-              const Border(bottom: BorderSide(color: AnalyticsColors.line)),
+          border: const Border(bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Text(
           r.workplace.name,
           style: const TextStyle(
             color: AnalyticsColors.text,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -352,16 +349,13 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
   }
 
   Widget _scrollableDataRow(_WpRow r, int index, bool hovered) {
-    final unit = r.workplace.unit?.trim().isNotEmpty == true
-        ? r.workplace.unit!
-        : 'ед.';
-    final avgQtySpeed =
-        r.usefulMinutes > 0 ? r.qty / r.usefulMinutes : 0.0;
+    final unit =
+        r.workplace.unit?.trim().isNotEmpty == true ? r.workplace.unit! : 'ед.';
+    final avgQtySpeed = r.usefulMinutes > 0 ? r.qty / r.usefulMinutes : 0.0;
     // Скорость наладки — сколько минут уходит на одну наладку (время ÷
     // количество), а не наладок в минуту: наладка длится минуты, и обратная
     // величина получалась неинформативной дробью.
-    final avgSetupMinutes =
-        r.setupQty > 0 ? r.setupMinutes / r.setupQty : null;
+    final avgSetupMinutes = r.setupQty > 0 ? r.setupMinutes / r.setupQty : null;
     final rowColor = hovered
         ? AnalyticsColors.rowHover
         : (index.isEven ? AnalyticsColors.zebraOdd : AnalyticsColors.zebraEven);
@@ -371,8 +365,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
       child: Container(
         decoration: BoxDecoration(
           color: rowColor,
-          border:
-              const Border(bottom: BorderSide(color: AnalyticsColors.line)),
+          border: const Border(bottom: BorderSide(color: AnalyticsColors.line)),
         ),
         child: Row(
           children: [
@@ -385,17 +378,15 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
             _cellLong(
               '${AnalyticsFormat.decimal(r.setupQty)} нал.',
               '${AnalyticsFormat.hoursMinutes(r.setupMinutes)} · '
-              '${avgSetupMinutes == null ? '—' : AnalyticsFormat.decimal(avgSetupMinutes, precision: 1)} мин/нал.',
+                  '${avgSetupMinutes == null ? '—' : AnalyticsFormat.decimal(avgSetupMinutes, precision: 1)} мин/нал.',
             ),
             _cell('${r.ordersCount}'),
             // flex: 1 — веса ячеек данных обязаны совпадать с _scrollableHeader
             // ([1,1,2,2,1,1,1,1,1]), иначе колонки съезжают от заголовка.
             _cellLong(
-                '${r.pauseCount}',
-                AnalyticsFormat.hoursMinutes(r.pauseMinutes),
+                '${r.pauseCount}', AnalyticsFormat.hoursMinutes(r.pauseMinutes),
                 flex: 1),
-            _cellLong(
-                '${r.problemCount}',
+            _cellLong('${r.problemCount}',
                 AnalyticsFormat.hoursMinutes(r.problemMinutes),
                 flex: 1),
             _cell('${r.claims}'),
@@ -418,8 +409,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Text(
             v,
-            style:
-                const TextStyle(color: AnalyticsColors.text, fontSize: 12),
+            style: const TextStyle(color: AnalyticsColors.text, fontSize: 12),
           ),
         ),
       );
@@ -435,7 +425,7 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
                   style: const TextStyle(
                     color: AnalyticsColors.text,
                     fontSize: 12,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w600,
                   )),
               Text(sub,
                   style: const TextStyle(

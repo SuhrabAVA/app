@@ -46,7 +46,8 @@ WorkplaceSummaryRow buildWorkplaceSummary({
   required List<AnalyticsEvent> events,
   required int claims,
 }) {
-  final pause = events.where((e) => e.type == AnalyticsEventType.pause).toList();
+  final pause =
+      events.where((e) => e.type == AnalyticsEventType.pause).toList();
   final problem =
       events.where((e) => e.type == AnalyticsEventType.problem).toList();
   final pauseM = AnalyticsCalculator.pauseMinutes(pause);
@@ -171,7 +172,7 @@ class _AllCard extends StatelessWidget {
               Text('Все',
                   style: TextStyle(
                     color: AnalyticsColors.text,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w600,
                     fontSize: 16,
                   )),
               SizedBox(height: 4),
@@ -215,7 +216,7 @@ class _WorkplaceCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: AnalyticsColors.text,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w600,
                 fontSize: 14,
               ),
             ),
@@ -271,8 +272,8 @@ class _WorkplaceCard extends StatelessWidget {
           children: [
             Text(
               k,
-              style: const TextStyle(
-                  color: AnalyticsColors.muted, fontSize: 11),
+              style:
+                  const TextStyle(color: AnalyticsColors.muted, fontSize: 11),
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -284,7 +285,7 @@ class _WorkplaceCard extends StatelessWidget {
                 style: const TextStyle(
                   color: AnalyticsColors.text,
                   fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
@@ -315,7 +316,7 @@ class _IncidentButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
     return Material(
-      color: enabled ? color.withOpacity(0.16) : const Color(0x2202061B),
+      color: enabled ? color.withOpacity(0.12) : AnalyticsColors.bg2,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
@@ -339,7 +340,7 @@ class _IncidentButton extends StatelessWidget {
                 style: TextStyle(
                   color: enabled ? color : AnalyticsColors.muted,
                   fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
               const SizedBox(height: 2),
@@ -348,11 +349,9 @@ class _IncidentButton extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: enabled
-                      ? AnalyticsColors.text
-                      : AnalyticsColors.muted,
+                  color: enabled ? AnalyticsColors.text : AnalyticsColors.muted,
                   fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
@@ -376,23 +375,21 @@ class _CardContainer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(14),
       onTap: onTap,
       child: Container(
         width: 240,
         decoration: BoxDecoration(
-          color: const Color(0x5902061B),
-          borderRadius: BorderRadius.circular(18),
+          color: AnalyticsColors.card,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isActive
-                ? AnalyticsColors.blue
-                : AnalyticsColors.line,
+            color: isActive ? AnalyticsColors.blue : AnalyticsColors.line,
             width: isActive ? 2 : 1,
           ),
           boxShadow: isActive
               ? const [
                   BoxShadow(
-                    color: Color(0x2238BDF8),
+                    color: Color(0x246A6CF7),
                     blurRadius: 8,
                   ),
                 ]

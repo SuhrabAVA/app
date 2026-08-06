@@ -1,11 +1,10 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../analytics/analytics_routes.dart';
 import '../chat/chat_tab.dart';
 import '../tasks/tasks_screen.dart';
+import '../tasks/workspace_design.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/position_model.dart';
@@ -15,6 +14,7 @@ import '../../services/error_log_uploader.dart';
 import '../../utils/auth_helper.dart';
 import '../../login_screen.dart';
 import '../../services/audit_log_service.dart';
+
 /// Рабочее пространство сотрудника.
 ///
 /// Экран поддерживает одновременную работу нескольких сотрудников в рамках
@@ -30,10 +30,12 @@ class EmployeeWorkspaceScreen extends StatefulWidget {
   const EmployeeWorkspaceScreen({super.key, required this.employeeId});
 
   @override
-  State<EmployeeWorkspaceScreen> createState() => _EmployeeWorkspaceScreenState();
+  State<EmployeeWorkspaceScreen> createState() =>
+      _EmployeeWorkspaceScreenState();
 }
 
-class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with TickerProviderStateMixin {
+class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen>
+    with TickerProviderStateMixin {
   late List<String> _employeeIds;
   late TabController _employeeTabController;
 
@@ -41,7 +43,8 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
   void initState() {
     super.initState();
     _employeeIds = [widget.employeeId];
-    _employeeTabController = TabController(length: _employeeIds.length, vsync: this);
+    _employeeTabController =
+        TabController(length: _employeeIds.length, vsync: this);
   }
 
   @override
@@ -77,224 +80,198 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen> with 
         _employeeIds.add(selectedId);
         // Пересоздаём контроллер вкладок для новой длины.
         _employeeTabController.dispose();
-        _employeeTabController = TabController(length: _employeeIds.length, vsync: this);
+        _employeeTabController =
+            TabController(length: _employeeIds.length, vsync: this);
         // Переключаемся на новую вкладку
         _employeeTabController.index = _employeeIds.length - 1;
       });
     }
   }
 
+  String _employeeTabLabel(PersonnelProvider personnel, String id) {
+    final emp = personnel.employees.firstWhere(
+      (employee) => employee.id == id,
+      orElse: () => EmployeeModel(
+        id: '',
+        lastName: 'Неизвестно',
+        firstName: '',
+        patronymic: '',
+        iin: '',
+        positionIds: const [],
+      ),
+    );
+    final firstInitial = emp.firstName.isEmpty ? '' : '${emp.firstName[0]}.';
+    return '${emp.lastName} $firstInitial'.trim();
+  }
+
+  Future<void> _logoutActiveEmployee() async {
+    if (_employeeIds.isEmpty) return;
+    final tabIndex = _employeeTabController.index.clamp(
+      0,
+      _employeeIds.length - 1,
+    );
+    final analytics = AuditLogService();
+    final userId = _employeeIds[tabIndex];
+    await analytics.logEvent(
+      userId: userId,
+      action: 'logout',
+      category: 'production',
+    );
+    if (!mounted) return;
+
+    if (_employeeIds.length > 1) {
+      final oldController = _employeeTabController;
+      setState(() {
+        _employeeIds.removeAt(tabIndex);
+        _employeeTabController = TabController(
+          length: _employeeIds.length,
+          vsync: this,
+          initialIndex: tabIndex > 0 ? tabIndex - 1 : 0,
+        );
+      });
+      oldController.dispose();
+      return;
+    }
+
+    ErrorLogUploader.instance.flush(reason: 'logout');
+    AuthHelper.clear();
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
-    final media = MediaQuery.of(context);
-    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
-    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
-    final bool isTablet1280x800 = isTablet &&
-        ((media.size.width == 1280 && media.size.height == 800) ||
-            (media.size.width == 800 && media.size.height == 1280));
-    final bool isTablet1000x700 = isTablet &&
-        ((media.size.width == 1000 && media.size.height == 700) ||
-            (media.size.width == 700 && media.size.height == 1000));
-    const double topBlockScale = 0.6;
-    final double toolbarHeight = isTablet
-        ? ((isTablet1280x800
-                ? 20
-                : (isTablet1000x700 ? 19 : (isCompactTablet ? 24 : 28))) *
-            topBlockScale)
-        : 50 * topBlockScale;
-    final double actionIconSize = isTablet
-        ? ((isTablet1280x800
-                ? 11
-                : (isTablet1000x700 ? 10 : (isCompactTablet ? 14 : 16))) *
-            0.8)
-        : 22 * 0.8;
-    final double tabLabelSize = isTablet1280x800
-        ? 7
-        : (isTablet1000x700
-            ? 6.8
-            : (isCompactTablet ? 8 : (isTablet ? 9.5 : 13 * topBlockScale)));
-    final EdgeInsetsGeometry tabPadding = isTablet
-        ? EdgeInsets.symmetric(
-            horizontal: isTablet1280x800
-                ? 6
-                : (isTablet1000x700 ? 5 : 8),
-            vertical: isTablet1280x800
-                ? 1
-                : (isTablet1000x700 ? 0.5 : 2),
-          )
-        : const EdgeInsets.symmetric(horizontal: 8, vertical: 2);
+    final isNarrow = MediaQuery.sizeOf(context).width < 640;
 
-    final theme = Theme.of(context);
-    final TextStyle? tabLabelStyle = theme.textTheme.labelLarge?.copyWith(
-      fontSize: tabLabelSize,
-      fontWeight: FontWeight.w600,
-    );
-    final TextStyle? tabUnselectedStyle = theme.textTheme.labelMedium?.copyWith(
-      fontSize: tabLabelSize,
-      fontWeight: FontWeight.w500,
-    );
-
-    final scaffold = Scaffold(
-      appBar: AppBar(
-          toolbarHeight: toolbarHeight,
-          titleTextStyle: theme.textTheme.titleMedium?.copyWith(
-            fontSize: isTablet ? tabLabelSize + 2 : null,
-            fontWeight: FontWeight.w600,
-        ),
-        title: const Text('Рабочее пространство'),
-        actions: [
-          // Кнопка добавления сотрудника
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE1E1E8)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x08000000),
-                    blurRadius: 6,
-                    offset: Offset(0, 2),
-                  ),
-                ],
+    return Scaffold(
+      backgroundColor: WorkspaceColors.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                isNarrow ? 12 : 20,
+                12,
+                isNarrow ? 12 : 20,
+                4,
               ),
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints.tightFor(
-                  width: isTablet ? 26 : 24,
-                  height: isTablet ? 26 : 24,
-                ),
-                iconSize: actionIconSize,
-                icon: const Icon(Icons.add),
-                tooltip: 'Добавить сотрудника',
-                onPressed: _addEmployeeTab,
-              ),
-            ),
-          ),
-          // Кнопка выхода из рабочего места сотрудника
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE1E1E8)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x08000000),
-                    blurRadius: 6,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints.tightFor(
-                  width: isTablet ? 26 : 24,
-                  height: isTablet ? 26 : 24,
-                ),
-                iconSize: actionIconSize,
-                icon: const Icon(Icons.logout),
-                tooltip: 'Выйти',
-                onPressed: () async {
-                  final tabIndex = _employeeTabController.index;
-                  final analytics = AuditLogService();
-                  final userId = _employeeIds[tabIndex];
-                  await analytics.logEvent(
-                    userId: userId,
-                    action: 'logout',
-                    category: 'production',
-                  );
-                  if (_employeeIds.length > 1) {
-                    // Если открыто несколько вкладок, закрываем текущую вкладку
-                    final oldController = _employeeTabController;
-                    setState(() {
-                      _employeeIds.removeAt(tabIndex);
-                      // Пересоздаём TabController для нового списка сотрудников
-                      _employeeTabController =
-                          TabController(length: _employeeIds.length, vsync: this);
-                      // Выставляем индекс на предыдущую вкладку, если она есть
-                      if (tabIndex > 0) {
-                        _employeeTabController.index = tabIndex - 1;
-                      }
-                    });
-                    oldController.dispose();
-                  } else {
-                    // Если это последняя вкладка, выходим на экран входа.
-                    // Журнал ошибок выгружаем ДО очистки данных сотрудника —
-                    // иначе записи уедут без имени и id.
-                    ErrorLogUploader.instance.flush(reason: 'logout');
-                    AuthHelper.clear();
-                    if (!mounted) return;
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const LoginScreen()),
-                      (route) => false,
+              child: SizedBox(
+                height: WorkspaceMetrics.headerActionSize,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final centerInset = isNarrow ? 118.0 : 250.0;
+                    return Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: SizedBox(
+                            width: isNarrow ? 150 : 280,
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                              child: Text(
+                                'Рабочее пространство',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: WorkspaceColors.foreground,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_employeeIds.length > 1)
+                          Positioned(
+                            left: centerInset,
+                            right: centerInset,
+                            child: Center(
+                              child: ConstrainedBox(
+                                constraints:
+                                    const BoxConstraints(maxWidth: 440),
+                                child: Container(
+                                  height: 38,
+                                  decoration:
+                                      workspaceCardDecoration(radius: 12),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: TabBar(
+                                    controller: _employeeTabController,
+                                    isScrollable: true,
+                                    dividerHeight: 0,
+                                    indicatorSize: TabBarIndicatorSize.tab,
+                                    indicator: BoxDecoration(
+                                      color: WorkspaceColors.primary
+                                          .withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    labelColor: WorkspaceColors.primary,
+                                    unselectedLabelColor:
+                                        WorkspaceColors.mutedForeground,
+                                    labelStyle: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    tabs: [
+                                      for (final id in _employeeIds)
+                                        Tab(
+                                          height: 36,
+                                          text: _employeeTabLabel(
+                                            personnel,
+                                            id,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              WorkspaceHeaderAction(
+                                icon: Icons.add,
+                                tooltip: 'Добавить сотрудника',
+                                onPressed: _addEmployeeTab,
+                              ),
+                              const SizedBox(width: 10),
+                              WorkspaceHeaderAction(
+                                icon: Icons.logout,
+                                tooltip: 'Выйти',
+                                onPressed: _logoutActiveEmployee,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     );
-                  }
-                },
+                  },
+                ),
               ),
             ),
-          ),
-        ],
-        bottom: TabBar(
-          controller: _employeeTabController,
-          isScrollable: true,
-          labelPadding: isTablet ? tabPadding : null,
-          labelStyle: tabLabelStyle,
-          unselectedLabelStyle: tabUnselectedStyle,
-          tabs: [
-            for (final id in _employeeIds)
-              Tab(
-                height: isTablet ? 28 : 18,
-                text: () {
-                  final emp = personnel.employees.firstWhere(
-                    (e) => e.id == id,
-                    orElse: () => EmployeeModel(
-                      id: '',
-                      lastName: 'Неизвестно',
-                      firstName: '',
-                      patronymic: '',
-                      iin: '',
-                      positionIds: [],
-                    ),
-                  );
-                  return '${emp.lastName} ${emp.firstName.isNotEmpty ? emp.firstName[0] + '.' : ''}';
-                }(),
+            Expanded(
+              child: TabBarView(
+                controller: _employeeTabController,
+                children: [
+                  for (final id in _employeeIds)
+                    _EmployeeWorkspaceTab(employeeId: id),
+                ],
               ),
+            ),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _employeeTabController,
-        children: [
-          for (final id in _employeeIds)
-            _EmployeeWorkspaceTab(employeeId: id),
-        ],
-      ),
-    );
-
-    if (!isTablet) {
-      return scaffold;
-    }
-
-    return Theme(
-      data: theme.copyWith(
-        tabBarTheme: theme.tabBarTheme.copyWith(
-          labelPadding: tabPadding,
-          labelStyle: tabLabelStyle,
-          unselectedLabelStyle: tabUnselectedStyle,
-        ),
-        iconTheme: theme.iconTheme.copyWith(size: actionIconSize),
-        appBarTheme: theme.appBarTheme.copyWith(toolbarHeight: toolbarHeight),
-      ),
-      child: scaffold,
     );
   }
 }
 
-/// Один рабочий таб сотрудника, содержащий две вкладки: задания и чат.
+/// Один рабочий таб сотрудника: список, активное задание и чат.
 class _EmployeeWorkspaceTab extends StatelessWidget {
   final String employeeId;
   const _EmployeeWorkspaceTab({required this.employeeId});
@@ -324,195 +301,124 @@ class _EmployeeWorkspaceTab extends StatelessWidget {
         .join(' ')
         .trim();
 
-    final media = MediaQuery.of(context);
-    final bool isTablet = media.size.shortestSide >= 600 && media.size.shortestSide < 1100;
-    final bool isCompactTablet = isTablet && media.size.shortestSide <= 850;
-    final bool isTablet1280x800 = isTablet &&
-        ((media.size.width == 1280 && media.size.height == 800) ||
-            (media.size.width == 800 && media.size.height == 1280));
-    final bool isTablet1000x700 = isTablet &&
-        ((media.size.width == 1000 && media.size.height == 700) ||
-            (media.size.width == 700 && media.size.height == 1000));
-    final double targetTextScale = math.max(
-      media.textScaleFactor,
-      isTablet1280x800
-          ? 1.0
-          : (isTablet1000x700
-              ? 0.98
-              : (isCompactTablet
-                  ? 1.12
-                  : (isTablet
-                      ? 1.08
-                      : 1.0))),
-    );
-    final mediaData = media.copyWith(textScaleFactor: targetTextScale);
-    final theme = Theme.of(context);
-    final TextStyle? baseTabLabel = theme.tabBarTheme.labelStyle ?? theme.textTheme.labelLarge;
-    final TextStyle? baseTabUnselected = theme.tabBarTheme.unselectedLabelStyle ?? theme.textTheme.labelMedium;
-    final ThemeData compactTheme = theme.copyWith(
-      visualDensity: isTablet1280x800
-          ? const VisualDensity(horizontal: -0.2, vertical: -0.2)
-          : (isTablet1000x700
-              ? const VisualDensity(horizontal: -0.4, vertical: -0.4)
-              : (isCompactTablet
-                  ? const VisualDensity(horizontal: 0.5, vertical: 0.5)
-                  : (isTablet
-                      ? const VisualDensity(horizontal: 0.25, vertical: 0.25)
-                      : theme.visualDensity))),
-      tabBarTheme: theme.tabBarTheme.copyWith(
-        labelPadding: isTablet
-            ? EdgeInsets.symmetric(horizontal: isTablet1000x700 ? 6 : 8)
-            : theme.tabBarTheme.labelPadding,
-        labelStyle: baseTabLabel?.copyWith(
-          fontSize: isTablet1280x800
-              ? 12
-              : (isTablet1000x700
-                  ? 11
-                  : (isCompactTablet ? 13 : (isTablet ? 14 : baseTabLabel?.fontSize))),
-        ),
-        unselectedLabelStyle: baseTabUnselected?.copyWith(
-          fontSize: isTablet1280x800
-              ? 12
-              : (isTablet1000x700
-                  ? 11
-                  : (isCompactTablet ? 13 : (isTablet ? 14 : baseTabUnselected?.fontSize))),
-        ),
-      ),
-      iconTheme: theme.iconTheme.copyWith(
-        size: isTablet1280x800
-            ? 20
-            : (isTablet1000x700
-                ? 18
-                : (isCompactTablet ? 22 : (isTablet ? 24 : theme.iconTheme.size))),
-      ),
-      appBarTheme: theme.appBarTheme.copyWith(
-        toolbarHeight: isTablet1280x800
-            ? 48
-            : (isTablet1000x700
-                ? 44
-                : (isCompactTablet ? 52 : (isTablet ? 56 : theme.appBarTheme.toolbarHeight))),
-      ),
-    );
-    final double tabBarHeight = isTablet1280x800
-        ? 18
-        : (isTablet1000x700 ? 17 : (isCompactTablet ? 23 : (isTablet ? 25 : 26)));
-    const Color tabBackground = Color(0xFFF1F1F5);
-    const Color tabBorder = Color(0xFFE1E1E8);
-
-    return MediaQuery(
-      data: mediaData,
-      child: Theme(
-        data: compactTheme,
-        child: DefaultTabController(
-          length: 3,
-          child: Scaffold(
-            appBar: PreferredSize(
-              preferredSize: Size.fromHeight(tabBarHeight + 6),
-              child: Container(
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: tabBackground,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: tabBorder),
+    return DefaultTabController(
+      length: 3,
+      child: ColoredBox(
+        color: WorkspaceColors.background,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: 28,
+                      decoration: workspaceCardDecoration(radius: 10),
+                      clipBehavior: Clip.antiAlias,
+                      child: TabBar(
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        dividerHeight: 0,
+                        indicator: const BoxDecoration(
+                          color: WorkspaceColors.primary,
                         ),
-                        child: TabBar(
-                          indicatorSize: TabBarIndicatorSize.tab,
-                          indicatorPadding: const EdgeInsets.all(1.2),
-                          labelColor: Colors.black,
-                          unselectedLabelColor: const Color(0xFF6F6F7B),
-                          labelStyle: Theme.of(context)
-                              .textTheme
-                              .labelLarge
-                              ?.copyWith(
-                                fontSize: isTablet1280x800
-                                    ? 7
-                                    : (isTablet1000x700 ? 6.5 : (isCompactTablet ? 8.8 : 9.8)),
-                                fontWeight: FontWeight.w600,
-                              ),
-                          unselectedLabelStyle: Theme.of(context)
-                              .textTheme
-                              .labelMedium
-                              ?.copyWith(
-                                fontSize: isTablet1280x800
-                                    ? 6.7
-                                    : (isTablet1000x700 ? 6.2 : (isCompactTablet ? 8.2 : 9.2)),
-                                fontWeight: FontWeight.w500,
-                              ),
-                          indicator: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x14000000),
-                                blurRadius: 6,
-                                offset: Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          tabs: const [
-                            Tab(text: 'Список заданий'),
-                            Tab(text: 'Задание'),
-                            Tab(text: 'Чат'),
-                          ],
+                        labelColor: Colors.white,
+                        unselectedLabelColor: WorkspaceColors.mutedForeground,
+                        labelStyle: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
                         ),
+                        unselectedLabelStyle: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        tabs: const [
+                          Tab(height: 28, text: 'Список заданий'),
+                          Tab(height: 28, text: 'Задание'),
+                          Tab(height: 28, text: 'Чат'),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    // Компактная кнопка «Моя аналитика»: selfView сотрудника
-                    // этой вкладки (id подтверждён паролем при входе/добавлении).
-                    Tooltip(
-                      message: 'Моя аналитика',
-                      child: Material(
-                        color: tabBackground,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          side: const BorderSide(color: tabBorder),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(18),
-                          onTap: () => Navigator.of(context).push(
-                            AnalyticsRoutes.buildSelfViewRoute(
-                                employeeId: employeeId),
+                  ),
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: 'Аналитика сотрудника',
+                    child: Material(
+                      color: WorkspaceColors.setupBackground,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: () => Navigator.of(context).push(
+                          AnalyticsRoutes.buildSelfViewRoute(
+                            employeeId: employeeId,
                           ),
-                          child: SizedBox(
-                            height: tabBarHeight,
-                            width: tabBarHeight + 10,
-                            child: Icon(
-                              Icons.query_stats,
-                              size: (tabBarHeight - 6).clamp(11.0, 18.0),
-                              color: const Color(0xFF6F6F7B),
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                        hoverColor:
+                            WorkspaceColors.primary.withValues(alpha: 0.08),
+                        focusColor:
+                            WorkspaceColors.primary.withValues(alpha: 0.10),
+                        child: Container(
+                          height: 28,
+                          padding: EdgeInsets.symmetric(
+                            horizontal:
+                                MediaQuery.sizeOf(context).width < 700 ? 9 : 12,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: WorkspaceColors.primary
+                                  .withValues(alpha: 0.22),
                             ),
                           ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.analytics_outlined,
+                                size: 16,
+                                color: WorkspaceColors.primary,
+                              ),
+                              if (MediaQuery.sizeOf(context).width >= 700) ...[
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'Аналитика',
+                                  style: TextStyle(
+                                    color: WorkspaceColors.primary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            body: TabBarView(
-              children: [
-                TasksScreen(
-                  employeeId: employeeId,
-                  showListOnly: true,
-                  compactList: true,
-                ),
-                TasksScreen(
-                  employeeId: employeeId,
-                  hideListPanel: true,
-                ),
-                ChatTab(
-                  currentUserId: employeeId,
-                  currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
-                ),
-              ],
+            Expanded(
+              child: TabBarView(
+                children: [
+                  TasksScreen(
+                    employeeId: employeeId,
+                    showListOnly: true,
+                    compactList: true,
+                  ),
+                  TasksScreen(
+                    employeeId: employeeId,
+                    hideListPanel: true,
+                  ),
+                  ChatTab(
+                    currentUserId: employeeId,
+                    currentUserName: fio.isEmpty ? 'Сотрудник' : fio,
+                    workspaceStyle: true,
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

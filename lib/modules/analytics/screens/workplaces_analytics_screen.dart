@@ -146,17 +146,17 @@ class _AnalyticsTableCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Container(
         decoration: BoxDecoration(
           color: AnalyticsColors.card,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AnalyticsColors.line),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x29000000),
-              blurRadius: 42,
-              offset: Offset(0, 12),
+              color: Color(0x12000000),
+              blurRadius: 10,
+              offset: Offset(0, 2),
             ),
           ],
         ),

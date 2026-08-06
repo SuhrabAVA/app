@@ -39,7 +39,8 @@ class EmployeeCalendar extends StatelessWidget {
           final entry = scheduleByDay[day];
           final events = eventsByDay[day] ?? const <AnalyticsEvent>[];
           final shift = entry?.shiftType ?? _detectShiftFromEvents(events);
-          final hasWorkOnOffDay = shift == DayShiftType.off && events.isNotEmpty;
+          final hasWorkOnOffDay =
+              shift == DayShiftType.off && events.isNotEmpty;
           final missingActivity = _missingActivityAlert(
             entry: entry,
             events: events,
@@ -187,7 +188,7 @@ class _CalendarDay extends StatelessWidget {
                 '$day',
                 style: TextStyle(
                   color: fg,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w600,
                   fontSize: 22,
                 ),
               ),
