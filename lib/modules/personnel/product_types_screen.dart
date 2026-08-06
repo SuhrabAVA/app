@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/product_type_settings.dart';
-import 'product_type_settings_screen.dart';
+import 'product_type_settings_shell.dart';
 
 /// Список типов продукта с точкой входа в редактор настроек.
 ///
@@ -66,7 +66,7 @@ class _ProductTypesScreenState extends State<ProductTypesScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProductTypeSettingsScreen(productType: type),
+        builder: (_) => ProductTypeSettingsShell(productType: type),
       ),
     );
     if (!mounted) return;

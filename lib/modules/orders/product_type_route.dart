@@ -161,6 +161,135 @@ class ProductTypeRoute {
   }
 }
 
+/// Этапы одного ранга — единица перестановки и строка списка в редакторе.
+///
+/// Совпадение позиций осмысленно: этапы на одном ранге взаимоисключающие, в
+/// очередь попадает не более одного. Три этапа ручек делят позицию по
+/// `handle_type_is`, два «Вставка картона» — по принадлежности разным
+/// вариантам. Поэтому двигать нужно группу целиком: внутри неё порядка нет и
+/// быть не может.
+class StageGroup {
+  const StageGroup({required this.position, required this.stages});
+
+  final int position;
+  final List<RouteStage> stages;
+
+  bool get isPinned => stages.any((s) => s.isPinnedLast);
+  int get level => stages.first.level;
+  bool get isSubQueue => level == 1;
+
+  /// Для группы уровня 1 — id этапа-переключателя, которому принадлежат
+  /// варианты-родители. Нужен для проверки «под-этап позже переключателя».
+  String? parentSwitchStageId(ProductTypeRoute route) {
+    if (!isSubQueue) return null;
+    final parentVariantId = stages.first.parentVariantId;
+    if (parentVariantId == null) return null;
+    for (final stage in route.stages) {
+      for (final workplace in stage.workplaces) {
+        if (workplace.rowId == parentVariantId) return stage.rowId;
+      }
+    }
+    return null;
+  }
+}
+
+/// Группы маршрута в порядке рангов.
+///
+/// Закреплённая упаковка идёт последней отдельной группой и в перестановке не
+/// участвует — её позиция не меняется никогда.
+List<StageGroup> stageGroupsOf(ProductTypeRoute route) {
+  final byPosition = <int, List<RouteStage>>{};
+  for (final stage in route.stages) {
+    byPosition.putIfAbsent(stage.position, () => <RouteStage>[]).add(stage);
+  }
+
+  final positions = byPosition.keys.toList()..sort();
+  return <StageGroup>[
+    for (final position in positions)
+      StageGroup(
+        position: position,
+        stages: byPosition[position]!
+          ..sort((a, b) => a.key.compareTo(b.key)),
+      ),
+  ];
+}
+
+/// Результат попытки перестановки.
+///
+/// Ход, нарушающий инвариант, не отклоняется молча: кнопка становится
+/// неактивной, а [blockedReason] уходит в подсказку.
+class StageGroupReorder {
+  const StageGroupReorder.allowed(this.orderedGroups) : blockedReason = null;
+  const StageGroupReorder.blocked(this.blockedReason)
+      : orderedGroups = const <List<String>>[];
+
+  /// Готовый аргумент `p_ordered_groups` для RPC: списки id по группам.
+  final List<List<String>> orderedGroups;
+  final String? blockedReason;
+
+  bool get isAllowed => blockedReason == null;
+}
+
+/// Двигает группу [groupIndex] на [delta] позиций в последовательности групп.
+///
+/// Индекс считается по списку ПОДВИЖНЫХ групп, то есть без закреплённой
+/// упаковки.
+///
+/// Проверка инварианта идёт по построенному кандидату, а не разбором случаев,
+/// — поэтому одинаково ловит и подъём под-этапа выше переключателя, и
+/// опускание переключателя ниже его под-этапов. Тот же инвариант проверяет
+/// `set_product_type_stage_positions`: клиент не единственная линия обороны.
+StageGroupReorder reorderStageGroups(
+  ProductTypeRoute route, {
+  required int groupIndex,
+  required int delta,
+}) {
+  final movable =
+      stageGroupsOf(route).where((g) => !g.isPinned).toList(growable: false);
+  final target = groupIndex + delta;
+  if (groupIndex < 0 || groupIndex >= movable.length) {
+    return const StageGroupReorder.blocked('Этап не найден в списке.');
+  }
+  if (target < 0 || target >= movable.length) {
+    return const StageGroupReorder.blocked('Дальше двигать некуда.');
+  }
+
+  final candidate = List<StageGroup>.from(movable);
+  candidate.insert(target, candidate.removeAt(groupIndex));
+
+  // Ранг группы — её место в списке, считая с единицы.
+  final rankByStageId = <String, int>{};
+  for (var i = 0; i < candidate.length; i++) {
+    for (final stage in candidate[i].stages) {
+      rankByStageId[stage.rowId] = i + 1;
+    }
+  }
+
+  for (final group in candidate) {
+    if (!group.isSubQueue) continue;
+    final switchStageId = group.parentSwitchStageId(route);
+    final subRank = rankByStageId[group.stages.first.rowId];
+    final switchRank =
+        switchStageId == null ? null : rankByStageId[switchStageId];
+    if (switchRank == null || subRank == null || subRank <= switchRank) {
+      final switchTitle = route.stages
+          .where((s) => s.rowId == switchStageId)
+          .map((s) => s.title)
+          .join();
+      return StageGroupReorder.blocked(
+        'Под-этап «${group.stages.first.title}» должен идти после '
+        'переключателя${switchTitle.isEmpty ? '' : ' «$switchTitle»'}, '
+        'иначе вариант ещё не выбран.',
+      );
+    }
+  }
+
+  return StageGroupReorder.allowed(<List<String>>[
+    for (final group in candidate)
+      group.stages.map((s) => s.rowId).toList(growable: false),
+  ]);
+}
+
 /// Собирает очередь этапов заказа по настройкам типа продукта.
 ///
 /// Возвращает то же, что и `buildOrderStages`, — постобработка общая.

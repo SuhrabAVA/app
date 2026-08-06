@@ -42,6 +42,26 @@ class ProductTypeRef {
   }
 }
 
+/// Рабочее место — строка справочника `public.workplaces`.
+///
+/// Нужен редактору маршрута: рабочие места этапа выбираются из списка, а не
+/// вводятся текстом. Свободный ввод вернул бы опечатки в идентификаторах,
+/// ради которых заведён реестр `production_ids.dart`.
+@immutable
+class WorkplaceRef {
+  const WorkplaceRef({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  static WorkplaceRef? fromMap(Map<String, dynamic> map) {
+    final id = (map['id'] ?? '').toString().trim();
+    final name = (map['name'] ?? '').toString().trim();
+    if (id.isEmpty) return null;
+    return WorkplaceRef(id: id, name: name.isEmpty ? id : name);
+  }
+}
+
 /// Блок формы заказа — строка справочника `order_form_blocks`.
 @immutable
 class OrderFormBlock {
@@ -126,6 +146,7 @@ class ProductTypeSettings {
 
   List<ProductTypeRef> _types = const <ProductTypeRef>[];
   List<OrderFormBlock> _blocks = const <OrderFormBlock>[];
+  List<WorkplaceRef> _workplaces = const <WorkplaceRef>[];
 
   /// product_type_id → опубликованная версия настроек.
   final Map<String, ProductTypeConfig> _publishedByType =
@@ -150,6 +171,16 @@ class ProductTypeSettings {
       _types.map((t) => t.title).toList(growable: false);
 
   List<OrderFormBlock> get formBlocks => List.unmodifiable(_blocks);
+
+  /// Справочник рабочих мест для выпадающих списков редактора маршрута.
+  List<WorkplaceRef> get workplaces => List.unmodifiable(_workplaces);
+
+  String workplaceName(String workplaceId) {
+    for (final w in _workplaces) {
+      if (w.id == workplaceId) return w.name;
+    }
+    return workplaceId;
+  }
 
   /// Загружает справочники и настройки один раз за сессию.
   ///
@@ -180,6 +211,15 @@ class ProductTypeSettings {
     final overrides = await _sb
         .from('product_type_form_blocks')
         .select('config_id, block_code, is_visible');
+    final workplaces =
+        await _sb.from('workplaces').select('id, name').order('name');
+
+    _workplaces = <WorkplaceRef>[
+      for (final row in (workplaces as List))
+        if (WorkplaceRef.fromMap(Map<String, dynamic>.from(row as Map))
+            case final ref?)
+          ref,
+    ];
 
     _types = <ProductTypeRef>[
       for (final row in (types as List))
@@ -217,11 +257,49 @@ class ProductTypeSettings {
   }
 
   /// Маршруты опубликованных версий: этапы обоих уровней, их рабочие места и
-  /// условия. Три запроса вместо N+1 — строки собираются в граф здесь.
+  /// условия.
   Future<void> _loadRoutes() async {
     _routesByType.clear();
     final configIds = _publishedByType.values.map((c) => c.id).toList();
     if (configIds.isEmpty) return;
+
+    final stagesByConfig = await _fetchStagesByConfig(configIds);
+    for (final type in _types) {
+      final config = _publishedByType[type.id];
+      if (config == null) continue;
+      _routesByType[type.id] = ProductTypeRoute(
+        productTypeId: type.id,
+        title: type.title,
+        configId: config.id,
+        stages: stagesByConfig[config.id] ?? const <RouteStage>[],
+      );
+    }
+  }
+
+  /// Читает маршрут КОНКРЕТНОЙ версии, минуя кэш.
+  ///
+  /// Редактору нужен черновик, а кэш держит только опубликованные версии.
+  /// После каждой правки данные всё равно перечитываются, поэтому кэшировать
+  /// здесь нечего.
+  Future<ProductTypeRoute> loadRouteForConfig({
+    required String configId,
+    required String productTypeId,
+    required String title,
+  }) async {
+    final stagesByConfig = await _fetchStagesByConfig(<String>[configId]);
+    return ProductTypeRoute(
+      productTypeId: productTypeId,
+      title: title,
+      configId: configId,
+      stages: stagesByConfig[configId] ?? const <RouteStage>[],
+    );
+  }
+
+  /// Собирает граф этапов трёмя запросами вместо N+1.
+  Future<Map<String, List<RouteStage>>> _fetchStagesByConfig(
+    List<String> configIds,
+  ) async {
+    if (configIds.isEmpty) return const <String, List<RouteStage>>{};
 
     final stages = await _sb
         .from('product_type_stages')
@@ -233,7 +311,7 @@ class ProductTypeSettings {
     ];
     final stageIds =
         stageRows.map((r) => r['id'].toString()).toList(growable: false);
-    if (stageIds.isEmpty) return;
+    if (stageIds.isEmpty) return const <String, List<RouteStage>>{};
 
     final workplaces = await _sb
         .from('product_type_stage_workplaces')
@@ -272,17 +350,7 @@ class ProductTypeSettings {
             'conditions': conditionsByStage[stageId] ?? const [],
           }));
     }
-
-    for (final type in _types) {
-      final config = _publishedByType[type.id];
-      if (config == null) continue;
-      _routesByType[type.id] = ProductTypeRoute(
-        productTypeId: type.id,
-        title: type.title,
-        configId: config.id,
-        stages: stagesByConfig[config.id] ?? const <RouteStage>[],
-      );
-    }
+    return stagesByConfig;
   }
 
   /// Маршрут типа продукта; принимает и uuid, и заголовок.
