@@ -33,7 +33,10 @@ class _ProductTypeSettingsScreenState extends State<ProductTypeSettingsScreen> {
   String? _error;
 
   List<OrderFormBlock> _blocks = const <OrderFormBlock>[];
-  ProductTypeConfig? _published;
+  // Опубликованную версию экран больше не держит в поле: её читают только
+  // серверные функции — create_product_type_config_draft при копировании и
+  // publish_product_type_config при архивировании. Локальной переменной в
+  // _loadState достаточно, чтобы выбрать, что показать.
   ProductTypeConfig? _draft;
 
   /// Значения, показанные на экране: черновик, если он есть, иначе публикация.
@@ -79,7 +82,6 @@ class _ProductTypeSettingsScreenState extends State<ProductTypeSettingsScreen> {
       if (!mounted) return;
       setState(() {
         _blocks = ProductTypeSettings.instance.formBlocks;
-        _published = published;
         _draft = draft;
         _visibility = visibility;
         _loading = false;
@@ -112,60 +114,32 @@ class _ProductTypeSettingsScreenState extends State<ProductTypeSettingsScreen> {
   /// отклонения от умолчания.
   bool _isVisible(String code) => _visibility[code] ?? true;
 
-  /// Создаёт черновик копированием опубликованной версии.
+  /// Создаёт черновик глубокой копией опубликованной версии.
+  ///
+  /// Копирование делает серверная функция, а не клиент. Раньше здесь были
+  /// вставка шапки версии и копирование строк product_type_form_blocks —
+  /// этого хватало, пока настройки состояли из одних блоков формы. С
+  /// появлением правил очереди копировать нужно граф: этапы, их рабочие
+  /// места, условия, и переложить parent_variant_id на НОВЫЕ id вариантов.
+  /// Клиентом это N+1 запросов без транзакции, и обрыв на середине оставил бы
+  /// черновик с половиной маршрута, который техлид опубликовал бы не заметив.
+  ///
+  /// Функция идемпотентна: если черновик уже есть, она вернёт его. Это
+  /// закрывает и вторую дыру — два одновременно открытых экрана настроек
+  /// больше не создадут по своему черновику.
   Future<ProductTypeConfig> _createDraft() async {
-    final versions = await _sb
-        .from('product_type_configs')
-        .select('version')
-        .eq('product_type_id', widget.productType.id)
-        .order('version', ascending: false)
-        .limit(1);
-    final maxVersion = (versions as List).isEmpty
-        ? 0
-        : ((Map<String, dynamic>.from(versions.first as Map)['version']
-                    as num?)
-                ?.toInt() ??
-            0);
+    final draftId = await _sb.rpc(
+      'create_product_type_config_draft',
+      params: {'p_product_type_id': widget.productType.id},
+    );
 
-    final inserted = await _sb
+    final row = await _sb
         .from('product_type_configs')
-        .insert({
-          'product_type_id': widget.productType.id,
-          'version': maxVersion + 1,
-          'status': ProductTypeConfig.statusDraft,
-          'note': 'Черновик правки настроек блоков формы.',
-        })
         .select('id, product_type_id, version, status')
+        .eq('id', draftId as Object)
         .single();
 
-    final draft =
-        ProductTypeConfig.fromMap(Map<String, dynamic>.from(inserted))!;
-
-    // Копируем настройки опубликованной версии, чтобы черновик стартовал с
-    // текущего состояния, а не с пустого.
-    final source = _published;
-    if (source != null) {
-      final rows = await _sb
-          .from('product_type_form_blocks')
-          .select('block_code, is_visible, is_required')
-          .eq('config_id', source.id);
-      final copies = <Map<String, dynamic>>[
-        for (final row in (rows as List))
-          {
-            'config_id': draft.id,
-            'block_code':
-                Map<String, dynamic>.from(row as Map)['block_code'],
-            'is_visible':
-                Map<String, dynamic>.from(row)['is_visible'] != false,
-            'is_required':
-                Map<String, dynamic>.from(row)['is_required'] == true,
-          },
-      ];
-      if (copies.isNotEmpty) {
-        await _sb.from('product_type_form_blocks').insert(copies);
-      }
-    }
-    return draft;
+    return ProductTypeConfig.fromMap(Map<String, dynamic>.from(row))!;
   }
 
   Future<void> _toggleBlock(OrderFormBlock block, bool visible) async {
