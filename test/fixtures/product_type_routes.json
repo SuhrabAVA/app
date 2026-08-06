@@ -1,2098 +1,2099 @@
 {
   "note": "Снимок опубликованных маршрутов типов продукта. Вход паритетного теста test/product_type_route_parity_test.dart. Обновлять только скриптом scripts/refresh_product_type_routes.dart и обязательно после публикации новой версии настроек типа продукта — иначе тест останется зелёным на устаревших маршрутах.",
+  "generated_at": "2026-08-06",
   "source": "product_type_configs (status=published) + product_type_stages + product_type_stage_workplaces + product_type_stage_conditions",
   "productTypes": [
     {
       "id": "448b731a-eafe-40f1-9268-bc5dd6ba57bc",
       "title": "В-образный окно",
+      "configId": "b7d0ce5f-9ea5-46c9-bc41-5107407a1901",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "4d9b7eaf-57b7-4a16-bb79-c22c8dc8f1da",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "f196fc93-7c3b-4012-a1af-3480907fb025",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "4720e346-c30d-46de-bfbe-2800924b8eaa",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "4720e346-c30d-46de-bfbe-2800924b8eaa",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "284344ac-2a08-4560-adbe-645ea3c5a1a4",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "v_main_switch",
-          "level": 0,
           "rowId": "e8ec3c96-b073-4453-bbc3-7f798dd93351",
+          "key": "v_main_switch",
           "title": "Формирование дна",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "one_of",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "63195daf-b9d2-46c8-8fe0-5e59bba6b13d",
-              "isDefault": true,
-              "sortOrder": 1,
               "workplaceId": "92d96ee9-0519-40b9-bd17-9bec475496b6",
-              "variantTitle": "Фри"
+              "variantTitle": "Фри",
+              "isDefault": true,
+              "sortOrder": 1
             },
             {
               "rowId": "e666c3c2-9080-4a72-8a53-0b6df65ebdf9",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "8337f16e-c2d1-42dc-966d-6277ba3c1a50",
-              "variantTitle": "Окно"
+              "variantTitle": "Окно",
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "one_of",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "fa0a43e0-f740-4119-bcd0-cf825cb7c662",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "3478f143-cf3b-4756-bef6-4b0b1996338a",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
-          "rowId": "c18d2560-dad7-4aee-9cfb-86e75d0c3dcd",
-          "title": "Вырубка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "dieCut",
+              "predicate": "has_trimming",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "c18d2560-dad7-4aee-9cfb-86e75d0c3dcd",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
+          "title": "Вырубка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "e172ab4e-fe6a-4084-92b7-cd68d92177e1",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "5a31ca57-8459-4c2e-a887-b791078f431c",
-          "title": "Плоская ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "5a31ca57-8459-4c2e-a887-b791078f431c",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "9da2fa40-92ac-4a55-8795-114a228efbd4",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "21820dd7-bba9-4919-a62c-834623c53b3c",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "604d2c23-ea3c-4102-8e5d-669f018d8505",
-          "title": "Кручёная ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "604d2c23-ea3c-4102-8e5d-669f018d8505",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "7e0d9aee-e050-408f-89b6-c12982640292",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "9a86a050-543f-4f40-9641-3fcf8518da8b",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "13274388-d2cc-4881-bacf-ec2f72077c88",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "1b675157-4e41-4255-9d7a-6fc772475458",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "b7d0ce5f-9ea5-46c9-bc41-5107407a1901"
+      ]
     },
     {
       "id": "688ce20b-2db5-43ed-a414-dda08443a06a",
       "title": "В-образный пакет",
+      "configId": "c0019e88-c3c9-4bcf-901f-9c60e9037699",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "44bd4680-c438-4840-b1ff-5f8cbd432a55",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "075379f4-fbe2-4560-ad1e-ac3c40067a7e",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "383bb62d-a45d-4630-ba62-5a73181a7311",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "383bb62d-a45d-4630-ba62-5a73181a7311",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "7f89b5b5-8210-4576-9dda-7a4a4ff2c746",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "v_main_switch",
-          "level": 0,
           "rowId": "24ad5deb-1a05-408b-9bfd-8bcb62b7fcaf",
+          "key": "v_main_switch",
           "title": "Формирование дна",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "one_of",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "b037f2aa-0b72-4d48-a0c1-4e99577bb588",
-              "isDefault": true,
-              "sortOrder": 1,
               "workplaceId": "92d96ee9-0519-40b9-bd17-9bec475496b6",
-              "variantTitle": "Фри"
+              "variantTitle": "Фри",
+              "isDefault": true,
+              "sortOrder": 1
             },
             {
               "rowId": "9131abe4-0f02-4626-9a69-6623899d0ae1",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "8337f16e-c2d1-42dc-966d-6277ba3c1a50",
-              "variantTitle": "Окно"
+              "variantTitle": "Окно",
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "one_of",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "37086cee-ecb0-4f2a-a613-9e9db4d7952d",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "fe15e4af-2643-402c-ac31-96a3e8114a7c",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
-          "rowId": "78c14a0d-fdaa-4e7b-a8e0-e78d0736d831",
-          "title": "Вырубка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "dieCut",
+              "predicate": "has_trimming",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "78c14a0d-fdaa-4e7b-a8e0-e78d0736d831",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
+          "title": "Вырубка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "d9056009-cfba-40a7-a3e5-c502c1312cef",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "5ffb2696-923d-4ccc-a35e-96d441440485",
-          "title": "Плоская ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "5ffb2696-923d-4ccc-a35e-96d441440485",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "afabbf91-1f62-4171-8e5e-e749a19c689d",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "ca4f2000-d881-4d66-9914-ced058fd315c",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "377a5c6c-4fea-4456-82ac-a995d3bb03cb",
-          "title": "Кручёная ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "377a5c6c-4fea-4456-82ac-a995d3bb03cb",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "5424c2bd-6954-4a2b-9c55-6177bf041a68",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "4fee3e1f-a4c2-4301-89ac-375d407576b8",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "7bad7e8d-452a-4335-b68d-9fe548b58240",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "66f93e22-59b7-42c9-b46f-f571b8ecb9d8",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "c0019e88-c3c9-4bcf-901f-9c60e9037699"
+      ]
     },
     {
       "id": "dfd3beb1-1afd-4c06-9b3b-5da680377b0d",
       "title": "В-образный уголок",
+      "configId": "233a9c9a-8232-4697-b0a2-54da002ed0b5",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "f4fa0848-093c-4177-8efc-d89051180b73",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "b2812a2f-d407-4f62-a11e-44a5982401a0",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "bbda5be8-ecaf-4034-aeea-bde49cd043c6",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "bbda5be8-ecaf-4034-aeea-bde49cd043c6",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "4547fb07-5dab-4f54-9fb2-fcf759e5159d",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "v_main_switch",
-          "level": 0,
           "rowId": "f91bbb06-9ae4-4372-8073-8033895703fe",
+          "key": "v_main_switch",
           "title": "Формирование дна",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "one_of",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "fa8ba828-6556-4d2e-8bd7-622e5aff4b59",
-              "isDefault": true,
-              "sortOrder": 1,
               "workplaceId": "92d96ee9-0519-40b9-bd17-9bec475496b6",
-              "variantTitle": "Фри"
+              "variantTitle": "Фри",
+              "isDefault": true,
+              "sortOrder": 1
             },
             {
               "rowId": "da560558-a324-433b-bdd7-d993d6b9276e",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "8337f16e-c2d1-42dc-966d-6277ba3c1a50",
-              "variantTitle": "Окно"
+              "variantTitle": "Окно",
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "one_of",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "e85057a9-1565-47d5-b48f-45fb237cd01a",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "852be473-fa5b-4776-a524-dd3a0422e4e2",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
-          "rowId": "4c9b1527-8998-4cfd-a197-bbf0f7bc9b2f",
-          "title": "Вырубка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "dieCut",
+              "predicate": "has_trimming",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "4c9b1527-8998-4cfd-a197-bbf0f7bc9b2f",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
+          "title": "Вырубка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "f3f38988-7c5e-48e2-ac5d-4a0ce3f5f92c",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "7222035a-c043-4a80-a302-c7788de0d9d5",
-          "title": "Плоская ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "7222035a-c043-4a80-a302-c7788de0d9d5",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "830665bf-b2eb-4bcf-81d4-a3d9dade0ac6",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "5162e7ba-dc3a-497f-a8a8-9a46a44193e5",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "2da1d9b3-e7dd-4859-9925-f6a75fb6f6b5",
-          "title": "Кручёная ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "2da1d9b3-e7dd-4859-9925-f6a75fb6f6b5",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "53b48994-4e3d-4efb-b37d-6a7069cce830",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "c90a84ff-cd62-4731-bd0c-90c59a71a9a6",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "f8a360db-5373-41e8-ad35-9706add9c68e",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "80cd7e3a-de4a-4bc0-b4ce-7ae48d7d6b41",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "233a9c9a-8232-4697-b0a2-54da002ed0b5"
+      ]
     },
     {
       "id": "d2323dba-74c9-4e86-adfb-18cd47be9480",
       "title": "В-образный фри",
+      "configId": "1dcb0c3a-4e2d-4c90-ac37-17b382bd1cc3",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "e572e0c1-2cdf-4ca4-8713-8a366ae8a518",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "440c5d2b-71ff-43d8-ad0a-0c66cbd9eb78",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "a196275c-55a9-4d67-9130-133419aa0b41",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "a196275c-55a9-4d67-9130-133419aa0b41",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "55b26cd0-4405-471d-a9dc-a3d7b5643572",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "v_main_switch",
-          "level": 0,
           "rowId": "a875ec6a-6799-4402-93e6-14178e6fe0dc",
+          "key": "v_main_switch",
           "title": "Формирование дна",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "one_of",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "17ad0d6e-2f34-41b3-89c3-eb9affaf9d66",
-              "isDefault": true,
-              "sortOrder": 1,
               "workplaceId": "92d96ee9-0519-40b9-bd17-9bec475496b6",
-              "variantTitle": "Фри"
+              "variantTitle": "Фри",
+              "isDefault": true,
+              "sortOrder": 1
             },
             {
               "rowId": "eaec6b0a-59ca-4990-b972-5a720caaad3a",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "8337f16e-c2d1-42dc-966d-6277ba3c1a50",
-              "variantTitle": "Окно"
+              "variantTitle": "Окно",
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "one_of",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "6ac30481-e705-4b8c-86cd-046e357f9cd3",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "51a4edf0-0ccc-4a0f-97d5-7f9ac3e6a119",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
-          "rowId": "0e4d0ebd-2553-4533-ae51-41591e40c95b",
-          "title": "Вырубка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "dieCut",
+              "predicate": "has_trimming",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "0e4d0ebd-2553-4533-ae51-41591e40c95b",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
+          "title": "Вырубка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "210f80a7-ed8d-48b2-98aa-e709e075aced",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "1d6aea68-7bdc-4c70-958c-592e6e42b1c3",
-          "title": "Плоская ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "1d6aea68-7bdc-4c70-958c-592e6e42b1c3",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "d254a47c-b3fe-48b3-9a4f-d5c815d7264e",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "69b42778-a93d-4f0d-bada-6578ff36b3f2",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "db953c36-95b2-4483-94ac-650c27011ad2",
-          "title": "Кручёная ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "db953c36-95b2-4483-94ac-650c27011ad2",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "61c9e822-3275-463c-9964-6a109337743d",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "ef2c9eb8-1896-4181-b309-2ddebcb34666",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "6c8c8091-f5c0-46ea-a946-1cb02c4c9702",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "e62620c2-9aca-42a6-abba-0ad55b205317",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "1dcb0c3a-4e2d-4c90-ac37-17b382bd1cc3"
+      ]
     },
     {
       "id": "434a2fe1-73f1-4bf0-8e16-cb6f4a7b67b1",
       "title": "Готовая продукция",
+      "configId": "303b7da8-8691-454c-817f-d6b946b75cb6",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "af287e3b-adb3-455e-b17c-432367f5c832",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "05bb38ee-7cb6-4390-89e3-8d101fb64342",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "612262ec-34f4-4bd8-99cb-801d54cda7bc",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "612262ec-34f4-4bd8-99cb-801d54cda7bc",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "51d7774c-3698-4856-bb60-7c54442ae9b4",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "ea6e003e-1185-4bd9-b326-6733f5d7407b",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "603b683e-11eb-4d61-95a1-2fe6174518ca",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "303b7da8-8691-454c-817f-d6b946b75cb6"
+      ]
     },
     {
       "id": "aab3ed17-1688-43f0-b623-58dac264941f",
       "title": "Листы",
+      "configId": "a6e6c888-2ea0-401c-8561-dd314e828e5a",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "574a7e69-aa95-4bab-ad5e-0f023995b4be",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "bd1cb78e-ca27-471e-8de8-fc1142549d11",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "3dec2fe2-74ee-428c-b6c2-6fcfa5112c8f",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "3dec2fe2-74ee-428c-b6c2-6fcfa5112c8f",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "aaec05e5-3c8b-4a19-aef1-f1a0199050d9",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "19a67630-8374-4f9f-ae5b-f2f66828720b",
-          "level": 0,
           "rowId": "e5961b0c-17b6-4ec3-88fc-03a0758516ce",
+          "key": "19a67630-8374-4f9f-ae5b-f2f66828720b",
           "title": "Листорезка",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "0801e1da-c787-456e-a85e-e901d1cfbbb7",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "19a67630-8374-4f9f-ae5b-f2f66828720b",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "4ed200b1-1b05-4c19-8ca1-e2fa7c36c038",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "fc9f6bfc-3d65-4871-b838-9bae728f0a06",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
-          "rowId": "e31872cb-1694-48a0-9cf0-371a44a2603a",
-          "title": "Вырубка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "dieCut",
+              "predicate": "has_trimming",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "e31872cb-1694-48a0-9cf0-371a44a2603a",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
+          "title": "Вырубка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "7ce80a46-4e8c-418b-bd48-9fd4d76b793c",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "3a2d66fb-8811-4f00-b5fb-43c354e7ba2f",
-          "title": "Плоская ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "3a2d66fb-8811-4f00-b5fb-43c354e7ba2f",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "5e00d5ce-c6e4-4259-bdca-7e4524b291f3",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "efe34aae-0b1b-4ee3-a8ff-984bbc7f73bb",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "97fe129a-b97c-4507-b5a0-6c811e011f00",
-          "title": "Кручёная ручка",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "97fe129a-b97c-4507-b5a0-6c811e011f00",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "487ba3ad-a39e-48c3-a27c-f1f3aa95b858",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "58cf922a-efaf-4a59-b080-9c9f4b61ae57",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "881ee4e3-9c16-4340-bb9a-a701817afcaf",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "3978fdf9-4f69-444d-a535-7f46e1031411",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "a6e6c888-2ea0-401c-8561-dd314e828e5a"
+      ]
     },
     {
       "id": "71c889cb-b24c-4bda-9a69-ae312f9a4bbd",
       "title": "П-образный пакет",
+      "configId": "1304f3d8-e352-45bb-b21a-456a36448b19",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "afc21cc0-64c4-4bbc-8ce6-1231d243dbe8",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "ac691b9f-3b17-47b6-9c59-2e9f43d05159",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "f99b37dd-04d4-48e2-bc98-241426289a2e",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "f99b37dd-04d4-48e2-bc98-241426289a2e",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "2264416c-b514-4a29-90ee-70216d8a20a0",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "p_main_switch",
-          "level": 0,
           "rowId": "85d7e55c-ea81-4bca-805c-078d9beea810",
+          "key": "p_main_switch",
           "title": "Сборка пакета",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "one_of",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "4234526b-1562-48c3-8c9d-70f9f3d344a3",
-              "isDefault": true,
-              "sortOrder": 1,
               "workplaceId": "fdbf1735-a67c-47c9-a7e1-90546e1fe6ed",
-              "variantTitle": "Автомат большой"
+              "variantTitle": "Автомат большой",
+              "isDefault": true,
+              "sortOrder": 1
             },
             {
               "rowId": "1d37cb8b-eaa6-46fa-a6f3-e57c0d6e1acf",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "cbcbe469-b924-4064-ae05-885ccd1b842a",
-              "variantTitle": "Автомат маленький"
+              "variantTitle": "Автомат маленький",
+              "isDefault": false,
+              "sortOrder": 2
             },
             {
               "rowId": "6e32719a-0eea-4b4b-933e-87b5475e61b6",
-              "isDefault": false,
-              "sortOrder": 3,
               "workplaceId": "e62fc013-4785-43f3-b3ee-a3ca51777199",
-              "variantTitle": "Труба"
+              "variantTitle": "Труба",
+              "isDefault": false,
+              "sortOrder": 3
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "one_of",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "5f63c41f-6591-4a42-92e6-9527ada243a3",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "07226d0e-9608-41ca-bc1d-28239524274c",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "d7d91f75-2f85-446f-8c1d-a20606bdb3b1",
-          "level": 0,
-          "rowId": "106bd653-8ac8-42f9-a001-9f4c40f61285",
-          "title": "Резка картона",
-          "position": 5,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "has_trimming",
               "negate": false,
-              "predicate": "has_cardboard"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "106bd653-8ac8-42f9-a001-9f4c40f61285",
+          "key": "d7d91f75-2f85-446f-8c1d-a20606bdb3b1",
+          "title": "Резка картона",
+          "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "7727d8fb-6e15-41c6-b563-b559f8a13a13",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "d7d91f75-2f85-446f-8c1d-a20606bdb3b1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "ce15da53-34bb-4a48-acef-610dddfad42e",
-          "level": 1,
-          "rowId": "a0647e9a-d914-41c8-8c67-0c8fb2e5ecee",
-          "title": "Вставка картона",
-          "position": 6,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "has_cardboard",
               "negate": false,
-              "predicate": "has_cardboard"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "a0647e9a-d914-41c8-8c67-0c8fb2e5ecee",
+          "key": "ce15da53-34bb-4a48-acef-610dddfad42e",
+          "title": "Вставка картона",
+          "position": 6,
+          "level": 1,
+          "parentVariantId": "1d37cb8b-eaa6-46fa-a6f3-e57c0d6e1acf",
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "4eca59ad-191c-4ea5-adc2-8b4ce8ed3378",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "ce15da53-34bb-4a48-acef-610dddfad42e",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": "1d37cb8b-eaa6-46fa-a6f3-e57c0d6e1acf"
-        },
-        {
-          "key": "ce15da53-34bb-4a48-acef-610dddfad42e",
-          "level": 1,
-          "rowId": "7c9c2493-244b-4ce2-9713-66341e63bf0d",
-          "title": "Вставка картона",
-          "position": 6,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "has_cardboard",
               "negate": false,
-              "predicate": "has_cardboard"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "7c9c2493-244b-4ce2-9713-66341e63bf0d",
+          "key": "ce15da53-34bb-4a48-acef-610dddfad42e",
+          "title": "Вставка картона",
+          "position": 6,
+          "level": 1,
+          "parentVariantId": "4234526b-1562-48c3-8c9d-70f9f3d344a3",
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "9bd40763-fb28-49f5-8360-19255864c616",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "ce15da53-34bb-4a48-acef-610dddfad42e",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": "4234526b-1562-48c3-8c9d-70f9f3d344a3"
+          "conditions": [
+            {
+              "predicate": "has_cardboard",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "d15da69b-9842-4967-96ed-28a4834b409e",
-          "level": 1,
           "rowId": "f9031c16-7737-43b0-91c2-ae341abc93d0",
+          "key": "d15da69b-9842-4967-96ed-28a4834b409e",
           "title": "Сборка дно+картон",
           "position": 7,
+          "level": 1,
+          "parentVariantId": "6e32719a-0eea-4b4b-933e-87b5475e61b6",
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "a09f8c1a-5bc3-4f15-a534-7e69263414a4",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "d15da69b-9842-4967-96ed-28a4834b409e",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": "6e32719a-0eea-4b4b-933e-87b5475e61b6"
+          "conditions": []
         },
         {
-          "key": "bottom_glue_group",
-          "level": 1,
           "rowId": "532e9af4-c3b1-4945-9347-6e1e7668c213",
+          "key": "bottom_glue_group",
           "title": "Склейка дна",
           "position": 8,
+          "level": 1,
+          "parentVariantId": "6e32719a-0eea-4b4b-933e-87b5475e61b6",
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "68cc8c64-f4e8-4028-a16c-7057ca1c8fe1",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "dee83c5c-4624-4ca4-b36c-47673dc5cd72",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "1c8effc9-0d0b-497b-b604-200f4aedff6e",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "ad504db5-86c3-4284-8266-42bbf967b064",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             },
             {
               "rowId": "f2b1d0c6-e32c-4bf0-b3a6-ded72205785c",
-              "isDefault": false,
-              "sortOrder": 3,
               "workplaceId": "96075b60-77d8-4fb2-91b0-bfbe6c1ed13c",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 3
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": "6e32719a-0eea-4b4b-933e-87b5475e61b6"
+          "conditions": []
         },
         {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
           "rowId": "26218b0b-e056-45d9-8bb6-9c39736a0161",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
           "title": "Вырубка",
           "position": 9,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": "dieCut",
-              "negate": false,
-              "predicate": "handle_type_is"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "ac55228d-c9d9-4932-8aa6-f44bd1849e93",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "99b93b4d-a39b-4538-85eb-efd2a53203de",
-          "title": "Плоская ручка",
-          "position": 9,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "99b93b4d-a39b-4538-85eb-efd2a53203de",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 9,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "5fd86b7b-20d5-4f9a-8057-5931461d578d",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "150bb9ca-13c7-4b39-92a2-d1f8a472004d",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "20992952-0729-45ab-acce-726202711b23",
-          "title": "Кручёная ручка",
-          "position": 9,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "20992952-0729-45ab-acce-726202711b23",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 9,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "51fde239-d35e-4283-98bc-9c447c637e09",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "32fd49c4-88d8-4f3e-a721-b5a3811c1ea8",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "b69aeaf4-87b0-4525-b386-f20f5c087632",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "9fd809ff-8aff-452c-a311-443786ffc537",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "1304f3d8-e352-45bb-b21a-456a36448b19"
+      ]
     },
     {
       "id": "b07cd977-939c-4d4f-b68c-8d163341460e",
       "title": "Пакет из 2х листов",
+      "configId": "f527bab9-034b-47c3-9fa7-c771483400c8",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "0bfc45f6-c54c-47f9-89d0-d5f12f390adc",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "536abe6f-0211-4312-8934-143be312fa0c",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "715a4d81-7465-4b5e-a273-b5202d79a413",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "715a4d81-7465-4b5e-a273-b5202d79a413",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "bc2c34f7-9da7-46e1-9a9b-ee9eceade08a",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "19a67630-8374-4f9f-ae5b-f2f66828720b",
-          "level": 0,
           "rowId": "c9701132-d042-48f9-be0d-fdf7470ab78b",
+          "key": "19a67630-8374-4f9f-ae5b-f2f66828720b",
           "title": "Листорезка",
           "position": 3,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "deabaa5b-a85d-4dbb-946a-abfd87ae4647",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "19a67630-8374-4f9f-ae5b-f2f66828720b",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-          "level": 0,
           "rowId": "d322efa0-0303-4e66-9da0-0c6ff11af343",
+          "key": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
           "title": "Резка",
           "position": 4,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_trimming"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "2770856d-5207-478a-b814-1962843ed12d",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "c828062f-a6a6-4fe5-b01b-c51e36fe5fba",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_trimming",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "die_cut_a1_a2",
-          "level": 0,
           "rowId": "9776e790-77b0-4f56-9f18-dd5e66258083",
+          "key": "die_cut_a1_a2",
           "title": "Высечка A1/A2",
           "position": 5,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "055cb09b-d2e0-46ac-a42b-bceb8ce135d7",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "7c168998-76b8-4a4c-9708-af45c2dbd4f0",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "efe90804-c477-48cf-b302-06f745c80970",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "5a47821b-c276-4deb-90de-f196539fc95d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "a9e21c59-e145-4074-8d24-f2db089c8747",
-          "level": 0,
           "rowId": "fb5b9b6c-28b9-427a-b62d-79f5ea4cabf2",
+          "key": "a9e21c59-e145-4074-8d24-f2db089c8747",
           "title": "Скотч",
           "position": 6,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "e53a227c-362b-4866-976a-acf0835b93dc",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "a9e21c59-e145-4074-8d24-f2db089c8747",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "008a5bbd-86f8-48c1-a98b-0034f80492a6",
-          "level": 0,
           "rowId": "a76e227c-bf34-4d02-887c-3b4875b742fc",
+          "key": "008a5bbd-86f8-48c1-a98b-0034f80492a6",
           "title": "С 2х листов",
           "position": 7,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "02af0275-2572-49e7-838f-ae3de2450b94",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "008a5bbd-86f8-48c1-a98b-0034f80492a6",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "4e4750b0-5849-42be-94b8-a721a68b85da",
-          "level": 0,
           "rowId": "09990be4-b676-48a5-97bd-1a4a231e6f0c",
+          "key": "4e4750b0-5849-42be-94b8-a721a68b85da",
           "title": "Сборка трубы",
           "position": 8,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "5ee0a007-0fab-4f66-95d3-08320060527a",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4e4750b0-5849-42be-94b8-a721a68b85da",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "d7d91f75-2f85-446f-8c1d-a20606bdb3b1",
-          "level": 0,
           "rowId": "03adabc9-db40-4613-a5b8-21a1f67059eb",
+          "key": "d7d91f75-2f85-446f-8c1d-a20606bdb3b1",
           "title": "Резка картона",
           "position": 9,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "has_cardboard"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "e4b0249f-c498-4a72-be81-8f1fb40dd04d",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "d7d91f75-2f85-446f-8c1d-a20606bdb3b1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_cardboard",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "d15da69b-9842-4967-96ed-28a4834b409e",
-          "level": 0,
           "rowId": "7f96cb45-73bb-40f5-aa84-5f029b087ed0",
+          "key": "d15da69b-9842-4967-96ed-28a4834b409e",
           "title": "Сборка дно+картон",
           "position": 10,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "ee587772-fea5-470f-a8e8-a404cba05422",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "d15da69b-9842-4967-96ed-28a4834b409e",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "bottom_glue_group",
-          "level": 0,
           "rowId": "b35795d3-64f1-40af-af19-24a7d1c5e1ff",
+          "key": "bottom_glue_group",
           "title": "Склейка дна",
           "position": 11,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "fb606c2a-d8ab-496b-98fe-1c9fe8eb100f",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "dee83c5c-4624-4ca4-b36c-47673dc5cd72",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "1711df60-9a21-4f30-9a72-79da4c3f8c06",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "ad504db5-86c3-4284-8266-42bbf967b064",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             },
             {
               "rowId": "07ac18c2-6dc3-4fe6-b374-28d6409c2a30",
-              "isDefault": false,
-              "sortOrder": 3,
               "workplaceId": "96075b60-77d8-4fb2-91b0-bfbe6c1ed13c",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 3
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         },
         {
-          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-          "level": 0,
           "rowId": "07370840-0ff8-41f9-930d-96d9c72870e0",
+          "key": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
           "title": "Вырубка",
           "position": 12,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": "dieCut",
-              "negate": false,
-              "predicate": "handle_type_is"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "dd515b9a-2f15-4543-bd36-f381667473ec",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "4925309c-a2c6-4f5f-9f3e-7dd5ff38827d",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "flat_handle_group",
-          "level": 0,
-          "rowId": "c2c2cad9-2be0-4f83-b0ae-00ac82f7fbb8",
-          "title": "Плоская ручка",
-          "position": 12,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "flat",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "dieCut"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "c2c2cad9-2be0-4f83-b0ae-00ac82f7fbb8",
+          "key": "flat_handle_group",
+          "title": "Плоская ручка",
+          "position": 12,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "c7209889-e96b-4831-ade5-d27c4d8f860f",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "6fdff2d9-3f57-45ca-9fad-dd700ac5c320",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "204600ca-d661-4dcb-ba87-0fe5e8eaf49a",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "twisted_handle_group",
-          "level": 0,
-          "rowId": "3526204b-5829-4d77-9cd9-cc06db32e4e9",
-          "title": "Кручёная ручка",
-          "position": 12,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": "twisted",
+              "predicate": "handle_type_is",
               "negate": false,
-              "predicate": "handle_type_is"
+              "param": "flat"
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "3526204b-5829-4d77-9cd9-cc06db32e4e9",
+          "key": "twisted_handle_group",
+          "title": "Кручёная ручка",
+          "position": 12,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "bc1254fc-1dfb-431e-a32a-2779e56f4f29",
-              "isDefault": false,
-              "sortOrder": 1,
               "workplaceId": "c5c1eb2e-dac8-4068-9e4c-ced8fb975626",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 1
             },
             {
               "rowId": "ab2ba979-2fb2-4192-b65e-48ba874cdf10",
-              "isDefault": false,
-              "sortOrder": 2,
               "workplaceId": "c25ac6fa-390a-4e87-84aa-536055e013f4",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 2
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "handle_type_is",
+              "negate": false,
+              "param": "twisted"
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "7ff28d83-6e84-4293-a5e7-f70e963056c0",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "8cf971d9-5ca9-40ef-9453-2b62b464b4e1",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "f527bab9-034b-47c3-9fa7-c771483400c8"
+      ]
     },
     {
       "id": "3e5b7098-382f-4fda-8021-77721618c6ac",
       "title": "Рулонная печать",
+      "configId": "ea62943d-f23d-4679-9340-368c74abb3dc",
       "stages": [
         {
-          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-          "level": 0,
           "rowId": "61162ab1-61db-4fa9-b289-a474bea55fdf",
+          "key": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
           "title": "Бабинорезка",
           "position": 1,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [
-            {
-              "param": null,
-              "negate": false,
-              "predicate": "needs_bobbin_cutting"
-            }
-          ],
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "eb9d3d11-460d-499e-bc0d-ff7ce5648611",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "b92a89d1-8e95-4c6d-b990-e308486e4bf1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
-        },
-        {
-          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-          "level": 0,
-          "rowId": "8bc7dabe-7b7a-4734-abc1-1f8dc66594b9",
-          "title": "Флексопечать",
-          "position": 2,
-          "isEnabled": true,
           "conditions": [
             {
-              "param": null,
+              "predicate": "needs_bobbin_cutting",
               "negate": false,
-              "predicate": "has_paint"
+              "param": null
             }
-          ],
+          ]
+        },
+        {
+          "rowId": "8bc7dabe-7b7a-4734-abc1-1f8dc66594b9",
+          "key": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
+          "title": "Флексопечать",
+          "position": 2,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
+          "isEnabled": true,
+          "isPinnedLast": false,
           "workplaces": [
             {
               "rowId": "caac6b0e-d93d-4e50-93dc-8b641218d0ca",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "0571c01c-f086-47e4-81b2-5d8b2ab91218",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": false,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": [
+            {
+              "predicate": "has_paint",
+              "negate": false,
+              "param": null
+            }
+          ]
         },
         {
-          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-          "level": 0,
           "rowId": "4ee1e0ca-ef6e-47f0-a926-84716c33bf02",
+          "key": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
           "title": "Упаковка",
           "position": 999,
+          "level": 0,
+          "parentVariantId": null,
+          "selectionMode": "all",
           "isEnabled": true,
-          "conditions": [],
+          "isPinnedLast": true,
           "workplaces": [
             {
               "rowId": "a730dbf9-3b9b-450d-9b5e-717a4562e1a3",
-              "isDefault": false,
-              "sortOrder": 0,
               "workplaceId": "edeb85db-c7a3-4a24-8f33-70ccdd4aaae1",
-              "variantTitle": null
+              "variantTitle": null,
+              "isDefault": false,
+              "sortOrder": 0
             }
           ],
-          "isPinnedLast": true,
-          "selectionMode": "all",
-          "parentVariantId": null
+          "conditions": []
         }
-      ],
-      "configId": "ea62943d-f23d-4679-9340-368c74abb3dc"
+      ]
     }
   ]
 }

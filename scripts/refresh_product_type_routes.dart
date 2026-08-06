@@ -9,10 +9,21 @@
 // типа продукта. Иначе снимок разойдётся с базой: тест останется зелёным на
 // устаревших маршрутах, а приложение будет собирать очередь по новым.
 //
+// ТРЕБУЕТ SERVICE_ROLE И ЗАПУСКАЕТСЯ ТОЛЬКО ЛОКАЛЬНО
+// RLS-политики таблиц настроек выданы роли authenticated, поэтому под
+// анонимным ключом скрипт получал ноль строк и отказывался перезаписывать
+// снимок. Служебный скрипт обслуживания — ровно тот случай, для которого
+// заведён service_role: он обходит RLS целиком, не требует входа и не
+// расширяет права остальным. Ключ служебный, поэтому запуск только с машины
+// разработчика; в CI этот скрипт не место.
+//
+// Соседний refresh_workplaces_snapshot.dart остаётся на анонимном ключе — у
+// workplaces есть политика чтения для anon, и ему service_role не нужен.
+//
 // Запуск:
 //   dart run scripts/refresh_product_type_routes.dart
 //
-// Читает SUPABASE_URL и SUPABASE_ANON_KEY из .env в корне проекта.
+// Читает SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY из .env в корне проекта.
 
 import 'dart:convert';
 import 'dart:io';
@@ -20,9 +31,9 @@ import 'dart:io';
 Future<void> main() async {
   final env = _readEnv(File('.env'));
   final url = env['SUPABASE_URL'];
-  final key = env['SUPABASE_ANON_KEY'];
+  final key = env['SUPABASE_SERVICE_ROLE_KEY'];
   if (url == null || url.isEmpty || key == null || key.isEmpty) {
-    stderr.writeln('В .env нет SUPABASE_URL или SUPABASE_ANON_KEY');
+    stderr.writeln('В .env нет SUPABASE_URL или SUPABASE_SERVICE_ROLE_KEY');
     exitCode = 1;
     return;
   }
@@ -170,13 +181,24 @@ Map<String, dynamic> _stageEntry(
 }
 
 /// Порядок строк в снимке должен быть устойчивым, иначе diff файла шумит на
-/// каждом обновлении. Ключи те же, по которым сортирует сборщик.
+/// каждом обновлении.
+///
+/// Тройки (позиция, уровень, ключ) НЕ ХВАТАЕТ: у П-образного пакета два
+/// под-этапа «Вставка картона» делят позицию 6, уровень 1 и ключ — различаются
+/// они только вариантом-владельцем. Без последних двух ключей их взаимный
+/// порядок определял бы порядок ответа PostgREST, и снимок менялся бы на
+/// пустом месте.
 int _compareStages(Map<String, dynamic> a, Map<String, dynamic> b) {
   final byPosition = (a['position'] as int).compareTo(b['position'] as int);
   if (byPosition != 0) return byPosition;
   final byLevel = (a['level'] as int).compareTo(b['level'] as int);
   if (byLevel != 0) return byLevel;
-  return '${a['key']}'.compareTo('${b['key']}');
+  final byKey = '${a['key']}'.compareTo('${b['key']}');
+  if (byKey != 0) return byKey;
+  final byParent =
+      '${a['parentVariantId']}'.compareTo('${b['parentVariantId']}');
+  if (byParent != 0) return byParent;
+  return '${a['rowId']}'.compareTo('${b['rowId']}');
 }
 
 Map<String, String> _readEnv(File file) {
@@ -196,13 +218,13 @@ Map<String, String> _readEnv(File file) {
 Future<List<Map<String, dynamic>>> _fetch(
   HttpClient client,
   String baseUrl,
-  String anonKey,
+  String serviceRoleKey,
   String path,
 ) async {
   final request = await client.getUrl(Uri.parse('$baseUrl/rest/v1/$path'));
   request.headers
-    ..set('apikey', anonKey)
-    ..set('Authorization', 'Bearer $anonKey');
+    ..set('apikey', serviceRoleKey)
+    ..set('Authorization', 'Bearer $serviceRoleKey');
   final response = await request.close();
   final body = await response.transform(utf8.decoder).join();
   if (response.statusCode != 200) {
