@@ -1,18 +1,64 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import 'dart:async';
 
 import '../../services/app_auth.dart';
+import '../../services/audit_log_service.dart';
 import '../../services/attachment_service.dart';
+import '../../services/realtime_sync_service.dart';
+import '../../utils/network_failures.dart';
 
 import '../orders/order_model.dart';
 import '../orders/order_queue_service.dart';
 import '../orders/production_ids.dart' as production_ids;
 import '../orders/stage_queue_builder.dart' as stage_queue;
+import 'local_write_guard.dart';
 import 'task_completion_rules.dart';
 import 'quantity_status_service.dart';
+import 'stage_event_ops.dart';
+import 'stage_event_outbox.dart';
+import 'stage_quantity_records.dart';
 import 'stage_sequence_utils.dart';
 import 'task_model.dart';
+
+/// Человеческое объяснение неудавшейся записи этапа.
+///
+/// Обрыв связи и отказ сервера цех должен различать: в первом случае действие
+/// надо повторить, во втором — звать техлида.
+String describeStageWriteFailure(Object error) {
+  if (isTransientNetworkFailure(error)) {
+    return 'Нет связи с сервером — действие не сохранено. '
+        'Повторите, когда связь появится.';
+  }
+  if (error is PostgrestException) {
+    final message = error.message.trim();
+    if (message.isNotEmpty) return message;
+  }
+  return 'Не удалось сохранить действие: $error';
+}
+
+/// Очередь повторов на диске планшета.
+///
+/// Одна строка на всю очередь: она короткая (несколько намерений), а атомарная
+/// запись целиком избавляет от полусохранённого состояния — ровно того, из-за
+/// чего эта очередь и появилась.
+class _PrefsStageOutboxStore implements StageOutboxStore {
+  static const String _key = 'stage_event_outbox_v1';
+
+  @override
+  Future<String?> read() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_key);
+  }
+
+  @override
+  Future<void> write(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, value);
+  }
+}
 
 const String _canonicalFlexoWorkplaceId = production_ids.wpFlexPrintingUuid;
 const String _canonicalBobbinWorkplaceId = production_ids.wpBobbinUuid;
@@ -75,7 +121,12 @@ const List<_KnownWorkplaceAliasSpec> _knownWorkplaceAliases = [
   ),
   _KnownWorkplaceAliasSpec(
     canonicalId: stage_queue.kAutoBigStageId,
-    aliases: {'автомат большой', 'большой автомат', 'auto big', 'automatic big'},
+    aliases: {
+      'автомат большой',
+      'большой автомат',
+      'auto big',
+      'automatic big'
+    },
     containsAny: {'автомат большой', 'большой автомат', 'auto big'},
   ),
   _KnownWorkplaceAliasSpec(
@@ -192,30 +243,89 @@ class _StageSequenceData {
         groupByStageId = const {};
 }
 
+/// Итог правки количества: id-шники записи и формулировка «было → стало».
+class QuantityEditResult {
+  final String taskId;
+  final String commentId;
+  final String orderId;
+  final String stageId;
+
+  /// «Количество исправлено: 12000 шт → 13000 шт. Причина: …»
+  final String summary;
+
+  const QuantityEditResult({
+    required this.taskId,
+    required this.commentId,
+    required this.orderId,
+    required this.stageId,
+    required this.summary,
+  });
+}
+
 class TaskProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
-  late final AttachmentService _attachmentService = AttachmentService(supabase: _supabase);
+  late final AttachmentService _attachmentService =
+      AttachmentService(supabase: _supabase);
 
   final List<TaskModel> _tasks = [];
+  // Полный перечит задач затирает список целиком. Если он стартовал до
+  // локальной записи, а завершился после неё, действие цеха молча
+  // откатывалось на экране — и сотрудник жал кнопку второй раз (см.
+  // [LocalWriteGuard]). Все точечные изменения списка идут через [_setTask].
+  final LocalWriteGuard<TaskModel> _localWrites =
+      LocalWriteGuard<TaskModel>(idOf: (task) => task.id);
   final Map<String, String> _workplaceAliasToId = <String, String>{};
+  // Имя и код рабочего места по id — из того же чтения workplaces, что и
+  // алиасы. Последовательности этапов берут имена отсюда, а не отдельным
+  // запросом на каждый заказ.
+  final Map<String, Map<String, dynamic>> _workplaceMetaById = {};
   final Map<String, List<String>> _orderStageSequences = {};
   final Map<String, Map<String, String>> _orderStageNames = {};
   final Map<String, Map<String, String>> _orderStageGroupMaps = {};
   final Map<String, List<TaskCommentAttachment>> _attachmentsByComment = {};
   final Set<String> _loadingAttachmentKeys = <String>{};
+  int _attachmentCacheGeneration = 0;
   final Set<String> _loadedStageSequenceOrderIds = <String>{};
-  RealtimeChannel? _tasksChannel;
-  final List<RealtimeChannel> _stageSyncChannels = <RealtimeChannel>[];
   Future<void>? _activeRefresh;
   bool _refreshQueued = false;
+  bool _disposed = false;
+  // Страховочный поллинг на случай, когда realtime-сокет отвалился (цеховой
+  // Wi-Fi). Раз в интервал проверяем ТОЛЬКО max(updated_at) (~50 байт) и
+  // делаем полный refresh лишь если в БД что-то реально изменилось — почти без
+  // нагрузки на сеть. См. [_startFallbackPoll].
+  Timer? _fallbackPollTimer;
+  DateTime? _lastLoadedMaxUpdatedAt;
+  static const Duration _fallbackPollInterval = Duration(seconds: 8);
 
   TaskProvider() {
-    _listenToTasks();
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.tasks,
+      handler: refresh,
+    );
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.taskAttachments,
+      handler: () async => invalidateAttachmentCache(),
+    );
+    refresh();
+    _startFallbackPoll();
   }
 
   List<TaskModel> get tasks => List.unmodifiable(_tasks);
+
+  /// Единственная точка точечной правки списка задач.
+  ///
+  /// Кроме записи в список запоминает версию в [_localWrites]: перечит,
+  /// который читал базу до этого момента, не должен вернуть строку назад.
+  void _setTask(int index, TaskModel task) {
+    _tasks[index] = task;
+    _localWrites.record(task);
+  }
+
   List<TaskCommentAttachment> attachmentsForComment(String commentId) =>
-      List.unmodifiable(_attachmentsByComment[commentId] ?? const <TaskCommentAttachment>[]);
+      List.unmodifiable(
+          _attachmentsByComment[commentId] ?? const <TaskCommentAttachment>[]);
   List<String>? stageSequenceForOrder(String orderId) {
     final seq = _orderStageSequences[orderId];
     return seq == null ? null : List.unmodifiable(normalizeStageSequence(seq));
@@ -321,11 +431,9 @@ class TaskProvider with ChangeNotifier {
     return _workplaceAliasToId[normalized.toLowerCase()] ?? normalized;
   }
 
-  bool _isFlexoAlias(String text) =>
-      _knownWorkplaceAliases[0].matches(text);
+  bool _isFlexoAlias(String text) => _knownWorkplaceAliases[0].matches(text);
 
-  bool _isBobbinAlias(String text) =>
-      _knownWorkplaceAliases[1].matches(text);
+  bool _isBobbinAlias(String text) => _knownWorkplaceAliases[1].matches(text);
 
   String? _detectWorkplaceIdByAlias(
       List<Map<String, dynamic>> rows, bool Function(String text) matcher) {
@@ -433,6 +541,28 @@ class TaskProvider with ChangeNotifier {
     _workplaceAliasToId
       ..clear()
       ..addAll(aliases);
+
+    if (rows.isNotEmpty) {
+      _workplaceMetaById
+        ..clear()
+        ..addAll(_workplaceMetaFromRows(rows));
+    }
+  }
+
+  static Map<String, Map<String, dynamic>> _workplaceMetaFromRows(
+      Iterable<Map<String, dynamic>> rows) {
+    final result = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      final name = row['name']?.toString().trim() ?? '';
+      final code = row['code']?.toString().trim() ?? '';
+      result[id] = {
+        if (name.isNotEmpty) 'stage_name': name,
+        if (code.isNotEmpty) 'stage_code': code,
+      };
+    }
+    return result;
   }
 
   String? stageNameForOrder(String orderId, String stageId) {
@@ -448,6 +578,54 @@ class TaskProvider with ChangeNotifier {
     }
 
     return null;
+  }
+
+  /// Макс. `updated_at` среди строк задач (для дешёвого фолбэк-поллинга).
+  static DateTime? _maxUpdatedAt(List<Map<String, dynamic>> rows) {
+    DateTime? maxTs;
+    for (final r in rows) {
+      final raw = r['updated_at'];
+      if (raw == null) continue;
+      final ts = DateTime.tryParse(raw.toString());
+      if (ts == null) continue;
+      if (maxTs == null || ts.isAfter(maxTs)) maxTs = ts;
+    }
+    return maxTs;
+  }
+
+  /// Страховка на случай, когда realtime не доставил событие (обрыв сокета):
+  /// периодически проверяем лёгким запросом только max(updated_at) и делаем
+  /// полный refresh, лишь если что-то изменилось с последней загрузки. Realtime
+  /// остаётся основным путём — это только подстраховка, поэтому редкие
+  /// пограничные случаи (напр. DELETE, не меняющий max) не критичны.
+  void _startFallbackPoll() {
+    _fallbackPollTimer?.cancel();
+    _fallbackPollTimer =
+        Timer.periodic(_fallbackPollInterval, (_) => _fallbackPollTick());
+  }
+
+  Future<void> _fallbackPollTick() async {
+    if (_disposed) return;
+    // Уже идёт загрузка — незачем ни проверять, ни дёргать ещё раз.
+    if (_activeRefresh != null) return;
+    try {
+      final rows = await _supabase
+          .from('tasks')
+          .select('updated_at')
+          .order('updated_at', ascending: false)
+          .limit(1);
+      if (_disposed) return;
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      if (list.isEmpty) return;
+      final ts = DateTime.tryParse((list.first['updated_at'] ?? '').toString());
+      if (ts == null) return;
+      final last = _lastLoadedMaxUpdatedAt;
+      if (last == null || ts.isAfter(last)) {
+        unawaited(refresh());
+      }
+    } catch (_) {
+      // Тихо: это лишь страховка, сетевые ошибки не должны шуметь в логах.
+    }
   }
 
   Future<void> refresh() {
@@ -471,6 +649,36 @@ class TaskProvider with ChangeNotifier {
       _refreshQueued = false;
       await _refreshOnceWithRetry();
     } while (_refreshQueued);
+    // Обновление списка означает, что связь есть — самый верный момент дослать
+    // застрявшие действия, не дожидаясь таймера. Здесь же очередь читается с
+    // диска: если планшет выключили с непустой очередью, она уйдёт при первом
+    // обновлении, без участия человека.
+    unawaited(flushStageOutbox());
+  }
+
+  /// Читает ВСЕ задания страницами.
+  ///
+  /// PostgREST отдаёт не больше 1000 строк за запрос и обрезает хвост молча,
+  /// без ошибки. Таблица уже подходила к этому потолку, а срез при сортировке
+  /// по возрастанию created_at отрезал бы самые СВЕЖИЕ задания: заказ выглядел
+  /// бы «без задач» — висел бы на всех рабочих местах своих плановых этапов и
+  /// никогда не считался завершённым. Вторым ключом сортировки идёт id, иначе
+  /// строки с одинаковым created_at могут задвоиться или пропасть на границе
+  /// страниц.
+  Future<List<Map<String, dynamic>>> _fetchAllTaskRows() async {
+    const pageSize = 1000;
+    final rows = <Map<String, dynamic>>[];
+    for (var offset = 0;; offset += pageSize) {
+      final page = await _supabase
+          .from('tasks')
+          .select('*')
+          .order('created_at')
+          .order('id')
+          .range(offset, offset + pageSize - 1);
+      rows.addAll(List<Map<String, dynamic>>.from(page));
+      if (page.length < pageSize) break;
+    }
+    return rows;
   }
 
   Future<void> _refreshOnceWithRetry() async {
@@ -479,12 +687,20 @@ class TaskProvider with ChangeNotifier {
       await _retryTransientSupabase('refresh tasks', () async {
         await _ensureAuthed();
         await _loadWorkplaceAliases();
-        final rows =
-            await _supabase.from('tasks').select('*').order('created_at');
+        // Метка снимается ДО чтения: всё, что запишется локально, пока идут
+        // эти запросы, снимок заведомо не увидит и затирать не должен.
+        final fetchToken = _localWrites.beginFetch();
+        final rowList = await _fetchAllTaskRows();
+        if (_disposed) return;
         _tasks
           ..clear()
-          ..addAll(
-              List<Map<String, dynamic>>.from(rows as List).map(_rowToTask));
+          ..addAll(_localWrites.reconcile(
+            rowList.map(_rowToTask).toList(growable: false),
+            fetchToken,
+          ));
+        // Опорная точка для дешёвого фолбэк-поллинга: макс. updated_at из уже
+        // загруженных строк. Дальше поллинг сравнивает с ним лёгким запросом.
+        _lastLoadedMaxUpdatedAt = _maxUpdatedAt(rowList);
         orderIds = _tasks.map((t) => t.orderId).toSet();
         _loadedStageSequenceOrderIds.clear();
       });
@@ -492,9 +708,19 @@ class TaskProvider with ChangeNotifier {
       debugPrint('❌ refresh tasks error: $e\n$st');
       return;
     }
-    // Загружаем последовательности этапов вне таймаута —
-    // они медленные при большом числе заказов.
+    // Задачи уже свежие — отдаём их экрану немедленно.
+    //
+    // Раньше notifyListeners() стоял ПОСЛЕ загрузки последовательностей
+    // этапов. Та загрузка делает отдельный запрос на каждый заказ, и на сотне
+    // заказов растягивалась на десятки секунд. Всё это время интерфейс держал
+    // прежнее состояние: сотрудник жал «Проблема» или «Завершить», статус в
+    // базе уже менялся, а кнопки не двигались — и приходилось перезаходить.
+    if (_disposed) return;
+    notifyListeners();
+
+    // Последовательности этапов — вне таймаута и уже после первой отрисовки.
     await _preloadStageSequences(orderIds);
+    if (_disposed) return;
     notifyListeners();
   }
 
@@ -527,105 +753,8 @@ class TaskProvider with ChangeNotifier {
     Error.throwWithStackTrace(lastError!, lastStackTrace!);
   }
 
-  bool _isTransientSupabaseError(Object error) {
-    final text = error.toString().toLowerCase();
-    return text.contains('handshakeexception') ||
-        text.contains('connection terminated during handshake') ||
-        text.contains('socketexception') ||
-        text.contains('connection closed') ||
-        text.contains('connection reset') ||
-        text.contains('connection refused') ||
-        text.contains('failed host lookup') ||
-        text.contains('timed out') ||
-        text.contains('timeout');
-  }
-
-  void _listenToTasks() {
-    // initial load
-    refresh();
-
-    // remove old channel
-    if (_tasksChannel != null) {
-      _supabase.removeChannel(_tasksChannel!);
-      _tasksChannel = null;
-    }
-    _disposeStageSyncChannels();
-
-    _tasksChannel = _supabase
-        .channel('public:tasks')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'tasks',
-          callback: (payload) async {
-            await refresh();
-          },
-        )
-        .subscribe();
-
-    // Изменения рабочих мест/маршрутов этапов часто не трогают напрямую
-    // таблицу tasks, поэтому без этих подписок очередь может устаревать.
-    _registerStageSyncChannel(
-      channelName: 'public:orders:task-sync',
-      schema: 'public',
-      table: 'orders',
-    );
-    _registerStageSyncChannel(
-      channelName: 'public:production_plans:task-sync',
-      schema: 'public',
-      table: 'production_plans',
-    );
-    _registerStageSyncChannel(
-      channelName: 'public:prod_plan_stages:task-sync',
-      schema: 'public',
-      table: 'prod_plan_stages',
-    );
-    _registerStageSyncChannel(
-      channelName: 'public:workplace_stages:task-sync',
-      schema: 'public',
-      table: 'workplace_stages',
-    );
-    _registerStageSyncChannel(
-      channelName: 'public:order_stages:task-sync',
-      schema: 'public',
-      table: 'order_stages',
-    );
-    _registerStageSyncChannel(
-      channelName: 'production:plan_stages:task-sync',
-      schema: 'production',
-      table: 'plan_stages',
-    );
-  }
-
-  void _registerStageSyncChannel({
-    required String channelName,
-    required String schema,
-    required String table,
-  }) {
-    try {
-      final channel = _supabase
-          .channel(channelName)
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: schema,
-            table: table,
-            callback: (_) async {
-              await refresh();
-            },
-          )
-          .subscribe();
-      _stageSyncChannels.add(channel);
-    } catch (_) {
-      // Таблица/схема может отсутствовать в конкретной инсталляции.
-    }
-  }
-
-  void _disposeStageSyncChannels() {
-    for (final channel in _stageSyncChannels) {
-      _supabase.removeChannel(channel);
-    }
-    _stageSyncChannels.clear();
-  }
+  bool _isTransientSupabaseError(Object error) =>
+      isTransientNetworkFailure(error);
 
   // ===== updates =====
 
@@ -642,10 +771,25 @@ class TaskProvider with ChangeNotifier {
   }
 
   Future<void> _preloadStageSequences(Iterable<String> orderIds) async {
-    for (final orderId in orderIds) {
-      if (orderId.isEmpty) {
-        continue;
-      }
+    final ids = orderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (ids.isEmpty) return;
+
+    // Запрос уходит на каждый заказ отдельно. Последовательный цикл на сотне
+    // заказов занимал десятки секунд — грузим пачками, сохраняя ограничение
+    // по числу одновременных запросов, чтобы не задавить соединение.
+    const int concurrency = 8;
+    for (var start = 0; start < ids.length; start += concurrency) {
+      final chunk = ids.skip(start).take(concurrency);
+      await Future.wait(chunk.map(_loadStageSequenceForOrder));
+    }
+  }
+
+  Future<void> _loadStageSequenceForOrder(String orderId) async {
+    try {
       final data = await _fetchStageSequence(orderId);
       _loadedStageSequenceOrderIds.add(orderId);
       if (data.ids.isNotEmpty) {
@@ -674,6 +818,9 @@ class TaskProvider with ChangeNotifier {
       } else {
         _orderStageNames.remove(orderId);
       }
+    } catch (e) {
+      // Один сбойный заказ не должен ронять загрузку всей пачки.
+      debugPrint('⚠️ stage sequence load failed for $orderId: $e');
     }
   }
 
@@ -816,42 +963,32 @@ class TaskProvider with ChangeNotifier {
   Future<Map<String, Map<String, dynamic>>> _workplaceMeta(
       List<String> stageIds) async {
     if (stageIds.isEmpty) return const {};
-    try {
-      final rows = await _supabase
-          .from('workplaces')
-          .select('id, name, title, short_name, code')
-          .inFilter('id', stageIds);
-      final result = <String, Map<String, dynamic>>{};
-      if (rows is List) {
-        for (final row in rows) {
-          if (row is! Map) continue;
-          final map = Map<String, dynamic>.from(row as Map);
-          final id = map['id']?.toString();
-          if (id == null || id.isEmpty) continue;
-          final nameCandidates = [
-            map['name'],
-            map['title'],
-            map['short_name'],
-          ];
-          String? resolvedName;
-          for (final candidate in nameCandidates) {
-            if (candidate == null) continue;
-            final text = candidate.toString().trim();
-            if (text.isNotEmpty) {
-              resolvedName = text;
-              break;
-            }
-          }
-          result[id] = {
-            if (resolvedName != null) 'stage_name': resolvedName,
-            if (map['code'] != null) 'stage_code': map['code'].toString(),
-          };
+    // Обычно все рабочие места уже прочитаны вместе с алиасами. Раньше здесь
+    // шёл отдельный запрос на каждый заказ при каждом обновлении задач — и с
+    // несуществующими колонками title/short_name: ~230 тыс. ответов 400 в
+    // сутки, а имена этапов не подгружались вовсе.
+    final missing = stageIds
+        .where((id) => !_workplaceMetaById.containsKey(id))
+        .toList(growable: false);
+    if (missing.isNotEmpty) {
+      try {
+        final rows = await _supabase
+            .from('workplaces')
+            .select('id, name, code')
+            .inFilter('id', missing);
+        _workplaceMetaById.addAll(_workplaceMetaFromRows(
+            rows.map((row) => Map<String, dynamic>.from(row))));
+        // Id, которого в workplaces нет, не переспрашиваем на каждом заказе.
+        for (final id in missing) {
+          _workplaceMetaById.putIfAbsent(id, () => const {});
         }
-      }
-      return result;
-    } catch (_) {
-      return const {};
+      } catch (_) {}
     }
+    return {
+      for (final id in stageIds)
+        if (_workplaceMetaById[id]?.isNotEmpty ?? false)
+          id: _workplaceMetaById[id]!,
+    };
   }
 
   Future<_StageSequenceData> _fetchStageSequence(String orderId) async {
@@ -993,7 +1130,13 @@ class TaskProvider with ChangeNotifier {
         final id = result[i];
         final extras = meta[id];
         if (extras != null && extras.isNotEmpty) {
-          filteredRows[i].addAll(extras);
+          // Только недостающее: имя из сохранённой очереди заказа главнее
+          // текущего имени рабочего места.
+          final row = filteredRows[i];
+          extras.forEach((key, value) {
+            final current = row[key]?.toString().trim() ?? '';
+            if (current.isEmpty) row[key] = value;
+          });
         }
       }
       final names = <String, Map<String, dynamic>>{};
@@ -1032,60 +1175,36 @@ class TaskProvider with ChangeNotifier {
       final filters = <String>[
         'order_id.eq.$orderId',
         'order_code.eq.$orderId',
-        if (orderCode != null &&
-            orderCode!.isNotEmpty &&
-            orderCode != orderId)
+        if (orderCode != null && orderCode!.isNotEmpty && orderCode != orderId)
           'order_code.eq.$orderCode',
       ];
+      // `seq` — физический порядок этапов в очереди заказа, `step_no` — номер
+      // шага маршрута. Раньше запрашивался только `step_no`, и сортировка шла
+      // по нему одному, без вторичного ключа.
+      //
+      // У заказа «Хороший год» после пересборки маршрута «Резка картона» и
+      // «Сборка дно+картон» получили ОДИН И ТОТ ЖЕ step_no = 8. Порядок среди
+      // равных PostgREST не определяет, поэтому неначатая «Резка картона»
+      // вставала предшественником уже работавшей «Сборки дно+картон» — и
+      // запирала её. На разных устройствах порядок мог выйти разным, отчего
+      // блокировка выглядела случайной.
       final rows = await _supabase
           .from('v_order_plan_stages')
           .select(
-            'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
+            'stage_id, stage_group_key, stage_name, seq, step_no, order_id, '
+            'order_code',
           )
           .or(filters.join(','))
-          .order('step_no', ascending: true);
+          .order('seq', ascending: true)
+          .order('step_no', ascending: true)
+          .order('stage_id', ascending: true);
       final seq = await fromRows(rows);
       if (seq.ids.isNotEmpty) return seq;
     } catch (_) {}
 
-    try {
-      final filters = <String>[
-        'order_id.eq.$orderId',
-        'order_code.eq.$orderId',
-        if (orderCode != null &&
-            orderCode!.isNotEmpty &&
-            orderCode != orderId)
-          'order_code.eq.$orderCode',
-      ];
-      final rows = await _supabase
-          .from('production.v_plan_with_stages')
-          .select(
-            'stage_id, stage_group_key, stage_name, step_no, order_id, order_code',
-          )
-          .or(filters.join(','))
-          .order('step_no', ascending: true);
-      final seq = await fromRows(rows);
-      if (seq.ids.isNotEmpty) return seq;
-    } catch (_) {}
-
-    // Last fallback for old deployments.
-    try {
-      final plan = await _supabase
-          .from('workplace_stages')
-          .select('stage_id, order')
-          .eq('order_id', orderId);
-      final seq = await fromRows(plan);
-      if (seq.ids.isNotEmpty) return seq;
-    } catch (_) {}
-    try {
-      final rows = await _supabase
-          .from('order_stages')
-          .select('stage_id, order')
-          .eq('order_id', orderId);
-      final seq = await fromRows(rows);
-      if (seq.ids.isNotEmpty) return seq;
-    } catch (_) {}
-
+    // Дальше источников нет. Прежние запасные чтения production.v_plan_with_stages
+    // (схема production через REST не видна), workplace_stages и order_stages
+    // (таблиц нет) всегда отвечали 404 — на каждый заказ без маршрута.
     return const _StageSequenceData.empty();
   }
 
@@ -1131,8 +1250,8 @@ class TaskProvider with ChangeNotifier {
     if (index == -1) return false;
 
     final current = _tasks[index];
-    final shouldClearStartedAt =
-        clearStartedAt || (status != TaskStatus.inProgress && startedAt == null);
+    final shouldClearStartedAt = clearStartedAt ||
+        (status != TaskStatus.inProgress && startedAt == null);
     final effectiveStartedAt =
         shouldClearStartedAt ? null : (startedAt ?? current.startedAt);
     final updated = current.copyWith(
@@ -1149,8 +1268,8 @@ class TaskProvider with ChangeNotifier {
       'spent_seconds': updated.spentSeconds,
       'started_at': effectiveStartedAt,
     };
-    final bool becameInProgress =
-        current.status != TaskStatus.inProgress && status == TaskStatus.inProgress;
+    final bool becameInProgress = current.status != TaskStatus.inProgress &&
+        status == TaskStatus.inProgress;
     final int? capturedAt =
         becameInProgress ? DateTime.now().millisecondsSinceEpoch : null;
     if (capturedAt != null) {
@@ -1186,7 +1305,7 @@ class TaskProvider with ChangeNotifier {
       return false;
     }
 
-    _tasks[index] = _rowToTask(persistedRow);
+    _setTask(index, _rowToTask(persistedRow));
     notifyListeners();
 
     if (capturedAt != null) {
@@ -1229,9 +1348,12 @@ class TaskProvider with ChangeNotifier {
             if (task.orderId == current.orderId &&
                 task.stageGroupKey == groupKey &&
                 task.capturedByWorkplaceId == null) {
-              _tasks[i] = task.copyWith(
-                capturedByWorkplaceId: current.stageId,
-                capturedAt: capturedAt,
+              _setTask(
+                i,
+                task.copyWith(
+                  capturedByWorkplaceId: current.stageId,
+                  capturedAt: capturedAt,
+                ),
               );
             }
           }
@@ -1265,20 +1387,20 @@ class TaskProvider with ChangeNotifier {
     final orderId = updated.orderId;
     if (orderId.isNotEmpty) {
       try {
-        final rows = await _supabase
-            .from('tasks')
-            .select('*')
-            .eq('order_id', orderId);
+        final rows =
+            await _supabase.from('tasks').select('*').eq('order_id', orderId);
         final list = List<Map<String, dynamic>>.from(rows as List)
             .map(_rowToTask)
             .toList(growable: false);
         if (isOrderFinallyCompleted(list)) {
-          await _supabase
-              .from('orders')
-              .update({
-                  'status': OrderStatus.completed.name,
-                  'completed_at': DateTime.now().toUtc().toIso8601String(),
-                }).eq('id', orderId);
+          await _supabase.from('orders').update({
+            'status': OrderStatus.completed.name,
+            'completed_at': DateTime.now().toUtc().toIso8601String(),
+          }).eq('id', orderId);
+          // Список заказов живёт в другом провайдере: без этого он ждал
+          // эха realtime и показывал заказ незавершённым ещё минуту.
+          RealtimeSyncService.instance
+              .invalidateLocal(RealtimeResource.orders);
         }
       } catch (_) {}
     }
@@ -1335,13 +1457,15 @@ class TaskProvider with ChangeNotifier {
       for (var i = 0; i < _tasks.length; i++) {
         final local = _tasks[i];
         if (local.orderId == task.orderId && local.stageGroupKey == groupKey) {
-          _tasks[i] = local.copyWith(
-            status: status,
-            spentSeconds: spentSeconds ?? local.spentSeconds,
-            startedAt: shouldClearStartedAt
-                ? null
-                : (startedAt ?? local.startedAt),
-            clearStartedAt: shouldClearStartedAt,
+          _setTask(
+            i,
+            local.copyWith(
+              status: status,
+              spentSeconds: spentSeconds ?? local.spentSeconds,
+              startedAt:
+                  shouldClearStartedAt ? null : (startedAt ?? local.startedAt),
+              clearStartedAt: shouldClearStartedAt,
+            ),
           );
         }
       }
@@ -1421,6 +1545,150 @@ class TaskProvider with ChangeNotifier {
         (error.code == '42703' || error.code == 'PGRST204');
   }
 
+  /// Возвращает завершённый этап в работу.
+  ///
+  /// Ничего не удаляет: время, количество и комментарии остаются на задачах —
+  /// после возобновления сотрудник дополняет их, а не начинает с нуля. Снимаем
+  /// только признаки завершения (статус, started_at/completed_at) — у задач
+  /// группы, в плане производства и, если заказ успел закрыться, у заказа.
+  ///
+  /// Складские последствия закрытия заказа (финализация резервов бумаги) не
+  /// откатываются: их отменяют отдельной складской операцией.
+  ///
+  /// Возвращает null при успехе или текст ошибки для снекбара.
+  Future<String?> reopenStageGroup({
+    required TaskModel task,
+    required String actorUserId,
+  }) async {
+    final orderId = task.orderId.trim();
+    final groupKey = stageGroupKeyForTask(task);
+    if (orderId.isEmpty || groupKey.isEmpty) {
+      return 'Этап не привязан к заказу.';
+    }
+
+    final groupTasks = _tasks
+        .where((t) =>
+            t.orderId == orderId && stageGroupKeyForTask(t) == groupKey)
+        .toList(growable: false);
+    if (groupTasks.isEmpty) return 'Задачи этапа не найдены.';
+    if (!isStageGroupFinallyCompleted(groupTasks)) {
+      return 'Этап не завершён — возобновлять нечего.';
+    }
+
+    final completedIds = groupTasks
+        .where((t) => t.status == TaskStatus.completed)
+        .map((t) => t.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (completedIds.isEmpty) return 'Завершённых задач этапа не найдено.';
+
+    try {
+      // Отметка в ленте: история этапа дополняется, а не переписывается.
+      for (final id in completedIds) {
+        await addComment(
+          taskId: id,
+          type: 'stage_reopened',
+          text: 'Этап возобновлён после завершения',
+          userId: actorUserId,
+        );
+      }
+
+      await _clearTaskCompletion(completedIds);
+      await _clearPlanStageCompletion(orderId: orderId, groupKey: groupKey);
+      await _reopenOrderIfCompleted(orderId);
+    } catch (e, st) {
+      debugPrint('❌ reopenStageGroup: $e\n$st');
+      return 'Не удалось возобновить этап: $e';
+    }
+
+    await refresh();
+    RealtimeSyncService.instance.invalidateLocal(RealtimeResource.orders);
+    return null;
+  }
+
+  Future<void> _clearTaskCompletion(List<String> taskIds) async {
+    // Обновляем строго по id: у части задач stage_group_key пуст, и фильтр
+    // по группе прошёл бы мимо них.
+    Future<void> run(Map<String, dynamic> payload) async {
+      await _supabase.from('tasks').update(payload).inFilter('id', taskIds);
+    }
+
+    final updates = <String, dynamic>{
+      'status': TaskStatus.waiting.name,
+      'started_at': null,
+      'completed_at': null,
+    };
+    try {
+      await run(updates);
+    } catch (error) {
+      if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+      await run(Map<String, dynamic>.from(updates)..remove('completed_at'));
+    }
+  }
+
+  Future<void> _clearPlanStageCompletion({
+    required String orderId,
+    required String groupKey,
+  }) async {
+    try {
+      final plan = await _supabase
+          .from('prod_plans')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle();
+      final planId = plan == null ? null : plan['id']?.toString();
+      if (planId == null || planId.isEmpty) return;
+
+      Future<void> run(Map<String, dynamic> payload) async {
+        await _supabase
+            .from('prod_plan_stages')
+            .update(payload)
+            .eq('plan_id', planId)
+            .eq('stage_group_key', groupKey);
+      }
+
+      final updates = <String, dynamic>{
+        'status': TaskStatus.waiting.name,
+        'finished_at': null,
+        'completed_at': null,
+      };
+      try {
+        await run(updates);
+      } catch (error) {
+        if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+        await run(Map<String, dynamic>.from(updates)..remove('completed_at'));
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ prod_plan_stages reopen sync failed: $e\n$st');
+    }
+  }
+
+  Future<void> _reopenOrderIfCompleted(String orderId) async {
+    try {
+      final row = await _supabase
+          .from('orders')
+          .select('status')
+          .eq('id', orderId)
+          .maybeSingle();
+      final status = (row?['status'] ?? '').toString();
+      if (status != OrderStatus.completed.name) return;
+
+      try {
+        await _supabase.from('orders').update({
+          'status': OrderStatus.in_production.name,
+          'completed_at': null,
+        }).eq('id', orderId);
+      } catch (error) {
+        if (!_isMissingColumnError(error, 'completed_at')) rethrow;
+        await _supabase
+            .from('orders')
+            .update({'status': OrderStatus.in_production.name})
+            .eq('id', orderId);
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ order reopen sync failed: $e\n$st');
+    }
+  }
 
   Future<bool> reportProblem({
     required String taskId,
@@ -1448,7 +1716,8 @@ class TaskProvider with ChangeNotifier {
     if (normalizedSubjects.isEmpty) normalizedSubjects.add(userId);
 
     final uploaded = <TaskCommentAttachment>[];
-    List<Map<String, dynamic>> previousComments = const <Map<String, dynamic>>[];
+    List<Map<String, dynamic>> previousComments =
+        const <Map<String, dynamic>>[];
     var commentsPersisted = false;
     var statusPersisted = false;
     Map<String, dynamic>? previousTaskUpdates;
@@ -1716,10 +1985,11 @@ class TaskProvider with ChangeNotifier {
       'userId': userId,
       'timestamp': timestamp,
     });
-    comments.sort((a, b) =>
-        _parseCommentTimestamp(a['timestamp'])
-            .compareTo(_parseCommentTimestamp(b['timestamp'])));
-    await _supabase.from('tasks').update({'comments': comments}).eq('id', taskId);
+    comments.sort((a, b) => _parseCommentTimestamp(a['timestamp'])
+        .compareTo(_parseCommentTimestamp(b['timestamp'])));
+    await _supabase
+        .from('tasks')
+        .update({'comments': comments}).eq('id', taskId);
 
     final idx = _tasks.indexWhere((t) => t.id == taskId);
     if (idx != -1) {
@@ -1733,16 +2003,14 @@ class TaskProvider with ChangeNotifier {
           timestamp: timestamp,
         ))
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      _tasks[idx] = current.copyWith(comments: updatedComments);
+      _setTask(idx, current.copyWith(comments: updatedComments));
       notifyListeners();
     }
   }
 
   Future<void> loadAttachmentsForComments(Iterable<String> commentIds) async {
-    final ids = commentIds
-        .map((id) => id.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet();
+    final ids =
+        commentIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
     final missing = ids
         .where((id) => !_attachmentsByComment.containsKey(id))
         .toList(growable: false);
@@ -1750,10 +2018,12 @@ class TaskProvider with ChangeNotifier {
     final key = 'comments:${missing.join(',')}';
     if (_loadingAttachmentKeys.contains(key)) return;
     _loadingAttachmentKeys.add(key);
+    final generation = _attachmentCacheGeneration;
     try {
       final loaded = await _attachmentService.loadTaskCommentAttachments(
         commentIds: missing,
       );
+      if (generation != _attachmentCacheGeneration) return;
       for (final id in missing) {
         _attachmentsByComment[id] = loaded
             .where((attachment) => attachment.commentId == id)
@@ -1767,15 +2037,27 @@ class TaskProvider with ChangeNotifier {
     }
   }
 
-  Future<void> loadAttachmentsForOrder(String orderId, {String? stageId}) async {
+  /// Realtime invalidates only the attachment cache. The existing workspace
+  /// loader will request the visible comments again on the next rebuild.
+  void invalidateAttachmentCache() {
+    _attachmentCacheGeneration += 1;
+    _attachmentsByComment.clear();
+    _loadingAttachmentKeys.clear();
+    notifyListeners();
+  }
+
+  Future<void> loadAttachmentsForOrder(String orderId,
+      {String? stageId}) async {
     final key = 'order:$orderId:${stageId ?? ''}';
     if (_loadingAttachmentKeys.contains(key)) return;
     _loadingAttachmentKeys.add(key);
+    final generation = _attachmentCacheGeneration;
     try {
       final loaded = await _attachmentService.loadTaskCommentAttachments(
         orderId: orderId,
         stageId: stageId,
       );
+      if (generation != _attachmentCacheGeneration) return;
       for (final attachment in loaded) {
         final list = _attachmentsByComment.putIfAbsent(
           attachment.commentId,
@@ -1799,93 +2081,83 @@ class TaskProvider with ChangeNotifier {
   Future<void> removeStorageObject(String storagePath) =>
       _attachmentService.removeStorageObject(storagePath);
 
-  Future<void> addComment(
+  /// Возвращает false, если комментарий не сохранён.
+  ///
+  /// Вызывающий обязан на это реагировать: раньше сбой уходил в debugPrint, и
+  /// пересмена, у которой не долетели `shift_pause_state` и `shift_pause`,
+  /// выглядела для оператора успешной.
+  /// Дописывает комментарий к заданию.
+  ///
+  /// Через этот метод идут не только реплики, но и вся история этапа: отметки
+  /// количества, режимы работы, проблемы, пересмены. Раньше он читал весь
+  /// массив `comments`, дописывал в него запись и возвращал массив назад
+  /// целиком. Отсюда два хронических сбоя:
+  ///
+  ///   * второй планшет, писавший в те же секунды, затирал чужую запись —
+  ///     она пропадала бесследно;
+  ///   * обрыв связи посреди записи терял её молча.
+  ///
+  /// Теперь уходит намерение «добавь комментарий»: сервер дописывает его к
+  /// свежим данным, а не долетевшее ждёт связи в очереди повторов.
+  Future<bool> addComment(
       {required String taskId,
       required String type,
       required String text,
       required String userId}) async {
+    final applied = await applyStageEvents(
+      taskId: taskId,
+      label: 'Запись в задание',
+      ops: [
+        StageEventOps.comment(type: type, text: text, userId: userId),
+      ],
+    );
+    if (!applied) return false;
+
+    if (type == 'start') {
+      await _markStageCapturedBy(taskId: taskId, userId: userId);
+    }
+    return true;
+  }
+
+  /// Фиксирует, кто фактически захватил этап.
+  ///
+  /// Отдельный столбец, а не комментарий, поэтому идёт своим запросом. Условие
+  /// `is null` оставлено намеренно: первый захвативший остаётся навсегда, и
+  /// повторный вызов (в том числе повтор из очереди) ничего не переписывает.
+  Future<void> _markStageCapturedBy({
+    required String taskId,
+    required String userId,
+  }) async {
+    final task = _tasks.cast<TaskModel?>().firstWhere(
+          (t) => t?.id == taskId,
+          orElse: () => null,
+        );
+    if (task == null) return;
+    if (task.capturedByUserId != null && task.capturedByUserId!.isNotEmpty) {
+      return;
+    }
+    final groupKey = task.stageGroupKey.trim();
     try {
-      // Read current comments
-      final row = await _supabase
-          .from('tasks')
-          .select('comments')
-          .eq('id', taskId)
-          .single();
-      List<dynamic> comments = [];
-      final c = row['comments'];
-      if (c is List) comments = List.from(c);
-      if (c is Map) {
-        // convert map to list
-        c.forEach((_, v) {
-          comments.add(v);
-        });
-      }
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final newComment = {
-        'id': '$timestamp',
-        'type': type,
-        'text': text,
-        'userId': userId,
-        'timestamp': timestamp,
-      };
-      comments.add(newComment);
-      // sort by ts
-      comments.sort(
-          (a, b) => (a['timestamp'] as int).compareTo(b['timestamp'] as int));
       await _supabase
           .from('tasks')
-          .update({'comments': comments}).eq('id', taskId);
-
-      if (type == 'start') {
-        // Фиксируем фактического инициатора захвата этапа.
-        final task = _tasks.cast<TaskModel?>().firstWhere(
-              (t) => t?.id == taskId,
-              orElse: () => null,
-            );
-        if (task != null &&
-            (task.capturedByUserId == null || task.capturedByUserId!.isEmpty)) {
-          final groupKey = task.stageGroupKey.trim();
-          try {
-            await _supabase
-                .from('tasks')
-                .update({'captured_by_user_id': userId})
-                .eq('order_id', task.orderId)
-                .eq('stage_group_key', groupKey)
-                .isFilter('captured_by_user_id', null);
-            for (var i = 0; i < _tasks.length; i++) {
-              final local = _tasks[i];
-              if (local.orderId == task.orderId &&
-                  local.stageGroupKey == groupKey &&
-                  (local.capturedByUserId == null ||
-                      local.capturedByUserId!.isEmpty)) {
-                _tasks[i] = local.copyWith(capturedByUserId: userId);
-              }
-            }
-            notifyListeners();
-          } catch (e, st) {
-            debugPrint('⚠️ capture user update failed: $e\n$st');
-          }
+          .update({'captured_by_user_id': userId})
+          .eq('order_id', task.orderId)
+          .eq('stage_group_key', groupKey)
+          .isFilter('captured_by_user_id', null);
+      for (var i = 0; i < _tasks.length; i++) {
+        final local = _tasks[i];
+        if (local.orderId == task.orderId &&
+            local.stageGroupKey == groupKey &&
+            (local.capturedByUserId == null ||
+                local.capturedByUserId!.isEmpty)) {
+          _setTask(i, local.copyWith(capturedByUserId: userId));
         }
       }
-
-      // update locally
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
-      if (idx != -1) {
-        final current = _tasks[idx];
-        final updatedComments = List<TaskComment>.from(current.comments)
-          ..add(TaskComment(
-            id: newComment['id'] as String,
-            type: type,
-            text: text,
-            userId: userId,
-            timestamp: timestamp,
-          ))
-          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        _tasks[idx] = current.copyWith(comments: updatedComments);
-        notifyListeners();
-      }
+      if (!_disposed) notifyListeners();
     } catch (e, st) {
-      debugPrint('❌ addComment error: $e\n$st');
+      // Не критично: столбец только для отчёта «кто запустил этап», сама
+      // история этапа уже записана.
+      debugPrint('⚠️ capture user update failed: $e — $st');
     }
   }
 
@@ -1927,8 +2199,8 @@ class TaskProvider with ChangeNotifier {
     return result;
   }
 
-  int? _findOpenTimeEventIndex(List<Map<String, dynamic>> comments,
-      String subjectUserId) {
+  int? _findOpenTimeEventIndex(
+      List<Map<String, dynamic>> comments, String subjectUserId) {
     int? openIndex;
     int latestTs = -1;
     for (var i = 0; i < comments.length; i++) {
@@ -1936,8 +2208,11 @@ class TaskProvider with ChangeNotifier {
       if ((comment['type'] ?? '') != 'time_event') continue;
       final text = comment['text']?.toString() ?? '';
       final timestamp = _parseCommentTimestamp(comment['timestamp']);
-      final event =
-          TaskTimeEvent.fromPayload(text, comment['id']?.toString() ?? '', timestamp, comment['userId']?.toString() ?? '');
+      final event = TaskTimeEvent.fromPayload(
+          text,
+          comment['id']?.toString() ?? '',
+          timestamp,
+          comment['userId']?.toString() ?? '');
       if (event == null) continue;
       if (event.subjectUserId != subjectUserId) continue;
       if (event.endTime != null) continue;
@@ -1949,7 +2224,20 @@ class TaskProvider with ChangeNotifier {
     return openIndex;
   }
 
-  Future<void> recordTimeEvent({
+  /// Открывает интервал времени сотруднику.
+  ///
+  /// Раньше метод читал `comments`, дописывал событие и возвращал ВЕСЬ массив
+  /// назад. Два планшета, нажавшие кнопки в пределах одного round-trip,
+  /// затирали записи друг друга, а обрыв связи посреди этого терял событие
+  /// молча — ровно так пропадали отметки пересмены.
+  ///
+  /// Теперь уходит намерение «открой интервал»: сервер применяет его к свежим
+  /// данным в одной транзакции, а не долетевшее ждёт связи в очереди повторов.
+  ///
+  /// Поведение сохранено один в один (`open_interval` в `task_apply_ops`):
+  /// если у сотрудника уже открыт интервал того же типа — ничего не меняется;
+  /// интервал другого типа закрывается тем же моментом времени.
+  Future<bool> recordTimeEvent({
     required TaskModel task,
     required TaskTimeType type,
     required String initiatedBy,
@@ -1959,149 +2247,256 @@ class TaskProvider with ChangeNotifier {
     String? executionMode,
     String? helperId,
     String? note,
-  }) async {
-    try {
-      final row = await _supabase
-          .from('tasks')
-          .select('comments')
-          .eq('id', task.id)
-          .single();
-      final comments = _normalizeComments(row['comments']);
-      final now = DateTime.now().toUtc();
-      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
-      if (openIndex != null) {
-        final open = comments[openIndex];
-        final rawText = open['text']?.toString() ?? '';
-        final openEvent = TaskTimeEvent.fromPayload(
-            rawText,
-            open['id']?.toString() ?? '',
-            _parseCommentTimestamp(open['timestamp']),
-            open['userId']?.toString() ?? '');
-        if (openEvent != null) {
-          if (openEvent.type == type && openEvent.endTime == null) {
-            return;
-          }
-          final closed = openEvent.copyWith(endTime: now, note: note);
-          open['text'] = TaskTimeEvent.encodePayload(closed);
-        }
-      }
-
-      final event = TaskTimeEvent(
-        id: '${now.millisecondsSinceEpoch}-${subjectUserId}',
-        type: type,
-        startTime: now,
-        endTime: null,
-        initiatedBy: initiatedBy,
-        subjectUserId: subjectUserId,
-        taskId: task.id,
-        workplaceId: workplaceId,
-        participantsSnapshot: participantsSnapshot,
-        executionMode: executionMode,
-        helperId: helperId,
-        note: note,
-      );
-
-      comments.add({
-        'id': event.id,
-        'type': 'time_event',
-        'text': TaskTimeEvent.encodePayload(event),
-        'userId': subjectUserId,
-        'timestamp': now.millisecondsSinceEpoch,
-      });
-
-      comments.sort((a, b) =>
-          _parseCommentTimestamp(a['timestamp'])
-              .compareTo(_parseCommentTimestamp(b['timestamp'])));
-      await _supabase
-          .from('tasks')
-          .update({'comments': comments}).eq('id', task.id);
-
-      final idx = _tasks.indexWhere((t) => t.id == task.id);
-      if (idx != -1) {
-        final current = _tasks[idx];
-        _tasks[idx] = current.copyWith(comments: _toTaskComments(comments));
-        notifyListeners();
-      }
-    } catch (e, st) {
-      debugPrint('❌ recordTimeEvent error: $e\n$st');
-    }
+  }) {
+    return applyStageEvents(
+      taskId: task.id,
+      label: 'Отметка времени',
+      ops: [
+        StageEventOps.openInterval(
+          subject: subjectUserId,
+          type: taskTimeTypeToString(type),
+          initiatedBy: initiatedBy,
+          workplaceId: workplaceId,
+          participants: participantsSnapshot,
+          executionMode: executionMode,
+          helperId: helperId,
+          note: note,
+        ),
+      ],
+    );
   }
 
-  Future<void> closeOpenTimeEvent({
+  /// Закрывает открытый интервал сотрудника.
+  ///
+  /// Как и [recordTimeEvent], ушёл от «прочитать-поправить-записать весь
+  /// массив» к намерению «закрой интервал». Если открытого интервала нет,
+  /// сервер ничего не делает — прежний ранний выход сохранён.
+  ///
+  /// Именно потерянное закрытие мотало счётчик этапа 16 часов подряд: запрос
+  /// не долетал, и никто об этом не узнавал. Теперь он доедет сам.
+  Future<bool> closeOpenTimeEvent({
     required TaskModel task,
     required String initiatedBy,
     required String subjectUserId,
     String? note,
+  }) {
+    return applyStageEvents(
+      taskId: task.id,
+      label: 'Закрытие интервала',
+      ops: [
+        StageEventOps.closeInterval(subject: subjectUserId, note: note),
+      ],
+    );
+  }
+
+  /// Текст последней неудавшейся записи этапа — экран показывает его цеху.
+  ///
+  /// Раньше сбой записи виден не был вообще: `catch { debugPrint }` в каждом
+  /// методе, оптимистичное локальное обновление поверх — и оператор был
+  /// уверен, что действие сохранилось.
+  String? _lastStageWriteError;
+  String? get lastStageWriteError => _lastStageWriteError;
+
+  void clearStageWriteError() {
+    if (_lastStageWriteError == null) return;
+    _lastStageWriteError = null;
+  }
+
+  /// Единственный способ менять состав исполнителей и историю этапа.
+  ///
+  /// Весь список операций уходит одним вызовом и применяется сервером в одной
+  /// транзакции — целиком либо никак. Прежняя цепочка независимых запросов на
+  /// цеховой сети оставляла действие наполовину выполненным: пересмену без
+  /// записи `shift_pause`, старт без строки в `assignees`.
+  ///
+  /// Возвращает false, если запись не удалась; локальное состояние при этом не
+  /// трогается. Расхождение «на экране назначен, в базе нет» и запирало
+  /// рабочее место: без назначения экран не показывал сотруднику кнопок, а
+  /// незакрытый интервал запрещал старт.
+  /// Пропавшая связь больше не теряет действие: [_stageOutbox] дошлёт его сам.
+  Future<bool> applyStageEvents({
+    required String taskId,
+    required List<Map<String, dynamic>> ops,
+    String? expectAssignee,
+    String? label,
   }) async {
-    try {
-      final row = await _supabase
-          .from('tasks')
-          .select('comments')
-          .eq('id', task.id)
-          .single();
-      final comments = _normalizeComments(row['comments']);
-      final now = DateTime.now().toUtc();
-      final openIndex = _findOpenTimeEventIndex(comments, subjectUserId);
-      if (openIndex == null) return;
-      final open = comments[openIndex];
-      final rawText = open['text']?.toString() ?? '';
-      final openEvent = TaskTimeEvent.fromPayload(
-          rawText,
-          open['id']?.toString() ?? '',
-          _parseCommentTimestamp(open['timestamp']),
-          open['userId']?.toString() ?? '');
-      if (openEvent == null) return;
-      final closed = openEvent.copyWith(endTime: now, note: note);
-      open['text'] = TaskTimeEvent.encodePayload(closed);
+    if (ops.isEmpty) return true;
+    final expect = (expectAssignee != null && expectAssignee.trim().isNotEmpty)
+        ? expectAssignee.trim()
+        : null;
+    await _ensureStageOutboxLoaded();
 
-      comments.sort((a, b) =>
-          _parseCommentTimestamp(a['timestamp'])
-              .compareTo(_parseCommentTimestamp(b['timestamp'])));
-      await _supabase
-          .from('tasks')
-          .update({'comments': comments}).eq('id', task.id);
+    // Ключ создаётся на НАМЕРЕНИЕ. Если такое же намерение уже лежит в
+    // очереди — оператор нажал кнопку второй раз, не дождавшись связи, — берём
+    // его ключ: сервер узнает повтор и не задвоит запись.
+    final draft = StageEventRequest(
+      requestId: '',
+      taskId: taskId,
+      ops: ops,
+      expectAssignee: expect,
+      createdAtMillis: DateTime.now().millisecondsSinceEpoch,
+      label: label,
+    );
+    final request = StageEventRequest(
+      requestId: _stageOutbox.pendingIdFor(draft) ?? const Uuid().v4(),
+      taskId: taskId,
+      ops: ops,
+      expectAssignee: expect,
+      createdAtMillis: draft.createdAtMillis,
+      label: label,
+    );
 
-      final idx = _tasks.indexWhere((t) => t.id == task.id);
-      if (idx != -1) {
-        final current = _tasks[idx];
-        _tasks[idx] = current.copyWith(comments: _toTaskComments(comments));
-        notifyListeners();
-      }
-    } catch (e, st) {
-      debugPrint('❌ closeOpenTimeEvent error: $e\n$st');
+    final result = await _sendStageEvents(request);
+    switch (result.outcome) {
+      case StageSendOutcome.applied:
+        _mergeStageEventsResult(taskId, result.payload);
+        _lastStageWriteError = null;
+        return true;
+      case StageSendOutcome.rejected:
+        _lastStageWriteError = result.error;
+        return false;
+      case StageSendOutcome.retry:
+        // Связь оборвалась. Намерение остаётся в очереди и уйдёт само, поэтому
+        // цеху говорим именно это, а не «повторите»: повторное нажатие тут
+        // ничего не ускорит.
+        await _stageOutbox.enqueue(
+          request,
+          nowMillis: DateTime.now().millisecondsSinceEpoch,
+        );
+        _scheduleStageOutboxFlush();
+        _lastStageWriteError =
+            'Нет связи с сервером. Действие сохранено на планшете и '
+            'отправится само, как только связь появится '
+            '(в очереди: ${_stageOutbox.pendingCount}). Повторять не нужно.';
+        return false;
     }
   }
 
-  Future<void> assignToUser(String taskId, String userId) async {
+  /// Одна попытка отправки. Разделяет обрыв связи и отказ сервера: первое
+  /// повторяется, второе — нет.
+  Future<StageSendResult> _sendStageEvents(StageEventRequest request) async {
     try {
-      final row = await _supabase
-          .from('tasks')
-          .select('assignees')
-          .eq('id', taskId)
-          .single();
-      List<String> current = List<String>.from(
-          (row['assignees'] as List?)?.map((e) => e.toString()) ?? const []);
-      if (!current.contains(userId)) {
-        current.add(userId);
-        await _supabase
-            .from('tasks')
-            .update({'assignees': current}).eq('id', taskId);
-      }
-
-      // local
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
-      if (idx != -1) {
-        final local = _tasks[idx];
-        if (!local.assignees.contains(userId)) {
-          final newAssignees = List<String>.from(local.assignees)..add(userId);
-          _tasks[idx] = local.copyWith(assignees: newAssignees);
-          notifyListeners();
-        }
-      }
+      await _ensureAuthed();
+      final result = await _supabase.rpc(
+        'task_apply_stage_events',
+        params: {
+          'p_task_id': request.taskId,
+          'p_ops': request.ops,
+          if (request.expectAssignee != null)
+            'p_expect_assignee': request.expectAssignee,
+          'p_request_id': request.requestId,
+        },
+      );
+      return StageSendResult.applied(result);
     } catch (e, st) {
-      debugPrint('❌ assignToUser error: $e\n$st');
+      debugPrint('❌ task_apply_stage_events error: $e\n$st');
+      if (isTransientNetworkFailure(e)) {
+        return StageSendResult.retry(describeStageWriteFailure(e));
+      }
+      return StageSendResult.rejected(describeStageWriteFailure(e));
     }
   }
+
+  // ---- Очередь повторов -----------------------------------------------------
+
+  late final StageEventOutbox _stageOutbox = StageEventOutbox(
+    sender: _sendStageEvents,
+    store: _PrefsStageOutboxStore(),
+    onApplied: (request, payload) {
+      // Сервер посчитал состояние — показываем его, иначе экран остался бы с
+      // тем, что было до потерянного действия.
+      _mergeStageEventsResult(request.taskId, payload);
+    },
+    onRejected: (request, reason) {
+      _lastStageWriteError = reason;
+      if (!_disposed) notifyListeners();
+    },
+    onChanged: () {
+      if (!_disposed) notifyListeners();
+    },
+  );
+
+  Timer? _stageOutboxTimer;
+  Future<void>? _stageOutboxLoad;
+
+  /// Сколько действий ждёт связи. Экран показывает это цеху.
+  int get pendingStageWrites => _stageOutbox.pendingCount;
+
+  Future<void> _ensureStageOutboxLoaded() {
+    return _stageOutboxLoad ??= _stageOutbox.load().then((_) {
+      // Планшет выключили с непустой очередью — досылаем при первом же
+      // действии после запуска.
+      if (_stageOutbox.pendingCount > 0) _scheduleStageOutboxFlush();
+    });
+  }
+
+  /// Досылает очередь. Вызывается по таймеру и вручную при обновлении списка.
+  Future<void> flushStageOutbox() async {
+    if (_disposed) return;
+    await _ensureStageOutboxLoaded();
+    if (_stageOutbox.pendingCount == 0) {
+      _stageOutboxTimer?.cancel();
+      _stageOutboxTimer = null;
+      return;
+    }
+    await _stageOutbox.flush(
+      nowMillis: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (_stageOutbox.pendingCount == 0) {
+      _stageOutboxTimer?.cancel();
+      _stageOutboxTimer = null;
+    } else {
+      _scheduleStageOutboxFlush();
+    }
+  }
+
+  /// Один таймер на очередь, пока в ней что-то есть.
+  ///
+  /// Период короче самой короткой выдержки: сама очередь решает, чему уже
+  /// пришёл срок, а таймер лишь регулярно её будит.
+  void _scheduleStageOutboxFlush() {
+    if (_disposed) return;
+    _stageOutboxTimer ??= Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(flushStageOutbox()),
+    );
+  }
+
+  /// Ответ RPC — уже посчитанные сервером assignees и comments. Берём их, а не
+  /// пересобираем локально: так экран показывает ровно то, что в базе.
+  void _mergeStageEventsResult(String taskId, dynamic result) {
+    if (result is! Map) return;
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx == -1) return;
+    final current = _tasks[idx];
+    _setTask(
+      idx,
+      current.copyWith(
+        assignees: assigneesFromRaw(result['assignees']),
+        comments: _toTaskComments(_normalizeComments(result['comments'])),
+      ),
+    );
+    notifyListeners();
+  }
+
+  /// Добавляет исполнителя атомарно, на сервере.
+  ///
+  /// Прежний код собирал новый массив из снимка задачи в build и перезаписывал
+  /// `assignees` целиком. Два сотрудника, нажавшие «Начать» в пределах одного
+  /// сетевого round-trip, затирали друг друга: чей PATCH долетал последним,
+  /// тот и оставался единственным исполнителем.
+  Future<bool> addAssignee(String id, String userId) => applyStageEvents(
+        taskId: id,
+        ops: [StageEventOps.addAssignee(userId)],
+      );
+
+  Future<bool> removeAssignee(String id, String userId) => applyStageEvents(
+        taskId: id,
+        ops: [StageEventOps.removeAssignee(userId)],
+      );
+
+  Future<bool> assignToUser(String taskId, String userId) =>
+      addAssignee(taskId, userId);
 
   Future<void> createTask({
     required String orderId,
@@ -2112,9 +2507,10 @@ class TaskProvider with ChangeNotifier {
       await _supabase.from('tasks').insert({
         'order_id': orderId,
         'stage_id': stageId,
-        'stage_group_key': (stageGroupKey == null || stageGroupKey.trim().isEmpty)
-            ? stageId
-            : stageGroupKey.trim(),
+        'stage_group_key':
+            (stageGroupKey == null || stageGroupKey.trim().isEmpty)
+                ? stageId
+                : stageGroupKey.trim(),
         'status': 'waiting',
         'assignees': [],
         'comments': [],
@@ -2125,200 +2521,22 @@ class TaskProvider with ChangeNotifier {
     }
   }
 
-  Future<void> updateAssignees(String id, List<String> assignees) async {
-    // Local optimistic update
+  /// Приводит состав исполнителей к заданному списку.
+  ///
+  /// Осталась ровно для одного случая — правки состава техлидом, когда нужен
+  /// именно указанный список. Рабочие сценарии цеха («начать», «присоединить
+  /// помощника», «снять помощника», «пересмена») ходят через
+  /// [addAssignee]/[removeAssignee]: слепая перезапись всего массива теряла
+  /// сотрудников, которых добавил соседний планшет.
+  Future<bool> updateAssignees(String id, List<String> assignees) async {
     final index = _tasks.indexWhere((t) => t.id == id);
-    if (index != -1) {
-      final updated =
-          _tasks[index].copyWith(assignees: List<String>.from(assignees));
-      _tasks[index] = updated;
-      notifyListeners();
-    }
-    try {
-      await _supabase
-          .from('tasks')
-          .update({'assignees': assignees}).eq('id', id);
-    } catch (e, st) {
-      debugPrint('❌ updateAssignees error: $e\n$st');
-    }
-  }
-
-  Future<void> addAssignee(String id, String userId) async {
-    try {
-      final row = await _supabase
-          .from('tasks')
-          .select('assignees')
-          .eq('id', id)
-          .single();
-      List<String> current = List<String>.from(
-          (row['assignees'] as List?)?.map((e) => e.toString()) ?? const []);
-      if (!current.contains(userId)) {
-        current.add(userId);
-        await _supabase
-            .from('tasks')
-            .update({'assignees': current}).eq('id', id);
-      }
-      // Local
-      final index = _tasks.indexWhere((t) => t.id == id);
-      if (index != -1) {
-        final task = _tasks[index];
-        if (!task.assignees.contains(userId)) {
-          final newAssignees = List<String>.from(task.assignees)..add(userId);
-          _tasks[index] = task.copyWith(assignees: newAssignees);
-          notifyListeners();
-        }
-      }
-    } catch (e, st) {
-      debugPrint('❌ addAssignee error: $e\n$st');
-    }
-  }
-
-  // ---- Helpers for last-stage quantity propagation to orders.actual_qty ----
-  Future<bool> _isLastStage(String orderId, String stageId) async {
-    Future<bool?> fromPlan(String planTable, String stagesTable) async {
-      try {
-        final plan = await _supabase
-            .from(planTable)
-            .select('id')
-            .eq('order_id', orderId)
-            .maybeSingle();
-        if (plan != null && plan is Map && plan['id'] != null) {
-          final rows = await _supabase
-              .from(stagesTable)
-              .select('*')
-              .eq('plan_id', plan['id'].toString());
-          if (rows is List && rows.isNotEmpty) {
-            int maxOrder = 0;
-            for (final r in rows) {
-              final o = r['order'] ??
-                  r['position'] ??
-                  r['idx'] ??
-                  r['step_no'] ??
-                  r['step'] ??
-                  r['seq'] ??
-                  0;
-              final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-              if (oi > maxOrder) maxOrder = oi;
-            }
-            final lastIds = <String>{};
-            for (final r in rows) {
-              final o = r['order'] ??
-                  r['position'] ??
-                  r['idx'] ??
-                  r['step_no'] ??
-                  r['step'] ??
-                  r['seq'] ??
-                  0;
-              final oi = (o is int) ? o : int.tryParse(o.toString()) ?? 0;
-              if (oi == maxOrder) {
-                final sid =
-                    (r['stage_id'] ?? r['stageId'] ?? r['id'] ?? '').toString();
-                if (sid.isNotEmpty) lastIds.add(sid);
-              }
-            }
-            return lastIds.contains(stageId);
-          }
-        }
-      } catch (_) {}
-      return null;
-    }
-
-    final prodPlanResult =
-        await fromPlan('production.plans', 'production.plan_stages');
-    if (prodPlanResult != null) return prodPlanResult;
-
-    final legacyPlanResult = await fromPlan('prod_plans', 'prod_plan_stages');
-    if (legacyPlanResult != null) return legacyPlanResult;
-
-    // Fallback: consider stage last if there are no other stages in work/pending.
-    try {
-      final rows = await _supabase
-          .from('tasks')
-          .select('stage_id, status')
-          .eq('order_id', orderId);
-      bool hasPendingOtherStage = false;
-      if (rows is List) {
-        for (final r in rows) {
-          final sid = (r['stage_id'] ?? r['stageId'] ?? '').toString();
-          if (sid.isEmpty || sid == stageId) continue;
-          final statusRaw = (r['status'] ?? '').toString().toLowerCase();
-          if (statusRaw != 'completed') {
-            hasPendingOtherStage = true;
-            break;
-          }
-        }
-      }
-      if (!hasPendingOtherStage) return true;
-    } catch (_) {}
-
-    return false;
-  }
-
-  double _parseQtySafe(dynamic v) {
-    if (v == null) return 0;
-    if (v is num) return v.toDouble();
-    if (v is String) {
-      final normalized = v.replaceAll(',', '.').trim();
-      final totalFromFormula =
-          RegExp(r'=\s*(-?\d+(?:\.\d+)?)').firstMatch(normalized);
-      if (totalFromFormula != null) {
-        return double.tryParse(totalFromFormula.group(1) ?? '') ?? 0;
-      }
-      final packsMatch =
-          RegExp(r'(-?\d+(?:\.\d+)?)\s*пач', caseSensitive: false)
-              .firstMatch(normalized);
-      final inPackMatch = RegExp(r'[x×*]\s*(-?\d+(?:\.\d+)?)')
-          .firstMatch(normalized);
-      if (packsMatch != null && inPackMatch != null) {
-        final packs = double.tryParse(packsMatch.group(1) ?? '') ?? 0;
-        final inPack = double.tryParse(inPackMatch.group(1) ?? '') ?? 0;
-        return packs * inPack;
-      }
-      final parsed = double.tryParse(normalized);
-      if (parsed != null) return parsed;
-      final firstNumber = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(normalized);
-      if (firstNumber != null) {
-        return double.tryParse(firstNumber.group(0) ?? '') ?? 0;
-      }
-      return 0;
-    }
-    return 0;
-  }
-
-  Future<double> _sumLastStageQuantity(String orderId, String stageId) async {
-    // get all tasks for this order & stage
-    final rows = await _supabase
-        .from('tasks')
-        .select('comments, assignees')
-        .eq('order_id', orderId)
-        .eq('stage_id', stageId);
-
-    double total = 0;
-    if (rows is List) {
-      for (final r in rows) {
-        // comments can be list or map
-        final c = r['comments'];
-        List<Map<String, dynamic>> comments = [];
-        if (c is List) {
-          comments = List<Map<String, dynamic>>.from(
-              c.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
-        } else if (c is Map) {
-          c.forEach((_, v) {
-            if (v is Map) comments.add(Map<String, dynamic>.from(v));
-          });
-        }
-        // Сумма всех записей количества: quantity_share (перерывы) +
-        // quantity_done/quantity_team_total (завершение — «сделано с
-        // последнего перерыва»); та же семантика, что в аналитике.
-        for (final m in comments) {
-          if (!_actualQtyCommentTypes.contains((m['type'] ?? '').toString())) {
-            continue;
-          }
-          total += _parseQtySafe(m['text']);
-        }
-      }
-    }
-    return total;
+    final current = index == -1 ? const <String>[] : _tasks[index].assignees;
+    final ops = <Map<String, dynamic>>[
+      for (final userId in current)
+        if (!assignees.contains(userId)) StageEventOps.removeAssignee(userId),
+      for (final userId in assignees) StageEventOps.addAssignee(userId),
+    ];
+    return applyStageEvents(taskId: id, ops: ops);
   }
 
   Future<void> _maybeUpdateActualQtyAfterStage(
@@ -2326,238 +2544,226 @@ class TaskProvider with ChangeNotifier {
     await recomputeOrderActualQty(orderId, completedStageId: stageId);
   }
 
-  /// Пересчитывает orders.actual_qty по правилу «фактическое количество —
-  /// только то, что зафиксировано ПОСЛЕ завершения этапа Упаковка».
+  /// Что известно после правки количества — нужно смежным действиям
+  /// (претензии сотрудникам, сообщение в чат).
   ///
-  /// Критерий — не порядковый номер этапа, а факт завершения упаковки на
-  /// момент фиксации количества (этапы могут закрываться не по порядку:
-  /// упаковке разрешён внеочередной старт, см. canStartPackagingOutOfQueue):
-  ///   • пока упаковка не завершена, actual_qty не трогаем вовсе;
-  ///   • после завершения упаковки допускаются её собственные количества
-  ///     (финальный подсчёт при завершении) и другие этапы, чья последняя
-  ///     фиксация количества не раньше момента завершения упаковки; сумма
-  ///     допущенного этапа включает все его записи (в т.ч. quantity_share
-  ///     на перерывах, даже сделанные до закрытия упаковки);
-  ///   • из допущенных берётся сумма ОДНОЙ группы этапа — той, что
-  ///     зафиксировала количество последней. Этапы обрабатывают один и тот
-  ///     же тираж последовательно, поэтому суммирование по разным этапам
-  ///     завысило бы факт (actual_qty участвует в отгрузке и списаниях).
+  /// [summary] — человеческая формулировка «было → стало» с причиной; она же
+  /// уходит и в историю заказа, и в описание претензии, чтобы сотрудник видел
+  /// ровно тот текст, что и техлид.
+
+  /// Исправляет зафиксированное количество: техлид правит число, которое
+  /// сотрудник ввёл неверно.
   ///
-  /// Для заказов без этапа упаковки сохраняется старое поведение
-  /// («количество последнего этапа»), чтобы не ломать легаси-маршруты.
+  /// Одним действием закрывает все три места, где это число живёт:
+  ///  * запись в `tasks.comments` — из неё же считается аналитика сотрудника
+  ///    и его сдельная часть, отдельного хранилища у аналитики нет;
+  ///  * след в истории заказа — отдельный комментарий `quantity_edit`
+  ///    с прежним значением, новым и причиной;
+  ///  * `orders.actual_qty` — через [recomputeOrderActualQty], который сам
+  ///    решает, формирует ли этот этап фактическое количество (правило
+  ///    «после упаковки», последний этап). Если не формирует — факт не
+  ///    тронется, и это верно.
+  ///
+  /// Пишет через RPC `update_task_quantity_comment`: комментарии лежат одним
+  /// jsonb в строке задачи, и клиентский «прочитал всё → записал всё» затёр бы
+  /// комментарии, которые сотрудник успел записать между чтением и записью.
+  ///
+  /// Бросает исключение с человеческим текстом — вызывающий показывает его.
+  Future<QuantityEditResult> editQuantityRecord({
+    required String taskId,
+    required String commentId,
+    required double newActual,
+    required String reason,
+    required String editorUserId,
+    required String editorName,
+  }) async {
+    if (newActual < 0) {
+      throw Exception('Количество не может быть отрицательным.');
+    }
+    final trimmedReason = reason.trim();
+    if (trimmedReason.isEmpty) {
+      throw Exception('Укажите причину правки.');
+    }
+
+    // Читаем запись заново: техлид мог открыть аналитику давно, а число за
+    // это время исправил кто-то другой. Пересобирать payload нужно от того,
+    // что лежит в базе сейчас.
+    final row = await _supabase
+        .from('tasks')
+        .select('comments, order_id, stage_id')
+        .eq('id', taskId)
+        .maybeSingle();
+    if (row == null) {
+      throw Exception('Задание не найдено — обновите аналитику.');
+    }
+
+    Map<String, dynamic>? target;
+    for (final c in _rowComments(Map<String, dynamic>.from(row))) {
+      if ((c['id'] ?? '').toString() == commentId) {
+        target = c;
+        break;
+      }
+    }
+    if (target == null) {
+      throw Exception(
+        'Запись количества не найдена — возможно, её уже исправили. '
+        'Обновите аналитику.',
+      );
+    }
+
+    final previousText = (target['text'] ?? '').toString();
+    final previousActual = quantityActualFromText(previousText) ?? 0;
+    final previousDisplay = quantityDisplayText(previousText);
+    final newText = rebuildQuantityPayload(
+      previousText: previousText,
+      newActual: newActual,
+      editorId: editorUserId,
+      editedAt: DateTime.now(),
+    );
+    final newDisplay = quantityDisplayText(newText);
+
+    if (previousActual == newActual) {
+      throw Exception('Новое количество совпадает с прежним.');
+    }
+
+    final orderId = (row['order_id'] ?? '').toString();
+    final stageId = (row['stage_id'] ?? '').toString();
+    final summary = 'Количество исправлено: $previousDisplay → $newDisplay. '
+        'Причина: $trimmedReason';
+    final auditText = '$summary. Исправил: '
+        '${editorName.trim().isEmpty ? editorUserId : editorName.trim()}';
+
+    try {
+      await _supabase.rpc('update_task_quantity_comment', params: {
+        'p_task_id': taskId,
+        'p_comment_id': commentId,
+        'p_new_text': newText,
+        'p_audit_text': auditText,
+        'p_audit_user_id': editorUserId,
+      });
+    } on PostgrestException catch (e) {
+      if ((e.code ?? '') == 'PGRST202' ||
+          e.message.contains('update_task_quantity_comment')) {
+        throw Exception(
+          'На сервере нет функции правки количества. Примените миграцию '
+          '20260818_edit_task_quantity_comment.sql.',
+        );
+      }
+      throw Exception(e.message);
+    }
+
+    // Локальная правка вместо refresh(): полный select('*') по всем задачам
+    // занимает десятки секунд (в логах он и вовсе отваливался по таймауту), а
+    // окно правки всё это время висело. Нужное состояние известно и так —
+    // патчим кэш на месте.
+    _applyLocalQuantityEdit(
+      taskId: taskId,
+      commentId: commentId,
+      newText: newText,
+      auditText: auditText,
+      editorUserId: editorUserId,
+    );
+
+    // Пересчёт факта заказа и аудит не задерживают закрытие окна: сама правка
+    // уже записана, actual_qty — производная от неё. Ждать их нечего и по
+    // другой причине: recomputeOrderActualQty гасит свои ошибки внутри, так
+    // что await не дал бы ни одного дополнительного сигнала.
+    if (orderId.isNotEmpty) {
+      unawaited(recomputeOrderActualQty(orderId, completedStageId: stageId));
+    }
+
+    unawaited(AuditLogService().logEvent(
+      userId: editorUserId,
+      action: 'quantity_edit',
+      orderId: orderId,
+      stageId: stageId,
+      category: 'analytics',
+      details: auditText,
+    ));
+
+    return QuantityEditResult(
+      taskId: taskId,
+      commentId: commentId,
+      orderId: orderId,
+      stageId: stageId,
+      summary: summary,
+    );
+  }
+
+  /// Отражает правку количества в локальном кэше задач — ровно то, что сделал
+  /// на сервере `update_task_quantity_comment`.
+  void _applyLocalQuantityEdit({
+    required String taskId,
+    required String commentId,
+    required String newText,
+    required String auditText,
+    required String editorUserId,
+  }) {
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx == -1) return;
+    final current = _tasks[idx];
+    final updated = <TaskComment>[
+      for (final c in current.comments)
+        if (c.id == commentId)
+          TaskComment(
+            id: c.id,
+            type: c.type,
+            text: newText,
+            userId: c.userId,
+            timestamp: c.timestamp,
+          )
+        else
+          c,
+    ];
+    if (auditText.trim().isNotEmpty) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      updated.add(TaskComment(
+        id: 'local-$now',
+        type: 'quantity_edit',
+        text: auditText,
+        userId: editorUserId,
+        timestamp: now,
+      ));
+    }
+    updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    _setTask(idx, current.copyWith(comments: updated));
+    notifyListeners();
+  }
+
+  /// Пересчитывает orders.actual_qty.
+  ///
+  /// Считает СЕРВЕР (`recompute_order_actual_qty`), клиент только просит.
+  /// Раньше факт писали трое по разным правилам: этот метод (правило «после
+  /// упаковки»), `advance_order_after_task_completion` (сумма последнего
+  /// закрытого этапа) и сохранение заказа своим снимком. Побеждал последний:
+  /// у заказа Agosto упаковка сделала 3100 шт, а сервер, закрыв следом этап
+  /// ручек без количества, затёр факт нулём. Правило перенесено на сервер
+  /// один в один, а запись actual_qty в обход функции база теперь игнорирует
+  /// (триггер `orders_guard_actual_qty`).
+  ///
+  /// Сервер и сам пересчитывает факт при каждом завершении этапа. Вызов
+  /// отсюда нужен путям, которые меняют количество без завершения: правка
+  /// записи техлидом, возобновление этапа.
   Future<void> recomputeOrderActualQty(String orderId,
       {String? completedStageId}) async {
     if (orderId.trim().isEmpty) return;
     try {
-      final rs = await _supabase
-          .from('tasks')
-          .select('*')
-          .eq('order_id', orderId);
-      final rows = List<Map<String, dynamic>>.from(
-          (rs as List).whereType<Map>().map(Map<String, dynamic>.from));
-      if (rows.isEmpty) return;
-
-      // Имена рабочих мест — для надёжного распознавания упаковки, когда
-      // stage_id отличается от канонического kPackagingStageId.
-      final stageIds = rows
-          .map((r) => (r['stage_id'] ?? '').toString().trim())
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      var stageNames = <String, String>{};
-      var stageUnits = <String, String>{};
-      try {
-        final wr = await _supabase
-            .from('workplaces')
-            .select('id, name, unit')
-            .inFilter('id', stageIds.toList());
-        stageNames = {
-          for (final row in (wr as List).whereType<Map>())
-            (row['id'] ?? '').toString(): (row['name'] ?? '').toString(),
-        };
-        stageUnits = {
-          for (final row in (wr as List).whereType<Map>())
-            (row['id'] ?? '').toString(): (row['unit'] ?? '').toString(),
-        };
-      } catch (_) {
-        // Имена опциональны: сработает матч по id/group key.
-      }
-
-      bool rowIsPackaging(Map<String, dynamic> r) {
-        final sid = (r['stage_id'] ?? '').toString();
-        return isPackagingStage(
-          stageId: sid,
-          stageName: stageNames[sid],
-          stageGroupKey: (r['stage_group_key'] ?? '').toString(),
-        );
-      }
-
-      final packagingRows = rows.where(rowIsPackaging).toList(growable: false);
-
-      if (packagingRows.isEmpty) {
-        // Легаси: заказ без упаковки — прежняя логика последнего этапа.
-        final stageId = (completedStageId ?? '').trim();
-        if (stageId.isEmpty) return;
-        final stageRows = rows.where(
-            (r) => (r['stage_id'] ?? '').toString().trim() == stageId);
-        final allStageCompleted = stageRows.isNotEmpty &&
-            stageRows.every((r) => (r['status'] ?? '') == 'completed');
-        if (!allStageCompleted) return;
-        if (!await _isLastStage(orderId, stageId)) return;
-        final total = await _sumLastStageQuantity(orderId, stageId);
-        await _supabase
-            .from('orders')
-            .update({'actual_qty': total}).eq('id', orderId);
-        return;
-      }
-
-      final packagingCompleted =
-          packagingRows.every((r) => (r['status'] ?? '') == 'completed');
-      if (!packagingCompleted) return;
-
-      final packagingCompletedAt = packagingRows
-          .map(_taskCompletionMillis)
-          .fold<int>(0, (max, v) => v > max ? v : max);
-
-      // Группа этапа → (сумма допущенных количеств, поздняя метка фиксации).
-      final qtyByGroup = <String, double>{};
-      final latestTsByGroup = <String, int>{};
-      for (final row in rows) {
-        final measured = _quantityForActualQty(row);
-        if (measured.qty <= 0) continue;
-        // Этап допускается, если его ПОСЛЕДНЯЯ фиксация количества не раньше
-        // завершения упаковки; сумма при этом включает и более ранние записи
-        // этой же стадии (quantity_share на перерывах до закрытия упаковки).
-        if (!rowIsPackaging(row) && measured.latestTs < packagingCompletedAt) {
-          continue;
-        }
-        final groupKey = (row['stage_group_key'] ?? '').toString().trim().isEmpty
-            ? (row['stage_id'] ?? '').toString()
-            : (row['stage_group_key'] ?? '').toString().trim();
-        qtyByGroup[groupKey] = (qtyByGroup[groupKey] ?? 0) + measured.qty;
-        if (measured.latestTs > (latestTsByGroup[groupKey] ?? 0)) {
-          latestTsByGroup[groupKey] = measured.latestTs;
-        }
-      }
-      // Нет ни одного допущенного количества — ничего не перезаписываем
-      // (не затираем возможное ручное значение нулём).
-      if (qtyByGroup.isEmpty) return;
-
-      String winner = qtyByGroup.keys.first;
-      for (final key in qtyByGroup.keys) {
-        if ((latestTsByGroup[key] ?? 0) > (latestTsByGroup[winner] ?? 0)) {
-          winner = key;
-        }
-      }
-      final total = qtyByGroup[winner] ?? 0;
-
-      // actual_qty хранится в штуках продукции. Упаковщик отчитывается в
-      // упаковках, поэтому его число переводим в штуки по фасовке заказа
-      // («Упаковка: N» в дополнительных параметрах). Без фасовки множителя
-      // нет — пишем как есть, чтобы не завышать факт вслепую.
-      final winnerRows = rows.where((r) {
-        final groupKey = (r['stage_group_key'] ?? '').toString().trim().isEmpty
-            ? (r['stage_id'] ?? '').toString()
-            : (r['stage_group_key'] ?? '').toString().trim();
-        return groupKey == winner;
+      await _supabase.rpc('recompute_order_actual_qty', params: {
+        'p_order_id': orderId,
+        'p_completed_stage_id': completedStageId,
       });
-      final winnerInPacks = winnerRows.any((r) =>
-          isQuantityPackUnit(stageUnits[(r['stage_id'] ?? '').toString()]));
-      final double packSize =
-          winnerInPacks ? (await _orderPackSize(orderId) ?? 1) : 1;
-
-      await _supabase
-          .from('orders')
-          .update({'actual_qty': total * packSize}).eq('id', orderId);
+      RealtimeSyncService.instance.invalidateLocal(RealtimeResource.orders);
     } catch (e, st) {
       debugPrint('❌ recomputeOrderActualQty error: $e\n$st');
     }
-  }
-
-  /// Фасовка заказа («Упаковка: N» в дополнительных параметрах) — сколько
-  /// штук в одной упаковке. null, если параметр не заполнен.
-  Future<double?> _orderPackSize(String orderId) async {
-    try {
-      final row = await _supabase
-          .from('orders')
-          .select('additional_params')
-          .eq('id', orderId)
-          .maybeSingle();
-      final raw = row == null ? null : row['additional_params'];
-      if (raw is! List) return null;
-      return packSizeFromParams(raw.map((e) => e?.toString() ?? ''));
-    } catch (e) {
-      debugPrint('⚠️ _orderPackSize failed: $e');
-      return null;
-    }
-  }
-
-  /// Момент завершения задачи в millis. Приоритет: колонка completed_at
-  /// (миграция 20260720, пишется _syncStageGroupStatusToSharedSources) →
-  /// поздняя метка завершающих комментариев (user_done/количества — их
-  /// пишет и клиент, и RPC complete_task_stage) → updated_at.
-  int _taskCompletionMillis(Map<String, dynamic> row) {
-    final direct = row['completed_at'];
-    if (direct is int && direct > 0) return direct;
-    if (direct is num && direct > 0) return direct.toInt();
-    if (direct is String) {
-      final parsed = int.tryParse(direct) ??
-          DateTime.tryParse(direct)?.millisecondsSinceEpoch;
-      if (parsed != null && parsed > 0) return parsed;
-    }
-
-    const finishTypes = {
-      'user_done',
-      'quantity_done',
-      'quantity_team_total',
-      'finish_note',
-    };
-    var latest = 0;
-    for (final c in _rowComments(row)) {
-      if (!finishTypes.contains((c['type'] ?? '').toString())) continue;
-      final ts = _commentMillis(c['timestamp']);
-      if (ts > latest) latest = ts;
-    }
-    if (latest > 0) return latest;
-
-    final updated = row['updated_at'];
-    if (updated is String) {
-      return DateTime.tryParse(updated)?.millisecondsSinceEpoch ?? 0;
-    }
-    return 0;
-  }
-
-  /// Количество по задаче для actual_qty: сумма ВСЕХ записей количества —
-  /// quantity_share (фиксации на перерывах/пересменах), quantity_done
-  /// (отдельные исполнители) и quantity_team_total (финал совместного
-  /// режима — «сделано с последнего перерыва», а не итог за этап; та же
-  /// семантика, что в аналитике, см. TaskAnalyticsMapper).
-  /// Вместе с количеством возвращается поздняя метка учтённой записи —
-  /// по ней выбирается этап, зафиксировавший количество последним.
-  static const _actualQtyCommentTypes = {
-    'quantity_share',
-    'quantity_done',
-    'quantity_team_total',
-  };
-
-  ({double qty, int latestTs}) _quantityForActualQty(Map<String, dynamic> row) {
-    double sum = 0;
-    var latestTs = 0;
-    for (final c in _rowComments(row)) {
-      final type = (c['type'] ?? '').toString();
-      if (!_actualQtyCommentTypes.contains(type)) continue;
-      sum += _parseQtySafe(c['text']);
-      final ts = _commentMillis(c['timestamp']);
-      if (ts > latestTs) latestTs = ts;
-    }
-    return (qty: sum, latestTs: latestTs);
   }
 
   List<Map<String, dynamic>> _rowComments(Map<String, dynamic> row) {
     final c = row['comments'];
     final comments = <Map<String, dynamic>>[];
     if (c is List) {
-      comments.addAll(
-          c.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+      comments
+          .addAll(c.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
     } else if (c is Map) {
       c.forEach((_, v) {
         if (v is Map) comments.add(Map<String, dynamic>.from(v));
@@ -2566,43 +2772,42 @@ class TaskProvider with ChangeNotifier {
     return comments;
   }
 
-  int _commentMillis(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) {
-      final asInt = int.tryParse(value.trim());
-      if (asInt != null) return asInt;
-      return DateTime.tryParse(value.trim())?.millisecondsSinceEpoch ?? 0;
-    }
-    return 0;
-  }
-
   @override
   void dispose() {
-    if (_tasksChannel != null) {
-      _supabase.removeChannel(_tasksChannel!);
-      _tasksChannel = null;
-    }
-    _disposeStageSyncChannels();
+    _disposed = true;
+    _fallbackPollTimer?.cancel();
+    _fallbackPollTimer = null;
+    _stageOutboxTimer?.cancel();
+    _stageOutboxTimer = null;
+    RealtimeSyncService.instance.unregisterOwner(this);
     super.dispose();
   }
 
   /// Добавляет комментарий, автоматически подставляя текущего пользователя из Supabase Auth.
-  Future<void> addCommentAutoUser({
+  Future<bool> addCommentAutoUser({
     required String taskId,
     required String type,
     required String text,
     String? userIdOverride,
   }) async {
-    await _ensureAuthed();
-    final uid =
-        (userIdOverride != null && userIdOverride.isNotEmpty)
-            ? userIdOverride
-            : _supabase.auth.currentUser?.id;
-    if (uid == null || uid.isEmpty) {
-      debugPrint('❌ addCommentAutoUser: нет авторизованного пользователя');
-      return;
+    try {
+      await _ensureAuthed();
+    } catch (e, st) {
+      // Обновление токена идёт по сети и на цеховом Wi-Fi падает. Раньше
+      // исключение отсюда вылетало из всего обработчика, и остаток действия
+      // (например записи пересмены) просто не выполнялся.
+      _lastStageWriteError = describeStageWriteFailure(e);
+      debugPrint('❌ addCommentAutoUser auth error: $e\n$st');
+      return false;
     }
-    await addComment(taskId: taskId, type: type, text: text, userId: uid);
+    final uid = (userIdOverride != null && userIdOverride.isNotEmpty)
+        ? userIdOverride
+        : _supabase.auth.currentUser?.id;
+    if (uid == null || uid.isEmpty) {
+      _lastStageWriteError = 'Не удалось определить сотрудника для записи.';
+      debugPrint('❌ addCommentAutoUser: нет авторизованного пользователя');
+      return false;
+    }
+    return addComment(taskId: taskId, type: type, text: text, userId: uid);
   }
 }

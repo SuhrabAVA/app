@@ -29,7 +29,8 @@ import 'dart:convert';
 import 'dart:io';
 
 Future<void> main() async {
-  final env = _readEnv(File('.env'));
+  // Ключ service_role живёт в .env.scripts: .env упакован в сборку приложения.
+  final env = _readEnv(File(File('.env.scripts').existsSync() ? '.env.scripts' : '.env'));
   final url = env['SUPABASE_URL'];
   final key = env['SUPABASE_SERVICE_ROLE_KEY'];
   if (url == null || url.isEmpty || key == null || key.isEmpty) {

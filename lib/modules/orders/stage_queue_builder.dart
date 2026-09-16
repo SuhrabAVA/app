@@ -1,6 +1,7 @@
 import '../tasks/stage_sequence_utils.dart' as stage_sequence;
 import 'material_model.dart';
 import 'order_handle_type.dart';
+import 'product_type_route.dart';
 import 'production_ids.dart';
 
 // Идентификаторы приходят из единого реестра production_ids.dart —
@@ -209,6 +210,7 @@ List<Map<String, dynamic>> buildOrderStageQueue({
       const <String, String>{},
   List<Map<String, dynamic>> existingStages = const [],
   List<Map<String, dynamic>> templateStages = const [],
+  ProductTypeRoute? route,
 }) {
   final selectedByStageKey = <String, String>{
     ..._selectedSwitchableStageIdsByStageKey(templateStages),
@@ -231,8 +233,15 @@ List<Map<String, dynamic>> buildOrderStageQueue({
     selectedSwitchableStageId: selectedFromSource,
     selectedSwitchableStageIdsByStageKey: selectedByStageKey,
   );
+  // Маршрут из редактора типов продукта — источник правды, когда он
+  // опубликован и в нём есть этапы. Зашитые в этот файл ветки по uuid типов
+  // продукта остаются фолбэком: у части типов настройка ещё не заведена, и
+  // без неё заказ должен собираться как раньше, а не пустым.
+  final stages = (route != null && route.stages.isNotEmpty)
+      ? buildOrderStagesFromRoute(draft, route)
+      : buildOrderStages(draft);
   final built = normalizeBuiltOrderStageQueue(
-    buildOrderStages(draft).map((stage) => stage.toMap()).toList(),
+    stages.map((stage) => stage.toMap()).toList(),
   );
   return _preserveSwitchableBobbinFlexOrder(built, existingStages);
 }

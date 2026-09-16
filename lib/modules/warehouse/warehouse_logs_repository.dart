@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/app_auth.dart';
+import '../../utils/network_failures.dart';
 
 /// Тип действия склада.
 enum WarehouseLogAction { arrival, writeoff, inventory }
@@ -358,6 +359,14 @@ class WarehouseLogsRepository {
 
   static String typeLabel(String key) => typeLabels[key] ?? key;
 
+  /// Перебор кандидатов ниже нужен, чтобы подстроиться под разные схемы:
+  /// пробуем таблицы, колонки сортировки и наборы полей, пока что-то не
+  /// ответит. Но при обрыве связи перебирать нечего — не отвечает вообще
+  /// ничего. Раньше каждая комбинация уходила в сеть и падала по своему
+  /// таймауту (в журнале — по 5 минут на попытку), и открытие журнала
+  /// склада зависало на десятки минут, засоряя лог одинаковыми строками.
+  static const Duration _probeTimeout = Duration(seconds: 25);
+
   static Future<List<Map<String, dynamic>>> _selectAnyTable({
     required List<String> tables,
     required String selectFields,
@@ -387,8 +396,10 @@ class WarehouseLogsRepository {
           final ordered =
               order == null ? query : query.order(order, ascending: ascending);
           final dynamic data = limit == null
-              ? await ordered
-              : await ordered.range(offset, offset + limit - 1);
+              ? await ordered.timeout(_probeTimeout)
+              : await ordered
+                  .range(offset, offset + limit - 1)
+                  .timeout(_probeTimeout);
           return (data as List).cast<Map<String, dynamic>>();
         } on PostgrestException catch (error) {
           final String code = (error.code?.toString() ?? '').toLowerCase();
@@ -410,6 +421,9 @@ class WarehouseLogsRepository {
           debugPrint('WarehouseLogsRepository: $error for table $table');
         } catch (error, stack) {
           debugPrint('WarehouseLogsRepository: $error for table $table');
+          if (isTransientNetworkFailure(error)) {
+            return <Map<String, dynamic>>[];
+          }
           debugPrintStack(stackTrace: stack);
         }
         break;
@@ -465,8 +479,10 @@ class WarehouseLogsRepository {
             final PostgrestFilterBuilder<dynamic> filteredQuery =
                 baseQuery.inFilter(fk, normalizedIds);
             final dynamic data = order == null
-                ? await filteredQuery
-                : await filteredQuery.order(order, ascending: ascending);
+                ? await filteredQuery.timeout(_probeTimeout)
+                : await filteredQuery
+                    .order(order, ascending: ascending)
+                    .timeout(_probeTimeout);
             return (data as List).cast<Map<String, dynamic>>();
           } on PostgrestException catch (error) {
             final String code = (error.code?.toString() ?? '').toLowerCase();
@@ -474,11 +490,8 @@ class WarehouseLogsRepository {
                 (error.message?.toString() ?? '').toLowerCase();
             final String details =
                 (error.details?.toString() ?? '').toLowerCase();
-            final String? orderLower = order?.toLowerCase();
-            final bool orderColumnMissing = orderLower != null &&
-                (code == '42703' ||
-                    message.contains(orderLower) && message.contains('column') ||
-                    details.contains(orderLower) && details.contains('column'));
+            final bool orderColumnMissing =
+                order != null && isMissingOrderColumnMessage(message, order);
 
             final bool selectColumnMissing = code == '42703' ||
                 message.contains('column') ||
@@ -497,6 +510,9 @@ class WarehouseLogsRepository {
             debugPrint('WarehouseLogsRepository: $error for table $table');
           } catch (error, stack) {
             debugPrint('WarehouseLogsRepository: $error for table $table');
+            if (isTransientNetworkFailure(error)) {
+              return <Map<String, dynamic>>[];
+            }
             debugPrintStack(stackTrace: stack);
           }
           break;
@@ -504,6 +520,19 @@ class WarehouseLogsRepository {
       }
     }
     return <Map<String, dynamic>>[];
+  }
+
+  /// Ошибка говорит об отсутствии именно колонки сортировки
+  /// («column orders.description does not exist»), а не какой-то колонки из
+  /// select. Раньше хватало кода 42703: при нехватке колонки в select цикл
+  /// перебирал все шесть вариантов сортировки — шесть заведомо ошибочных
+  /// запросов. Имя сверяется целиком: 'name' не совпадает с 'full_name'.
+  @visibleForTesting
+  static bool isMissingOrderColumnMessage(String message, String orderColumn) {
+    final String lower = message.toLowerCase();
+    if (!lower.contains('column')) return false;
+    return RegExp('[."]${RegExp.escape(orderColumn.toLowerCase())}\\b')
+        .hasMatch(lower);
   }
 
   static bool _isRecoverableSchemaProbeError(PostgrestException error) {
@@ -678,27 +707,19 @@ class WarehouseLogsRepository {
     // Раньше здесь тянулись целиком JSONB-колонки `data` и `product` (в них
     // лежат фото заказа и весь payload) плюс fallback '*' — на большом числе
     // заказов это валило запрос по statement timeout (57014). Достаём только
-    // нужные вложенные текстовые поля через ->> и лёгкий fallback без JSON.
-    const String jsonFields =
-        'data_new_form_no:data->>new_form_no, '
-        'data_form_code:data->>form_code, '
-        'data_assignment_id:data->>assignment_id, '
-        'data_title:data->>title, '
-        'data_order_name:data->>order_name, '
-        'data_product_name:data->>product_name, '
-        'data_customer:data->>customer, '
-        'data_name:data->>name, '
-        'product_j_name:product->>name, '
-        'product_j_title:product->>title, '
-        'data_product_name_nested:data->product->>name, '
-        'data_product_title_nested:data->product->>title';
+    // нужные вложенные текстовые поля через ->>.
+    //
+    // Колонок title/name/order_name/data у orders нет: оба прежних варианта
+    // запроса всегда падали, и подписи заказов в журнале склада не строились.
     const String flatFields =
-        'id, assignment_id, title, name, order_name, product_name, customer, '
-        'new_form_no, form_code';
+        'id, assignment_id, product_name, customer, new_form_no, form_code';
+    const String jsonFields =
+        'product_j_name:product->>name, product_j_title:product->>title';
     final List<Map<String, dynamic>> rows = await _selectByIdsAny(
       tables: const <String>['orders'],
       fk: 'id',
       ids: orderIds.toList(growable: false),
+      orderBy: 'id',
       selectFields: '$flatFields, $jsonFields',
       fallbackSelectFields: flatFields,
     );
@@ -750,9 +771,10 @@ class WarehouseLogsRepository {
       tables: const <String>['employees_view', 'employees'],
       fk: 'id',
       ids: employeeIds.toList(growable: false),
-      selectFields:
-          'id, last_name, first_name, patronymic, full_name, display_name, name, login',
-      fallbackSelectFields: '*',
+      orderBy: 'id',
+      // Колонок full_name/display_name/name нет ни в представлении, ни в
+      // таблице. Запасной '*' убран: он тянул и колонку password.
+      selectFields: 'id, last_name, first_name, patronymic, login',
     );
     final Map<String, String> labels = <String, String>{};
     for (final Map<String, dynamic> row in rows) {
@@ -892,7 +914,6 @@ class WarehouseLogsRepository {
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
-      if (typeKey == 'paper') 'paper_writeoffs',
       if (typeKey == 'paint') 'paints_writeoffs',
       if (typeKey == 'material') 'materials_writeoffs',
     ];

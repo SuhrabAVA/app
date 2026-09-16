@@ -228,11 +228,77 @@ void main() {
     expect(entries.map((entry) => entry.step), [5, 5]);
   });
 
-  test('physical seq stays unique for parallel stages on the same logical step', () {
+  group('planMatchesQueue', () {
+    const flexo = OrderQueueSyncEntry(
+      stageId: 'flexo',
+      stageGroupKey: 'flexo',
+      step: 1,
+    );
+    const pack = OrderQueueSyncEntry(
+      stageId: 'pack',
+      stageGroupKey: 'pack',
+      step: 2,
+    );
+
+    test('сохранение без правок маршрута план не переписывает', () {
+      expect(
+        OrderQueueSyncService.planMatchesQueue(
+          const [flexo, pack],
+          const [flexo, pack],
+        ),
+        isTrue,
+      );
+    });
+
+    test('сдвиг шага — расхождение', () {
+      expect(
+        OrderQueueSyncService.planMatchesQueue(
+          const [flexo, pack],
+          const [
+            flexo,
+            OrderQueueSyncEntry(
+              stageId: 'pack',
+              stageGroupKey: 'pack',
+              step: 3,
+            ),
+          ],
+        ),
+        isFalse,
+      );
+    });
+
+    test('удалённый и добавленный этап — расхождение', () {
+      expect(
+        OrderQueueSyncService.planMatchesQueue(const [flexo, pack], const [flexo]),
+        isFalse,
+      );
+      expect(
+        OrderQueueSyncService.planMatchesQueue(
+          const [flexo],
+          const [
+            flexo,
+            OrderQueueSyncEntry(
+              stageId: 'bobbin',
+              stageGroupKey: 'bobbin',
+              step: 2,
+            ),
+          ],
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  test('rpc payload keeps parallel stages of one step as separate rows', () {
+    // Физический seq раздаёт replace_plan_stages: только сервер видит номера,
+    // занятые защищёнными этапами. Клиент отдаёт логический порядок, и два
+    // параллельных рабочих места одного шага обязаны остаться двумя строками
+    // с общим stage_group_key и одинаковым step_no.
     const firstAlternative = OrderQueueSyncEntry(
       stageId: 'die-cut-a1',
       stageGroupKey: 'die_cut',
       step: 3,
+      row: {'name': 'Вырубка А1'},
     );
     const secondAlternative = OrderQueueSyncEntry(
       stageId: 'die-cut-a2',
@@ -244,21 +310,33 @@ void main() {
       stageGroupKey: 'pack',
       step: 4,
     );
-    const farStage = OrderQueueSyncEntry(
-      stageId: 'far-stage',
-      stageGroupKey: 'far-stage',
-      step: 3000,
+
+    final payload = OrderQueueSyncService.planStagesRpcPayload(
+      const [firstAlternative, secondAlternative, nextStage],
     );
 
-    final physicalSeq = OrderQueueSyncService.physicalSeqByIdentityKey(
-      const [firstAlternative, secondAlternative, nextStage, farStage],
-    );
-
-    expect(physicalSeq[firstAlternative.identityKey], 3001);
-    expect(physicalSeq[secondAlternative.identityKey], 3002);
-    expect(physicalSeq[nextStage.identityKey], 4);
-    expect(physicalSeq[farStage.identityKey], 3000);
-    expect(physicalSeq.values.toSet(), hasLength(4));
+    expect(payload, [
+      {
+        'stage_id': 'die-cut-a1',
+        'stage_group_key': 'die_cut',
+        'name': 'Вырубка А1',
+        'step_no': 3,
+      },
+      {
+        'stage_id': 'die-cut-a2',
+        'stage_group_key': 'die_cut',
+        // Без имени в строке очереди в план уходит идентификатор — иначе
+        // функция подставит его сама, но в плане останется пустое поле.
+        'name': 'die-cut-a2',
+        'step_no': 3,
+      },
+      {
+        'stage_id': 'pack',
+        'stage_group_key': 'pack',
+        'name': 'pack',
+        'step_no': 4,
+      },
+    ]);
   });
 
   test(

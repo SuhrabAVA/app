@@ -3,12 +3,22 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import 'supplier_model.dart';
+import '../../services/realtime_sync_service.dart';
 
 /// Провайдер для управления данными поставщиков.
 /// Переезд с JSON-коллекции `documents` на таблицу `public.suppliers`.
 class SupplierProvider with ChangeNotifier {
+  SupplierProvider() {
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.suppliers,
+      handler: fetchSuppliers,
+    );
+  }
+
   final SupabaseClient _sb = Supabase.instance.client;
   List<SupplierModel> _suppliers = [];
+  bool _disposed = false;
   List<SupplierModel> get suppliers => List.unmodifiable(_suppliers);
 
   Future<void> _ensureAuthed() async {
@@ -23,6 +33,7 @@ class SupplierProvider with ChangeNotifier {
     await _ensureAuthed();
     final res =
         await _sb.from('suppliers').select().order('name', ascending: true);
+    if (_disposed) return;
     if (res is List) {
       _suppliers = res.map((row) {
         final m = Map<String, dynamic>.from(row as Map);
@@ -77,5 +88,12 @@ class SupplierProvider with ChangeNotifier {
     await _ensureAuthed();
     await _sb.from('suppliers').delete().eq('id', id);
     await fetchSuppliers();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    RealtimeSyncService.instance.unregisterOwner(this);
+    super.dispose();
   }
 }

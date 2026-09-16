@@ -6,6 +6,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/app_auth.dart';
+import '../../services/realtime_sync_service.dart';
+
+@visibleForTesting
+Future<T> afterProductionQueueBootstrap<T>(
+  Future<void>? bootstrap,
+  Future<T> Function() read,
+) async {
+  if (bootstrap != null) await bootstrap;
+  return read();
+}
 
 class WorkplaceQueuePosition {
   final String id;
@@ -31,6 +41,20 @@ class WorkplaceQueuePosition {
   String get queueKey => ProductionQueueProvider.queueKeyFor(
         workplaceId: workplaceId,
         taskId: taskId,
+        orderId: orderId,
+        stageId: stageId,
+        stageGroupKey: stageGroupKey,
+      );
+
+  /// Тождество элемента очереди — БЕЗ task_id.
+  ///
+  /// [queueKey] строится по-разному в зависимости от того, известна ли задача
+  /// (`wp::task::T` против `wp::order::O::stage::S::group::G`), а в таблице
+  /// позиций лежат строки обоих видов: часть завели из рабочего пространства
+  /// без task_id, часть — из производства с ним. Сопоставлять их строгим
+  /// ключом нельзя: один и тот же элемент выглядит как два разных.
+  String get semanticKey => ProductionQueueProvider.queueSemanticKeyFor(
+        workplaceId: workplaceId,
         orderId: orderId,
         stageId: stageId,
         stageGroupKey: stageGroupKey,
@@ -88,6 +112,63 @@ class WorkplaceQueuePositionPlanner {
     return left.id.compareTo(right.id);
   }
 
+  /// Какая из двух строк одного и того же элемента главная.
+  ///
+  /// В таблице встречаются пары строк на один заказ+этап: одна заведена с
+  /// task_id (из производства), другая без него (из рабочего пространства).
+  /// Пока показ и перестановка выбирали разные строки, заказ после
+  /// перетаскивания вставал на позицию «второй» строки. Правило одно на обе
+  /// стороны: выигрывает строка с task_id, при равенстве — меньшая позиция,
+  /// затем id (чтобы выбор не зависел от порядка обхода карты).
+  static WorkplaceQueuePosition preferredPosition(
+    WorkplaceQueuePosition left,
+    WorkplaceQueuePosition right,
+  ) {
+    final leftHasTask = (left.taskId ?? '').trim().isNotEmpty;
+    final rightHasTask = (right.taskId ?? '').trim().isNotEmpty;
+    if (leftHasTask != rightHasTask) return leftHasTask ? left : right;
+    if (left.hasQueuePosition != right.hasQueuePosition) {
+      return left.hasQueuePosition ? left : right;
+    }
+    if (left.queuePosition != right.queuePosition) {
+      return left.queuePosition < right.queuePosition ? left : right;
+    }
+    return left.id.compareTo(right.id) <= 0 ? left : right;
+  }
+
+  /// Строки рабочего места по тождеству элемента, задвоения свёрнуты по
+  /// [preferredPosition].
+  static Map<String, WorkplaceQueuePosition> canonicalBySemanticKey(
+    Iterable<WorkplaceQueuePosition> positions,
+  ) {
+    final result = <String, WorkplaceQueuePosition>{};
+    for (final position in positions) {
+      final key = position.semanticKey;
+      final existing = result[key];
+      result[key] =
+          existing == null ? position : preferredPosition(existing, position);
+    }
+    return result;
+  }
+
+  /// Строка, по которой показывается позиция элемента очереди.
+  ///
+  /// Ровно та же, которую выберет перестановка ([reorderedQueueKeys] через
+  /// [canonicalBySemanticKey]). Инвариант обязателен: пока показ и запись
+  /// выбирали разные строки одного заказа, поднять его в очереди было
+  /// невозможно — drag присваивал номер одной строке, а список читал вторую.
+  static WorkplaceQueuePosition? positionForSemanticKey(
+    Iterable<WorkplaceQueuePosition> positions,
+    String semanticKey,
+  ) {
+    WorkplaceQueuePosition? best;
+    for (final position in positions) {
+      if (position.semanticKey != semanticKey) continue;
+      best = best == null ? position : preferredPosition(best, position);
+    }
+    return best;
+  }
+
   static List<WorkplaceQueuePosition> sortedPositions(
     Iterable<WorkplaceQueuePosition> positions,
   ) {
@@ -115,7 +196,8 @@ class WorkplaceQueuePositionPlanner {
     final normalizedWorkplace = workplaceId.trim();
     final existingKeys = {
       for (final position in existing)
-        if (position.workplaceId.trim() == normalizedWorkplace) position.queueKey,
+        if (position.workplaceId.trim() == normalizedWorkplace)
+          position.queueKey,
     };
     final existingSemanticKeys = {
       for (final position in existing)
@@ -168,6 +250,46 @@ class WorkplaceQueuePositionPlanner {
     ];
   }
 
+  /// Сплошная нумерация 1..N для ВСЕХ строк рабочего места.
+  ///
+  /// [nextKeys] задаёт порядок элементов очереди, но строк у элемента может
+  /// быть две (задвоение: одна с task_id, другая без). Пропущенная строка
+  /// сохранила бы прежний номер и столкнулась бы с новым — очередь снова
+  /// стала бы неоднозначной. Поэтому всё, что не попало в [nextKeys],
+  /// дописывается следом, в текущем порядке.
+  static List<WorkplaceQueuePosition> renumber({
+    required Iterable<WorkplaceQueuePosition> current,
+    required Iterable<String> nextKeys,
+  }) {
+    final byKey = <String, WorkplaceQueuePosition>{
+      for (final position in current) position.queueKey: position,
+    };
+    final result = <WorkplaceQueuePosition>[];
+    final assignedIds = <String>{};
+
+    void assign(WorkplaceQueuePosition position) {
+      if (!assignedIds.add(position.id)) return;
+      result.add(WorkplaceQueuePosition(
+        id: position.id,
+        workplaceId: position.workplaceId,
+        taskId: position.taskId,
+        orderId: position.orderId,
+        stageId: position.stageId,
+        stageGroupKey: position.stageGroupKey,
+        queuePosition: result.length + 1,
+      ));
+    }
+
+    for (final key in nextKeys) {
+      final position = byKey[key];
+      if (position != null) assign(position);
+    }
+    for (final position in current) {
+      assign(position);
+    }
+    return result;
+  }
+
   static List<String> reorderedKeys({
     required Iterable<WorkplaceQueuePosition> current,
     required Iterable<WorkplaceQueueEntry> orderedEntries,
@@ -188,24 +310,35 @@ class WorkplaceQueuePositionPlanner {
     required String workplaceId,
   }) {
     final normalizedWorkplace = workplaceId.trim();
-    final visibleKeys = <String>[];
-    final seen = <String>{};
-    for (final key in orderedKeys) {
-      if (key.workplaceId.trim() != normalizedWorkplace) continue;
-      final queueKey = key.queueKey;
-      if (!seen.add(queueKey)) continue;
-      visibleKeys.add(queueKey);
-    }
-
     final currentForWorkplace = sortedPositions(current.where(
       (position) => position.workplaceId.trim() == normalizedWorkplace,
     ));
-    final visibleKeySet = visibleKeys.toSet();
+    // Существующие строки ищем по тождеству, а возвращаем их собственный
+    // queueKey: вызывающий сопоставляет результат с картой позиций, у которой
+    // ключи именно такие. Раньше сравнение шло строгими ключами, и элемент,
+    // чья строка заведена без task_id, не опознавался как видимый: его
+    // позиция не переписывалась, а сам он ещё и дублировался в хвосте —
+    // отсюда «поставил на одно место, а оно встало на другое».
+    final bySemantic = canonicalBySemanticKey(currentForWorkplace);
+
+    final visibleKeys = <String>[];
+    final seenSemantic = <String>{};
+    for (final key in orderedKeys) {
+      if (key.workplaceId.trim() != normalizedWorkplace) continue;
+      if (!seenSemantic.add(key.semanticKey)) continue;
+      final existing = bySemantic[key.semanticKey];
+      visibleKeys.add(existing?.queueKey ?? key.queueKey);
+    }
+
+    // В хвост — по одной строке на элемент: вторая строка задвоенного элемента
+    // заняла бы отдельный номер и сдвинула всё, что ниже.
+    final tailSeen = <String>{};
     return <String>[
       ...visibleKeys,
-      ...currentForWorkplace
-          .where((position) => !visibleKeySet.contains(position.queueKey))
-          .map((position) => position.queueKey),
+      for (final position in currentForWorkplace)
+        if (!seenSemantic.contains(position.semanticKey) &&
+            tailSeen.add(position.semanticKey))
+          bySemantic[position.semanticKey]?.queueKey ?? position.queueKey,
     ];
   }
 }
@@ -243,6 +376,14 @@ class WorkplaceQueueItemKey {
         stageGroupKey: stageGroupKey,
       );
 
+  /// Тождество элемента очереди — см. [WorkplaceQueuePosition.semanticKey].
+  String get semanticKey => ProductionQueueProvider.queueSemanticKeyFor(
+        workplaceId: workplaceId,
+        orderId: orderId,
+        stageId: stageId,
+        stageGroupKey: stageGroupKey,
+      );
+
   WorkplaceQueueEntry toEntry() {
     return WorkplaceQueueEntry(
       workplaceId: workplaceId,
@@ -269,9 +410,53 @@ class WorkplaceQueueEntry {
     this.stageGroupKey,
   });
 
+  /// Единственный способ построить элемент очереди рабочего места.
+  ///
+  /// ПОЧЕМУ stageId ПРИБИТ К РАБОЧЕМУ МЕСТУ
+  /// Тождество слота — это `workplaceId::order::stageId::group`, и один и тот
+  /// же слот обязаны одинаково назвать все экраны. Рабочее пространство
+  /// отбирает задачи условием `task.stageId == выбранное РМ`, поэтому у него
+  /// stageId всегда равен рабочему месту. МУПЗ же брал stageId из НАЙДЕННОЙ
+  /// задачи, а искал её через `tasksByGroup[group.key]` — по ключу группы
+  /// маршрута, тогда как задачи разложены по СВОЕМУ `task.stageGroupKey`.
+  /// Ключи расходились, и на один слот заводились ДВЕ строки позиций: одну
+  /// читало рабочее пространство, другую — МУПЗ. Списки после этого жили
+  /// каждый своей жизнью, а перетаскивание в МУПЗ не двигало то, что видит
+  /// рабочий.
+  ///
+  /// Уникальный индекс `workplace_queue_positions_item_uniq` от этого не
+  /// спасал: он держит одну строку на ключ, а ключи были разные.
+  ///
+  /// Пустой [workplaceId] или [orderId] даёт элемент, который
+  /// `syncWorkplaceEntries` отбрасывает, — это законный «нечего ставить в
+  /// очередь», а не ошибка.
+  factory WorkplaceQueueEntry.forSlot({
+    required String workplaceId,
+    required String orderId,
+    String? taskId,
+    String? stageGroupKey,
+  }) {
+    final workplace = workplaceId.trim();
+    return WorkplaceQueueEntry(
+      workplaceId: workplace,
+      taskId: (taskId?.trim().isEmpty ?? true) ? null : taskId!.trim(),
+      orderId: orderId.trim(),
+      stageId: workplace,
+      stageGroupKey: stageGroupKey?.trim(),
+    );
+  }
+
   String get queueKey => ProductionQueueProvider.queueKeyFor(
         workplaceId: workplaceId,
         taskId: taskId,
+        orderId: orderId,
+        stageId: stageId,
+        stageGroupKey: stageGroupKey,
+      );
+
+  /// Тождество элемента очереди — см. [WorkplaceQueuePosition.semanticKey].
+  String get semanticKey => ProductionQueueProvider.queueSemanticKeyFor(
+        workplaceId: workplaceId,
         orderId: orderId,
         stageId: stageId,
         stageGroupKey: stageGroupKey,
@@ -297,9 +482,14 @@ class WorkplaceQueueEntry {
 class ProductionQueueProvider with ChangeNotifier {
   static const _prefsKeyOrder = 'production_order_sequence';
   static const _prefsKeyHidden = 'production_hidden_orders';
+  static const _prefsKeyPositions = 'production_workplace_positions';
   static const _defaultGroup = 'global';
   static const _legacyRemoteTable = 'production_queue_state';
   static const _positionsTable = 'workplace_queue_positions';
+
+  // Ключи подавления повторов лога, см. [_logSyncError].
+  static const _syncSourceLegacy = 'legacy';
+  static const _syncSourcePositions = 'positions';
 
   /// 25 с вместо прежних 10: цеховой Wi-Fi слабый, а после замедления
   /// поллинга до 20 с одиночный медленный запрос уже никому не мешает.
@@ -307,19 +497,23 @@ class ProductionQueueProvider with ChangeNotifier {
 
   final Map<String, List<String>> _orderSequences = {};
   final Map<String, Set<String>> _hiddenOrders = {};
-  final Map<String, Map<String, WorkplaceQueuePosition>> _positionsByWorkplace = {};
+  final Map<String, Map<String, WorkplaceQueuePosition>> _positionsByWorkplace =
+      {};
   final SupabaseClient _sb = Supabase.instance.client;
-  RealtimeChannel? _legacyChannel;
-  RealtimeChannel? _positionsChannel;
   Future<void>? _remoteBootstrap;
   Timer? _pollingTimer;
+  bool _disposed = false;
 
   // Защита поллинга: не запускаем новый цикл, пока висит предыдущий,
   // а при ошибках сети пропускаем тики с экспоненциальным backoff (до 60 с).
   bool _pollInFlight = false;
   int _pollFailureStreak = 0;
   int _pollSkipTicks = 0;
-  bool _syncErrorLogged = false;
+  // Подавление повторов лога — отдельно по каждому источнику. Общий флаг
+  // сбрасывался успехом соседней таблицы: legacy-запрос проходил, снимал
+  // подавление, и следующий таймаут positions снова печатался. В журнале
+  // это давало по 7 одинаковых строк за 11 секунд.
+  final Set<String> _mutedSyncErrorSources = <String>{};
 
   bool _loaded = false;
   bool _isSyncingOrders = false;
@@ -327,6 +521,16 @@ class ProductionQueueProvider with ChangeNotifier {
   bool get isReady => _loaded;
 
   ProductionQueueProvider() {
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.productionQueueLegacy,
+      handler: refreshLegacyRemoteState,
+    );
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.productionQueuePositions,
+      handler: refreshPositionsRemoteState,
+    );
     _bootstrapRemoteSync();
     _startPollingFallback();
   }
@@ -350,8 +554,7 @@ class ProductionQueueProvider with ChangeNotifier {
     required String stageId,
     String? stageGroupKey,
   }) {
-    return '${
-        workplaceId.trim()}::order::${orderId.trim()}::stage::${stageId.trim()}::group::${(stageGroupKey ?? '').trim()}';
+    return '${workplaceId.trim()}::order::${orderId.trim()}::stage::${stageId.trim()}::group::${(stageGroupKey ?? '').trim()}';
   }
 
   void _startPollingFallback() {
@@ -373,8 +576,18 @@ class ProductionQueueProvider with ChangeNotifier {
     }
     _pollInFlight = true;
     try {
-      final legacyOk = await _loadLegacyRemote();
-      final positionsOk = await _loadAllWorkplacePositions();
+      final result = await afterProductionQueueBootstrap(
+        _remoteBootstrap,
+        () async {
+          if (_disposed) return (legacy: true, positions: true);
+          return (
+            legacy: await _loadLegacyRemote(),
+            positions: await _loadAllWorkplacePositions(),
+          );
+        },
+      );
+      final legacyOk = result.legacy;
+      final positionsOk = result.positions;
       if (legacyOk && positionsOk) {
         _pollFailureStreak = 0;
         _pollSkipTicks = 0;
@@ -392,23 +605,21 @@ class ProductionQueueProvider with ChangeNotifier {
     }
   }
 
-  void _logSyncError(String message) {
-    if (_syncErrorLogged) return;
-    _syncErrorLogged = true;
+  void _logSyncError(String source, String message) {
+    if (!_mutedSyncErrorSources.add(source)) return;
     debugPrint('$message (повторные ошибки скрыты до восстановления связи)');
   }
 
-  void _noteSyncSuccess() {
-    if (!_syncErrorLogged) return;
-    _syncErrorLogged = false;
-    debugPrint('✅ Связь с Supabase восстановлена, синхронизация очереди продолжается');
+  void _noteSyncSuccess(String source) {
+    if (!_mutedSyncErrorSources.remove(source)) return;
+    debugPrint('✅ Связь с Supabase восстановлена ($source), '
+        'синхронизация очереди продолжается');
   }
 
   Future<void> _init() async {
     await _loadLocal();
-    await _loadLegacyRemote();
+    await _loadLegacyRemote(seedRemoteWhenEmpty: true);
     await _loadAllWorkplacePositions();
-    await _subscribeRemote();
   }
 
   Future<void> _bootstrapRemoteSync() {
@@ -488,6 +699,10 @@ class ProductionQueueProvider with ChangeNotifier {
               rawHidden.where((e) => e.trim().isNotEmpty).toSet();
         }
       }
+      // Снимок позиций с прошлого запуска больше не читаем и не храним —
+      // очередь берётся только из базы. Ключ удаляем, чтобы на устройствах,
+      // обновившихся со старой версии, не оставалось лежать старой очереди.
+      await prefs.remove(_prefsKeyPositions);
     } catch (e) {
       debugPrint('❌ Failed to load production queue prefs: $e');
     }
@@ -495,6 +710,29 @@ class ProductionQueueProvider with ChangeNotifier {
     _loaded = true;
     notifyListeners();
   }
+
+  /// Рабочие места, для которых позиции уже грузятся.
+  final Set<String> _positionsRequested = <String>{};
+
+  /// Статус загрузки позиций по рабочим местам.
+  ///
+  /// Раньше отказ сети был неотличим от успеха: клиент молча отдавал снимок с
+  /// диска, и соседние планшеты показывали разную очередь, оба — уверенно.
+  /// Теперь экран знает, загружены позиции или нет, и вместо произвольного
+  /// порядка показывает, что связи нет.
+  final Map<String, bool> _positionsLoadedByWorkplace = <String, bool>{};
+
+  /// Загружены ли позиции этого рабочего места в текущем сеансе.
+  bool positionsLoadedFor(String workplaceId) =>
+      _positionsLoadedByWorkplace[_normalizeWorkplaceId(workplaceId)] ?? false;
+
+  /// Идёт ли сейчас запрос позиций этого рабочего места.
+  ///
+  /// Нужно, чтобы отличать «ещё грузим» от «не смогли загрузить»: без этого
+  /// экран показывал бы отказ в первом же кадре, до того как запрос вообще
+  /// успел уйти.
+  bool positionsLoadingFor(String workplaceId) =>
+      _positionsRequested.contains(_normalizeWorkplaceId(workplaceId));
 
   Future<void> _ensureAuthed() async {
     try {
@@ -519,7 +757,8 @@ class ProductionQueueProvider with ChangeNotifier {
   bool _stringListsEqual(List<String> left, List<String> right) {
     if (left.length != right.length) return false;
     for (var i = 0; i < left.length; i++) {
-      if (_normalizeOrderId(left[i]) != _normalizeOrderId(right[i])) return false;
+      if (_normalizeOrderId(left[i]) != _normalizeOrderId(right[i]))
+        return false;
     }
     return true;
   }
@@ -582,23 +821,26 @@ class ProductionQueueProvider with ChangeNotifier {
         _hiddenOrders.length != nextHidden.length) return false;
     for (final entry in nextSequences.entries) {
       final current = _orderSequences[entry.key];
-      if (current == null || !_stringListsEqual(current, entry.value)) return false;
+      if (current == null || !_stringListsEqual(current, entry.value))
+        return false;
     }
     for (final entry in nextHidden.entries) {
       final current = _hiddenOrders[entry.key];
-      if (current == null || !_stringSetsEqual(current, entry.value)) return false;
+      if (current == null || !_stringSetsEqual(current, entry.value))
+        return false;
     }
     return true;
   }
 
-  Future<bool> _loadLegacyRemote() async {
+  Future<bool> _loadLegacyRemote({bool seedRemoteWhenEmpty = false}) async {
     try {
       await _ensureAuthed();
       final raw = await _sb
           .from(_legacyRemoteTable)
           .select('group_id, order_sequence, hidden_order_ids')
           .timeout(_queueRequestTimeout);
-      _noteSyncSuccess();
+      _noteSyncSuccess(_syncSourceLegacy);
+      if (_disposed) return true;
       if (raw is! List) return true;
 
       final nextSequences = <String, List<String>>{};
@@ -608,10 +850,15 @@ class ProductionQueueProvider with ChangeNotifier {
         final map = Map<String, dynamic>.from(row as Map);
         final groupId = _normalizeGroup(map['group_id']?.toString() ?? '');
         nextSequences[groupId] = _decodeStringList(map['order_sequence']);
-        nextHidden[groupId] = _decodeStringList(map['hidden_order_ids']).toSet();
+        nextHidden[groupId] =
+            _decodeStringList(map['hidden_order_ids']).toSet();
       }
 
-      if (nextSequences.isEmpty && nextHidden.isEmpty) {
+      if (shouldSeedLegacyRemote(
+        seedRemoteWhenEmpty: seedRemoteWhenEmpty,
+        remoteIsEmpty: nextSequences.isEmpty && nextHidden.isEmpty,
+        localIsEmpty: _orderSequences.isEmpty && _hiddenOrders.isEmpty,
+      )) {
         await _pushLocalStateToLegacyRemote();
         return true;
       }
@@ -628,7 +875,8 @@ class ProductionQueueProvider with ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      _logSyncError('⚠️ Failed to load legacy production queue from Supabase: $e');
+      _logSyncError(_syncSourceLegacy,
+          '⚠️ Failed to load legacy production queue from Supabase: $e');
       return false;
     }
   }
@@ -636,21 +884,41 @@ class ProductionQueueProvider with ChangeNotifier {
   Future<bool> _loadAllWorkplacePositions() async {
     try {
       await _ensureAuthed();
-      final raw = await _sb
-          .from(_positionsTable)
-          .select('id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
-          .order('workplace_id')
-          .order('queue_position')
-          .timeout(_queueRequestTimeout);
-      _noteSyncSuccess();
-      if (raw is! List) return true;
+      // Страницами по 1000: PostgREST по умолчанию не отдаёт больше тысячи
+      // строк за запрос, а таблица уже перевалила за неё. Без пагинации
+      // «хвост» просто не приезжал, и заказы этих рабочих мест оказывались
+      // без позиции — то есть в конце списка, независимо от очереди.
+      const pageSize = 1000;
+      final raw = <dynamic>[];
+      for (var offset = 0;; offset += pageSize) {
+        final page = await _sb
+            .from(_positionsTable)
+            .select(
+                'id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
+            .order('workplace_id')
+            .order('queue_position')
+            .range(offset, offset + pageSize - 1)
+            .timeout(_queueRequestTimeout);
+        if (page is! List) break;
+        raw.addAll(page);
+        if (page.length < pageSize) break;
+      }
+      _noteSyncSuccess(_syncSourcePositions);
+      if (_disposed) return true;
       final next = <String, Map<String, WorkplaceQueuePosition>>{};
       for (final row in raw) {
         if (row is! Map) continue;
-        final position = WorkplaceQueuePosition.fromMap(Map<String, dynamic>.from(row as Map));
+        final position = WorkplaceQueuePosition.fromMap(
+            Map<String, dynamic>.from(row as Map));
         final workplaceId = _normalizeWorkplaceId(position.workplaceId);
-        if (workplaceId.isEmpty || position.orderId.trim().isEmpty || position.stageId.trim().isEmpty) continue;
-        next.putIfAbsent(workplaceId, () => <String, WorkplaceQueuePosition>{})[position.queueKey] = position;
+        if (workplaceId.isEmpty ||
+            position.orderId.trim().isEmpty ||
+            position.stageId.trim().isEmpty) continue;
+        next.putIfAbsent(workplaceId, () => <String, WorkplaceQueuePosition>{})[
+            position.queueKey] = position;
+      }
+      for (final workplaceId in next.keys) {
+        _positionsLoadedByWorkplace[workplaceId] = true;
       }
       if (positionSnapshotsMatch(_positionsByWorkplace, next)) return true;
       _positionsByWorkplace
@@ -659,42 +927,133 @@ class ProductionQueueProvider with ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      _logSyncError('⚠️ Failed to load workplace queue positions from Supabase: $e');
+      _logSyncError(_syncSourcePositions,
+          '⚠️ Failed to load workplace queue positions from Supabase: $e');
       return false;
     }
   }
 
-  Future<List<WorkplaceQueuePosition>> loadPositionsForWorkplace(String workplaceId) async {
+  /// Перечитывает удалённую очередь без каких-либо записей в Supabase.
+  /// Повторный realtime event во время чтения объединяется в один проход.
+  Future<void> refreshLegacyRemoteState() async {
+    await afterProductionQueueBootstrap(_remoteBootstrap, () async {
+      if (_disposed) return;
+      await _loadLegacyRemote();
+    });
+  }
+
+  Future<void> refreshPositionsRemoteState() async {
+    await afterProductionQueueBootstrap(_remoteBootstrap, () async {
+      if (_disposed) return;
+      await _loadAllWorkplacePositions();
+    });
+  }
+
+  @visibleForTesting
+  static bool shouldSeedLegacyRemote({
+    required bool seedRemoteWhenEmpty,
+    required bool remoteIsEmpty,
+    required bool localIsEmpty,
+  }) =>
+      seedRemoteWhenEmpty && remoteIsEmpty && !localIsEmpty;
+
+  Future<void> refreshRemoteState() async {
+    await Future.wait<void>([
+      refreshLegacyRemoteState(),
+      refreshPositionsRemoteState(),
+    ]);
+  }
+
+
+
+  /// Гарантирует, что позиции ОДНОГО рабочего места загружены.
+  ///
+  /// Экран очереди не должен зависеть от общего запроса по всей таблице: тот
+  /// тянет больше тысячи строк и на цеховой сети регулярно не укладывался в
+  /// таймаут (в журнале это «Failed to load workplace queue positions»). При
+  /// его провале карта позиций оставалась пустой, priorityOfEntry возвращал
+  /// «бесконечность» для всех заказов, и список показывался в произвольном
+  /// порядке — при том что в базе номера были правильные. Запрос по одному
+  /// рабочему месту меньше на порядок и проходит.
+  void ensurePositionsLoaded(String workplaceId) {
+    final normalized = _normalizeWorkplaceId(workplaceId);
+    if (normalized.isEmpty || _disposed) return;
+    // Очередь всегда читается из базы. Дедуп по _positionsRequested, чтобы
+    // повторные перестройки экрана не плодили одинаковые запросы.
+    if (!_positionsRequested.add(normalized)) return;
+    // Метод зовётся и из build (нельзя уведомлять сразу), и с кнопки
+    // «Повторить» (там уведомить надо, иначе нажатие выглядит как ничего).
+    // Пост-кадровый колбэк подходит обоим.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) notifyListeners();
+    });
+    unawaited(loadPositionsForWorkplace(normalized).whenComplete(() {
+      _positionsRequested.remove(normalized);
+      // Снимаем признак «грузится» И только потом уведомляем: иначе экран
+      // перерисуется, пока флаг ещё стоит, и навсегда останется со спиннером.
+      if (!_disposed) notifyListeners();
+    }));
+  }
+
+  /// Читает позиции рабочего места ИЗ БАЗЫ. Единственный источник очереди.
+  ///
+  /// Сеть в цеху рвётся часто (в журнале за месяц 483 отказа DNS и 373
+  /// таймаута), поэтому одна неудачная попытка — не повод сдаваться: пробуем
+  /// три раза с нарастающей паузой. Если не вышло и после этого, рабочее место
+  /// помечается «не загружено», и экран показывает это прямо, а не рисует
+  /// список в произвольном порядке.
+  Future<List<WorkplaceQueuePosition>> loadPositionsForWorkplace(
+      String workplaceId) async {
     final normalized = _normalizeWorkplaceId(workplaceId);
     if (normalized.isEmpty) return const <WorkplaceQueuePosition>[];
-    try {
-      await _ensureAuthed();
-      final raw = await _sb
-          .from(_positionsTable)
-          .select('id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
-          .eq('workplace_id', normalized)
-          .order('queue_position');
-      if (raw is! List) return positionsForWorkplace(normalized);
-      final positions = WorkplaceQueuePositionPlanner.sortedPositions(
-        raw.whereType<Map>().map(
-              (row) => WorkplaceQueuePosition.fromMap(
-                Map<String, dynamic>.from(row),
+    const attempts = 3;
+    Object? lastError;
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      if (_disposed) return positionsForWorkplace(normalized);
+      try {
+        await _ensureAuthed();
+        final raw = await _sb
+            .from(_positionsTable)
+            .select(
+                'id, workplace_id, task_id, order_id, stage_id, stage_group_key, queue_position')
+            .eq('workplace_id', normalized)
+            .order('queue_position')
+            .timeout(_queueRequestTimeout);
+        if (raw is! List) throw StateError('unexpected payload');
+        _noteSyncSuccess('$_syncSourcePositions:$normalized');
+        final positions = WorkplaceQueuePositionPlanner.sortedPositions(
+          raw.whereType<Map>().map(
+                (row) => WorkplaceQueuePosition.fromMap(
+                  Map<String, dynamic>.from(row),
+                ),
               ),
-            ),
-      );
-      _positionsByWorkplace[normalized] = {
-        for (final position in positions) position.queueKey: position,
-      };
-      notifyListeners();
-      return positions;
-    } catch (e) {
-      debugPrint('⚠️ Failed to load workplace queue positions for "$normalized": $e');
-      return positionsForWorkplace(normalized);
+        );
+        _positionsByWorkplace[normalized] = {
+          for (final position in positions) position.queueKey: position,
+        };
+        _positionsLoadedByWorkplace[normalized] = true;
+        notifyListeners();
+        return positions;
+      } catch (e) {
+        lastError = e;
+        if (attempt < attempts) {
+          await Future<void>.delayed(Duration(seconds: attempt * 2));
+        }
+      }
     }
+    // Отказ больше не притворяется успехом: снимка с диска нет, а то, что
+    // осталось в памяти от прошлой удачной загрузки, помечено устаревшим.
+    _positionsLoadedByWorkplace[normalized] = false;
+    _logSyncError('$_syncSourcePositions:$normalized',
+        '⚠️ Failed to load workplace queue positions for "$normalized": $lastError');
+    notifyListeners();
+    return positionsForWorkplace(normalized);
   }
 
   List<WorkplaceQueuePosition> positionsForWorkplace(String workplaceId) {
-    final values = _positionsByWorkplace[_normalizeWorkplaceId(workplaceId)]?.values.toList() ??
+    final values = _positionsByWorkplace[_normalizeWorkplaceId(workplaceId)]
+            ?.values
+            .toList() ??
         <WorkplaceQueuePosition>[];
     return WorkplaceQueuePositionPlanner.sortedPositions(values);
   }
@@ -704,25 +1063,26 @@ class ProductionQueueProvider with ChangeNotifier {
     if (workplaceId.isEmpty) return 1 << 30;
     final workplaceMap = _positionsByWorkplace[workplaceId];
     if (workplaceMap == null || workplaceMap.isEmpty) return 1 << 30;
-    final exact = workplaceMap[entry.queueKey];
-    if (exact != null) return exact.queuePosition;
     final semanticKey = queueSemanticKeyFor(
       workplaceId: workplaceId,
       orderId: entry.orderId,
       stageId: entry.stageId,
       stageGroupKey: entry.stageGroupKey,
     );
-    for (final position in workplaceMap.values) {
-      if (queueSemanticKeyFor(
-            workplaceId: position.workplaceId,
-            orderId: position.orderId,
-            stageId: position.stageId,
-            stageGroupKey: position.stageGroupKey,
-          ) ==
-          semanticKey) {
-        return position.queuePosition;
-      }
-    }
+    // Ту же строку, что выберет перестановка — см. positionForSemanticKey.
+    //
+    // Раньше здесь стоял быстрый путь «точное совпадение по queueKey», и он
+    // обходил это правило. У заказа с ДВУМЯ строками (одна на живой задаче,
+    // другая на удалённой) показ попадал в строку живой задачи, а
+    // перестановка выбирала строку с меньшим номером — то есть мёртвую. Заказ
+    // ТОО Raw на Листорезке из-за этого нельзя было поднять в очереди вообще:
+    // drag присваивал номер мёртвой строке, живая уезжала в хвост, и список
+    // читал именно её.
+    final best = WorkplaceQueuePositionPlanner.positionForSemanticKey(
+      workplaceMap.values,
+      semanticKey,
+    );
+    if (best != null) return best.queuePosition;
     return 1 << 30;
   }
 
@@ -741,37 +1101,6 @@ class ProductionQueueProvider with ChangeNotifier {
       return a.index.compareTo(b.index);
     });
     return indexed.map((entry) => entry.item).toList();
-  }
-
-  Future<void> _subscribeRemote() async {
-    try {
-      await _ensureAuthed();
-      _legacyChannel?.unsubscribe();
-      if (_legacyChannel != null) _sb.removeChannel(_legacyChannel!);
-      _legacyChannel = _sb
-          .channel('realtime:$_legacyRemoteTable')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: _legacyRemoteTable,
-            callback: (_) async => _loadLegacyRemote(),
-          )
-          .subscribe();
-
-      _positionsChannel?.unsubscribe();
-      if (_positionsChannel != null) _sb.removeChannel(_positionsChannel!);
-      _positionsChannel = _sb
-          .channel('realtime:$_positionsTable')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: _positionsTable,
-            callback: (_) async => _loadAllWorkplacePositions(),
-          )
-          .subscribe();
-    } catch (e) {
-      debugPrint('⚠️ Failed to subscribe production queue realtime: $e');
-    }
   }
 
   Future<void> _pushLocalStateToLegacyRemote() async {
@@ -794,7 +1123,8 @@ class ProductionQueueProvider with ChangeNotifier {
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
     } catch (e) {
-      debugPrint('⚠️ Failed to upsert legacy production queue group "$groupId": $e');
+      debugPrint(
+          '⚠️ Failed to upsert legacy production queue group "$groupId": $e');
     }
   }
 
@@ -825,31 +1155,32 @@ class ProductionQueueProvider with ChangeNotifier {
     await _pushLocalStateToLegacyRemote();
   }
 
+  /// Номер для нового элемента в хвосте очереди — считается ПО БАЗЕ.
+  ///
+  /// Раньше при сетевом сбое `catch (_) {}` молча оставлял максимум из памяти.
+  /// Устройство с отставшим снимком вставляло элемент на уже занятый номер, а
+  /// уникальности на `(workplace_id, queue_position)` в схеме нет — получалась
+  /// ничья, и порядок у такого элемента начинал зависеть от устройства.
+  /// Теперь сбой чтения — это отказ: лучше не записать ничего, чем записать
+  /// номер, взятый с потолка.
   Future<int> _nextPositionForWorkplace(String workplaceId) async {
     final normalized = _normalizeWorkplaceId(workplaceId);
-    final cached = _positionsByWorkplace[normalized]?.values ??
-        const <WorkplaceQueuePosition>[];
+    final raw = await _sb
+        .from(_positionsTable)
+        .select('queue_position')
+        .eq('workplace_id', normalized)
+        .timeout(_queueRequestTimeout);
     var maxPosition = 0;
-    for (final item in cached) {
-      if (!item.hasQueuePosition) continue;
-      if (item.queuePosition > maxPosition) maxPosition = item.queuePosition;
-    }
-    try {
-      final raw = await _sb
-          .from(_positionsTable)
-          .select('queue_position')
-          .eq('workplace_id', normalized);
-      if (raw is List) {
-        for (final row in raw.whereType<Map>()) {
-          final remoteMax = WorkplaceQueuePosition._intFrom(
-            row['queue_position'],
-          );
-          if (remoteMax != null && remoteMax > maxPosition) {
-            maxPosition = remoteMax;
-          }
+    if (raw is List) {
+      for (final row in raw.whereType<Map>()) {
+        final remoteMax = WorkplaceQueuePosition._intFrom(
+          row['queue_position'],
+        );
+        if (remoteMax != null && remoteMax > maxPosition) {
+          maxPosition = remoteMax;
         }
       }
-    } catch (_) {}
+    }
     return maxPosition + 1;
   }
 
@@ -858,7 +1189,14 @@ class ProductionQueueProvider with ChangeNotifier {
     if (workplaceId.isEmpty ||
         entry.orderId.trim().isEmpty ||
         entry.stageId.trim().isEmpty) return;
-    if (_positionsByWorkplace[workplaceId]?.containsKey(entry.queueKey) == true) return;
+    // По тождеству, а не по строгому ключу: иначе для элемента, уже
+    // записанного без task_id, вставлялась ВТОРАЯ строка на ту же позицию в
+    // очереди, и порядок становился неопределённым.
+    final existing = _positionsByWorkplace[workplaceId];
+    if (existing != null &&
+        existing.values.any((p) => p.semanticKey == entry.semanticKey)) {
+      return;
+    }
     try {
       await _ensureAuthed();
       final position = await _nextPositionForWorkplace(workplaceId);
@@ -959,21 +1297,60 @@ class ProductionQueueProvider with ChangeNotifier {
     }
   }
 
+  /// Записывает новые номера очереди ОДНИМ запросом.
+  ///
+  /// Раньше здесь шёл цикл `update ... eq(id)` — по запросу на строку. На
+  /// Флексопечати это 189 запросов подряд, на Упаковке 220, и каждый из них
+  /// realtime-подписка возвращала обратно в приложение: пока перестановка
+  /// дописывалась, список несколько раз перечитывал наполовину обновлённую
+  /// таблицу и перетасовывался на глазах. Прерывание на середине (уход с
+  /// экрана, обрыв сети) оставляло очередь частью в новом порядке, частью в
+  /// старом — та же «вакханалия» уже навсегда.
+  ///
+  /// upsert по первичному ключу — одна операция: либо применились все
+  /// номера, либо ни одного.
+  Future<void> _writePositions(List<WorkplaceQueuePosition> changes) async {
+    if (changes.isEmpty) return;
+    await _ensureAuthed();
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _sb.from(_positionsTable).upsert([
+      for (final position in changes)
+        {
+          'id': position.id,
+          'workplace_id': position.workplaceId.trim(),
+          if ((position.taskId ?? '').trim().isNotEmpty)
+            'task_id': position.taskId!.trim(),
+          'order_id': position.orderId.trim(),
+          'stage_id': position.stageId.trim(),
+          if ((position.stageGroupKey ?? '').trim().isNotEmpty)
+            'stage_group_key': position.stageGroupKey!.trim(),
+          'queue_position': position.queuePosition,
+          'updated_at': now,
+        },
+    ]);
+  }
+
   Future<void> normalizePositions({required String workplaceId}) async {
     final normalized = _normalizeWorkplaceId(workplaceId);
     if (normalized.isEmpty) return;
     final positions = await loadPositionsForWorkplace(normalized);
-    var changed = false;
+    final changes = <WorkplaceQueuePosition>[];
     for (var i = 0; i < positions.length; i++) {
       final expected = i + 1;
       if (positions[i].queuePosition == expected) continue;
-      changed = true;
-      await _sb.from(_positionsTable).update({
-        'queue_position': expected,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', positions[i].id);
+      changes.add(WorkplaceQueuePosition(
+        id: positions[i].id,
+        workplaceId: positions[i].workplaceId,
+        taskId: positions[i].taskId,
+        orderId: positions[i].orderId,
+        stageId: positions[i].stageId,
+        stageGroupKey: positions[i].stageGroupKey,
+        queuePosition: expected,
+      ));
     }
-    if (changed) await loadPositionsForWorkplace(normalized);
+    if (changes.isEmpty) return;
+    await _writePositions(changes);
+    await loadPositionsForWorkplace(normalized);
   }
 
   Future<void> saveWorkplaceReorder(
@@ -1001,7 +1378,7 @@ class ProductionQueueProvider with ChangeNotifier {
     for (final key in orderedKeys) {
       if (_normalizeWorkplaceId(key.workplaceId) != normalized) continue;
       if (key.orderId.trim().isEmpty || key.stageId.trim().isEmpty) continue;
-      if (!seen.add(key.queueKey)) continue;
+      if (!seen.add(key.semanticKey)) continue;
       visibleKeys.add(key);
     }
     if (visibleKeys.isEmpty) return;
@@ -1016,30 +1393,32 @@ class ProductionQueueProvider with ChangeNotifier {
       orderedKeys: visibleKeys,
       workplaceId: normalized,
     );
-    final byKey = {
-      for (final position in current) position.queueKey: position,
-    };
+    // Номер получает КАЖДАЯ строка рабочего места, без исключений — см.
+    // WorkplaceQueuePositionPlanner.renumber.
+    final renumbered = WorkplaceQueuePositionPlanner.renumber(
+      current: current,
+      nextKeys: nextKeys,
+    );
 
     // Apply the new order in memory before the network roundtrip. Without this
     // optimistic update the next build can re-render the old queue and make a
     // successful drag look like it was ignored until realtime/polling catches up.
-    _applyLocalVisibleReorder(
-      workplaceId: normalized,
-      nextKeys: nextKeys,
-      byKey: byKey,
-    );
+    _applyLocalRenumber(workplaceId: normalized, renumbered: renumbered);
+
+    final changes = <WorkplaceQueuePosition>[];
+    final currentById = {for (final position in current) position.id: position};
+    for (final position in renumbered) {
+      final before = currentById[position.id];
+      if (before != null &&
+          before.hasQueuePosition &&
+          before.queuePosition == position.queuePosition) {
+        continue;
+      }
+      changes.add(position);
+    }
 
     try {
-      for (var i = 0; i < nextKeys.length; i++) {
-        final position = byKey[nextKeys[i]];
-        if (position == null) continue;
-        final nextPosition = i + 1;
-        if (position.queuePosition == nextPosition) continue;
-        await _sb.from(_positionsTable).update({
-          'queue_position': nextPosition,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        }).eq('id', position.id);
-      }
+      await _writePositions(changes);
     } catch (_) {
       await loadPositionsForWorkplace(normalized);
       rethrow;
@@ -1047,32 +1426,32 @@ class ProductionQueueProvider with ChangeNotifier {
     await loadPositionsForWorkplace(normalized);
   }
 
-  void _applyLocalVisibleReorder({
+  /// Отражает пересчитанные номера в памяти до похода в сеть: без этого
+  /// следующая перерисовка показала бы прежний порядок, и удачное
+  /// перетаскивание выглядело бы как проигнорированное.
+  void _applyLocalRenumber({
     required String workplaceId,
-    required List<String> nextKeys,
-    required Map<String, WorkplaceQueuePosition> byKey,
+    required List<WorkplaceQueuePosition> renumbered,
   }) {
     final currentMap = _positionsByWorkplace[workplaceId];
     if (currentMap == null || currentMap.isEmpty) return;
+    final byId = {
+      for (final entry in currentMap.entries) entry.value.id: entry.key,
+    };
     var changed = false;
     final updated = Map<String, WorkplaceQueuePosition>.from(currentMap);
-    for (var i = 0; i < nextKeys.length; i++) {
-      final key = nextKeys[i];
-      final position = byKey[key];
-      if (position == null) continue;
-      final nextPosition = i + 1;
-      if (position.queuePosition == nextPosition && position.hasQueuePosition) {
+    for (final position in renumbered) {
+      // Ключ карты — тот, под которым строка уже лежит: запись под чужим
+      // ключом плодила бы в памяти второй элемент рядом со старым.
+      final mapKey = byId[position.id];
+      if (mapKey == null) continue;
+      final before = updated[mapKey];
+      if (before != null &&
+          before.hasQueuePosition &&
+          before.queuePosition == position.queuePosition) {
         continue;
       }
-      updated[key] = WorkplaceQueuePosition(
-        id: position.id,
-        workplaceId: position.workplaceId,
-        taskId: position.taskId,
-        orderId: position.orderId,
-        stageId: position.stageId,
-        stageGroupKey: position.stageGroupKey,
-        queuePosition: nextPosition,
-      );
+      updated[mapKey] = position;
       changed = true;
     }
     if (!changed) return;
@@ -1157,7 +1536,8 @@ class ProductionQueueProvider with ChangeNotifier {
     }
     if (indexed.length < 2) return indexed.map((entry) => entry.item).toList();
 
-    final sequence = _orderSequences[_normalizeGroup(groupId)] ?? const <String>[];
+    final sequence =
+        _orderSequences[_normalizeGroup(groupId)] ?? const <String>[];
     final indexById = <String, int>{};
     for (var i = 0; i < sequence.length; i++) {
       final id = _normalizeOrderId(sequence[i]);
@@ -1184,7 +1564,8 @@ class ProductionQueueProvider with ChangeNotifier {
 
   /// Legacy/fallback reorder. Manual workplace ordering must use
   /// [saveWorkplaceReorder] instead.
-  void applyVisibleReorder(List<String> orderedIds, {String groupId = _defaultGroup}) {
+  void applyVisibleReorder(List<String> orderedIds,
+      {String groupId = _defaultGroup}) {
     unawaited(_bootstrapRemoteSync());
     if (orderedIds.isEmpty) return;
     final normalizedOrderedIds = <String>[];
@@ -1239,18 +1620,10 @@ class ProductionQueueProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _pollingTimer?.cancel();
     _pollingTimer = null;
-    if (_legacyChannel != null) {
-      _legacyChannel!.unsubscribe();
-      _sb.removeChannel(_legacyChannel!);
-      _legacyChannel = null;
-    }
-    if (_positionsChannel != null) {
-      _positionsChannel!.unsubscribe();
-      _sb.removeChannel(_positionsChannel!);
-      _positionsChannel = null;
-    }
+    RealtimeSyncService.instance.unregisterOwner(this);
     super.dispose();
   }
 }

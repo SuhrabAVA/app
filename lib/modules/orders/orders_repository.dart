@@ -5,6 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../services/stock_availability_recheck_coordinator.dart';
+import 'flex_paint_rows.dart';
+import 'paper_usage_rules.dart';
+
 class OrderFormData {
   final String manager;
   final String customer;
@@ -275,9 +279,8 @@ class OrdersRepository {
       await addPaints(orderId, list);
       await syncPaintReservations(
         orderId: orderId,
-        paints: list
-            .map((paint) => paint.toRow(orderId))
-            .toList(growable: false),
+        paints:
+            list.map((paint) => paint.toRow(orderId)).toList(growable: false),
       );
     }
 
@@ -343,9 +346,8 @@ class OrdersRepository {
                 );
           final name =
               (row['paint_name'] ?? row['name'] ?? '').toString().trim();
-          final paintId = (row['paint_id'] ?? row['material_id'] ?? '')
-              .toString()
-              .trim();
+          final paintId =
+              (row['paint_id'] ?? row['material_id'] ?? '').toString().trim();
           return <String, dynamic>{
             if (paintId.isNotEmpty) 'paint_id': paintId,
             if (name.isNotEmpty) 'paint_name': name,
@@ -378,7 +380,8 @@ class OrdersRepository {
     });
   }
 
-  Future<List<Map<String, dynamic>>> getPaintReservations(String orderId) async {
+  Future<List<Map<String, dynamic>>> getPaintReservations(
+      String orderId) async {
     final rows = await _sb
         .from('order_paint_reservations')
         .select('paint_id, paint_name, reserved_qty, used_qty, released_qty')
@@ -446,13 +449,59 @@ class OrdersRepository {
         .cast<Map<String, dynamic>>()
         .map(PaintPendingWriteoff.fromMap)
         .where((row) {
-          final hasMatchingPaintId =
-              row.paintId.isNotEmpty && paintIds.contains(row.paintId);
-          final hasMatchingPaintName = row.paintName.isNotEmpty &&
-              paintNames.contains(_normalizePaintNameForMatching(row.paintName));
-          return hasMatchingPaintId || hasMatchingPaintName;
-        })
-        .toList(growable: false);
+      final hasMatchingPaintId =
+          row.paintId.isNotEmpty && paintIds.contains(row.paintId);
+      final hasMatchingPaintName = row.paintName.isNotEmpty &&
+          paintNames.contains(_normalizePaintNameForMatching(row.paintName));
+      return hasMatchingPaintId || hasMatchingPaintName;
+    }).toList(growable: false);
+  }
+
+  /// Бумага заказа для окна расхода: план, списано, свободно на складе и этап
+  /// бумаги. `null` — заказа нет.
+  Future<PaperUsageState?> getPaperUsageState(String orderId) async {
+    await ensureSignedIn();
+    final raw = await _sb.rpc(
+      'order_paper_usage_state',
+      params: {'p_order_id': orderId},
+    );
+    if (raw is! Map) return null;
+    return PaperUsageState.fromJson(Map<String, dynamic>.from(raw));
+  }
+
+  /// Записать фактический расход бумаги сотрудника этапа бумаги.
+  ///
+  /// Записанное сразу списывается со склада и уменьшает бронь заказа. Больше,
+  /// чем есть на складе для заказа, сервер не пропустит — исключение с
+  /// текстом для сотрудника. [requestId] защищает от двойного списания при
+  /// повторной отправке того же окна.
+  Future<PaperUsageState?> recordPaperUsage({
+    required String orderId,
+    required String taskId,
+    required Map<String, double> qtyByPaperId,
+    required PaperUsageKind kind,
+    String? requestId,
+    String? actor,
+    String? employeeId,
+  }) async {
+    await ensureSignedIn();
+    final raw = await _sb.rpc('record_order_paper_usage', params: {
+      'p_order_id': orderId,
+      'p_task_id': taskId,
+      'p_rows': [
+        for (final entry in qtyByPaperId.entries)
+          {'paper_id': entry.key, 'qty': entry.value},
+      ],
+      'p_kind': kind.wire,
+      'p_request_id': requestId ?? const Uuid().v4(),
+      'p_actor': actor ?? '',
+      'p_employee_id': employeeId ?? '',
+    });
+    if (raw is! Map) return null;
+    final state = raw['state'];
+    return state is Map
+        ? PaperUsageState.fromJson(Map<String, dynamic>.from(state))
+        : null;
   }
 
   Future<void> completeTaskStage({
@@ -466,16 +515,23 @@ class OrdersRepository {
     String? actor,
   }) async {
     await ensureSignedIn();
-    await _sb.rpc('complete_task_stage', params: {
-      'p_task_id': taskId,
-      'p_order_id': orderId,
-      'p_stage_id': stageId,
-      'p_employee_id': employeeId,
-      'p_quantity_done': quantityDone,
-      'p_comment': comment,
-      'p_joint_user_ids': jointUserIds,
-      'p_actor': actor ?? '',
-    });
+    final completionProbe = await _completionProbe(orderId);
+    try {
+      await _sb.rpc('complete_task_stage', params: {
+        'p_task_id': taskId,
+        'p_order_id': orderId,
+        'p_stage_id': stageId,
+        'p_employee_id': employeeId,
+        'p_quantity_done': quantityDone,
+        'p_comment': comment,
+        'p_joint_user_ids': jointUserIds,
+        'p_actor': actor ?? '',
+      });
+    } catch (_) {
+      await _recheckAfterCompletionTransition(orderId, completionProbe);
+      rethrow;
+    }
+    await _recheckAfterCompletionTransition(orderId, completionProbe);
   }
 
   Future<void> completeFlexPrintingStage({
@@ -483,7 +539,8 @@ class OrdersRepository {
     required String orderId,
     required String stageId,
     required String employeeId,
-    List<Map<String, dynamic>> currentOrderRows = const <Map<String, dynamic>>[],
+    List<Map<String, dynamic>> currentOrderRows =
+        const <Map<String, dynamic>>[],
     List<Map<String, dynamic>> pendingRows = const <Map<String, dynamic>>[],
     List<Map<String, dynamic>>? paintUsages,
     String? quantityDone,
@@ -495,33 +552,117 @@ class OrdersRepository {
         ? currentOrderRows
         : (paintUsages ?? const <Map<String, dynamic>>[]);
 
-    final currentRpcRows = effectiveCurrentRows
-        .map((row) => _paintQueueRpcRow(
-              row,
-              fallbackOrderId: orderId,
-              fallbackTaskId: taskId,
-            ))
-        .toList(growable: false);
-    final pendingRpcRows = pendingRows
-        .map((row) => _paintQueueRpcRow(row))
-        .toList(growable: false);
+    // Дубли снимаются ДО отправки: RPC доверяет списку и спишет одну и ту же
+    // краску столько раз, сколько строк придёт. Правило — в
+    // `flex_paint_rows.dart`; повтор слота не бывает правильным ни в каком
+    // сценарии.
+    final currentRpcRows = dedupeFlexPaintRows(
+      effectiveCurrentRows
+          .map((row) => _paintQueueRpcRow(
+                row,
+                fallbackOrderId: orderId,
+                fallbackTaskId: taskId,
+              ))
+          .toList(growable: false),
+      pending: false,
+    );
+    final pendingRpcRows = dropPendingRowsAlreadyInCurrent(
+      currentRows: currentRpcRows,
+      pendingRows: dedupeFlexPaintRows(
+        pendingRows
+            .map((row) => _paintQueueRpcRow(row))
+            .toList(growable: false),
+        pending: true,
+      ),
+    );
 
-    await _sb.rpc('complete_flex_printing_stage_with_paint_queue', params: {
-      'p_task_id': taskId,
-      'p_order_id': orderId,
-      'p_stage_id': stageId,
-      'p_employee_id': employeeId,
-      'p_current_order_rows': currentRpcRows,
-      'p_pending_rows': pendingRpcRows,
-      'p_quantity_done': quantityDone,
-      'p_comment': comment,
-      'p_actor': actor ?? '',
-    });
+    // Видно, что уходит на сервер: одна строка на слот, с количеством. Ради
+    // этой строки в логе разбор тройного списания занял бы минуту вместо дня —
+    // сервер списывает ровно то, что ему прислали, и проверить это иначе
+    // нечем: при отказе транзакция откатывается и следов не остаётся.
+    for (final row in currentRpcRows) {
+      debugPrint('🎨 заказ: ${row['paint_name'] ?? row['paint_id']} '
+          '= ${row['actual_used_amount']} (списать: ${row['write_off_now']})');
+    }
+    for (final row in pendingRpcRows) {
+      debugPrint('🎨 очередь: ${row['paint_name'] ?? row['paint_id']} '
+          '= ${row['actual_used_amount']} заказ ${row['source_order_id']}');
+    }
+
+    final completionProbe = await _completionProbe(orderId);
+    try {
+      await _sb.rpc('complete_flex_printing_stage_with_paint_queue', params: {
+        'p_task_id': taskId,
+        'p_order_id': orderId,
+        'p_stage_id': stageId,
+        'p_employee_id': employeeId,
+        'p_current_order_rows': currentRpcRows,
+        'p_pending_rows': pendingRpcRows,
+        'p_quantity_done': quantityDone,
+        'p_comment': comment,
+        'p_actor': actor ?? '',
+      });
+    } catch (_) {
+      await _recheckAfterCompletionTransition(orderId, completionProbe);
+      rethrow;
+    }
+    await _recheckAfterCompletionTransition(orderId, completionProbe);
 
     await _applyPaintReservationUsage(<Map<String, dynamic>>[
       ...currentRpcRows,
       ...pendingRpcRows,
     ]);
+  }
+
+  Future<({bool? completed, bool? hasPaperReservations})> _completionProbe(
+    String orderId,
+  ) async {
+    bool? completed;
+    bool? hasPaperReservations;
+    try {
+      final order = await _sb
+          .from('orders')
+          .select('status')
+          .eq('id', orderId)
+          .maybeSingle();
+      completed = order != null &&
+          (order['status'] ?? '').toString().trim().toLowerCase() ==
+              'completed';
+    } catch (_) {}
+    try {
+      final reservations = await _sb
+          .from('order_paper_reservations')
+          .select('order_id')
+          .eq('order_id', orderId)
+          .limit(1);
+      hasPaperReservations = reservations.isNotEmpty;
+    } catch (_) {}
+    return (completed: completed, hasPaperReservations: hasPaperReservations);
+  }
+
+  Future<void> _recheckAfterCompletionTransition(
+    String orderId,
+    ({bool? completed, bool? hasPaperReservations}) before,
+  ) async {
+    if (before.completed == true || before.hasPaperReservations == false) {
+      return;
+    }
+    try {
+      final order = await _sb
+          .from('orders')
+          .select('status')
+          .eq('id', orderId)
+          .maybeSingle();
+      final completed = order != null &&
+          (order['status'] ?? '').toString().trim().toLowerCase() ==
+              'completed';
+      if (!completed) return;
+      await StockAvailabilityRecheckCoordinator.instance
+          .afterCommittedStockMutation();
+    } catch (_) {
+      // A failed post-state probe must not turn a committed task completion
+      // into a client-visible failure. Realtime remains read-only.
+    }
   }
 
   Future<void> _applyPaintReservationUsage(
@@ -530,7 +671,8 @@ class OrdersRepository {
     final rowsToApply = writeoffRows.where((row) {
       final writeOffNow = row['write_off_now'] == true ||
           row['write_off_now']?.toString().toLowerCase() == 'true';
-      final qty = _readDouble(row, const ['actual_used_amount', 'used_qty']) ?? 0;
+      final qty =
+          _readDouble(row, const ['actual_used_amount', 'used_qty']) ?? 0;
       final sourceOrderId = _trimmedString(row, const ['source_order_id']);
       return writeOffNow && qty > 0 && sourceOrderId.isNotEmpty;
     }).toList(growable: false);
@@ -550,7 +692,8 @@ class OrdersRepository {
       try {
         var query = _sb
             .from('order_paint_reservations')
-            .select('id, paint_id, paint_name, reserved_qty, used_qty, released_qty')
+            .select(
+                'id, paint_id, paint_name, reserved_qty, used_qty, released_qty')
             .eq('order_id', sourceOrderId);
         if (paintId.isNotEmpty) {
           query = query.eq('paint_id', paintId);
@@ -561,25 +704,27 @@ class OrdersRepository {
                 .whereType<Map>()
                 .map((raw) => Map<String, dynamic>.from(raw as Map))
                 .where((reservation) {
-                  if (paintId.isNotEmpty) return true;
-                  return _normalizePaintNameForMatching(
-                        (reservation['paint_name'] ?? '').toString(),
-                      ) ==
-                      paintName;
-                })
-                .toList(growable: true)
+                if (paintId.isNotEmpty) return true;
+                return _normalizePaintNameForMatching(
+                      (reservation['paint_name'] ?? '').toString(),
+                    ) ==
+                    paintName;
+              }).toList(growable: true)
             : <Map<String, dynamic>>[];
         if (reservations.isEmpty) continue;
 
         var remainingToApply = usedQty;
         for (final reservation in reservations) {
           if (remainingToApply <= 0) break;
-          final reserved = _readDouble(reservation, const ['reserved_qty']) ?? 0;
+          final reserved =
+              _readDouble(reservation, const ['reserved_qty']) ?? 0;
           final alreadyUsed = _readDouble(reservation, const ['used_qty']) ?? 0;
-          final released = _readDouble(reservation, const ['released_qty']) ?? 0;
+          final released =
+              _readDouble(reservation, const ['released_qty']) ?? 0;
           final active = reserved - alreadyUsed - released;
           if (active <= 0) continue;
-          final applyQty = active < remainingToApply ? active : remainingToApply;
+          final applyQty =
+              active < remainingToApply ? active : remainingToApply;
           final nextUsed = alreadyUsed + applyQty;
           final reservationId = _trimmedString(reservation, const ['id']);
           var update = _sb
@@ -618,18 +763,24 @@ class OrdersRepository {
       'pendingWriteoffId',
       'id',
     ]);
-    final sourceOrderId = _trimmedString(row, const [
-      'source_order_id',
-      'sourceOrderId',
-      'order_id',
-      'orderId',
-    ], fallback: fallbackOrderId);
-    final sourceTaskId = _trimmedString(row, const [
-      'source_task_id',
-      'sourceTaskId',
-      'task_id',
-      'taskId',
-    ], fallback: fallbackTaskId);
+    final sourceOrderId = _trimmedString(
+        row,
+        const [
+          'source_order_id',
+          'sourceOrderId',
+          'order_id',
+          'orderId',
+        ],
+        fallback: fallbackOrderId);
+    final sourceTaskId = _trimmedString(
+        row,
+        const [
+          'source_task_id',
+          'sourceTaskId',
+          'task_id',
+          'taskId',
+        ],
+        fallback: fallbackTaskId);
     final rawPaintId = _trimmedString(row, const [
       'paint_id',
       'paintId',
@@ -647,30 +798,33 @@ class OrdersRepository {
         : (isValidPaintUuid ? '' : rawPaintId);
     final unit = _trimmedString(row, const ['unit'], fallback: 'г');
     final actualUsedAmount = _readDouble(row, const [
-      'actual_used_amount',
-      'actualUsedAmount',
-      'used_qty',
-      'qty_g',
-      'qty_grams',
-    ]) ?? (_readDouble(row, const ['qty_kg']) == null
-        ? null
-        : _readDouble(row, const ['qty_kg'])! * 1000);
+          'actual_used_amount',
+          'actualUsedAmount',
+          'used_qty',
+          'qty_g',
+          'qty_grams',
+        ]) ??
+        (_readDouble(row, const ['qty_kg']) == null
+            ? null
+            : _readDouble(row, const ['qty_kg'])! * 1000);
     final plannedAmount = _readDouble(row, const [
-      'planned_amount',
-      'plannedAmount',
-      'planned_qty',
-      'planned_qty_g',
-      'reserved_qty',
-    ]) ?? (_readDouble(row, const ['qty_kg']) == null
-        ? null
-        : _readDouble(row, const ['qty_kg'])! * 1000);
+          'planned_amount',
+          'plannedAmount',
+          'planned_qty',
+          'planned_qty_g',
+          'reserved_qty',
+        ]) ??
+        (_readDouble(row, const ['qty_kg']) == null
+            ? null
+            : _readDouble(row, const ['qty_kg'])! * 1000);
     final writeOffNow = row['write_off_now'] == true ||
         row['writeOffNow'] == true ||
         row['write_off_now']?.toString().toLowerCase() == 'true' ||
         row['writeOffNow']?.toString().toLowerCase() == 'true';
 
     return _cleanForInsert({
-      if (pendingWriteoffId.isNotEmpty) 'pending_writeoff_id': pendingWriteoffId,
+      if (pendingWriteoffId.isNotEmpty)
+        'pending_writeoff_id': pendingWriteoffId,
       if (sourceOrderId.isNotEmpty) 'source_order_id': sourceOrderId,
       if (sourceTaskId.isNotEmpty) 'source_task_id': sourceTaskId,
       if (paintId.isNotEmpty) 'paint_id': paintId,
@@ -736,8 +890,7 @@ class OrdersRepository {
             'paint_id, paint_name, planned_amount, actual_used_amount, unit, '
             'status, written_off_at')
         .eq('order_id', orderId)
-        .inFilter('status', ['pending', 'written_off'])
-        .order('created_at');
+        .inFilter('status', ['pending', 'written_off']).order('created_at');
     final writeoffs = writeoffRows is List
         ? writeoffRows.cast<Map<String, dynamic>>()
         : const <Map<String, dynamic>>[];
@@ -796,8 +949,7 @@ class OrdersRepository {
   }
 
   Future<void> applyPaintUsage(
-      {required String orderId,
-      required List<PaintUsageUpdate> usages}) async {
+      {required String orderId, required List<PaintUsageUpdate> usages}) async {
     await ensureSignedIn();
     if (usages.isEmpty) return;
 
@@ -915,9 +1067,8 @@ class OrdersRepository {
 String _formatGrams(double grams) {
   final precision = grams % 1 == 0 ? 0 : 2;
   final fixed = grams.toStringAsFixed(precision);
-  final trimmed = fixed
-      .replaceFirst(RegExp(r'0+$'), '')
-      .replaceFirst(RegExp(r'\.$'), '');
+  final trimmed =
+      fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
   return '$trimmed г';
 }
 

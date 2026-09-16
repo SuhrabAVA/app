@@ -3,9 +3,18 @@ import 'package:intl/intl.dart';
 
 import '../../services/storage_service.dart' as storage;
 import '../common/pdf_view_screen.dart';
+import 'package:provider/provider.dart';
+
 import '../tasks/workspace_design.dart';
+import '../warehouse/paint_stock_lookup.dart';
+import '../warehouse/warehouse_provider.dart';
 import 'material_model.dart';
+import 'order_extra_options.dart';
+import 'order_manager_comment_banner.dart';
 import 'order_model.dart';
+import 'order_shipment_rules.dart';
+import 'order_shipments_table.dart';
+import 'paper_usage_rules.dart';
 
 class OrderDetailsCard extends StatelessWidget {
   const OrderDetailsCard({
@@ -19,8 +28,14 @@ class OrderDetailsCard extends StatelessWidget {
     this.formImageUrl,
     this.formDetails,
     this.extraSections = const <Widget>[],
+    this.shipments = const <OrderShipment>[],
     this.workspaceStyle = false,
+    this.paperUsage,
   });
+
+  /// Расход бумаги по факту на этапе бумаги. Пока этап идёт, у длины бумаги
+  /// видно «· списано N м»; после закрытия длина уже равна итогу.
+  final PaperUsageState? paperUsage;
 
   final OrderModel order;
   final List<Map<String, dynamic>> paints;
@@ -35,7 +50,21 @@ class OrderDetailsCard extends StatelessWidget {
   final String? formImageUrl;
   final Map<String, dynamic>? formDetails;
   final List<Widget> extraSections;
+
+  /// Партии отгрузки. Здесь только показ: правят их в окне отгрузки, а карточку
+  /// открывают из архива, где заказ уже уехал.
+  final List<OrderShipment> shipments;
+
   final bool workspaceStyle;
+
+  /// Дополнительные опции заказа — ТОЛЬКО из снимка `orders.extra_options`.
+  ///
+  /// Справочник здесь не читается и читаться не должен. В этом весь смысл
+  /// снимка: заказ, открытый через год из архива, показывает то, что выбрали
+  /// при создании, даже если вариант с тех пор переименовали или удалили.
+  /// Сверка со справочником живёт только в форме редактирования.
+  List<OrderOptionSelection> get _extraOptions =>
+      order.extraOptions ?? const <OrderOptionSelection>[];
 
   String _fmtDate(DateTime? d) =>
       d == null ? '—' : DateFormat('dd.MM.yyyy').format(d);
@@ -60,11 +89,17 @@ class OrderDetailsCard extends StatelessWidget {
     return '$trimmed г';
   }
 
-  /// «Файлы заказа» = записи из order_files + линки формы с source='order'.
-  /// Двусторонняя связь форма↔заказ линкует PDF заказа в форму под тем же
-  /// objectPath, поэтому объединённый список дедуплицируем по objectPath
-  /// (предпочитая запись из order_files), иначе один файл показывается дважды.
-  List<Map<String, dynamic>> _orderFilesDeduped() {
+  /// Единый список файлов заказа: записи `order_files` плюс всё, что
+  /// привязано к форме (`form_files` — и залитое прямо в форму, и линки
+  /// самого заказа).
+  ///
+  /// Раньше это были две отдельные строки — «Файлы формы» и «Файлы заказа».
+  /// Прикрепить PDF можно было в обеих, а двусторонняя связь форма↔заказ
+  /// раскладывала один и тот же файл по обеим строкам, и было не понять,
+  /// один это документ или два. Теперь точка загрузки одна (PDF заказа),
+  /// а показываем один список с дедупом по objectPath: запись из
+  /// `order_files` приоритетнее линка формы с тем же путём.
+  List<Map<String, dynamic>> _allFilesDeduped() {
     final byKey = <String, bool>{};
     final result = <Map<String, dynamic>>[];
     void add(Map<String, dynamic> f) {
@@ -81,7 +116,7 @@ class OrderDetailsCard extends StatelessWidget {
       add(f);
     }
     for (final f in formFiles) {
-      if ((f['source'] ?? 'form').toString() == 'order') add(f);
+      add(f);
     }
     return result;
   }
@@ -405,6 +440,9 @@ class OrderDetailsCard extends StatelessWidget {
     ).firstMatch(p.parameters);
     final fallbackPaintInfo = (paintInfoFromParams?.group(1) ?? '').trim();
     final paintInfoValue = paintInfo.isNotEmpty ? paintInfo : fallbackPaintInfo;
+    // Один раз на сборку: индекс перебирает весь список красок склада, а
+    // строк краски в заказе бывает до восьми.
+    final stock = _paintStock(context);
     final paintsWidget = paints.isEmpty
         ? const Text('—')
         : Column(
@@ -428,7 +466,8 @@ class OrderDetailsCard extends StatelessWidget {
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2.0),
                   child: Text(
-                    '${index + 1}. $name — $v',
+                    '${index + 1}. $name — $v'
+                    '${_paintStockSuffix(stock, name)}',
                     style: const TextStyle(fontSize: 10),
                   ),
                 );
@@ -441,6 +480,7 @@ class OrderDetailsCard extends StatelessWidget {
         context,
         materials: materials,
         paintInfoValue: paintInfoValue,
+        paintStock: stock,
       );
     }
 
@@ -465,6 +505,10 @@ class OrderDetailsCard extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (OrderManagerCommentBanner.hasComment(o.comments)) ...[
+              OrderManagerCommentBanner(comment: o.comments),
+              const SizedBox(height: spacing),
+            ],
             Wrap(
               spacing: spacing,
               runSpacing: spacing,
@@ -537,7 +581,7 @@ class OrderDetailsCard extends StatelessWidget {
                           compact: true,
                         ),
                         _buildInfoRowWidget(
-                          'Файлы формы',
+                          'Файлы',
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -551,45 +595,11 @@ class OrderDetailsCard extends StatelessWidget {
                                         strokeWidth: 2),
                                   ),
                                 )
-                              else if (formFiles
-                                  .where((f) =>
-                                      (f['source'] ?? 'form').toString() ==
-                                      'form')
-                                  .isEmpty)
-                                const Text('Нет файлов формы',
-                                    style: TextStyle(color: Colors.grey))
-                              else
-                                ...formFiles
-                                    .where((f) =>
-                                        (f['source'] ?? 'form').toString() ==
-                                        'form')
-                                    .map((f) =>
-                                        _fileTile(context, f, compact: true)),
-                            ],
-                          ),
-                          alignEnd: false,
-                          compact: true,
-                        ),
-                        _buildInfoRowWidget(
-                          'Файлы заказа',
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (filesLoading)
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 4),
-                                  child: SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  ),
-                                )
-                              else if (_orderFilesDeduped().isEmpty)
+                              else if (_allFilesDeduped().isEmpty)
                                 const Text('Нет приложенных файлов',
                                     style: TextStyle(color: Colors.grey))
                               else
-                                ..._orderFilesDeduped().map((f) =>
+                                ..._allFilesDeduped().map((f) =>
                                     _fileTile(context, f, compact: true)),
                             ],
                           ),
@@ -642,7 +652,8 @@ class OrderDetailsCard extends StatelessWidget {
                                 _paperWidthValue(material, index);
                             final qtyValue =
                                 _paperQuantityValue(material, index);
-                            final lenValue = _paperLengthValue(material, index);
+                            final lenValue = _withWrittenSuffix(
+                                _paperLengthValue(material, index), material);
                             final details = <String>[materialLine];
                             if (widthValue.isNotEmpty) {
                               details.add('Ш: $widthValue');
@@ -669,9 +680,6 @@ class OrderDetailsCard extends StatelessWidget {
                             compact: true),
                         _buildInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—',
                             compact: true),
-                        _buildInfoRow('Комментарий',
-                            o.comments.isEmpty ? '—' : o.comments,
-                            compact: true),
                         _buildInfoRow(
                             'Менеджер', o.manager.isEmpty ? '—' : o.manager,
                             compact: true),
@@ -679,6 +687,38 @@ class OrderDetailsCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (shipments.isNotEmpty)
+                  SizedBox(
+                    width: sectionWidth,
+                    child: _buildSectionCard(
+                      title: 'Отгрузки',
+                      icon: Icons.local_shipping_outlined,
+                      backgroundColor: const Color(0xFFE8FAF0),
+                      accentColor: const Color(0xFF21B37B),
+                      child: OrderShipmentsTable(shipments: shipments),
+                    ),
+                  ),
+                // Сразу за «Бобинорезкой», как и в форме заказа.
+                if (_extraOptions.isNotEmpty)
+                  SizedBox(
+                    width: sectionWidth,
+                    child: _buildSectionCard(
+                      title: 'Дополнительные опции',
+                      icon: Icons.tune,
+                      backgroundColor: const Color(0xFFFFEDD5),
+                      accentColor: const Color(0xFFEA580C),
+                      child: Column(
+                        children: [
+                          for (final selection in _extraOptions)
+                            _buildInfoRow(
+                              selection.title,
+                              selection.valueLabel,
+                              compact: true,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
             if (extraSections.isNotEmpty) ...[
@@ -701,13 +741,11 @@ class OrderDetailsCard extends StatelessWidget {
     BuildContext context, {
     required List<MaterialModel> materials,
     required String paintInfoValue,
+    required Map<String, double> paintStock,
   }) {
     final o = order;
     final p = o.product;
-    final formOnlyFiles = formFiles
-        .where((file) => (file['source'] ?? 'form').toString() == 'form')
-        .toList(growable: false);
-    final orderFiles = _orderFilesDeduped();
+    final allFiles = _allFilesDeduped();
 
     final dimensionParts = <String>[
       if (p.width > 0) 'Д ${_fmtNum(p.width)}',
@@ -768,7 +806,7 @@ class OrderDetailsCard extends StatelessWidget {
               for (final entry in paints.asMap().entries)
                 _workspaceInfoRow(
                   'Краска ${entry.key + 1}',
-                  _workspacePaintValue(entry.value),
+                  _workspacePaintValue(entry.value, stock: paintStock),
                 ),
             _workspaceInfoWidget(
               'Форма',
@@ -781,19 +819,10 @@ class OrderDetailsCard extends StatelessWidget {
               ),
             ),
             _workspaceInfoWidget(
-              'Файлы формы',
+              'Файлы',
               _workspaceFilesValue(
                 context,
-                formOnlyFiles,
-                emptyText: 'Нет',
-              ),
-              alignEnd: false,
-            ),
-            _workspaceInfoWidget(
-              'Файлы заказа',
-              _workspaceFilesValue(
-                context,
-                orderFiles,
+                allFiles,
                 emptyText: 'Нет',
               ),
               alignEnd: false,
@@ -833,14 +862,37 @@ class OrderDetailsCard extends StatelessWidget {
               o.makeready > 0 ? _fmtNum(o.makeready) : '—',
             ),
             _workspaceInfoRow('ВАЛ', o.val > 0 ? _fmtNum(o.val) : '—'),
-            if (o.comments.isNotEmpty)
-              _workspaceInfoRow('Комментарий', o.comments),
+            // Комментарий менеджера — не здесь: экраны ставят его красным
+            // блоком над карточкой (OrderManagerCommentBanner).
             _workspaceInfoRow(
               'Менеджер',
               o.manager.isEmpty ? '—' : o.manager,
             ),
           ],
         ),
+        if (shipments.isNotEmpty) ...[
+          _workspaceDivider(),
+          _workspaceSection(
+            title: 'Отгрузки',
+            icon: Icons.local_shipping_outlined,
+            accentColor: WorkspaceColors.success,
+            iconBackground: WorkspaceColors.successBackground,
+            children: [OrderShipmentsTable(shipments: shipments)],
+          ),
+        ],
+        if (_extraOptions.isNotEmpty) ...[
+          _workspaceDivider(),
+          _workspaceSection(
+            title: 'Дополнительные опции',
+            icon: Icons.tune,
+            accentColor: WorkspaceColors.warning,
+            iconBackground: WorkspaceColors.warningBackground,
+            children: [
+              for (final selection in _extraOptions)
+                _workspaceInfoRow(selection.title, selection.valueLabel),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -962,7 +1014,26 @@ class OrderDetailsCard extends StatelessWidget {
     );
   }
 
-  String _workspacePaintValue(Map<String, dynamic> paint) {
+  /// Остатки красок склада по названию. Пустая карта — склад ещё не загружен.
+  ///
+  /// `watch`, а не `read`: склад меняется приходами и списаниями, и цифра в
+  /// задании обязана меняться вместе с ним — рабочий смотрит на неё, решая,
+  /// хватит ли краски до конца тиража.
+  Map<String, double> _paintStock(BuildContext context) => paintStockIndex(
+        context.watch<WarehouseProvider>().getTmcByType('Краска'),
+      );
+
+  /// «(на складе 25000 г)» — или пусто, если карточки с таким названием нет.
+  String _paintStockSuffix(Map<String, double> stock, String name) {
+    final total = paintStockFor(stock, name);
+    if (total == null) return '';
+    return ' (на складе ${_formatGrams(total)})';
+  }
+
+  String _workspacePaintValue(
+    Map<String, dynamic> paint, {
+    Map<String, double> stock = const <String, double>{},
+  }) {
     final name = (paint['name'] ?? '').toString().trim();
     final qty = paint['qty_kg'];
     double? grams;
@@ -976,7 +1047,8 @@ class OrderDetailsCard extends StatelessWidget {
       if (name.isNotEmpty) name,
       if (grams != null) _formatGrams(grams),
     ];
-    return parts.isEmpty ? '—' : parts.join(' ');
+    if (parts.isEmpty) return '—';
+    return parts.join(' ') + _paintStockSuffix(stock, name);
   }
 
   Widget _workspaceFilesValue(
@@ -985,17 +1057,26 @@ class OrderDetailsCard extends StatelessWidget {
     required String emptyText,
   }) {
     if (filesLoading) {
-      return const SizedBox(
-        width: 16,
-        height: 16,
-        child: CircularProgressIndicator(strokeWidth: 2),
+      // Align обязателен: ячейка значения — Expanded, и без него SizedBox
+      // получает её ширину целиком. Индикатор растягивался в широкий овал
+      // во всю строку вместо кружка.
+      return const Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       );
     }
     if (source.isEmpty) return Text(emptyText);
+    // Не compact: в этой карточке остальные строки набраны 16-м кеглем, а
+    // compact давал 9 px (14 × 0.65) и кнопку высотой 24 px — на планшете в
+    // такую не попасть пальцем.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final file in source) _fileTile(context, file, compact: true),
+        for (final file in source) _fileTile(context, file),
       ],
     );
   }
@@ -1012,9 +1093,15 @@ class OrderDetailsCard extends StatelessWidget {
 
   String _workspaceMaterialLength(MaterialModel material, int index) {
     final quantity = _paperQuantityValue(material, index);
-    final length = _paperLengthValue(material, index);
+    final length = _withWrittenSuffix(_paperLengthValue(material, index), material);
     if (quantity.isNotEmpty && length.isNotEmpty) return '$quantity × $length';
     return quantity.isNotEmpty ? quantity : length;
+  }
+
+  String _withWrittenSuffix(String length, MaterialModel material) {
+    final suffix = paperWrittenSuffix(state: paperUsage, paperId: material.id);
+    if (suffix == null) return length;
+    return length.isEmpty ? suffix : '$length м · $suffix';
   }
 
   Widget _buildSingleLineValue(String value) {
@@ -1155,12 +1242,12 @@ class OrderDetailsCard extends StatelessWidget {
     final objectPath = (f['objectPath'] ?? f['path'] ?? '').toString();
     final isImage = _isImageFile(fileName, objectPath);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: EdgeInsets.symmetric(vertical: compact ? 4.0 : 3.0),
       child: Row(
         children: [
           Icon(isImage ? Icons.image_outlined : Icons.picture_as_pdf,
-              size: compact ? 14 : 18),
-          SizedBox(width: compact ? 6 : 8),
+              size: compact ? 14 : 20),
+          SizedBox(width: compact ? 6 : 10),
           Expanded(
             child: Text(
               fileName.isEmpty ? 'Файл.pdf' : fileName,
@@ -1168,10 +1255,15 @@ class OrderDetailsCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: compact
                   ? const TextStyle(fontSize: 14 * _compactTextScale)
-                  : null,
+                  : const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
             ),
           ),
+          const SizedBox(width: 8),
           TextButton.icon(
+            // Обычный режим — кнопка под палец: 44 px в высоту (столько
+            // рекомендует Material для сенсорной цели) и заливка, чтобы её
+            // было видно кнопкой, а не подписью. Прежняя была 24 px высотой
+            // с 9-м кеглем — на планшете в цеху в неё не попадали.
             style: compact
                 ? TextButton.styleFrom(
                     textStyle:
@@ -1185,7 +1277,23 @@ class OrderDetailsCard extends StatelessWidget {
                       vertical: VisualDensity.minimumDensity,
                     ),
                   )
-                : null,
+                : TextButton.styleFrom(
+                    foregroundColor: WorkspaceColors.primary,
+                    backgroundColor:
+                        WorkspaceColors.primary.withValues(alpha: 0.10),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    minimumSize: const Size(0, 44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
             onPressed: objectPath.isEmpty
                 ? null
                 : () async {
@@ -1209,7 +1317,7 @@ class OrderDetailsCard extends StatelessWidget {
                       ),
                     );
                   },
-            icon: Icon(Icons.open_in_new, size: compact ? 14 : 18),
+            icon: Icon(Icons.open_in_new, size: compact ? 14 : 19),
             label: const Text('Открыть'),
           ),
         ],
@@ -1220,6 +1328,12 @@ class OrderDetailsCard extends StatelessWidget {
   String _formDisplayText(OrderModel order) {
     if (!order.hasForm) return 'Форма не используется';
     final typeLabel = order.isOldForm ? 'Старая форма' : 'Новая форма';
+    if (order.formId == null || order.formId!.trim().isEmpty) {
+      final reference = order.newFormNo?.toString() ?? order.formCode?.trim();
+      return reference != null && reference.isNotEmpty
+          ? '$typeLabel: $reference — не привязана к складу'
+          : '$typeLabel: не назначена';
+    }
     final formNo = order.newFormNo?.toString();
     if (formNo != null && formNo.isNotEmpty) {
       return '$typeLabel: $formNo';

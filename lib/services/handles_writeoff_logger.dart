@@ -1,21 +1,11 @@
 import 'package:flutter/foundation.dart';
-import 'package:postgrest/postgrest.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Константы для таблицы и колонок логирования списаний ручек.
-const String kHandlesWriteoffTable = 'warehouse_pens_writeoffs';
-const String kOrderIdColumn = 'order_id';
-const String kPenTypeIdColumn = 'item_id';
-const String? kColorIdColumn = 'color_id';
-const String kQuantityPairsColumn = 'qty';
-const String? kOccurredAtColumn = 'created_at';
-const String kCommentColumn = 'reason';
-
-/// Логирует списание ручек при переводе заказа в статус `completed`.
+/// Backwards-compatible entry point for order-completion pen write-offs.
 ///
-/// Создаёт запись в таблице списаний, если выбран тип ручек и фактическое
-/// количество больше нуля. Запрос выполняется идемпотентно: при наличии записи
-/// с тем же [orderId] повторная вставка не выполняется.
+/// The database RPC derives the item and quantity from the completed order and
+/// owns idempotency. Keeping the write atomic avoids the former SELECT/INSERT
+/// race when two devices observe the same completion.
 Future<void> logHandlesWriteoffOnOrderComplete({
   required String orderId,
   String? penTypeId,
@@ -25,63 +15,27 @@ Future<void> logHandlesWriteoffOnOrderComplete({
   DateTime? occurredAt,
   SupabaseClient? client,
 }) async {
-  final qty = actualQuantityPairs ?? 0;
-  if (qty <= 0) {
-    return;
-  }
+  final normalizedOrderId = orderId.trim();
+  if (normalizedOrderId.isEmpty) return;
+  if ((actualQuantityPairs ?? 0) <= 0) return;
+  if ((penTypeId ?? '').trim().isEmpty) return;
 
-  if (penTypeId == null || penTypeId.isEmpty) {
-    return;
-  }
-
-  final SupabaseClient sb = client ?? Supabase.instance.client;
-
+  final sb = client ?? Supabase.instance.client;
   try {
-    final existing = await sb
-        .from(kHandlesWriteoffTable)
-        .select(kOrderIdColumn)
-        .eq(kOrderIdColumn, orderId)
-        .limit(1)
-        .maybeSingle();
-
-    if (existing != null) {
-      return;
-    }
-
-    final payload = <String, dynamic>{
-      kOrderIdColumn: orderId,
-      kPenTypeIdColumn: penTypeId,
-      if (kColorIdColumn != null && colorId != null && colorId.isNotEmpty)
-        kColorIdColumn!: colorId,
-      kQuantityPairsColumn: qty,
-      if (kOccurredAtColumn != null)
-        kOccurredAtColumn!:
-            (occurredAt ?? DateTime.now().toUtc()).toIso8601String(),
-      kCommentColumn: customerName,
-    };
-
-    await sb.from(kHandlesWriteoffTable).insert(payload);
+    await sb.rpc(
+      'record_order_pens_completion_writeoff',
+      params: {'p_order_id': normalizedOrderId, 'p_actor': null},
+    );
   } on PostgrestException catch (error, stackTrace) {
     debugPrint(
-      'Не удалось записать списание ручек для заказа $orderId: ${error.message}',
+      'Unable to record pens write-off for order $normalizedOrderId: '
+      '${error.message}',
     );
     debugPrintStack(stackTrace: stackTrace);
   } catch (error, stackTrace) {
     debugPrint(
-      'Неизвестная ошибка при логировании списания ручек для заказа $orderId: $error',
+      'Unexpected pens write-off error for order $normalizedOrderId: $error',
     );
     debugPrintStack(stackTrace: stackTrace);
   }
-}
-
-/// Пример вызова после успешного сохранения заказа со статусом `completed`.
-Future<void> exampleLogWriteoffAfterOrderSaved() async {
-  await logHandlesWriteoffOnOrderComplete(
-    orderId: 'order-uuid',
-    penTypeId: 'handles-type-uuid',
-    colorId: 'color-uuid',
-    actualQuantityPairs: 12,
-    customerName: 'ООО «Ручки и Ко»',
-    occurredAt: DateTime.now(),
-  );
 }

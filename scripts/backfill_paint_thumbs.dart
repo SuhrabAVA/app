@@ -53,7 +53,8 @@ Future<void> main(List<String> args) async {
     }
   }
 
-  final env = readEnv('.env');
+  // Ключ service_role живёт в .env.scripts: .env упакован в сборку приложения.
+  final env = readEnv(File('.env.scripts').existsSync() ? '.env.scripts' : '.env');
   final baseUrl = env['SUPABASE_URL']!;
   final key = env['SUPABASE_SERVICE_ROLE_KEY']!;
   final headers = {

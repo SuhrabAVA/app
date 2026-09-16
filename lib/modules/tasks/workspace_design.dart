@@ -100,6 +100,7 @@ class WorkspaceActionButton extends StatelessWidget {
     required this.backgroundColor,
     required this.onPressed,
     this.primary = false,
+    this.compact = false,
   });
 
   final IconData icon;
@@ -108,6 +109,11 @@ class WorkspaceActionButton extends StatelessWidget {
   final Color backgroundColor;
   final VoidCallback? onPressed;
   final bool primary;
+
+  /// Уменьшенный вариант для режима отдельных исполнителей: там панель
+  /// повторяется для каждого сотрудника, и в полный рост набор кнопок
+  /// вытесняет с экрана всё остальное.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -134,13 +140,15 @@ class WorkspaceActionButton extends StatelessWidget {
           hoverColor: accentColor.withValues(alpha: 0.07),
           focusColor: accentColor.withValues(alpha: 0.1),
           child: SizedBox(
-            height: primary ? 88 : 50,
+            height: primary
+                ? (compact ? 70.0 : 88.0)
+                : (compact ? 42.0 : 50.0),
             child: primary
                 ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(icon, size: 25, color: foreground),
-                      const SizedBox(height: 6),
+                      Icon(icon, size: compact ? 21 : 25, color: foreground),
+                      SizedBox(height: compact ? 4 : 6),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 6),
                         child: Text(
@@ -150,7 +158,7 @@ class WorkspaceActionButton extends StatelessWidget {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: foreground,
-                            fontSize: 14,
+                            fontSize: compact ? 13 : 14,
                             height: 1.08,
                             fontWeight: FontWeight.w600,
                           ),
@@ -161,8 +169,8 @@ class WorkspaceActionButton extends StatelessWidget {
                 : Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(icon, size: 20, color: foreground),
-                      const SizedBox(width: 8),
+                      Icon(icon, size: compact ? 18 : 20, color: foreground),
+                      SizedBox(width: compact ? 6 : 8),
                       Flexible(
                         child: Text(
                           label,
@@ -172,7 +180,7 @@ class WorkspaceActionButton extends StatelessWidget {
                             color: enabled
                                 ? WorkspaceColors.foreground
                                 : WorkspaceColors.disabledForeground,
-                            fontSize: 14,
+                            fontSize: compact ? 13 : 14,
                             fontWeight: FontWeight.w500,
                           ),
                         ),

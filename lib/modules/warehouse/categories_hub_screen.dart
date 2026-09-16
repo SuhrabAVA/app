@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../services/realtime_sync_service.dart';
 import '../../utils/auth_helper.dart';
 import '../../utils/kostanay_time.dart';
 import 'deleted_records_repository.dart';
@@ -20,7 +21,18 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
   @override
   void initState() {
     super.initState();
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.warehouseCategoryList,
+      handler: _load,
+    );
     _load();
+  }
+
+  @override
+  void dispose() {
+    RealtimeSyncService.instance.unregisterOwner(this);
+    super.dispose();
   }
 
   Future<void> _ensureAuthed() async {
@@ -41,6 +53,7 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     await _ensureAuthed();
 
@@ -240,10 +253,8 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
 
     var count = 0;
     try {
-      final rows = await _sb
-          .from('orders')
-          .select('id')
-          .eq('product_type_id', it['id']);
+      final rows =
+          await _sb.from('orders').select('id').eq('product_type_id', it['id']);
       count = (rows as List).length;
     } catch (_) {
       // Счётчик — украшение сообщения, а не его условие: если посчитать не
@@ -259,7 +270,8 @@ class _CategoriesHubScreenState extends State<CategoriesHubScreen> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _openDeletedCategories() {
@@ -383,17 +395,24 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
   void initState() {
     super.initState();
     _tabs = TabController(length: 3, vsync: this);
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.warehouseCategoryItems,
+      handler: _loadAll,
+    );
     _loadAll();
   }
 
   @override
   void dispose() {
+    RealtimeSyncService.instance.unregisterOwner(this);
     _tabs.dispose();
     super.dispose();
   }
 
   // ======== loading ========
   Future<void> _loadAll() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final itemsRes = await _sb.from('warehouse_category_items').select();
@@ -454,7 +473,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'reason': r['reason'],
                 'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
-                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                'size':
+                    r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
                 'comment': r['comment'] ??
                     r['reason'] ??
                     itemMeta[r['item_id']?.toString()]?['comment'],
@@ -474,7 +494,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                 'note': r['note'],
                 'by_name': r['by_name'] ?? r['employee_name'] ?? r['employee'],
                 'created_at': r['created_at'],
-                'size': r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
+                'size':
+                    r['size'] ?? itemMeta[r['item_id']?.toString()]?['size'],
                 'comment': r['comment'] ??
                     r['note'] ??
                     itemMeta[r['item_id']?.toString()]?['comment'],
@@ -912,7 +933,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final subtitleParts = <String>[];
                     if (dt.trim().isNotEmpty) subtitleParts.add(dt);
                     if (size.isNotEmpty) subtitleParts.add('Размер: $size');
-                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
+                    if (comment.isNotEmpty)
+                      subtitleParts.add('Комментарий: $comment');
                     if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • −$qty'),
@@ -937,7 +959,8 @@ class _GenericCategoryItemsScreenState extends State<GenericCategoryItemsScreen>
                     final subtitleParts = <String>[];
                     if (dt.trim().isNotEmpty) subtitleParts.add(dt);
                     if (size.isNotEmpty) subtitleParts.add('Размер: $size');
-                    if (comment.isNotEmpty) subtitleParts.add('Комментарий: $comment');
+                    if (comment.isNotEmpty)
+                      subtitleParts.add('Комментарий: $comment');
                     if (by.isNotEmpty) subtitleParts.add(by);
                     return ListTile(
                       title: Text('$title • $qty'),

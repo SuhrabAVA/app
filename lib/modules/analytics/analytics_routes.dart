@@ -14,6 +14,7 @@ class AnalyticsRoutes {
   static const String employees = '/analytics/employees';
   static const String workplaces = '/analytics/workplaces';
   static const String schedule = '/analytics/schedule';
+  static const String statusStaff = '/analytics/status-staff';
   static const String accessDenied = '/analytics/access-denied';
   static const String employeeSelf = '/analytics/me';
 
@@ -103,6 +104,8 @@ class AnalyticsRoutes {
         return workplaces;
       case AnalyticsTopTab.schedule:
         return schedule;
+      case AnalyticsTopTab.statusStaff:
+        return statusStaff;
     }
   }
 }

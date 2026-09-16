@@ -26,7 +26,12 @@ class MessageBubble extends StatefulWidget {
 }
 
 class _MessageBubbleState extends State<MessageBubble> {
-  final _player = AudioPlayer();
+  // Здесь намеренно нет AudioPlayer: раньше поле создавало нативный плеер на
+  // КАЖДЫЙ пузырёк, включая текстовые, и ни разу не использовалось — играет
+  // только _AudioTile. Список сообщений строится ListView.builder, поэтому
+  // при прокрутке плееры создавались и уничтожались пачками, и
+  // audioplayers_windows_plugin.dll падал с access violation (0xc0000005),
+  // утаскивая всё приложение.
   static final RegExp _mentionRegExp = RegExp(r'@\{([^|{}]+)\|([^{}]+)\}');
 
   _ParsedSegments _parseSegments(String? source) {
@@ -66,12 +71,6 @@ class _MessageBubbleState extends State<MessageBubble> {
     final plain = segments.map((s) => s.text).join();
     return _ParsedSegments(
         segments: segments, mentions: mentions, plainText: plain);
-  }
-
-  @override
-  void dispose() {
-    _player.dispose();
-    super.dispose();
   }
 
   @override

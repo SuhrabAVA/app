@@ -3,7 +3,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/product_type_route.dart';
 import '../orders/product_type_settings.dart';
-import 'product_type_stage_preview.dart';
+import '../orders/product_type_stage_guards.dart';
+import 'product_type_add_stage_control.dart';
+import 'product_type_formula_card.dart';
+import 'product_type_problems_banner.dart';
+import 'product_type_stage_actions.dart';
+import 'product_type_stage_dialogs.dart';
 import 'product_type_stage_row.dart';
 import 'product_type_stage_workplaces_panel.dart';
 
@@ -18,6 +23,7 @@ class ProductTypeStagesTab extends StatefulWidget {
     required this.productType,
     required this.activeConfigId,
     required this.isDraft,
+    this.focusStageId,
   });
 
   final ProductTypeRef productType;
@@ -27,18 +33,28 @@ class ProductTypeStagesTab extends StatefulWidget {
   /// «Начать правку» в оболочке.
   final bool isDraft;
 
+  /// Этап, к которому перешли со вкладки «Условия»: строку подсвечиваем и
+  /// подводим к ней список.
+  final String? focusStageId;
+
   @override
   State<ProductTypeStagesTab> createState() => _ProductTypeStagesTabState();
 }
 
 class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
   final SupabaseClient _sb = Supabase.instance.client;
+  late final ProductTypeStageActions _actions =
+      ProductTypeStageActions(_sb);
 
   bool _loading = true;
   bool _busy = false;
   String? _error;
   ProductTypeRoute? _route;
   List<String> _problems = const <String>[];
+
+  /// `actual_qty_formula` показанной версии. Настройка версии, а не этапа,
+  /// поэтому в маршруте её нет и читается она отдельно.
+  String? _formula;
 
   /// Раскрыта не больше одной панели рабочих мест за раз.
   String? _expandedStageId;
@@ -65,10 +81,25 @@ class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
     _load();
   }
 
+  /// Ключ подсвеченной строки — только чтобы подвести к ней список после
+  /// перехода со вкладки «Условия».
+  final GlobalKey _focusKey = GlobalKey();
+
   @override
   void didUpdateWidget(covariant ProductTypeStagesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.activeConfigId != widget.activeConfigId) _load();
+    if (oldWidget.focusStageId != widget.focusStageId) _scrollToFocus();
+  }
+
+  void _scrollToFocus() {
+    if (widget.focusStageId == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _focusKey.currentContext;
+      if (context == null) return;
+      Scrollable.ensureVisible(context,
+          duration: const Duration(milliseconds: 250), alignment: 0.2);
+    });
   }
 
   Future<void> _load() async {
@@ -92,10 +123,16 @@ class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
         title: widget.productType.title,
       );
       final problems = await _readProblems(configId);
+      final config = await _sb
+          .from('product_type_configs')
+          .select('actual_qty_formula')
+          .eq('id', configId)
+          .single();
       if (!mounted) return;
       setState(() {
         _route = route;
         _problems = problems;
+        _formula = config['actual_qty_formula']?.toString();
         _loadedConfigId = configId;
         _loading = false;
       });
@@ -190,50 +227,41 @@ class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
     final reorder = _reorderFor(group, delta);
     if (reorder == null || !reorder.isAllowed) return;
 
-    await _write((configId) async {
-      // Перенумерация всей последовательности групп одним заходом: раздельные
-      // UPDATE оставили бы при обрыве два этапа на одной позиции, а раздача
-      // позиций только уровню 0 сталкивала бы ручки с под-этапами вариантов.
-      await _sb.rpc('set_product_type_stage_positions', params: {
-        'p_config_id': configId,
-        'p_ordered_groups': reorder.orderedGroups,
-      });
-    });
+    await _write((configId) =>
+        _actions.setPositions(configId, reorder.orderedGroups));
   }
 
   // ── Этап ──────────────────────────────────────────────────────────────────
 
   Future<void> _toggleEnabled(RouteStage stage, bool value) async {
-    await _write((_) async {
-      await _sb
-          .from('product_type_stages')
-          .update({'is_enabled': value}).eq('id', stage.rowId);
-    });
+    await _write((_) => _actions.setEnabled(stage, value));
+  }
+
+  /// Блокировка удаления считается по уже загруженному маршруту: без неё
+  /// техлид получил бы голый отказ внешнего ключа (ON DELETE RESTRICT на
+  /// parallel_with_stage_id) вместо имён зависимых этапов.
+  String? _deleteBlockedReason(RouteStage stage) {
+    final route = _route;
+    if (route == null) return null;
+    return stageDeleteBlockedReason(route, stage);
   }
 
   Future<void> _deleteStage(RouteStage stage) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Удалить этап «${stage.title}»?'),
-        content: const Text(
-          'Вместе с этапом удалятся его рабочие места, условия и под-этапы '
-          'вариантов.',
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Удалить')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    await _write((_) async {
-      await _sb.from('product_type_stages').delete().eq('id', stage.rowId);
-    });
+    final confirmed = await confirmStageDeletion(context, stage: stage);
+    if (!confirmed) return;
+    await _write((_) => _actions.deleteStage(stage.rowId));
+  }
+
+  Future<void> _changeExecution(
+    RouteStage stage,
+    String mode,
+    String? partnerRowId,
+  ) async {
+    await _write((_) => _actions.setExecution(stage.rowId, mode, partnerRowId));
+  }
+
+  Future<void> _setFormula(String formula) async {
+    await _write((configId) => _actions.setFormula(configId, formula));
   }
 
   // ── Рабочие места ─────────────────────────────────────────────────────────
@@ -245,50 +273,137 @@ class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
                 .map((w) => w.sortOrder)
                 .reduce((a, b) => a > b ? a : b) +
             1;
-    await _write((_) async {
-      await _sb.from('product_type_stage_workplaces').insert({
-        'stage_id': stage.rowId,
-        'workplace_id': workplaceId,
-        // Для переключаемого этапа подпись варианта заполняем сразу именем
-        // рабочего места — так же, как это делает смена режима.
-        if (stage.isSwitchable)
-          'variant_title':
-              ProductTypeSettings.instance.workplaceName(workplaceId),
-        'is_default': false,
-        'sort_order': nextSortOrder,
-      });
-    });
+    await _write((_) => _actions.addWorkplace(
+          stage: stage,
+          workplaceId: workplaceId,
+          // Для переключаемого этапа подпись варианта заполняем сразу именем
+          // рабочего места — так же, как это делает смена режима.
+          variantTitle: stage.isSwitchable
+              ? ProductTypeSettings.instance.workplaceName(workplaceId)
+              : null,
+          sortOrder: nextSortOrder,
+        ));
   }
 
   /// Обычный DELETE: он атомарен сам по себе, и каскад на под-этапы — его
   /// часть. Опасна была не потеря атомарности, а тишина, поэтому перечисление
   /// того, что уйдёт, показывает панель ДО вызова.
   Future<void> _removeWorkplace(RouteStageWorkplace workplace) async {
-    await _write((_) async {
-      await _sb
-          .from('product_type_stage_workplaces')
-          .delete()
-          .eq('id', workplace.rowId);
-    });
+    await _write((_) => _actions.removeWorkplace(workplace.rowId));
   }
 
   Future<void> _setDefaultVariant(RouteStageWorkplace variant) async {
-    await _write((_) async {
-      await _sb.rpc('set_product_type_stage_default_variant',
-          params: {'p_variant_id': variant.rowId});
-    });
+    await _write((_) => _actions.setDefaultVariant(variant.rowId));
   }
 
   Future<void> _changeSelectionMode(RouteStage stage, String targetMode) async {
     await _write((_) async {
-      final deleted = await _sb.rpc('set_product_type_stage_selection_mode',
-          params: {'p_stage_id': stage.rowId, 'p_mode': targetMode});
-      final count = (deleted as num?)?.toInt() ?? 0;
+      final count = await _actions.setSelectionMode(stage.rowId, targetMode);
       // Отчитываемся фактом из возврата функции, а не обещанием из диалога.
-      if (count > 0 && mounted) {
-        _showInfo('Удалено под-этапов: $count');
+      if (count > 0 && mounted) _showInfo('Удалено под-этапов: $count');
+    });
+  }
+
+  // ── Условие (Фаза A) ──────────────────────────────────────────────────────
+
+  Future<void> _changeCondition(
+    RouteStage stage,
+    String? predicate,
+    String? param,
+  ) async {
+    // Замена условия — DELETE плюс INSERT; между ними этап был бы «всегда».
+    await _write((_) => _actions.setCondition(stage.rowId, predicate, param));
+  }
+
+  // ── Под-этапы вариантов (Фаза C) и добавление этапа (Фаза B) ──────────────
+
+  /// Ранг нового этапа выдаёт сервер — см. `insert_product_type_stage`.
+  ///
+  /// Раньше он считался здесь как «максимум незакреплённых плюс один». После
+  /// уплотнения рангов это ровно ранг упаковки: новый этап слипся бы с ней в
+  /// одну группу и стал бы неперемещаемым. Сдвинуть упаковку тем же действием
+  /// клиент не может — это два оператора.
+  Future<void> _addSubStage(
+    RouteStageWorkplace variant,
+    String workplaceId,
+  ) async {
+    await _write((configId) async {
+      await _actions.insertStage(
+        configId: configId,
+        stageGroupKey: workplaceId,
+        title: ProductTypeSettings.instance.workplaceName(workplaceId),
+        workplaceId: workplaceId,
+        parentVariantId: variant.rowId,
+      );
+    });
+  }
+
+  Future<void> _deleteSubStage(RouteStage subStage) async {
+    final route = _route;
+    if (route == null) return;
+    var variantTitle = '';
+    for (final parent in route.stages) {
+      for (final workplace in parent.workplaces) {
+        if (workplace.rowId != subStage.parentVariantId) continue;
+        variantTitle = workplace.variantTitle ??
+            ProductTypeSettings.instance.workplaceName(workplace.workplaceId);
+      }
+    }
+    final confirmed = await confirmSubStageDeletion(
+      context,
+      subStage: subStage,
+      variantTitle: variantTitle,
+    );
+    if (!confirmed) return;
+    await _write((_) => _actions.deleteStage(subStage.rowId));
+  }
+
+  Future<void> _copyFromVariant(
+    RouteStageWorkplace from,
+    RouteStageWorkplace to,
+  ) async {
+    await _write((_) async {
+      final count =
+          await _actions.copyVariantSubStages(from.rowId, to.rowId);
+      // Функция пропускает под-этапы с уже занятым ключом, поэтому обещанное
+      // и реальное могут не совпасть — отчитываемся фактом.
+      if (mounted) {
+        _showInfo(count == 0
+            ? 'Копировать нечего: все под-этапы уже есть у варианта.'
+            : 'Скопировано под-этапов: $count');
       }
     });
+  }
+
+  Future<void> _addWorkplaceStage(String workplaceId) async {
+    await _write((configId) async {
+      await _actions.insertStage(
+        configId: configId,
+        stageGroupKey: workplaceId,
+        title: ProductTypeSettings.instance.workplaceName(workplaceId),
+        workplaceId: workplaceId,
+      );
+    });
+  }
+
+  Future<void> _addGroupStage() async {
+    final result = await promptGroupStage(context);
+    if (result == null) return;
+    await _write((configId) async {
+      await _actions.insertStage(
+        configId: configId,
+        // Ключ группы генерируется один раз и при переименовании подписи НЕ
+        // меняется: по нему группируют потребители и на него ссылаются планы.
+        stageGroupKey: _generateGroupKey(),
+        title: result.title,
+        workplaceId: result.workplaceId,
+      );
+    });
+  }
+
+  String _generateGroupKey() {
+    final hex = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    return 'grp_${hex.substring(hex.length - 8)}';
   }
 
   void _toggleWorkplaces(RouteStage stage) {
@@ -330,6 +445,7 @@ class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
       onMove: (group, delta) => _move(group, delta),
       onToggleEnabled: (stage, value) => _toggleEnabled(stage, value),
       onDeleteStage: _deleteStage,
+      deleteBlockedFor: _deleteBlockedReason,
       onToggleWorkplaces: _toggleWorkplaces,
       buildWorkplacesPanel: (stage, indent) => ProductTypeStageWorkplacesPanel(
         stage: stage,
@@ -340,41 +456,45 @@ class _ProductTypeStagesTabState extends State<ProductTypeStagesTab> {
         onRemoveWorkplace: _removeWorkplace,
         onSetDefaultVariant: _setDefaultVariant,
         onChangeSelectionMode: (mode) => _changeSelectionMode(stage, mode),
+        onChangeCondition: (predicate, param) =>
+            _changeCondition(stage, predicate, param),
+        onChangeExecution: (mode, partnerRowId) =>
+            _changeExecution(stage, mode, partnerRowId),
+        onAddSubStage: _addSubStage,
+        onDeleteSubStage: _deleteSubStage,
+        onCopyFromVariant: _copyFromVariant,
       ),
     );
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
       children: [
-        ProductTypeStagePreview(route: route),
-        if (_problems.isNotEmpty) _buildProblems(),
+        // Превью с переключателями условий убрано: очередь этапов ниже и так
+        // показывает маршрут, а после того как заказ стал собираться этим же
+        // маршрутом, отдельная «примерка» условий только дублировала экран.
+        ProductTypeFormulaCard(
+          formula: _formula,
+          locked: !_canEdit,
+          onChanged: _setFormula,
+        ),
+        ProductTypeProblemsBanner(problems: _problems),
         const Divider(height: 1),
-        for (final group in _groups) rows.build(context, group),
+        for (final group in _groups)
+          if (group.stages.any((s) => s.rowId == widget.focusStageId))
+            Container(
+              key: _focusKey,
+              color: const Color(0xFFFFF9E6),
+              child: rows.build(context, group),
+            )
+          else
+            rows.build(context, group),
+        ProductTypeAddStageControl(
+          route: route,
+          locked: !_canEdit,
+          onAddWorkplaceStage: _addWorkplaceStage,
+          onAddGroupStage: _addGroupStage,
+        ),
       ],
-    );
-  }
-
-  Widget _buildProblems() {
-    return Container(
-      width: double.infinity,
-      color: const Color(0xFFFFEBEE),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Маршрут нельзя опубликовать:',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.red.shade900)),
-          for (final problem in _problems)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text('• $problem',
-                  style: TextStyle(fontSize: 12, color: Colors.red.shade900)),
-            ),
-        ],
-      ),
     );
   }
 }

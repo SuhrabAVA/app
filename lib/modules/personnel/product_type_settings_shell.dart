@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../orders/product_type_route.dart';
 import '../orders/product_type_settings.dart';
+import 'product_type_conditions_tab.dart';
 import 'product_type_form_blocks_tab.dart';
+import 'product_type_design.dart';
 import 'product_type_stages_tab.dart';
 
 /// Создаёт черновик, если его ещё нет, и возвращает id версии для записи.
@@ -50,8 +53,20 @@ class ProductTypeSettingsShell extends StatefulWidget {
       _ProductTypeSettingsShellState();
 }
 
-class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
+class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell>
+    with SingleTickerProviderStateMixin {
   final SupabaseClient _sb = Supabase.instance.client;
+
+  /// Контроллер нужен явный: со вкладки «Условия» переходим на «Очередь
+  /// этапов» программно, а DefaultTabController такого не позволяет.
+  late final TabController _tabs = TabController(length: 3, vsync: this);
+
+  /// Маршрут показанной версии — вкладке «Условия» он нужен только на чтение,
+  /// поэтому грузится здесь, а не дублируется в ней.
+  ProductTypeRoute? _route;
+
+  /// Этап, к которому перешли со вкладки «Условия».
+  String? _focusStageId;
 
   bool _loading = true;
   bool _busy = false;
@@ -68,7 +83,27 @@ class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
   @override
   void initState() {
     super.initState();
+    // Вкладки-пилюли рисуются вручную, поэтому подсветку активной надо
+    // обновлять и при программном переходе (со вкладки «Условия»), и при
+    // свайпе содержимого.
+    _tabs.addListener(_onTabChanged);
     _loadState();
+  }
+
+  void _onTabChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _tabs.removeListener(_onTabChanged);
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  void _openStage(RouteStage stage) {
+    setState(() => _focusStageId = stage.rowId);
+    _tabs.animateTo(1);
   }
 
   Future<void> _loadState() async {
@@ -96,10 +131,20 @@ class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
         if (config.isDraft) draft = config;
       }
 
+      final activeId = (draft ?? published)?.id;
+      final route = activeId == null
+          ? null
+          : await ProductTypeSettings.instance.loadRouteForConfig(
+              configId: activeId,
+              productTypeId: widget.productType.id,
+              title: widget.productType.title,
+            );
+
       if (!mounted) return;
       setState(() {
         _published = published;
         _draft = draft;
+        _route = route;
         _loading = false;
       });
     } catch (e) {
@@ -208,22 +253,100 @@ class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  static const List<String> _tabLabels = <String>[
+    'Блоки заказа',
+    'Очередь этапов',
+    'Условия',
+  ];
+
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.productType.title),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Блоки формы'),
-              Tab(text: 'Очередь этапов'),
-            ],
+    return Scaffold(
+      backgroundColor: PtColors.background,
+      appBar: AppBar(
+        backgroundColor: PtColors.surface,
+        surfaceTintColor: PtColors.surface,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: const Border(bottom: BorderSide(color: PtColors.border)),
+        title: const Text(
+          'Конфигуратор типов продукта',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: PtColors.text,
           ),
         ),
-        body: _buildBody(),
-        bottomNavigationBar: _hasDraft ? _buildDraftBar() : null,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Center(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDCFCE7),
+                  borderRadius: BorderRadius.circular(PtMetrics.pillRadius),
+                ),
+                child: const Text(
+                  'Техлид',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF166534),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: _buildBody(),
+      bottomNavigationBar: _hasDraft ? _buildDraftBar() : null,
+    );
+  }
+
+  /// Шапка типа продукта: название и сводка по маршруту одной строкой.
+  Widget _buildTypeHeader() {
+    final route = _route;
+    final stageCount =
+        route == null ? 0 : route.stages.where((s) => s.isEnabled).length;
+    final conditionCount = route == null
+        ? 0
+        : route.stages.fold<int>(0, (sum, s) => sum + s.conditions.length);
+
+    return Container(
+      width: double.infinity,
+      color: PtColors.surface,
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.productType.title,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: PtColors.text,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '$stageCount активных этапов · $conditionCount условий',
+            style: const TextStyle(fontSize: 13, color: PtColors.muted),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              for (var i = 0; i < _tabLabels.length; i++)
+                PtTabPill(
+                  label: _tabLabels[i],
+                  selected: _tabs.index == i,
+                  onTap: () => setState(() => _tabs.index = i),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -251,21 +374,24 @@ class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
 
     return Column(
       children: [
+        _buildTypeHeader(),
+        const Divider(height: 1, color: PtColors.border),
         if (_hasDraft)
           Container(
             width: double.infinity,
             color: const Color(0xFFFFF4DE),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             child: const Text(
               'Черновик не опубликован. Заказы пока собираются по прежним '
               'настройкам.',
-              style: TextStyle(color: Color(0xFF8A5A00)),
+              style: TextStyle(color: Color(0xFF8A5A00), fontSize: 12.5),
             ),
           )
         else
           _buildReadOnlyBar(),
         Expanded(
           child: TabBarView(
+            controller: _tabs,
             children: [
               ProductTypeFormBlocksTab(
                 activeConfigId: _activeConfigId,
@@ -275,6 +401,14 @@ class _ProductTypeSettingsShellState extends State<ProductTypeSettingsShell> {
                 productType: widget.productType,
                 activeConfigId: _activeConfigId,
                 isDraft: _hasDraft,
+                focusStageId: _focusStageId,
+              ),
+              // Только для чтения: условно добавляемый этап — это обычный этап
+              // с условием, и правится он в своей строке. Два пути правки
+              // одной строки разъехались бы на первом же расхождении.
+              ProductTypeConditionsTab(
+                route: _route,
+                onOpenStage: _openStage,
               ),
             ],
           ),

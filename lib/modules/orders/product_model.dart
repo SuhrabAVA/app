@@ -28,6 +28,25 @@ class ProductModel {
     this.leftover,
   });
 
+  /// Габариты одной строкой: «12×81×41».
+  ///
+  /// Нули пропускаются (у листовых изделий глубины нет), дробные значения
+  /// показываются без хвостовых нулей. Пусто, если размеры не заполнены.
+  String get sizeLabel {
+    String? format(double value) {
+      if (value <= 0) return null;
+      if (value == value.roundToDouble()) return value.toInt().toString();
+      return value
+          .toStringAsFixed(2)
+          .replaceAll(RegExp(r'0+$'), '')
+          .replaceAll(RegExp(r'\.$'), '');
+    }
+
+    return [format(width), format(height), format(depth)]
+        .whereType<String>()
+        .join('×');
+  }
+
   /// Преобразует модель продукта в Map.
   Map<String, dynamic> toMap() => {
         'id': id,

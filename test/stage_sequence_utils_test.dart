@@ -274,4 +274,69 @@ test('canStartPackagingEarly blocks when packaging already started/completed', (
   expect(started, isFalse);
   expect(completed, isFalse);
 });
+
+  group('уже начатый этап очередью не запирается', () {
+    // Регрессия «Хороший год» / «Сборка дно+картон» (01.09.2026).
+    //
+    // С 13:10 на этапе работали трое: отметили количество и завершили участие,
+    // сам этап не закрыли — он встал на паузу. В 13:30 маршрут пересобрали, и
+    // в него добавился неначатый предшественник «Резка картона». Этап заперло
+    // задним числом: кнопка «Начать» погасла у всех, а новому сотруднику
+    // строка «Вы» вообще не показывалась.
+    const cardboardCut = 'stage-cardboard-cut';
+    const bottomAssembly = 'stage-bottom-assembly';
+
+    bool canStart({required bool assemblyStarted}) => isFirstPendingStageInOrder(
+          orderId: 'order-1',
+          currentStageId: bottomAssembly,
+          stageStates: [
+            const PendingStageState(
+              stageId: cardboardCut,
+              completed: false,
+              started: false,
+            ),
+            PendingStageState(
+              stageId: bottomAssembly,
+              completed: false,
+              started: assemblyStarted,
+            ),
+          ],
+          orderedStages: const [cardboardCut, bottomAssembly],
+        );
+
+    test('этап, на котором уже работали, остаётся открытым', () {
+      expect(canStart(assemblyStarted: true), isTrue);
+    });
+
+    test('нетронутый этап по-прежнему ждёт предыдущий', () {
+      expect(canStart(assemblyStarted: false), isFalse);
+    });
+
+    test('начатый предыдущий этап открывает следующий, даже стоя на паузе', () {
+      // Второе правило, о котором просил заказчик: предыдущему этапу
+      // достаточно быть НАЧАТЫМ. Он может стоять на паузе, все исполнители
+      // могли завершить участие, не закрыв этап, — следующий всё равно
+      // открыт.
+      expect(
+        isFirstPendingStageInOrder(
+          orderId: 'order-1',
+          currentStageId: bottomAssembly,
+          stageStates: const [
+            PendingStageState(
+              stageId: cardboardCut,
+              completed: false,
+              started: true,
+            ),
+            PendingStageState(
+              stageId: bottomAssembly,
+              completed: false,
+              started: false,
+            ),
+          ],
+          orderedStages: const [cardboardCut, bottomAssembly],
+        ),
+        isTrue,
+      );
+    });
+  });
 }

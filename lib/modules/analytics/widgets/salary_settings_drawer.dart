@@ -29,6 +29,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
   late TextEditingController _mealCtrl;
   late TextEditingController _socialCtrl;
   final Map<String, TextEditingController> _coeffCtrls = {};
+  final Map<String, TextEditingController> _helperCtrls = {};
   final Map<String, TextEditingController> _statusRateCtrls = {};
   final Map<String, TextEditingController> _setupPriceCtrls = {};
 
@@ -50,6 +51,9 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
     _mealCtrl.dispose();
     _socialCtrl.dispose();
     for (final c in _coeffCtrls.values) {
+      c.dispose();
+    }
+    for (final c in _helperCtrls.values) {
       c.dispose();
     }
     for (final c in _statusRateCtrls.values) {
@@ -174,7 +178,11 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Сдельная оплата = количество × коэффициент. Если коэффициент 0 — рабочее место не учитывается в сдельной зарплате.',
+          'Сдельная оплата = количество × коэффициент. Если коэффициент 0 — '
+          'рабочее место не учитывается в сдельной зарплате.\n'
+          'На местах с совместной работой «помощник» — скидка к основному '
+          'коэффициенту в процентах: -20 значит, что помощник получает 80% '
+          'от ставки того, кто начал этап. 0 — поровну.',
           style: TextStyle(color: AnalyticsColors.muted, fontSize: 11),
         ),
         const SizedBox(height: 8),
@@ -224,6 +232,7 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                     decoration: const InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(),
+                      labelText: 'основной',
                     ),
                     onChanged: widget.canEdit
                         ? (v) {
@@ -235,6 +244,53 @@ class _SalarySettingsDrawerState extends State<SalarySettingsDrawer> {
                         : null,
                   ),
                 ),
+                // Ставка помощника есть только там, где вообще бывает
+                // совместная работа: на «отдельном исполнителе» помощников
+                // не существует, и поле только путало бы.
+                if (w.executionMode == WorkplaceExecutionMode.joint) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 96,
+                    child: TextField(
+                      controller: _helperCtrls.putIfAbsent(
+                        w.id,
+                        () {
+                          // Пустое поле = «как у основного». Показывать здесь
+                          // ноль нельзя: ноль — это «помощнику не платим».
+                          final rate =
+                              widget.service.state.helperCoefficients[w.id];
+                          return TextEditingController(
+                            text: rate == null
+                                ? ''
+                                : AnalyticsFormat.decimal(rate),
+                          );
+                        },
+                      ),
+                      enabled: widget.canEdit,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                          color: AnalyticsColors.text,
+                          fontWeight: FontWeight.w500),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        labelText: 'помощник',
+                        hintText: 'как основной',
+                      ),
+                      onChanged: widget.canEdit
+                          ? (v) {
+                              widget.service.setWorkplaceHelperCoefficient(
+                                workplaceId: w.id,
+                                helperCoefficient:
+                                    v.trim().isEmpty ? null : _parse(v),
+                              );
+                            }
+                          : null,
+                    ),
+                  ),
+                ],
               ],
             ),
           );

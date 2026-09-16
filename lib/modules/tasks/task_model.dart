@@ -375,6 +375,10 @@ class TaskModel {
   final TaskStatus status;
   final int spentSeconds;
   final int? startedAt;
+  /// Когда этап был завершён, мс эпохи. Пишется сервером (`tasks.completed_at`)
+  /// при завершении и обнуляется при возобновлении. Только для чтения: в
+  /// toMap не попадает, чтобы клиентские сохранения не перетирали отметку.
+  final int? completedAt;
   final List<String> assignees;
   final List<TaskComment> comments;
 
@@ -389,6 +393,7 @@ class TaskModel {
     this.status = TaskStatus.waiting,
     this.spentSeconds = 0,
     this.startedAt,
+    this.completedAt,
     this.assignees = const [],
     this.comments = const [],
   }) : stageGroupKey = (stageGroupKey == null || stageGroupKey.trim().isEmpty)
@@ -493,6 +498,9 @@ class TaskModel {
       toInt(pick(['spentSeconds','spent_seconds','spentseconds'])) ?? 0;
   final startedAt =
       toInt(pick(['startedAt','started_at','startedat']));
+  final completedAtRaw = toInt(pick(['completedAt', 'completed_at', 'completedat']));
+  final completedAt =
+      completedAtRaw == null ? null : normalizeEpochToMillis(completedAtRaw);
 
   return TaskModel(
     id: id,
@@ -506,6 +514,7 @@ class TaskModel {
     status: status,
     spentSeconds: spentSeconds,
     startedAt: startedAt,
+    completedAt: completedAt,
     assignees: assignees,
     comments: comments,
   );
@@ -522,6 +531,8 @@ class TaskModel {
     String? capturedByWorkplaceId,
     String? capturedByUserId,
     int? capturedAt,
+    int? completedAt,
+    bool clearCompletedAt = false,
     List<String>? assignees,
     List<TaskComment>? comments,
   }) {
@@ -536,6 +547,7 @@ class TaskModel {
       status: status ?? this.status,
       spentSeconds: spentSeconds ?? this.spentSeconds,
       startedAt: clearStartedAt ? null : (startedAt ?? this.startedAt),
+      completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
       assignees: assignees ?? this.assignees,
       comments: comments ?? this.comments,
     );

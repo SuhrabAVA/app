@@ -12,13 +12,13 @@
 // Если колонки description/is_archived отсутствуют — запустите миграцию
 // migrate_plan_templates_existing.sql из ранее отправленного архива.
 
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import 'template_model.dart';
 import 'planned_stage_model.dart';
+import '../../services/realtime_sync_service.dart';
 
 class TemplateDeleteException implements Exception {
   TemplateDeleteException(this.message);
@@ -34,9 +34,9 @@ class TemplateProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   final List<TemplateModel> _templates = [];
-  RealtimeChannel? _tplChannel;
 
   bool _loading = false;
+  bool _disposed = false;
   Object? _lastError;
 
   List<TemplateModel> get templates => List.unmodifiable(_templates);
@@ -44,7 +44,12 @@ class TemplateProvider with ChangeNotifier {
   Object? get lastError => _lastError;
 
   TemplateProvider() {
-    _listenTemplates();
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.templates,
+      handler: fetchAll,
+    );
+    _fetchAndSetTemplates(includeArchived: false);
   }
 
   // -------------------------------
@@ -52,6 +57,7 @@ class TemplateProvider with ChangeNotifier {
   // -------------------------------
 
   Future<void> _fetchAndSetTemplates({bool includeArchived = false}) async {
+    if (_disposed) return;
     _loading = true;
     _lastError = null;
     notifyListeners();
@@ -67,6 +73,7 @@ class TemplateProvider with ChangeNotifier {
       query.order('name');
 
       final rows = await query;
+      if (_disposed) return;
 
       _templates
         ..clear()
@@ -84,10 +91,13 @@ class TemplateProvider with ChangeNotifier {
           return TemplateModel.fromMap(data);
         }));
     } catch (e) {
+      if (_disposed) return;
       _lastError = e;
     } finally {
-      _loading = false;
-      notifyListeners();
+      if (!_disposed) {
+        _loading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -134,33 +144,6 @@ class TemplateProvider with ChangeNotifier {
       return _sortByOrder(list);
     }
     return const [];
-  }
-
-  void _listenTemplates() {
-    // 1) Первичная загрузка
-    // (без архивных по умолчанию)
-    _fetchAndSetTemplates(includeArchived: false);
-
-    // 2) Переподписка на realtime
-    if (_tplChannel != null) {
-      _supabase.removeChannel(_tplChannel!);
-      _tplChannel = null;
-    }
-
-    _tplChannel = _supabase.channel('plan_templates_changes');
-
-    // Следим за любыми изменениями в таблице
-    _tplChannel!
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'plan_templates',
-          callback: (payload) {
-            // На любое изменение — перезагружаем список
-            _fetchAndSetTemplates(includeArchived: false);
-          },
-        )
-        .subscribe();
   }
 
   // -------------------------------
@@ -249,9 +232,7 @@ class TemplateProvider with ChangeNotifier {
           // На старых инсталляциях update недоступен, либо нет колонки.
           // Также бывает, что UPDATE запрещён RLS-политикой,
           // но DELETE разрешён. Тогда пробуем физическое удаление.
-          if (e.code == '42703' ||
-              e.code == 'PGRST204' ||
-              e.code == '42501') {
+          if (e.code == '42703' || e.code == 'PGRST204' || e.code == '42501') {
             affected = await hardDelete();
           } else {
             rethrow;
@@ -281,7 +262,7 @@ class TemplateProvider with ChangeNotifier {
       }
 
       //throw TemplateDeleteException('Ошибка удаления шаблона: ${e.message}');
-    //} catch (e) {
+      //} catch (e) {
       //throw TemplateDeleteException('Ошибка удаления шаблона: $e');
     }
 
@@ -298,10 +279,8 @@ class TemplateProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    if (_tplChannel != null) {
-      _supabase.removeChannel(_tplChannel!);
-      _tplChannel = null;
-    }
+    _disposed = true;
+    RealtimeSyncService.instance.unregisterOwner(this);
     super.dispose();
   }
 }

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../orders/product_type_condition_options.dart';
 import '../orders/product_type_route.dart';
 import '../orders/product_type_settings.dart';
+import 'product_type_design.dart';
 import '../orders/production_ids.dart';
 
 /// Этапы, подпись которых задана системой.
@@ -29,6 +31,7 @@ class StageRowBuilder {
     required this.onMove,
     required this.onToggleEnabled,
     required this.onDeleteStage,
+    required this.deleteBlockedFor,
     required this.onToggleWorkplaces,
     required this.buildWorkplacesPanel,
   });
@@ -42,6 +45,10 @@ class StageRowBuilder {
   final void Function(StageGroup group, int delta) onMove;
   final void Function(RouteStage stage, bool value) onToggleEnabled;
   final void Function(RouteStage stage) onDeleteStage;
+
+  /// Почему удаление недоступно; null — доступно. Кнопка гасится с подсказкой,
+  /// а не отказывает после нажатия: молчаливый отказ здесь недопустим.
+  final String? Function(RouteStage stage) deleteBlockedFor;
   final void Function(RouteStage stage) onToggleWorkplaces;
   final Widget Function(RouteStage stage, double indent) buildWorkplacesPanel;
 
@@ -53,35 +60,73 @@ class StageRowBuilder {
           _singleTile(context, group, group.stages.first)
         else
           _bundleTile(context, group),
-        const Divider(height: 1, indent: 16),
+
       ],
     );
   }
 
   Widget _singleTile(BuildContext context, StageGroup group, RouteStage stage) {
     final indent = group.isSubQueue ? 40.0 : 16.0;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Opacity(
-          opacity: stage.isEnabled ? 1 : 0.5,
-          child: ListTile(
-            contentPadding: EdgeInsets.only(left: indent, right: 8),
-            leading: _positionBadge(group),
-            title: Row(
-              children: [
-                Flexible(child: Text(stage.title)),
-                if (kSystemNamedStageKeys.contains(stage.key)) _systemNameLock(),
-                if (group.isSubQueue) ..._variantBadges(group),
-              ],
-            ),
-            subtitle: _subtitle(stage),
-            trailing: _rowActions(group, stage),
+    // Карточка вместо ListTile с разделителем: этапы читаются как элементы
+    // очереди, а под-этап видно по отступу, а не только по бейджу варианта.
+    return Padding(
+      padding: EdgeInsets.fromLTRB(indent, 0, 16, PtMetrics.gap),
+      child: Container(
+        decoration: BoxDecoration(
+          color: PtColors.surface,
+          borderRadius: BorderRadius.circular(PtMetrics.cardRadius),
+          border: Border.all(
+            color: stage.isEnabled ? const Color(0xFFE0E0FF) : PtColors.border,
           ),
         ),
-        if (expandedStageId == stage.rowId)
-          buildWorkplacesPanel(stage, indent + 18),
-      ],
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Opacity(
+              opacity: stage.isEnabled ? 1 : 0.55,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                child: Row(
+                  children: [
+                    _positionBadge(group),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  stage.title,
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w500,
+                                    color: PtColors.text,
+                                  ),
+                                ),
+                              ),
+                              if (kSystemNamedStageKeys.contains(stage.key))
+                                _systemNameLock(),
+                              if (group.isSubQueue) ..._variantBadges(group),
+                            ],
+                          ),
+                          const SizedBox(height: 1),
+                          _subtitle(stage),
+                        ],
+                      ),
+                    ),
+                    _rowActions(group, stage),
+                  ],
+                ),
+              ),
+            ),
+            if (expandedStageId == stage.rowId)
+              buildWorkplacesPanel(stage, 12),
+          ],
+        ),
+      ),
     );
   }
 
@@ -124,15 +169,18 @@ class StageRowBuilder {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _workplacesButton(stage),
-                    Switch(
+                    const SizedBox(width: 8),
+                    PtToggle(
                       value: stage.isEnabled,
                       onChanged:
                           locked ? null : (v) => onToggleEnabled(stage, v),
                     ),
                     IconButton(
-                      tooltip: 'Удалить этап',
+                      tooltip: deleteBlockedFor(stage) ?? 'Удалить этап',
                       icon: const Icon(Icons.delete_outline, size: 18),
-                      onPressed: locked ? null : () => onDeleteStage(stage),
+                      onPressed: locked || deleteBlockedFor(stage) != null
+                          ? null
+                          : () => onDeleteStage(stage),
                     ),
                   ],
                 ),
@@ -167,11 +215,22 @@ class StageRowBuilder {
     return '${group.stages.length} этапа на одном шаге';
   }
 
-  Widget _positionBadge(StageGroup group) => SizedBox(
-        width: 34,
-        child: Text('${group.position}',
-            style: TextStyle(
-                fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+  Widget _positionBadge(StageGroup group) => Container(
+        width: 24,
+        height: 24,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          color: PtColors.primarySoft,
+          shape: BoxShape.circle,
+        ),
+        child: Text(
+          '${group.position}',
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: PtColors.primary,
+          ),
+        ),
       );
 
   Widget _systemNameLock() => Padding(
@@ -261,14 +320,17 @@ class StageRowBuilder {
         _moveButton(Icons.arrow_downward, 'Ниже', down, () => onMove(group, 1)),
         if (single != null) ...[
           _workplacesButton(single),
-          Switch(
+          const SizedBox(width: 8),
+          PtToggle(
             value: single.isEnabled,
             onChanged: locked ? null : (v) => onToggleEnabled(single, v),
           ),
           IconButton(
-            tooltip: 'Удалить этап',
+            tooltip: deleteBlockedFor(single) ?? 'Удалить этап',
             icon: const Icon(Icons.delete_outline, size: 18),
-            onPressed: locked ? null : () => onDeleteStage(single),
+            onPressed: locked || deleteBlockedFor(single) != null
+                ? null
+                : () => onDeleteStage(single),
           ),
         ],
       ],
@@ -294,12 +356,7 @@ class StageRowBuilder {
   }
 
   String _stageSubtitle(RouteStage stage) {
-    final parts = <String>[];
-    if (stage.conditions.isEmpty) {
-      parts.add('всегда');
-    } else {
-      parts.add('если: ${stage.conditions.map(_conditionLabel).join(' и ')}');
-    }
+    final parts = <String>[stageConditionSummary(stage)];
     final subStages = route.stages
         .where((s) =>
             s.level == 1 &&
@@ -309,15 +366,4 @@ class StageRowBuilder {
     return parts.join(' · ');
   }
 
-  String _conditionLabel(RouteCondition condition) {
-    final base = switch (condition.predicate) {
-      'has_paint' => 'есть краски',
-      'has_cardboard' => 'есть картон',
-      'has_trimming' => 'есть подрезка',
-      'needs_bobbin_cutting' => 'заказ уже формата бумаги',
-      'handle_type_is' => 'ручка ${condition.param ?? ''}',
-      _ => condition.predicate,
-    };
-    return condition.negate ? 'не $base' : base;
-  }
 }

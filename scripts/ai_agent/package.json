@@ -1,0 +1,11 @@
+{
+  "name": "easy-pack-ai-agent-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:sql-validator": "node --test tests/sql_validator.test.mjs"
+  },
+  "devDependencies": {
+    "@supabase/pg-parser": "0.1.7"
+  }
+}

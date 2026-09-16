@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "sheet_clone" "\0"
+            VALUE "CompanyName", "Easy Pack Pro" "\0"
+            VALUE "FileDescription", "Easy Pack Pro" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "sheet_clone" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "sheet_clone.exe" "\0"
-            VALUE "ProductName", "sheet_clone" "\0"
+            VALUE "InternalName", "easy_pack_pro" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Easy Pack Pro. All rights reserved." "\0"
+            VALUE "OriginalFilename", "easy_pack_pro.exe" "\0"
+            VALUE "ProductName", "Easy Pack Pro" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

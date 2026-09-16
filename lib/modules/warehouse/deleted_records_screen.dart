@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../services/realtime_sync_service.dart';
+import '../../utils/kostanay_time.dart';
+
 class DeletedRecordsScreen extends StatefulWidget {
   final String entityType;
   final String title;
@@ -66,10 +69,22 @@ class _DeletedRecordsScreenState extends State<DeletedRecordsScreen> {
   @override
   void initState() {
     super.initState();
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.warehouseDeletedRecords,
+      handler: _load,
+    );
     _load();
   }
 
+  @override
+  void dispose() {
+    RealtimeSyncService.instance.unregisterOwner(this);
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       PostgrestFilterBuilder<dynamic> query =
@@ -111,7 +126,7 @@ class _DeletedRecordsScreenState extends State<DeletedRecordsScreen> {
   String _formatDate(String? iso) {
     if (iso == null || iso.isEmpty) return '—';
     try {
-      final dt = DateTime.parse(iso).toLocal();
+      final dt = toKostanayTime(DateTime.parse(iso));
       return '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     } catch (_) {
       return iso;

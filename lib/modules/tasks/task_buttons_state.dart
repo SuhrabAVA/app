@@ -131,6 +131,37 @@ const String _labelShiftResume = 'Продолжить пересмену';
 const String _labelHelpers = 'Добавить помощника';
 const String _labelFinishTask = 'Завершить задание';
 
+/// Полноправный ли исполнитель строки — тот, чьи кнопки вообще могут быть
+/// включены (см. `isAssignee` в [computeTaskButtons]).
+///
+/// Правило нужно двум разным местам экрана, и расхождение между ними уже
+/// стоило регресса: панель показывала строку «Вы» сотруднику, заходящему на
+/// этап вторым, а кнопка «Начать» в ней была выключена — начать работу было
+/// нельзя вообще.
+///
+/// [rowMode] — режим самого сотрудника (`exec_mode`), [stageMode] — режим
+/// этапа. Для незанесённого в [assignees] сотрудника [rowMode] не смотрим:
+/// его записи режима ещё нет.
+bool isRowAssignee({
+  required List<String> assignees,
+  required String rowUserId,
+  required ExecutionMode stageMode,
+  required ExecutionMode rowMode,
+}) {
+  // Этап ещё ничей: первый пришедший и становится исполнителем.
+  if (assignees.isEmpty) return true;
+  if (!assignees.contains(rowUserId)) {
+    // Отдельные исполнители назначают себя сами, нажимая «Начать»: до
+    // первого нажатия сотрудника нет в assignees. В совместном режиме
+    // присоединиться самому нельзя — только через «Добавить помощника».
+    return stageMode == ExecutionMode.separate;
+  }
+  if (rowMode == ExecutionMode.separate) return true;
+  // Совместный режим: заданием управляет только основной исполнитель,
+  // помощники — нет.
+  return stageMode == ExecutionMode.joint && assignees.first == rowUserId;
+}
+
 TaskRowPhase _resolvePhase({
   required TaskStatus taskStatus,
   required UserRunState rowState,
@@ -144,11 +175,15 @@ TaskRowPhase _resolvePhase({
   if (taskStatus == TaskStatus.completed) return TaskRowPhase.completed;
   if (shiftPaused) return TaskRowPhase.shiftPaused;
   if (setupInProgressForRow) return TaskRowPhase.setupRunning;
-  if (setupUnfinishedForRow && rowState == UserRunState.paused) {
-    return TaskRowPhase.setupPaused;
-  }
-  if (setupUnfinishedForRow && rowState == UserRunState.problem) {
-    return TaskRowPhase.setupProblem;
+  // Фазы незакрытой наладки имеют смысл только ДО запуска тиража. После него
+  // «Продолжить наладку» всё равно выключено (`!productionStarted` в
+  // setupEnabled), а фаз setupPaused/setupProblem нет в списке разрешённых для
+  // «Начать» — строка оставалась вообще без единой доступной кнопки. Именно
+  // так 09.09 заперся этап «Фри»: у сотрудника висела наладка, начатая накануне
+  // и закрытая за него сменщиком, и кроме «Пересмены» нажать было нечего.
+  if (!productionStarted && setupUnfinishedForRow) {
+    if (rowState == UserRunState.paused) return TaskRowPhase.setupPaused;
+    if (rowState == UserRunState.problem) return TaskRowPhase.setupProblem;
   }
   switch (rowState) {
     case UserRunState.active:
@@ -184,8 +219,8 @@ TaskRowPhase _resolvePhase({
 ///    возобновления смены и незакрытое намерение старта;
 ///  * [shiftResumeBlocked] — отдельный флаг для «Продолжить пересмену»: он
 ///    считается по другим правилам (доступ к рабочему месту, а не назначение);
-///  * [startInFlight] / [setupInFlight] — защита от повторного нажатия, пока
-///    запрос выполняется;
+///  * [startInFlight] / [setupInFlight] / [shiftInFlight] / [finishInFlight] —
+///    защита от повторного нажатия, пока запрос выполняется;
 ///  * [setupPendingForStage] — у кого-то на этапе висит незакрытая наладка;
 ///  * [hasAssignees] — нужен только для видимости «Завершить задание».
 TaskButtonsState computeTaskButtons({
@@ -210,6 +245,16 @@ TaskButtonsState computeTaskButtons({
   required bool hasAssignees,
   required bool allPerformersFinished,
   required bool anyUserActive,
+  // Этап возобновлён после завершения («Возобновить»), а в новом круге ещё
+  // ничего не начато. Станок уже налажен прошлым кругом: доступны и
+  // «Начать наладку», и сразу «Начать».
+  bool stageReopened = false,
+  // Пересмена и завершение спрашивают расход бумаги и количество: между
+  // нажатием и записью проходят секунды, и всё это время кнопка оставалась
+  // живой. Второе нажатие писало вторую пересмену, второе количество и второе
+  // списание бумаги.
+  bool shiftInFlight = false,
+  bool finishInFlight = false,
 }) {
   final bool joint = mode != ExecutionMode.separate;
 
@@ -258,7 +303,8 @@ TaskButtonsState computeTaskButtons({
     TaskRowPhase.freshWithoutMachine,
     TaskRowPhase.idleOnStartedStage,
   };
-  final bool startEnabled = startPhases.contains(phase) &&
+  final bool startEnabled = (startPhases.contains(phase) ||
+          (phase == TaskRowPhase.freshWithMachine && stageReopened)) &&
       isMyRow &&
       isAssignee &&
       !startInFlight &&
@@ -318,6 +364,7 @@ TaskButtonsState computeTaskButtons({
     enabled: finishPhases.contains(phase) &&
         isMyRow &&
         isAssignee &&
+        !finishInFlight &&
         finishStatuses.contains(taskStatus) &&
         productionStarted &&
         participated,
@@ -348,9 +395,10 @@ TaskButtonsState computeTaskButtons({
     TaskRowPhase.productionPaused,
     TaskRowPhase.problem,
   };
-  final bool shiftEnabled = phase == TaskRowPhase.shiftPaused
-      ? (isMyRow && !shiftResumeBlocked)
-      : (shiftPhases.contains(phase) && isMyRow);
+  final bool shiftEnabled = !shiftInFlight &&
+      (phase == TaskRowPhase.shiftPaused
+          ? (isMyRow && !shiftResumeBlocked)
+          : (shiftPhases.contains(phase) && isMyRow));
   final shift = TaskButtonState(
     visible: joint,
     enabled: joint && shiftEnabled,

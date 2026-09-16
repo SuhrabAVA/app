@@ -4,16 +4,19 @@ import 'package:provider/provider.dart';
 import '../analytics/analytics_routes.dart';
 import '../chat/chat_tab.dart';
 import '../tasks/tasks_screen.dart';
+import '../tasks/stage_status_colors.dart';
 import '../tasks/workspace_design.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/position_model.dart';
+import '../personnel/workspace_access_rules.dart';
 
 // Для выхода и возврата на экран входа
 import '../../services/error_log_uploader.dart';
 import '../../utils/auth_helper.dart';
 import '../../login_screen.dart';
 import '../../services/audit_log_service.dart';
+import '../../services/employee_password_service.dart';
 
 /// Рабочее пространство сотрудника.
 ///
@@ -60,10 +63,13 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen>
   /// с фото, ФИО и должностью; пароль спрашивается после выбора человека.
   Future<void> _addEmployeeTab() async {
     final personnel = context.read<PersonnelProvider>();
-    // Список доступных для выбора сотрудников (не включаем уже открытые)
-    final available = personnel.employees
-        .where((e) => !e.isFired && !_employeeIds.contains(e.id))
-        .toList();
+    // Список доступных для выбора сотрудников: не включаем уже открытые,
+    // уволенных и роли с отдельным рабочим местом (менеджер, техлид, зав.
+    // складом, CMM) — у них свои модули, а не производственные задания.
+    final available = employeesForSharedWorkspace(
+      personnel.employees,
+      excludedIds: _employeeIds.toSet(),
+    );
     if (available.isEmpty) {
       // Все сотрудники уже открыты
       return;
@@ -88,8 +94,8 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen>
     }
   }
 
-  String _employeeTabLabel(PersonnelProvider personnel, String id) {
-    final emp = personnel.employees.firstWhere(
+  EmployeeModel _employeeById(PersonnelProvider personnel, String id) {
+    return personnel.employees.firstWhere(
       (employee) => employee.id == id,
       orElse: () => EmployeeModel(
         id: '',
@@ -100,8 +106,30 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen>
         positionIds: const [],
       ),
     );
-    final firstInitial = emp.firstName.isEmpty ? '' : '${emp.firstName[0]}.';
-    return '${emp.lastName} $firstInitial'.trim();
+  }
+
+  /// Короткая подпись вкладки аккаунта. Приоритет — ИМЯ: показываем имя
+  /// полностью и инициал фамилии («Сухраб А.»). Если фамилии нет — только имя,
+  /// без «первой буквы с точкой» (раньше выходило просто «С.»).
+  String _employeeTabLabel(PersonnelProvider personnel, String id) {
+    final emp = _employeeById(personnel, id);
+    final first = emp.firstName.trim();
+    final last = emp.lastName.trim();
+    if (first.isEmpty) return last.isEmpty ? '—' : last;
+    final lastInitial = last.isEmpty ? '' : '${last[0]}.';
+    return '$first $lastInitial'.trim();
+  }
+
+  /// Полное имя активного (выбранного во вкладках) сотрудника: «Имя Фамилия».
+  /// Показывается в шапке, чтобы сотрудник видел, в чьём аккаунте работает.
+  String _activeEmployeeFullName(PersonnelProvider personnel) {
+    if (_employeeIds.isEmpty) return '';
+    final idx = _employeeTabController.index.clamp(0, _employeeIds.length - 1);
+    final emp = _employeeById(personnel, _employeeIds[idx]);
+    return [emp.firstName, emp.lastName]
+        .where((s) => s.trim().isNotEmpty)
+        .join(' ')
+        .trim();
   }
 
   Future<void> _logoutActiveEmployee() async {
@@ -158,101 +186,109 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen>
                 isNarrow ? 12 : 20,
                 4,
               ),
-              child: SizedBox(
-                height: WorkspaceMetrics.headerActionSize,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final centerInset = isNarrow ? 118.0 : 250.0;
-                    return Stack(
-                      alignment: Alignment.center,
+              // Шапка одной строкой: слева название и легенда цветов этапов,
+              // справа переключатель сотрудников и кнопки.
+              //
+              // Раньше переключатель стоял по центру, зажатый между двумя
+              // фиксированными отступами, и с ним соседствовала пустота. Он
+              // относится к учётным записям — там же, где «Добавить
+              // сотрудника» и «Выйти», ему и место. Освободившаяся левая
+              // половина ушла под легенду.
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: SizedBox(
-                            width: isNarrow ? 150 : 280,
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 10),
-                              child: Text(
-                                'Рабочее пространство',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: WorkspaceColors.foreground,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
+                        Text(
+                          'Рабочее пространство',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: WorkspaceColors.foreground,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        if (_employeeIds.length > 1)
-                          Positioned(
-                            left: centerInset,
-                            right: centerInset,
-                            child: Center(
-                              child: ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 440),
-                                child: Container(
-                                  height: 38,
-                                  decoration:
-                                      workspaceCardDecoration(radius: 12),
-                                  clipBehavior: Clip.antiAlias,
-                                  child: TabBar(
-                                    controller: _employeeTabController,
-                                    isScrollable: true,
-                                    dividerHeight: 0,
-                                    indicatorSize: TabBarIndicatorSize.tab,
-                                    indicator: BoxDecoration(
-                                      color: WorkspaceColors.primary
-                                          .withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    labelColor: WorkspaceColors.primary,
-                                    unselectedLabelColor:
-                                        WorkspaceColors.mutedForeground,
-                                    labelStyle: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    tabs: [
-                                      for (final id in _employeeIds)
-                                        Tab(
-                                          height: 36,
-                                          text: _employeeTabLabel(
-                                            personnel,
-                                            id,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                        SizedBox(height: 4),
+                        _StageLegend(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  AnimatedBuilder(
+                    animation: _employeeTabController,
+                    builder: (context, _) {
+                      if (_employeeIds.length <= 1) {
+                        return ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: isNarrow ? 140 : 220,
+                          ),
+                          child: Text(
+                            _activeEmployeeFullName(personnel),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              color: WorkspaceColors.foreground,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              WorkspaceHeaderAction(
-                                icon: Icons.add,
-                                tooltip: 'Добавить сотрудника',
-                                onPressed: _addEmployeeTab,
-                              ),
-                              const SizedBox(width: 10),
-                              WorkspaceHeaderAction(
-                                icon: Icons.logout,
-                                tooltip: 'Выйти',
-                                onPressed: _logoutActiveEmployee,
-                              ),
+                        );
+                      }
+                      return ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: isNarrow ? 200 : 440,
+                        ),
+                        child: Container(
+                          height: 38,
+                          decoration: workspaceCardDecoration(radius: 12),
+                          clipBehavior: Clip.antiAlias,
+                          child: TabBar(
+                            controller: _employeeTabController,
+                            isScrollable: true,
+                            dividerHeight: 0,
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            indicator: BoxDecoration(
+                              color: WorkspaceColors.primary
+                                  .withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            labelColor: WorkspaceColors.primary,
+                            unselectedLabelColor:
+                                WorkspaceColors.mutedForeground,
+                            labelStyle: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            tabs: [
+                              for (final id in _employeeIds)
+                                Tab(
+                                  height: 36,
+                                  text: _employeeTabLabel(personnel, id),
+                                ),
                             ],
                           ),
                         ),
-                      ],
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  WorkspaceHeaderAction(
+                    icon: Icons.add,
+                    tooltip: 'Добавить сотрудника',
+                    onPressed: _addEmployeeTab,
+                  ),
+                  const SizedBox(width: 10),
+                  WorkspaceHeaderAction(
+                    icon: Icons.logout,
+                    tooltip: 'Выйти',
+                    onPressed: _logoutActiveEmployee,
+                  ),
+                ],
               ),
             ),
             Expanded(
@@ -267,6 +303,51 @@ class _EmployeeWorkspaceScreenState extends State<EmployeeWorkspaceScreen>
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Легенда цветов этапов производства.
+///
+/// Стоит в шапке, поэтому нарочно скромная: точка 7 px и подпись 10 px
+/// приглушённым цветом. Семь статусов в одну строку не всегда влезают, но
+/// Wrap переносит их сам, а высота шапки от этого меняется предсказуемо —
+/// на одну строку. Расшифровка нужна редко: цвет читается сам, а подпись
+/// подсказывает новичку и не мозолит глаза остальным.
+class _StageLegend extends StatelessWidget {
+  const _StageLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final status in kStageRunStatusLegendOrder)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: stageRunStatusColor(status),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                stageRunStatusLabel(status),
+                style: const TextStyle(
+                  fontSize: 10,
+                  height: 1.1,
+                  color: WorkspaceColors.mutedForeground,
+                ),
+              ),
+            ],
+          ),
+      ],
     );
   }
 }
@@ -477,6 +558,7 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
       barrierDismissible: false,
       builder: (_) => _EmployeePasswordDialog(
         title: _fullName(employee),
+        employeeId: employee.id,
         password: employee.password,
       ),
     );
@@ -604,10 +686,15 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
 class _EmployeePasswordDialog extends StatefulWidget {
   const _EmployeePasswordDialog({
     required this.title,
+    required this.employeeId,
     required this.password,
   });
 
   final String title;
+  final String employeeId;
+
+  /// Пароль из списка сотрудников — только на случай обрыва связи
+  /// (см. employee_password_service.dart).
   final String password;
 
   @override
@@ -625,12 +712,34 @@ class _EmployeePasswordDialogState extends State<_EmployeePasswordDialog> {
     super.dispose();
   }
 
-  void _submit() {
-    if (_controller.text.trim() == widget.password) {
+  bool _checking = false;
+
+  Future<void> _submit() async {
+    if (_checking) return;
+    setState(() {
+      _checking = true;
+      _error = null;
+    });
+    String? error;
+    try {
+      final check = await verifyEmployeePassword(
+        employeeId: widget.employeeId,
+        input: _controller.text,
+        cachedPassword: widget.password,
+      );
+      error = passwordCheckError(check);
+    } catch (e) {
+      error = 'Не удалось проверить пароль: $e';
+    }
+    if (!mounted) return;
+    if (error == null) {
       Navigator.of(context).pop(true);
       return;
     }
-    setState(() => _error = 'Неверный пароль');
+    setState(() {
+      _checking = false;
+      _error = error;
+    });
   }
 
   @override

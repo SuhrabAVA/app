@@ -11,11 +11,15 @@ import 'modules/manager/manager_workspace_screen.dart';
 import 'admin_panel.dart';
 import 'modules/personnel/employee_workspace_screen.dart';
 import 'modules/personnel/personnel_provider.dart';
+import 'modules/personnel/status_shift_screen.dart';
 import 'utils/auth_helper.dart';
+import 'utils/network_failures.dart';
+import 'widgets/brand_mark.dart';
 import 'modules/warehouse_manager/warehouse_manager_workspace_screen.dart';
 import 'services/audit_log_service.dart';
-import 'services/user_service.dart';
+import 'services/error_log_uploader.dart';
 import 'services/auth_extras.dart';
+import 'services/employee_password_service.dart';
 
 bool isManagerUser(EmployeeModel emp, PersonnelProvider pr) {
   final ids = emp.positionIds.map((e) => e.toString()).toSet();
@@ -45,6 +49,31 @@ bool isWarehouseHeadUser(EmployeeModel emp, PersonnelProvider pr) {
   return false;
 }
 
+String _employeeDisplayName(EmployeeModel emp) {
+  final parts = [emp.lastName, emp.firstName, emp.patronymic]
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty);
+  final full = parts.join(' ');
+  return full.isEmpty ? (emp.login.isEmpty ? 'Сотрудник' : emp.login) : full;
+}
+
+String? _statusNameFor(PersonnelProvider personnel, String? statusId) {
+  if (statusId == null || statusId.isEmpty) return null;
+  for (final status in personnel.statuses) {
+    if (status.id == statusId) return status.name;
+  }
+  return null;
+}
+
+/// Сообщение о неудачной записи в `positions`. Обрыв связи и отказ RLS —
+/// разные диагнозы: раньше оба писались как «Нет прав», и в журнале ошибок
+/// сетевые сбои выглядели как проблема с правами.
+String _positionsWriteFailure(String step, Object error) {
+  return isTransientNetworkFailure(error)
+      ? 'Не удалось записать в positions ($step): нет связи с сервером: $error'
+      : 'Нет прав на запись в positions ($step): $error';
+}
+
 /// Экран логина.
 /// Безопасно работает при включенном RLS: записи создаются только при наличии авторизации.
 class LoginScreen extends StatefulWidget {
@@ -55,7 +84,6 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final UserService _userService = UserService();
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -69,22 +97,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _bootstrap() async {
     try {
-      // 1) создаём техлида в наших таблицах (если там логика локальная — ок; если SQL — обернуто в try/catch)
-      try {
-        await _userService.ensureTechLeaderExists();
-      } catch (_) {
-        // не критично для старта экрана
-      }
-
-      // 2) Пытаемся выполнить бэкенд-вход (если настроен)
+      // 1) Пытаемся выполнить бэкенд-вход (если настроен).
+      // Техлид — фиксированная должность tech_leader в positions; прежнее
+      // «создание техлида» в documents всегда падало (documents.id — uuid).
       try {
         await AuthExtras.tryBackendSignInIfConfigured();
       } catch (_) {
         // не критично
       }
 
-      // 3) После первого кадра — подгружаем данные
+      // 2) После первого кадра — подгружаем данные
       WidgetsBinding.instance.addPostFrameCallback((_) async {
+        // Кадр может прийти уже после dispose (быстрый выход с экрана,
+        // сворачивание приложения на старте). Тогда State.context бросает
+        // «Null check operator used on a null value» — читаем провайдер
+        // только пока элемент жив.
+        if (!mounted) return;
         final pr = context.read<PersonnelProvider>();
 
         // ВАЖНО: ensure* — только если есть авторизованный пользователь,
@@ -94,23 +122,17 @@ class _LoginScreenState extends State<LoginScreen> {
           try {
             await pr.ensureManagerPosition();
           } catch (e) {
-            debugPrint(
-              'Нет прав на запись в positions (ensureManagerPosition): $e',
-            );
+            debugPrint(_positionsWriteFailure('ensureManagerPosition', e));
           }
           try {
             await pr.ensureWarehouseHeadPosition();
           } catch (e) {
-            debugPrint(
-              'Нет прав на запись в positions (ensureWarehouseHeadPosition): $e',
-            );
+            debugPrint(_positionsWriteFailure('ensureWarehouseHeadPosition', e));
           }
           try {
             await pr.ensureCmmSpecialistPosition();
           } catch (e) {
-            debugPrint(
-              'Нет прав на запись в positions (ensureCmmSpecialistPosition): $e',
-            );
+            debugPrint(_positionsWriteFailure('ensureCmmSpecialistPosition', e));
           }
         }
 
@@ -118,7 +140,11 @@ class _LoginScreenState extends State<LoginScreen> {
         try {
           await pr.fetchEmployees();
         } catch (e) {
-          debugPrint('Нет прав на чтение сотрудников. Проверьте RLS: $e');
+          debugPrint(
+            isTransientNetworkFailure(e)
+                ? 'Сотрудники не загружены: нет связи с сервером: $e'
+                : 'Нет прав на чтение сотрудников. Проверьте RLS: $e',
+          );
         }
 
         if (mounted) {
@@ -160,6 +186,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Логотип над поиском и списком. Компактный: карточка
+                  // входа и так узкая, а место нужно списку сотрудников.
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: 14),
+                      child: BrandLockup(height: 40),
+                    ),
+                  ),
                   const Text(
                     'Вход в систему',
                     style: TextStyle(
@@ -414,11 +448,40 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
     } else {
-      final screen = isManagerUser(emp!, personnel)
-          ? ManagerWorkspaceScreen(employeeId: user.id)
-          : isWarehouseHeadUser(emp, personnel)
-              ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
-              : EmployeeWorkspaceScreen(employeeId: user.id);
+      // Сотрудник со статусом и без должности (уборщик, охранник) заданий не
+      // выполняет — производственное рабочее пространство ему показывать
+      // нечем. Такому нужен только экран отметки прихода/ухода.
+      final statusId = personnel.currentStatusIdFor(user.id);
+      final statusOnly = isStatusOnlyEmployee(
+        positionIds: emp!.positionIds,
+        statusId: statusId,
+      );
+
+      final screen = statusOnly
+          ? StatusShiftScreen(
+              employeeId: user.id,
+              employeeName: _employeeDisplayName(emp),
+              statusName: _statusNameFor(personnel, statusId),
+              onExit: () async {
+                await analytics.logEvent(
+                  userId: user.id,
+                  action: 'logout',
+                  category: 'production',
+                );
+                ErrorLogUploader.instance.flush(reason: 'logout');
+                AuthHelper.clear();
+                if (!rootNavigator.mounted) return;
+                rootNavigator.pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+              },
+            )
+          : isManagerUser(emp, personnel)
+              ? ManagerWorkspaceScreen(employeeId: user.id)
+              : isWarehouseHeadUser(emp, personnel)
+                  ? WarehouseManagerWorkspaceScreen(employeeId: user.id)
+                  : EmployeeWorkspaceScreen(employeeId: user.id);
 
       rootNavigator.pushReplacement(
         MaterialPageRoute(builder: (_) => screen),
@@ -448,7 +511,7 @@ class _PasswordDialogState extends State<_PasswordDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     if (_isSubmitting) {
       return;
     }
@@ -458,13 +521,28 @@ class _PasswordDialogState extends State<_PasswordDialog> {
       _error = null;
     });
 
-    if (_controller.text.trim() == widget.user.password) {
+    // Пароль сверяет сервер по хешу (employee_verify_password). Локальный
+    // пароль из списка сотрудников нужен только на случай обрыва связи.
+    String? error;
+    try {
+      final check = await verifyEmployeePassword(
+        employeeId: widget.user.id,
+        input: _controller.text,
+        cachedPassword: widget.user.password,
+      );
+      error = passwordCheckError(check);
+    } catch (e) {
+      error = 'Не удалось проверить пароль: $e';
+    }
+    if (!mounted) return;
+
+    if (error == null) {
       Navigator.of(context).pop(true);
       return;
     }
 
     setState(() {
-      _error = 'Неверный пароль';
+      _error = error;
       _isSubmitting = false;
     });
   }

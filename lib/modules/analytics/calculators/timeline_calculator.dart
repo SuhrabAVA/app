@@ -1,3 +1,4 @@
+import '../../../utils/kostanay_time.dart';
 import '../models/analytics_event.dart';
 import '../models/day_shift_type.dart';
 import '../models/work_schedule_entry.dart';
@@ -61,8 +62,11 @@ class TimelineCalculator {
     WorkScheduleEntry? schedule,
     DateTime? now,
   }) {
-    final reference = now ?? DateTime.now();
-    final midnight = DateTime(day.year, day.month, day.day);
+    // Событиям присвоено Костанайское время (UTC+5, помечено isUtc). Чтобы
+    // «минуты от полуночи» считались в той же рамке, полночь и «сейчас»
+    // берём тоже в Костанайской: локальная полночь устройства дала бы сдвиг.
+    final reference = now ?? nowInKostanay();
+    final midnight = DateTime.utc(day.year, day.month, day.day);
 
     int toMinutesFromMidnight(DateTime dt) {
       final diff = dt.difference(midnight).inMinutes;

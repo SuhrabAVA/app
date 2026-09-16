@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import '../orders/product_type_route.dart';
 import '../orders/product_type_settings.dart';
 import '../orders/product_type_stage_guards.dart';
+import 'product_type_stage_condition_editor.dart';
+import 'product_type_stage_execution_editor.dart';
 import 'product_type_stage_dialogs.dart';
+import 'product_type_stage_substages_block.dart';
 
 /// Панель рабочих мест этапа.
 ///
@@ -26,6 +29,11 @@ class ProductTypeStageWorkplacesPanel extends StatelessWidget {
     required this.onRemoveWorkplace,
     required this.onSetDefaultVariant,
     required this.onChangeSelectionMode,
+    required this.onChangeCondition,
+    required this.onChangeExecution,
+    required this.onAddSubStage,
+    required this.onDeleteSubStage,
+    required this.onCopyFromVariant,
   });
 
   final RouteStage stage;
@@ -38,6 +46,14 @@ class ProductTypeStageWorkplacesPanel extends StatelessWidget {
   final Future<void> Function(RouteStageWorkplace workplace) onRemoveWorkplace;
   final Future<void> Function(RouteStageWorkplace variant) onSetDefaultVariant;
   final Future<void> Function(String targetMode) onChangeSelectionMode;
+  final Future<void> Function(String? predicate, String? param) onChangeCondition;
+  final Future<void> Function(String mode, String? partnerRowId)
+      onChangeExecution;
+  final Future<void> Function(RouteStageWorkplace variant, String workplaceId)
+      onAddSubStage;
+  final Future<void> Function(RouteStage subStage) onDeleteSubStage;
+  final Future<void> Function(
+      RouteStageWorkplace from, RouteStageWorkplace to) onCopyFromVariant;
 
   /// Под-этапы, привязанные к варианту. Пусто для режима «все РМ».
   List<RouteStage> _subStagesOf(RouteStageWorkplace workplace) => route.stages
@@ -60,6 +76,19 @@ class ProductTypeStageWorkplacesPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          ProductTypeStageConditionEditor(
+            stage: stage,
+            locked: locked,
+            onChanged: onChangeCondition,
+          ),
+          const SizedBox(height: 10),
+          ProductTypeStageExecutionEditor(
+            stage: stage,
+            route: route,
+            locked: locked,
+            onChanged: onChangeExecution,
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -93,6 +122,18 @@ class ProductTypeStageWorkplacesPanel extends StatelessWidget {
           for (final workplace in stage.workplaces) _buildRow(context, workplace),
           const SizedBox(height: 4),
           _buildAddControl(context),
+          // Под-этапы есть только у вариантов, и только у этапа уровня 0:
+          // у под-этапа свои под-этапы потребовали бы level = 2, что
+          // запрещено CHECK.
+          if (stage.isSwitchable && stage.level == 0)
+            ProductTypeStageSubStagesBlock(
+              stage: stage,
+              route: route,
+              locked: locked,
+              onAddSubStage: onAddSubStage,
+              onDeleteSubStage: onDeleteSubStage,
+              onCopyFromVariant: onCopyFromVariant,
+            ),
         ],
       ),
     );

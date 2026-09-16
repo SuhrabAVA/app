@@ -14,6 +14,15 @@ class WorkplaceModel {
   /// Цена за одну засчитанную приладку (₸).
   final double priladkaPrice;
 
+  /// Делить ли количество этапа между участниками пропорционально
+  /// отработанному времени.
+  ///
+  /// false — бригада обслуживает одну машину (Флексопечать, автоматы,
+  /// Бабинорезка и т.п.): тираж делает станок, а не сумма человеко-часов,
+  /// поэтому каждому участнику записывается полное количество, а разницу в
+  /// оплате делает ставка помощника.
+  final bool splitQuantityByTime;
+
   WorkplaceModel({
     required this.id,
     required this.name,
@@ -25,6 +34,7 @@ class WorkplaceModel {
     this.executionMode = WorkplaceExecutionMode.joint,
     this.priladkaCalcMode,
     this.priladkaPrice = 0,
+    this.splitQuantityByTime = true,
   });
 
   /// Преобразование модели рабочего места в [Map] для сохранения в базе данных.
@@ -41,6 +51,7 @@ class WorkplaceModel {
         'execution_mode': executionMode.name,
         'priladka_calc_mode': priladkaCalcMode?.dbValue,
         'priladka_price': priladkaPrice,
+        'split_quantity_by_time': splitQuantityByTime,
       };
 
   /// Создание модели из [Map], полученного из базы данных. Использует snake_case
@@ -81,7 +92,37 @@ class WorkplaceModel {
           if (raw is num) return raw.toDouble();
           return double.tryParse('$raw'.replaceAll(',', '.')) ?? 0.0;
         })(),
+        // Значение по умолчанию — true: до применения миграции колонки нет,
+        // и деление по времени должно работать так же, как на любом обычном
+        // рабочем месте.
+        //
+        // Разбор через as bool? здесь недопустим: если драйвер отдаст булево
+        // строкой, приведение бросит исключение и упадёт загрузка ВСЕГО
+        // справочника рабочих мест. Неизвестное значение трактуем как true —
+        // обычное поведение безопаснее, чем молча выключить деление и выдать
+        // каждому участнику полный тираж.
+        splitQuantityByTime: _parseSplitQuantityByTime(
+          map['split_quantity_by_time'] ?? map['splitQuantityByTime'],
+        ),
       );
+}
+
+bool _parseSplitQuantityByTime(dynamic raw) {
+  if (raw is bool) return raw;
+  if (raw is num) return raw != 0;
+  if (raw is String) {
+    switch (raw.trim().toLowerCase()) {
+      case 'false':
+      case 'f':
+      case '0':
+        return false;
+      case 'true':
+      case 't':
+      case '1':
+        return true;
+    }
+  }
+  return true;
 }
 
 /// Способ расчёта приладки на рабочем месте с включённой приладкой.

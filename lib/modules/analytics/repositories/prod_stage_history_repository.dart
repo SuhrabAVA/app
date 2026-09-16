@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../utils/kostanay_time.dart';
 import '../../personnel/workplace_model.dart';
 import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
@@ -140,8 +141,8 @@ class ProdStageHistoryRepository {
           events.add(AnalyticsEvent(
             id: 'hist_${row['id']}',
             type: AnalyticsEventType.work,
-            startTime: startTime!.toLocal(),
-            endTime: changedAt.toLocal(),
+            startTime: toKostanayTime(startTime!),
+            endTime: toKostanayTime(changedAt),
             employeeId: employeeId ?? '',
             workplaceId: workplaceId,
             taskId: stageId,

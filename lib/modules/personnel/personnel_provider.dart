@@ -1,12 +1,11 @@
 // lib/modules/personnel/personnel_provider.dart
-import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' show ClientException;
 import 'package:uuid/uuid.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/doc_db.dart';
 import '../../services/personnel_db.dart';
+import '../../services/realtime_sync_service.dart';
 import '../../utils/auth_helper.dart';
 import 'personnel_constants.dart';
 import 'position_model.dart';
@@ -27,7 +26,10 @@ class PersonnelProvider extends ChangeNotifier {
   PersonnelProvider({PersonnelDB? db, DocDB? docDb, bool bootstrap = true})
       : _db = db ?? PersonnelDB(),
         _docDb = docDb {
-    if (bootstrap) _bootstrap();
+    if (bootstrap) {
+      _registerRealtimeRefreshers();
+      _bootstrap();
+    }
   }
 
   final _uuid = const Uuid();
@@ -44,14 +46,6 @@ class PersonnelProvider extends ChangeNotifier {
   final List<EmployeeStatus> _statuses = <EmployeeStatus>[];
   Map<String, String> _employeeStatusIds = <String, String>{};
 
-  // --- realtime channels ---
-  RealtimeChannel? _empChan;
-  RealtimeChannel? _posChan;
-  RealtimeChannel? _wpPosChan;
-  RealtimeChannel? _workplacesChan; // единственное объявление
-  RealtimeChannel? _statusChan;
-  RealtimeChannel? _statusHistoryChan;
-
   bool _disposed = false;
   void _safeNotify() {
     if (!_disposed) notifyListeners();
@@ -63,6 +57,7 @@ class PersonnelProvider extends ChangeNotifier {
   List<WorkplaceModel> get workplaces => List.unmodifiable(_workplaces);
   List<TerminalModel> get terminals => List.unmodifiable(_terminals);
   List<EmployeeStatus> get statuses => List.unmodifiable(_statuses);
+
   /// employeeId -> statusId для ТЕКУЩИХ (открытых) периодов.
   Map<String, String> get employeeStatusIds =>
       Map.unmodifiable(_employeeStatusIds);
@@ -85,36 +80,41 @@ class PersonnelProvider extends ChangeNotifier {
     await _loadWorkplacesFromSql();
     await _loadTerminalsFromSql();
     await _loadStatusesFromSql();
+  }
 
-    _listenToEmployees();
-    _listenToPositions();
-    _listenToWorkplacePositions();
-    _listenToWorkplaces(); // подписка на изменения в таблице рабочих мест
-    _listenToStatuses();
-    _listenToStatusHistory();
+  void _registerRealtimeRefreshers() {
+    final service = RealtimeSyncService.instance;
+    service.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.personnelEmployees,
+      handler: fetchEmployees,
+    );
+    service.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.personnelPositions,
+      handler: fetchPositions,
+    );
+    service.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.personnelWorkplaces,
+      handler: fetchWorkplaces,
+    );
+    service.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.personnelTerminals,
+      handler: fetchTerminals,
+    );
+    service.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.personnelStatuses,
+      handler: fetchStatuses,
+    );
   }
 
   @override
   void dispose() {
     _disposed = true;
-    try {
-      _empChan?.unsubscribe();
-    } catch (_) {}
-    try {
-      _posChan?.unsubscribe();
-    } catch (_) {}
-    try {
-      _wpPosChan?.unsubscribe();
-    } catch (_) {}
-    try {
-      _workplacesChan?.unsubscribe();
-    } catch (_) {}
-    try {
-      _statusChan?.unsubscribe();
-    } catch (_) {}
-    try {
-      _statusHistoryChan?.unsubscribe();
-    } catch (_) {}
+    RealtimeSyncService.instance.unregisterOwner(this);
     super.dispose();
   }
 
@@ -159,8 +159,7 @@ class PersonnelProvider extends ChangeNotifier {
               comments: r['comments'] ?? '',
               login: r['login'] ?? '',
               password: r['password'] ?? '',
-              baseDaySalary:
-                  (r['base_day_salary'] as num?)?.toDouble() ?? 0,
+              baseDaySalary: (r['base_day_salary'] as num?)?.toDouble() ?? 0,
             )));
       _safeNotify();
     } on ClientException catch (e, st) {
@@ -189,6 +188,7 @@ class PersonnelProvider extends ChangeNotifier {
               'execution_mode': r['execution_mode'],
               'priladka_calc_mode': r['priladka_calc_mode'],
               'priladka_price': r['priladka_price'],
+              'split_quantity_by_time': r['split_quantity_by_time'],
             }, r['id'])));
       _safeNotify();
     } on ClientException catch (e, st) {
@@ -336,7 +336,8 @@ class PersonnelProvider extends ChangeNotifier {
   Future<void> updateStatus(
       {required String id, required String name, String? description}) async {
     _assertTechLeader();
-    await _statusRepo.update(id: id, name: name.trim(), description: description);
+    await _statusRepo.update(
+        id: id, name: name.trim(), description: description);
     await _loadStatusesFromSql();
   }
 
@@ -357,7 +358,8 @@ class PersonnelProvider extends ChangeNotifier {
     await _loadStatusesFromSql();
   }
 
-  String? currentStatusIdFor(String employeeId) => _employeeStatusIds[employeeId];
+  String? currentStatusIdFor(String employeeId) =>
+      _employeeStatusIds[employeeId];
 
   // ---------- workplaces CRUD -----------
   Future<void> addWorkplace({
@@ -370,6 +372,7 @@ class PersonnelProvider extends ChangeNotifier {
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
     PriladkaCalcMode? priladkaCalcMode,
     double priladkaPrice = 0,
+    bool splitQuantityByTime = true,
   }) async {
     final id = _genId();
     // В тестах можем использовать DocDB как заглушку, чтобы не дергать Supabase.
@@ -385,6 +388,7 @@ class PersonnelProvider extends ChangeNotifier {
         executionMode: executionMode,
         priladkaCalcMode: priladkaCalcMode,
         priladkaPrice: priladkaPrice,
+        splitQuantityByTime: splitQuantityByTime,
       );
 
       await _docDb!.insert('workplaces', workplace.toMap(), explicitId: id);
@@ -402,6 +406,7 @@ class PersonnelProvider extends ChangeNotifier {
         executionMode: executionMode,
         priladkaCalcMode: priladkaCalcMode,
         priladkaPrice: priladkaPrice,
+        splitQuantityByTime: splitQuantityByTime,
       );
       await _loadWorkplacesFromSql();
     }
@@ -419,6 +424,7 @@ class PersonnelProvider extends ChangeNotifier {
     bool setPriladkaCalcMode = false,
     PriladkaCalcMode? priladkaCalcMode,
     double? priladkaPrice,
+    bool? splitQuantityByTime,
   }) async {
     await _db.updateWorkplace(
       id: id,
@@ -432,6 +438,7 @@ class PersonnelProvider extends ChangeNotifier {
       setPriladkaCalcMode: setPriladkaCalcMode,
       priladkaCalcMode: priladkaCalcMode,
       priladkaPrice: priladkaPrice,
+      splitQuantityByTime: splitQuantityByTime,
     );
     await _loadWorkplacesFromSql();
   }
@@ -460,6 +467,7 @@ class PersonnelProvider extends ChangeNotifier {
         executionMode: w.executionMode,
         priladkaCalcMode: w.priladkaCalcMode,
         priladkaPrice: price,
+        splitQuantityByTime: w.splitQuantityByTime,
       );
       _safeNotify();
     }
@@ -574,99 +582,16 @@ class PersonnelProvider extends ChangeNotifier {
     await _ensurePosition(id: kCmmSpecialistId, name: 'CMM специалист');
   }
 
-  Future<void> _ensurePosition({required String id, required String name}) async {
+  Future<void> _ensurePosition(
+      {required String id, required String name}) async {
     if (_positions.any((p) => p.id == id)) return;
-    try {
-      await _db.insertPosition(id: id, name: name);
-    } on PostgrestException catch (e) {
-      if (e.code != '23505') rethrow;
-      // Another client/session has already inserted this fixed position.
+    // На старте список ещё не загружен — сначала читаем, и только если
+    // должности действительно нет, вставляем.
+    if (_positions.isEmpty) {
+      await _loadPositionsFromSql();
+      if (_positions.any((p) => p.id == id)) return;
     }
+    await _db.insertPositionIfAbsent(id: id, name: name);
     await _loadPositionsFromSql();
-  }
-
-  // ---------- realtime ----------
-  void _listenToEmployees() {
-    try {
-      _empChan = Supabase.instance.client
-          .channel('realtime:employees')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'employees',
-            callback: (payload) => fetchEmployees(),
-          )
-          .subscribe();
-    } catch (_) {}
-  }
-
-  void _listenToPositions() {
-    try {
-      _posChan = Supabase.instance.client
-          .channel('realtime:positions')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'positions',
-            callback: (payload) => fetchPositions(),
-          )
-          .subscribe();
-    } catch (_) {}
-  }
-
-  void _listenToWorkplacePositions() {
-    try {
-      _wpPosChan = Supabase.instance.client
-          .channel('realtime:workplace_positions')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'workplace_positions',
-            callback: (payload) => fetchWorkplaces(),
-          )
-          .subscribe();
-    } catch (_) {}
-  }
-
-  void _listenToWorkplaces() {
-    try {
-      _workplacesChan = Supabase.instance.client
-          .channel('realtime:workplaces')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'workplaces',
-            callback: (payload) => fetchWorkplaces(),
-          )
-          .subscribe();
-    } catch (_) {}
-  }
-
-  void _listenToStatuses() {
-    try {
-      _statusChan = Supabase.instance.client
-          .channel('realtime:employee_statuses')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'employee_statuses',
-            callback: (payload) => fetchStatuses(),
-          )
-          .subscribe();
-    } catch (_) {}
-  }
-
-  void _listenToStatusHistory() {
-    try {
-      _statusHistoryChan = Supabase.instance.client
-          .channel('realtime:employee_status_history')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'employee_status_history',
-            callback: (payload) => fetchStatuses(),
-          )
-          .subscribe();
-    } catch (_) {}
   }
 }

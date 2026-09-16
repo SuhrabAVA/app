@@ -12,6 +12,7 @@ library;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../services/realtime_sync_service.dart';
 import 'product_type_route.dart';
 
 /// Коды блоков формы заказа. Совпадают с `order_form_blocks.code`.
@@ -62,6 +63,28 @@ class WorkplaceRef {
   }
 }
 
+/// Формула фактического количества — строка справочника
+/// `actual_qty_formulas`.
+@immutable
+class ActualQtyFormulaRef {
+  const ActualQtyFormulaRef({
+    required this.code,
+    required this.title,
+    required this.description,
+  });
+
+  final String code;
+  final String title;
+  final String description;
+
+  factory ActualQtyFormulaRef.fromMap(Map<String, dynamic> map) =>
+      ActualQtyFormulaRef(
+        code: (map['code'] ?? '').toString(),
+        title: (map['title'] ?? '').toString(),
+        description: (map['description'] ?? '').toString(),
+      );
+}
+
 /// Блок формы заказа — строка справочника `order_form_blocks`.
 @immutable
 class OrderFormBlock {
@@ -70,6 +93,7 @@ class OrderFormBlock {
     required this.title,
     this.affectsInput,
     this.sortOrder = 0,
+    this.canHide = true,
   });
 
   final String code;
@@ -83,6 +107,10 @@ class OrderFormBlock {
 
   final int sortOrder;
 
+  /// Можно ли выключить блок. `false` — блок в форме всегда, но потребовать
+  /// его заполнение техлид может: см. `order_form_blocks.can_hide`.
+  final bool canHide;
+
   bool get affectsStageQueue => (affectsInput ?? '').trim().isNotEmpty;
 
   static OrderFormBlock? fromMap(Map<String, dynamic> map) {
@@ -94,6 +122,35 @@ class OrderFormBlock {
       title: (map['title'] ?? code).toString(),
       affectsInput: affects.isEmpty ? null : affects,
       sortOrder: (map['sort_order'] as num?)?.toInt() ?? 0,
+      canHide: map['can_hide'] != false,
+    );
+  }
+}
+
+/// Условие обязательности блока — строка
+/// `product_type_form_block_conditions`.
+///
+/// Механизм повторяет условия этапов: закрытый справочник предикатов, AND
+/// между условиями одного блока, отсутствие условий = «всегда».
+class OrderBlockCondition {
+  const OrderBlockCondition({
+    required this.predicate,
+    this.negate = false,
+    this.param,
+  });
+
+  final String predicate;
+  final bool negate;
+  final String? param;
+
+  static OrderBlockCondition? tryFromMap(Map<String, dynamic> map) {
+    final predicate = (map['predicate'] ?? '').toString().trim();
+    if (predicate.isEmpty) return null;
+    final param = (map['param_text'] ?? map['param'])?.toString().trim();
+    return OrderBlockCondition(
+      predicate: predicate,
+      negate: map['negate'] == true,
+      param: (param == null || param.isEmpty) ? null : param,
     );
   }
 }
@@ -135,7 +192,15 @@ class ProductTypeConfig {
 
 /// Кэш настроек типов продукта на сессию.
 class ProductTypeSettings {
-  ProductTypeSettings._();
+  ProductTypeSettings._() {
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.productTypeSettings,
+      handler: () async {
+        if (_loaded) await ensureLoaded(force: true);
+      },
+    );
+  }
 
   static final ProductTypeSettings instance = ProductTypeSettings._();
 
@@ -143,10 +208,12 @@ class ProductTypeSettings {
 
   bool _loaded = false;
   Future<void>? _loading;
+  bool _reloadRequested = false;
 
   List<ProductTypeRef> _types = const <ProductTypeRef>[];
   List<OrderFormBlock> _blocks = const <OrderFormBlock>[];
   List<WorkplaceRef> _workplaces = const <WorkplaceRef>[];
+  List<ActualQtyFormulaRef> _formulas = const <ActualQtyFormulaRef>[];
 
   /// product_type_id → опубликованная версия настроек.
   final Map<String, ProductTypeConfig> _publishedByType =
@@ -155,6 +222,22 @@ class ProductTypeSettings {
   /// config_id → block_code → is_visible. Отсутствие ключа = блок виден.
   final Map<String, Map<String, bool>> _visibilityByConfig =
       <String, Map<String, bool>>{};
+
+  /// config_id → block_code → is_required. Отсутствие ключа = не обязателен.
+  ///
+  /// Умолчание противоположно видимости, и намеренно: невидимый блок обязан
+  /// быть необязательным, а новый блок в справочнике не должен задним числом
+  /// уронить в черновики все заказы типа продукта.
+  final Map<String, Map<String, bool>> _requiredByConfig =
+      <String, Map<String, bool>>{};
+
+  /// config_id → block_code → условия обязательности (AND).
+  ///
+  /// Отсутствие ключа = «обязателен всегда», как у этапов: условия — это
+  /// сужение требования, а не его источник.
+  final Map<String, Map<String, List<OrderBlockCondition>>>
+      _blockConditionsByConfig =
+      <String, Map<String, List<OrderBlockCondition>>>{};
 
   /// product_type_id → маршрут опубликованной версии.
   ///
@@ -172,8 +255,24 @@ class ProductTypeSettings {
 
   List<OrderFormBlock> get formBlocks => List.unmodifiable(_blocks);
 
+  /// Коды блоков в порядке справочника — им же упорядочены сообщения о
+  /// незаполненном, чтобы список читался в порядке полей формы.
+  List<String> get formBlockCodes =>
+      _blocks.map((block) => block.code).toList(growable: false);
+
+  Map<String, String> get formBlockTitles => <String, String>{
+        for (final block in _blocks) block.code: block.title,
+      };
+
   /// Справочник рабочих мест для выпадающих списков редактора маршрута.
   List<WorkplaceRef> get workplaces => List.unmodifiable(_workplaces);
+
+  /// Справочник формул фактического количества.
+  ///
+  /// Закрытый список: каждый код реализован функцией в Dart, поэтому новая
+  /// формула — это релиз приложения, а не строка в таблице.
+  List<ActualQtyFormulaRef> get actualQtyFormulas =>
+      List.unmodifiable(_formulas);
 
   String workplaceName(String workplaceId) {
     for (final w in _workplaces) {
@@ -188,11 +287,27 @@ class ProductTypeSettings {
   /// `initState` редактора заказа не приводит к двум запросам.
   Future<void> ensureLoaded({bool force = false}) {
     if (force) {
+      if (_loading != null) {
+        _reloadRequested = true;
+        return _loading!;
+      }
       _loaded = false;
-      _loading = null;
     }
     if (_loaded) return Future<void>.value();
-    return _loading ??= _load().whenComplete(() => _loading = null);
+    final active = _loading;
+    if (active != null) return active;
+    final future = _runLoadLoop();
+    _loading = future;
+    return future.whenComplete(() {
+      if (identical(_loading, future)) _loading = null;
+    });
+  }
+
+  Future<void> _runLoadLoop() async {
+    do {
+      _reloadRequested = false;
+      await _load();
+    } while (_reloadRequested);
   }
 
   Future<void> _load() async {
@@ -210,9 +325,28 @@ class ProductTypeSettings {
         .eq('status', ProductTypeConfig.statusPublished);
     final overrides = await _sb
         .from('product_type_form_blocks')
-        .select('config_id, block_code, is_visible');
+        .select('config_id, block_code, is_visible, is_required');
+    // Новые объекты читаются ОТДЕЛЬНО и переживают своё отсутствие.
+    //
+    // Прогрев настроек держит на себе весь модуль заказов: список типов
+    // продукта, видимость блоков формы, маршруты. Одним общим await это
+    // означало, что не доехавшая до базы миграция роняет всё сразу — ровно
+    // так экран типов продукта и умер с «Could not find the table
+    // product_type_form_block_conditions». Пока объекта нет, правильный ответ
+    // не «ошибка», а «условий нет» и «скрывать можно всё».
+    final canHideByCode = await _readCanHideFlags();
+    final blockConditions = await _readBlockConditions();
     final workplaces =
         await _sb.from('workplaces').select('id, name').order('name');
+    final formulas = await _sb
+        .from('actual_qty_formulas')
+        .select('code, title, description')
+        .order('sort_order');
+
+    _formulas = <ActualQtyFormulaRef>[
+      for (final row in (formulas as List))
+        ActualQtyFormulaRef.fromMap(Map<String, dynamic>.from(row as Map)),
+    ];
 
     _workplaces = <WorkplaceRef>[
       for (final row in (workplaces as List))
@@ -229,8 +363,11 @@ class ProductTypeSettings {
     ];
     _blocks = <OrderFormBlock>[
       for (final row in (blocks as List))
-        if (OrderFormBlock.fromMap(Map<String, dynamic>.from(row as Map))
-            case final block?)
+        if (OrderFormBlock.fromMap(<String, dynamic>{
+          ...Map<String, dynamic>.from(row as Map),
+          if (canHideByCode.containsKey((row['code'] ?? '').toString()))
+            'can_hide': canHideByCode[(row['code'] ?? '').toString()],
+        }) case final block?)
           block,
     ];
 
@@ -242,18 +379,65 @@ class ProductTypeSettings {
     }
 
     _visibilityByConfig.clear();
+    _requiredByConfig.clear();
     for (final row in (overrides as List)) {
       final map = Map<String, dynamic>.from(row as Map);
       final configId = (map['config_id'] ?? '').toString();
       final code = (map['block_code'] ?? '').toString();
       if (configId.isEmpty || code.isEmpty) continue;
-      _visibilityByConfig
-          .putIfAbsent(configId, () => <String, bool>{})[code] =
+      _visibilityByConfig.putIfAbsent(configId, () => <String, bool>{})[code] =
           map['is_visible'] != false;
+      _requiredByConfig.putIfAbsent(configId, () => <String, bool>{})[code] =
+          map['is_required'] == true;
+    }
+
+    _blockConditionsByConfig.clear();
+    for (final row in blockConditions) {
+      final map = Map<String, dynamic>.from(row as Map);
+      final configId = (map['config_id'] ?? '').toString();
+      final code = (map['block_code'] ?? '').toString();
+      final condition = OrderBlockCondition.tryFromMap(map);
+      if (configId.isEmpty || code.isEmpty || condition == null) continue;
+      _blockConditionsByConfig
+          .putIfAbsent(configId, () => <String, List<OrderBlockCondition>>{})
+          .putIfAbsent(code, () => <OrderBlockCondition>[])
+          .add(condition);
     }
 
     await _loadRoutes();
     _loaded = true;
+  }
+
+  /// `code → can_hide`; пустая карта — колонки ещё нет.
+  ///
+  /// Отдельным запросом, а не колонкой в общем select: PostgREST отвечает
+  /// ошибкой на весь запрос, если хоть одной колонки нет, и справочник блоков
+  /// пропал бы целиком вместе с формой заказа.
+  Future<Map<String, bool>> _readCanHideFlags() async {
+    try {
+      final rows = await _sb.from('order_form_blocks').select('code, can_hide');
+      return <String, bool>{
+        for (final row in (rows as List))
+          (Map<String, dynamic>.from(row as Map)['code'] ?? '').toString():
+              Map<String, dynamic>.from(row)['can_hide'] != false,
+      }..remove('');
+    } catch (e) {
+      debugPrint('ℹ️ order_form_blocks.can_hide недоступна: $e');
+      return const <String, bool>{};
+    }
+  }
+
+  /// Условия обязательности блоков; пустой список — таблицы ещё нет.
+  Future<List<dynamic>> _readBlockConditions() async {
+    try {
+      final rows = await _sb
+          .from('product_type_form_block_conditions')
+          .select('config_id, block_code, predicate, negate, param_text');
+      return rows as List;
+    } catch (e) {
+      debugPrint('ℹ️ условия блоков формы недоступны: $e');
+      return const <dynamic>[];
+    }
   }
 
   /// Маршруты опубликованных версий: этапы обоих уровней, их рабочие места и
@@ -304,7 +488,8 @@ class ProductTypeSettings {
     final stages = await _sb
         .from('product_type_stages')
         .select('id, config_id, parent_variant_id, level, stage_group_key, '
-            'title, position, selection_mode, is_enabled, is_pinned_last')
+            'title, position, selection_mode, is_enabled, is_pinned_last, '
+            'execution_mode, parallel_with_stage_id')
         .inFilter('config_id', configIds);
     final stageRows = <Map<String, dynamic>>[
       for (final row in (stages as List)) Map<String, dynamic>.from(row as Map),
@@ -315,7 +500,8 @@ class ProductTypeSettings {
 
     final workplaces = await _sb
         .from('product_type_stage_workplaces')
-        .select('id, stage_id, workplace_id, variant_title, is_default, sort_order')
+        .select(
+            'id, stage_id, workplace_id, variant_title, is_default, sort_order')
         .inFilter('stage_id', stageIds);
     final conditions = await _sb
         .from('product_type_stage_conditions')
@@ -398,6 +584,44 @@ class ProductTypeSettings {
     return _visibilityByConfig[config.id]?[blockCode] ?? true;
   }
 
+  /// Обязателен ли блок: без него заказ не уходит в «Готов к запуску».
+  ///
+  /// Умолчание — «не обязателен», и здесь оно строже, чем у видимости:
+  /// неизвестный тип продукта или незагруженный кэш НЕ делают блок
+  /// обязательным. Ошибиться в эту сторону безопаснее — заказ уйдёт в
+  /// готовность, как уходил раньше; обратная ошибка заперла бы в черновиках
+  /// все заказы разом, и починить это можно было бы только релизом.
+  ///
+  /// Скрытый блок обязательным не бывает: требовать заполнить поле, которого
+  /// нет в форме, — тупик без выхода. Правило держится здесь, а не только в
+  /// редакторе, чтобы старая строка «скрыт и обязателен» не заперла заказы.
+  bool isBlockRequired(String productTypeIdOrTitle, String blockCode) {
+    final config = publishedConfigFor(productTypeIdOrTitle);
+    if (config == null) return false;
+    if (_visibilityByConfig[config.id]?[blockCode] == false) return false;
+    return _requiredByConfig[config.id]?[blockCode] ?? false;
+  }
+
+  /// Условия обязательности блока: пустой список — «обязателен всегда».
+  List<OrderBlockCondition> blockConditions(
+    String productTypeIdOrTitle,
+    String blockCode,
+  ) {
+    final config = publishedConfigFor(productTypeIdOrTitle);
+    if (config == null) return const <OrderBlockCondition>[];
+    return _blockConditionsByConfig[config.id]?[blockCode] ??
+        const <OrderBlockCondition>[];
+  }
+
+  /// Коды блоков, отмеченных обязательными, — без учёта условий.
+  ///
+  /// Нужны там, где ещё неизвестно, что в заказе заполнено: по этому списку
+  /// решается, стоит ли вообще дочитывать краски и файлы.
+  Set<String> requiredBlockCodes(String productTypeIdOrTitle) => <String>{
+        for (final block in _blocks)
+          if (isBlockRequired(productTypeIdOrTitle, block.code)) block.code,
+      };
+
   @visibleForTesting
   void seedForTesting({
     List<ProductTypeRef> types = const <ProductTypeRef>[],
@@ -406,6 +630,11 @@ class ProductTypeSettings {
         const <String, ProductTypeConfig>{},
     Map<String, Map<String, bool>> visibilityByConfig =
         const <String, Map<String, bool>>{},
+    Map<String, Map<String, bool>> requiredByConfig =
+        const <String, Map<String, bool>>{},
+    Map<String, Map<String, List<OrderBlockCondition>>>
+        blockConditionsByConfig =
+        const <String, Map<String, List<OrderBlockCondition>>>{},
     Map<String, ProductTypeRoute> routesByType =
         const <String, ProductTypeRoute>{},
   }) {
@@ -417,6 +646,12 @@ class ProductTypeSettings {
     _visibilityByConfig
       ..clear()
       ..addAll(visibilityByConfig);
+    _requiredByConfig
+      ..clear()
+      ..addAll(requiredByConfig);
+    _blockConditionsByConfig
+      ..clear()
+      ..addAll(blockConditionsByConfig);
     _routesByType
       ..clear()
       ..addAll(routesByType);
@@ -429,8 +664,11 @@ class ProductTypeSettings {
     _blocks = const <OrderFormBlock>[];
     _publishedByType.clear();
     _visibilityByConfig.clear();
+    _requiredByConfig.clear();
+    _blockConditionsByConfig.clear();
     _routesByType.clear();
     _loaded = false;
     _loading = null;
+    _reloadRequested = false;
   }
 }

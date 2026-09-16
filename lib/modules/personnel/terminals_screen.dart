@@ -1,11 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'personnel_list_controls.dart';
+import 'personnel_list_filters.dart';
 import 'personnel_provider.dart';
 
 /// Экран для отображения и управления списком терминалов.
-class TerminalsScreen extends StatelessWidget {
+class TerminalsScreen extends StatefulWidget {
   const TerminalsScreen({super.key});
+
+  @override
+  State<TerminalsScreen> createState() => _TerminalsScreenState();
+}
+
+class _TerminalsScreenState extends State<TerminalsScreen> {
+  final TerminalListFilter _filter = TerminalListFilter();
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _reset() {
+    _search.clear();
+    setState(_filter.clear);
+  }
 
   void _openAddDialog(BuildContext context) {
     showDialog(
@@ -17,8 +38,11 @@ class TerminalsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<PersonnelProvider>(context);
-    final terminals = provider.terminals;
     final workplacesById = {for (var w in provider.workplaces) w.id: w.name};
+    final terminals = provider.terminals
+        .where((t) => _filter.matches(t,
+            workplaceName: (id) => workplacesById[id] ?? ''))
+        .toList();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Терминалы'),
@@ -29,8 +53,38 @@ class TerminalsScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: terminals.isEmpty
-          ? const Center(child: Text('Список терминалов пуст'))
+      body: Column(
+        children: [
+          PersonnelFilterBar(
+            controller: _search,
+            hint: 'Название терминала или рабочего места…',
+            onQueryChanged: (v) => setState(() => _filter.query = v),
+            shown: terminals.length,
+            total: provider.terminals.length,
+            isActive: _filter.isActive,
+            onReset: _reset,
+            filters: [
+              MultiSelectFilterChip(
+                label: 'Рабочее место',
+                options: [
+                  const FilterOption(kFilterNoneId, 'Без рабочих мест'),
+                  for (final w in provider.workplaces)
+                    FilterOption(w.id, w.name),
+                ],
+                selected: _filter.workplaceIds,
+                onChanged: (ids) => setState(() => _filter.workplaceIds
+                  ..clear()
+                  ..addAll(ids)),
+              ),
+            ],
+          ),
+          Expanded(
+            child: terminals.isEmpty
+          ? PersonnelEmptyResult(
+              isFiltered: _filter.isActive,
+              emptyText: 'Список терминалов пуст',
+              onReset: _reset,
+            )
           : ListView.separated(
               itemCount: terminals.length,
               separatorBuilder: (_, __) => const SizedBox(height: 4),
@@ -64,6 +118,9 @@ class TerminalsScreen extends StatelessWidget {
                 );
               },
             ),
+          ),
+        ],
+      ),
     );
   }
 }

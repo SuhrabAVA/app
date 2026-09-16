@@ -1,6 +1,6 @@
-# sheet_clone
+# Easy Pack Pro
 
-A new Flutter project.
+Учёт производства и склада: заказы, рабочие места, склад, зарплата.
 
 ## Getting Started
 

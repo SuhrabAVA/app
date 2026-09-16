@@ -263,77 +263,88 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Container(
                   decoration: workspaceCardDecoration(),
                   clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      Container(
-                        height: 54,
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        decoration: const BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(color: WorkspaceColors.border),
+                  // Во вкладке рабочего пространства у чата нет Scaffold
+                  // (он есть только в ветке отдельного экрана ниже), поэтому
+                  // TextField и PopupMenuButton не находили Material-предка
+                  // и падали с «No Material widget found», а подставленный
+                  // ErrorWidget раздувал Column до overflow в ~99000 px.
+                  // Прозрачный Material даёт предка, не трогая оформление
+                  // карточки: фон и рамку рисует workspaceCardDecoration.
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Column(
+                      children: [
+                        Container(
+                          height: 54,
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          decoration: const BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(color: WorkspaceColors.border),
+                            ),
                           ),
-                        ),
-                        child: Row(
-                          children: [
-                            backButton(),
-                            const SizedBox(width: 8),
-                            Container(
-                              width: 30,
-                              height: 30,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: WorkspaceColors.setupBackground,
-                                borderRadius: BorderRadius.circular(9),
+                          child: Row(
+                            children: [
+                              backButton(),
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 30,
+                                height: 30,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: WorkspaceColors.setupBackground,
+                                  borderRadius: BorderRadius.circular(9),
+                                ),
+                                child: const Icon(
+                                  Icons.chat_bubble_outline_rounded,
+                                  color: WorkspaceColors.primary,
+                                  size: 18,
+                                ),
                               ),
-                              child: const Icon(
-                                Icons.chat_bubble_outline_rounded,
-                                color: WorkspaceColors.primary,
-                                size: 18,
+                              const SizedBox(width: 10),
+                              const Text(
+                                'Чат',
+                                style: TextStyle(
+                                  color: WorkspaceColors.foreground,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            const Text(
-                              'Чат',
-                              style: TextStyle(
-                                color: WorkspaceColors.foreground,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Container(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 360),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: WorkspaceColors.secondaryBackground,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    widget.roomId,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: WorkspaceColors.mutedForeground,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w400,
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Container(
+                                    constraints:
+                                        const BoxConstraints(maxWidth: 360),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          WorkspaceColors.secondaryBackground,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      widget.roomId,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: WorkspaceColors.mutedForeground,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w400,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (widget.isLead) leadMenu(),
-                          ],
+                              if (widget.isLead) leadMenu(),
+                            ],
+                          ),
                         ),
-                      ),
-                      Expanded(child: messagesAndInput),
-                    ],
+                        Expanded(child: messagesAndInput),
+                      ],
+                    ),
                   ),
                 ),
               ),

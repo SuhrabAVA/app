@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'warehouse_provider.dart';
+import '../../services/realtime_sync_service.dart';
 import '../../services/storage_service.dart' as storage;
 import '../common/pdf_view_screen.dart';
 
@@ -66,21 +67,35 @@ class _FormsScreenState extends State<FormsScreen> {
     // Заглушка до первой загрузки
     _future =
         Future<List<Map<String, dynamic>>>(() => <Map<String, dynamic>>[]);
+    RealtimeSyncService.instance.registerRefreshHandler(
+      owner: this,
+      resource: RealtimeResource.forms,
+      handler: _refreshFromRealtime,
+    );
     // После первого кадра — реальная загрузка
     WidgetsBinding.instance.addPostFrameCallback((_) => _reload());
   }
 
   @override
   void dispose() {
+    RealtimeSyncService.instance.unregisterOwner(this);
     _searchCtl.dispose();
     super.dispose();
   }
 
-  void _reload({String? search}) {
+  Future<void> _refreshFromRealtime() async {
+    final search = _searchCtl.text.trim();
+    await _reload(search: search.isEmpty ? null : search);
+  }
+
+  Future<void> _reload({String? search}) async {
+    if (!mounted) return;
     final wp = context.read<WarehouseProvider>();
+    final future = wp.searchForms(query: search, limit: 1000);
     setState(() {
-      _future = wp.searchForms(query: search, limit: 1000);
+      _future = future;
     });
+    await future;
   }
 
   /// Открывает диалог создания или редактирования формы.
@@ -257,8 +272,7 @@ class _FormsScreenState extends State<FormsScreen> {
                               (f['filename'] ?? f['name'] ?? 'Файл.pdf')
                                   .toString();
                           final source = (f['source'] ?? 'form').toString();
-                          final objectPath =
-                              (f['objectPath'] ?? '').toString();
+                          final objectPath = (f['objectPath'] ?? '').toString();
                           return Padding(
                             padding: const EdgeInsets.symmetric(vertical: 2),
                             child: Row(
@@ -599,8 +613,7 @@ class _FormsScreenState extends State<FormsScreen> {
       previousEnabled = status != 'disabled';
     }
     final previousComment =
-        (row['disabled_comment'] ?? row['disable_comment'] ?? '')
-            .toString();
+        (row['disabled_comment'] ?? row['disable_comment'] ?? '').toString();
     final previousStatus = (row['status'] ?? '').toString();
     final id = (row['id'] ?? '').toString();
 
@@ -763,13 +776,15 @@ class _FormsScreenState extends State<FormsScreen> {
                   return const Center(child: Text('Формы не найдены'));
                 }
 
-                int compareSeries(Map<String, dynamic> a, Map<String, dynamic> b) {
+                int compareSeries(
+                    Map<String, dynamic> a, Map<String, dynamic> b) {
                   final sa = (a['series'] ?? '').toString();
                   final sb = (b['series'] ?? '').toString();
                   return sa.compareTo(sb);
                 }
 
-                int compareNumber(Map<String, dynamic> a, Map<String, dynamic> b) {
+                int compareNumber(
+                    Map<String, dynamic> a, Map<String, dynamic> b) {
                   final na = (a['number'] as num?)?.toInt() ?? 0;
                   final nb = (b['number'] as num?)?.toInt() ?? 0;
                   return na.compareTo(nb);
@@ -820,23 +835,27 @@ class _FormsScreenState extends State<FormsScreen> {
                     final colorsStr = (row['colors'] ?? '').toString();
                     final extraInfoStr = (row['description'] ?? '').toString();
                     final subtitleParts = <String>[];
-                    if (sizeStr.isNotEmpty) subtitleParts.add('Размер: $sizeStr');
+                    if (sizeStr.isNotEmpty)
+                      subtitleParts.add('Размер: $sizeStr');
                     if (typeStr.isNotEmpty) subtitleParts.add('Тип: $typeStr');
-                    if (colorsStr.isNotEmpty) subtitleParts.add('Цвета: $colorsStr');
+                    if (colorsStr.isNotEmpty)
+                      subtitleParts.add('Цвета: $colorsStr');
                     if (extraInfoStr.isNotEmpty) {
                       subtitleParts.add('Доп. инфо: $extraInfoStr');
                     }
-                    final subtitleText =
-                        subtitleParts.isEmpty ? null : subtitleParts.join('  |  ');
+                    final subtitleText = subtitleParts.isEmpty
+                        ? null
+                        : subtitleParts.join('  |  ');
 
                     final status = (row['status'] ?? '').toString();
                     final bool isEnabled = row['is_enabled'] is bool
                         ? row['is_enabled'] as bool
                         : status != 'disabled';
-                    final disabledComment =
-                        (row['disabled_comment'] ?? row['disable_comment'] ?? '')
-                            .toString()
-                            .trim();
+                    final disabledComment = (row['disabled_comment'] ??
+                            row['disable_comment'] ??
+                            '')
+                        .toString()
+                        .trim();
 
                     return ListTile(
                       onTap: () => _showFormDialog(row: row),
@@ -879,38 +898,38 @@ class _FormsScreenState extends State<FormsScreen> {
                                 fontWeight: FontWeight.w600,
                               ),
                       ),
-                      subtitle:
-                          (subtitleText == null && (isEnabled || disabledComment.isEmpty))
-                              ? null
-                              : Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (subtitleText != null)
-                                      Text(
-                                        subtitleText,
-                                        style: isEnabled
-                                            ? null
-                                            : TextStyle(
-                                                color: Colors.red.shade700,
-                                              ),
-                                      ),
-                                    if (!isEnabled && disabledComment.isNotEmpty)
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: Text(
-                                          disabledComment,
-                                          textAlign: TextAlign.end,
-                                          style: TextStyle(
+                      subtitle: (subtitleText == null &&
+                              (isEnabled || disabledComment.isEmpty))
+                          ? null
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (subtitleText != null)
+                                  Text(
+                                    subtitleText,
+                                    style: isEnabled
+                                        ? null
+                                        : TextStyle(
                                             color: Colors.red.shade700,
-                                            fontSize: 12,
                                           ),
-                                          maxLines: 3,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
+                                  ),
+                                if (!isEnabled && disabledComment.isNotEmpty)
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Text(
+                                      disabledComment,
+                                      textAlign: TextAlign.end,
+                                      style: TextStyle(
+                                        color: Colors.red.shade700,
+                                        fontSize: 12,
                                       ),
-                                  ],
-                                ),
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                              ],
+                            ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [

@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../../../utils/kostanay_time.dart';
 import '../../personnel/employee_model.dart';
 import '../../personnel/personnel_provider.dart';
 import '../../personnel/workplace_model.dart';
@@ -19,6 +20,7 @@ import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
 import '../models/day_shift_type.dart';
 import '../models/pay_type.dart';
+import '../models/workplace_coefficient.dart' show helperCoefficientOrMain;
 import '../models/salary_adjustments.dart';
 import '../models/work_schedule_entry.dart';
 import '../services/analytics_service.dart';
@@ -239,7 +241,10 @@ class AnalyticsPdfExportService {
     final unit = _unit(workplace);
     final eventsByDay = _eventsByDay(events);
     final day = selectedDay ?? (eventsByDay.keys.isEmpty ? 1 : eventsByDay.keys.reduce((a, b) => a < b ? a : b));
-    final qty = AnalyticsCalculator.totalQty(events);
+    // Выработка рабочего места — зафиксированный тираж, а не сумма
+    // выработки людей: на станке каждому участнику записан полный тираж.
+    final qty = state.workplaceStageTotals[workplaceId] ??
+        AnalyticsCalculator.totalQty(events);
     final useful = AnalyticsCalculator.usefulMinutes(events);
     final speed = useful > 0 ? qty / useful : 0.0;
     final kpd = KpdCalculator.compute(
@@ -458,24 +463,51 @@ class AnalyticsPdfExportService {
     }).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
-    final wpRows = workplaces.map((w) {
+    // Работу помощником показываем ОТДЕЛЬНОЙ строкой: у неё своя ставка, и
+    // одной строкой лист не сходился бы с итогом сдельной — сумма считалась
+    // бы по цене основного исполнителя.
+    final wpRows = <List<String>>[];
+    for (final w in workplaces) {
       final list = byWp[w.id] ?? const <AnalyticsEvent>[];
-      final qty = AnalyticsCalculator.totalQty(list);
+      final ownEvents = list.where((e) => !e.isHelper).toList();
+      final helperEvents = list.where((e) => e.isHelper).toList();
+
       final setups = AnalyticsCalculator.totalSetupQty(list);
-      final price = coefficients[w.id] ?? 0.0;
       final setupPrice = setupPrices[w.id] ?? 0.0;
       final hasSetup = setupPrice > 0;
-      final sum = qty * price + setups * setupPrice;
-      return [
-        w.name,
-        _unit(w),
-        AnalyticsFormat.decimal(qty),
-        hasSetup ? AnalyticsFormat.decimal(setups) : '',
-        price > 0 ? AnalyticsFormat.decimal(price) : '',
-        hasSetup ? AnalyticsFormat.decimal(setupPrice) : '',
-        AnalyticsFormat.decimal(sum),
-      ];
-    }).toList();
+      final price = coefficients[w.id] ?? 0.0;
+      final helperPrice =
+          helperCoefficientOrMain(state.helperCoefficients[w.id], price);
+
+      final ownQty = AnalyticsCalculator.totalQty(ownEvents);
+      final helperQty = AnalyticsCalculator.totalQty(helperEvents);
+
+      // Приладка привязана к рабочему месту, а не к роли — печатаем её в
+      // основной строке, чтобы не задвоить.
+      final showOwnRow = helperEvents.isEmpty || ownQty > 0 || setups > 0;
+      if (showOwnRow) {
+        wpRows.add([
+          w.name,
+          _unit(w),
+          AnalyticsFormat.decimal(ownQty),
+          hasSetup ? AnalyticsFormat.decimal(setups) : '',
+          price > 0 ? AnalyticsFormat.decimal(price) : '',
+          hasSetup ? AnalyticsFormat.decimal(setupPrice) : '',
+          AnalyticsFormat.decimal(ownQty * price + setups * setupPrice),
+        ]);
+      }
+      if (helperQty > 0) {
+        wpRows.add([
+          '${w.name} (помощник)',
+          _unit(w),
+          AnalyticsFormat.decimal(helperQty),
+          '',
+          helperPrice > 0 ? AnalyticsFormat.decimal(helperPrice) : '',
+          '',
+          AnalyticsFormat.decimal(helperQty * helperPrice),
+        ]);
+      }
+    }
 
     // Пустая ячейка = статья не применялась (нулевые суммы не печатаем,
     // чтобы лист читался, как эталон).
@@ -582,7 +614,7 @@ class AnalyticsPdfExportService {
                   children: [
                     _kvLine('Период:', period),
                     _kvLine('Месяц:', _monthText(state.month)),
-                    _kvLine('Дата формирования:', _dateTime(DateTime.now())),
+                    _kvLine('Дата формирования:', _dateTime(nowInKostanay())),
                   ],
                 ),
               ],
@@ -695,7 +727,7 @@ class AnalyticsPdfExportService {
         pw.Text(title, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
         pw.SizedBox(height: 4),
         pw.Text('Месяц: ${_monthText(month)}', style: const pw.TextStyle(fontSize: 11)),
-        pw.Text('Дата формирования: ${_dateTime(DateTime.now())}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+        pw.Text('Дата формирования: ${_dateTime(nowInKostanay())}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
         pw.SizedBox(height: 12),
       ],
     );
@@ -800,7 +832,8 @@ class AnalyticsPdfExportService {
     return byWp.entries.map((entry) {
       final wp = personnel.workplaceById(entry.key);
       final unit = wp == null ? 'ед.' : _unit(wp);
-      return '${wp?.name ?? entry.key}: ${AnalyticsFormat.decimal(AnalyticsCalculator.totalQty(entry.value))} $unit';
+      final qty = AnalyticsCalculator.totalQty(entry.value);
+      return '${wp?.name ?? entry.key}: ${AnalyticsFormat.decimal(qty)} $unit';
     }).toList();
   }
 
@@ -846,11 +879,17 @@ class AnalyticsPdfExportService {
     }
     return personnel.workplaces.map((wp) {
       final events = byWp[wp.id] ?? const <AnalyticsEvent>[];
-      final speed = AnalyticsCalculator.speedQtyPerMinute(events);
+      // Выработка рабочего места — зафиксированный тираж, а не сумма
+      // выработки людей: на станке каждому записан полный тираж.
+      final qty = state.workplaceStageTotals[wp.id] ??
+          AnalyticsCalculator.totalQty(events);
+      final useful = AnalyticsCalculator.usefulMinutes(events);
+      final speed = useful > 0 && qty.isFinite ? qty / useful : 0.0;
       return _WorkplacePdfRow(
         workplace: wp,
         coefficient: state.coefficients[wp.id] ?? 0,
         events: events,
+        qty: qty,
         claims: claimsByWp[wp.id] ?? 0,
         kpd: KpdCalculator.compute(currentSpeed: speed, previousMonthsSpeeds: state.workplacePreviousSpeeds[wp.id] ?? const []),
       );
@@ -865,6 +904,7 @@ class AnalyticsPdfExportService {
     return SalaryCalculator.compute(
       events: events,
       coefficients: state.coefficients,
+      helperCoefficients: state.helperCoefficients,
       settings: state.settings,
       adjustments: adj,
       halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
@@ -875,6 +915,7 @@ class AnalyticsPdfExportService {
       statusPayRates: state.statusPayRates,
       statusNames: {for (final s in state.statuses) s.id: s.name},
       setupPrices: service.workplaceSetupPrices,
+      scheduledShifts: state.scheduledShiftsFor(employeeId),
     );
   }
 
@@ -921,7 +962,7 @@ class AnalyticsPdfExportService {
 
   Map<String, String> _workplaceTotals(List<_WorkplacePdfRow> rows) => {
         'Всего рабочих мест': '${rows.length}',
-        'Общее количество': AnalyticsFormat.decimal(rows.fold<double>(0, (s, r) => s + AnalyticsCalculator.totalQty(r.events))),
+        'Общее количество': AnalyticsFormat.decimal(rows.fold<double>(0, (s, r) => s + r.qty)),
         'Общее полезное время': AnalyticsFormat.hoursMinutes(rows.fold<int>(0, (s, r) => s + AnalyticsCalculator.usefulMinutes(r.events))),
         'Общее количество пауз': '${rows.fold<int>(0, (s, r) => s + AnalyticsCalculator.countEventsOfType(r.events, AnalyticsEventType.pause))}',
         'Общее количество проблем': '${rows.fold<int>(0, (s, r) => s + AnalyticsCalculator.countEventsOfType(r.events, AnalyticsEventType.problem))}',
@@ -1072,6 +1113,7 @@ class _WorkplacePdfRow {
     required this.workplace,
     required this.coefficient,
     required this.events,
+    required this.qty,
     required this.claims,
     required this.kpd,
   });
@@ -1079,12 +1121,14 @@ class _WorkplacePdfRow {
   final WorkplaceModel workplace;
   final double coefficient;
   final List<AnalyticsEvent> events;
+
+  /// Тираж рабочего места за месяц (не сумма выработки участников).
+  final double qty;
   final int claims;
   final KpdResult kpd;
 
   List<String> get tableCells {
     final unit = workplace.unit?.trim().isNotEmpty == true ? workplace.unit!.trim() : 'ед.';
-    final qty = AnalyticsCalculator.totalQty(events);
     final useful = AnalyticsCalculator.usefulMinutes(events);
     final orders = <String>{};
     for (final e in events) {

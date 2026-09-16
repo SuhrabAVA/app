@@ -15,40 +15,90 @@ import '../../services/storage_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'orders_provider.dart';
+import 'order_edit_gate.dart';
+import 'order_edit_lease.dart';
+import 'order_extra_options.dart';
+import 'order_extra_options_block.dart';
+import 'order_extra_options_repository.dart';
+import 'order_form_design.dart';
 import 'order_handle_type.dart';
+import 'order_required_blocks.dart';
 import 'stage_queue_builder.dart';
 import 'order_queue_service.dart';
 import 'order_queue_validity.dart';
 import 'orders_repository.dart';
+import 'order_launch_rules.dart';
 import 'order_model.dart';
+import 'paper_usage_rules.dart';
+import 'paper_length_rules.dart';
 import 'order_form_rules.dart';
 import 'product_model.dart';
+import 'product_type_route.dart';
 import 'product_type_settings.dart';
 import 'material_model.dart';
 import '../products/products_provider.dart';
-import 'orders_screen.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../warehouse/stock_tables.dart';
+import '../warehouse/paint_stock_rules.dart';
 import '../warehouse/tmc_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../common/pdf_view_screen.dart';
 import '../../utils/media_viewer.dart';
 import '../../utils/enter_key_behavior.dart';
 import 'order_comments_timeline.dart';
+import '../../widgets/error_overlay.dart' show appNavigatorKey;
+
+/// Подпись под полем количества, когда запрошено больше доступного.
+///
+/// Одна на бумагу и на краску: обе меряются одинаково — складской остаток
+/// минус брони чужих заказов, — и разные формулировки у соседних полей
+/// читались бы как разные правила.
+const String kNotEnoughMaterialError = 'Недостаточно материала';
+
+/// Показывает snackbar поверх текущего экрана приложения — нужен для
+/// уведомлений о результате фонового сохранения заказа, когда экран
+/// редактирования уже закрыт (и обычный ScaffoldMessenger экрана недоступен).
+void _showBackgroundSaveSnackBar(String message, {bool isError = false}) {
+  final ctx = appNavigatorKey.currentContext;
+  if (ctx == null) return;
+  ScaffoldMessenger.of(ctx).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: isError ? Colors.red.shade700 : null,
+    ),
+  );
+}
 
 /// Экран редактирования или создания заказа.
 /// Если [order] передан, экран открывается для редактирования существующего заказа.
-class EditOrderScreen extends StatefulWidget {
+class EditOrderScreen extends StatelessWidget {
+  const EditOrderScreen({super.key, this.order, this.initialOrder});
+  final OrderModel? order;
+  final OrderModel? initialOrder;
+
+  @override
+  Widget build(BuildContext context) => order == null
+      ? _OrderEditor(initialOrder: initialOrder)
+      : OrderEditGate(
+          orderId: order!.id,
+          initialOrder: order,
+          builder: (fresh, lease) => _OrderEditor(order: fresh, lease: lease),
+          fallbackBuilder: (stale) => _OrderEditor(order: stale),
+        );
+}
+
+class _OrderEditor extends StatefulWidget {
   final OrderModel? order;
 
   /// Если [initialOrder] передан, экран заполняется данными, но создаётся
   /// новый заказ, а не редактируется существующий.
   final OrderModel? initialOrder;
-  const EditOrderScreen({super.key, this.order, this.initialOrder});
+  const _OrderEditor({this.order, this.initialOrder, this.lease});
+  final OrderEditLease? lease;
   @override
-  State<EditOrderScreen> createState() => _EditOrderScreenState();
+  State<_OrderEditor> createState() => _EditOrderScreenState();
 }
 
 const bool _disableSwitchableStageDotTooltipDiagnostic =
@@ -134,13 +184,24 @@ class _PaintEntry {
   bool exceeded;
   bool nameNotFound;
 
+  /// Ровно то, что набрано в поле, без обрезки краёв.
+  ///
+  /// Без этого поля поиск нельзя было набрать: [name] хранился обрезанным
+  /// (`value.trim()`), [displayName] возвращал его же, а fieldViewBuilder на
+  /// каждой перерисовке возвращал текст контроллера к [displayName]. Пробел,
+  /// набранный в конце, исчезал в тот же кадр — «192 красный» напечатать было
+  /// невозможно, поиск обрывался на первом слове. `null` — поле ещё не
+  /// трогали руками, показываем [displayName].
+  String? rawInput;
+
   _PaintEntry(
       {this.tmc,
       this.name,
       this.qtyGrams,
       this.memo = '',
       this.exceeded = false,
-      this.nameNotFound = false});
+      this.nameNotFound = false,
+      this.rawInput});
 
   String get displayName => tmc?.description ?? name ?? '';
   bool get hasName => displayName.trim().isNotEmpty;
@@ -186,16 +247,12 @@ List<Map<String, dynamic>> buildStageMapsForProductionPlanSaveForTesting({
       buildStageQueueFromCurrentDraft: buildStageQueueFromCurrentDraft,
     );
 
-class _EditOrderScreenState extends State<EditOrderScreen> {
-  static const String _paintInfoParamLabel = 'Информация для красок:';
+class _EditOrderScreenState extends State<_OrderEditor> {
+  // A failed later save step must not create a second order on retry.
+  OrderModel? _createdDuringSave;
+  OrderEditLease? _createdLease;
 
-  Future<void> _goToOrdersModuleHome() async {
-    if (!mounted) return;
-    await Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const OrdersScreen()),
-      (route) => route.isFirst,
-    );
-  }
+  static const String _paintInfoParamLabel = 'Информация для красок:';
 
   String _trimTrailingFractionZeros(String value) {
     if (!value.contains('.')) return value;
@@ -253,7 +310,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     try {
       final row = await _sb
           .from('orders')
-          .select('has_form, is_old_form, new_form_no, form_series, form_code')
+          .select('has_form, is_old_form, form_id, new_form_no, form_series, form_code')
           .eq('id', widget.order!.id)
           .maybeSingle();
       if (!mounted) return;
@@ -272,6 +329,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         display = no.toString();
       }
       setState(() {
+        _orderFormId = row?['form_id']?.toString();
         _orderFormIsOld = isOld;
         _orderFormNo = no;
         _orderFormSeries = series.isNotEmpty ? series : null;
@@ -297,13 +355,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
       // Загрузка дополнительных деталей формы (размер, цвета, изображение)
       try {
-        if (series.isNotEmpty && no != null) {
+        final formId = await findFormIdByOrderFormRef(
+          formId: _orderFormId,
+          formCode: code,
+          formSeries: series,
+          formNo: no,
+        );
+        if (formId != null) {
           final form = await _sb
               .from('forms')
               .select(
                   'title, description, image_url, size, product_type, colors')
-              .eq('series', series)
-              .eq('number', no)
+              .eq('id', formId)
               .maybeSingle();
           if (mounted) {
             setState(() {
@@ -325,50 +388,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         }
       } catch (_) {}
 
-      // Bug-2: подгружаем PDF привязанной формы для read-only сводки.
-      // Раньше файлы появлялись только при входе в режим редактирования формы,
-      // из-за чего при открытии заказа на редактирование они «пропадали».
-      if (hasForm) {
-        _loadAssignedFormPdfs(
-          formCode: code.isNotEmpty ? code : null,
-          formSeries: series.isNotEmpty ? series : null,
-          formNo: no,
-        );
+      // PDF привязанной формы. Без этой загрузки список «PDF» показывал
+      // только файлы самого заказа, и документы старой формы в редакторе
+      // не появлялись вовсе — их было видно лишь в карточке заказа.
+      if (hasForm && (isOld ?? false)) {
+        await _ensureAssignedFormPdfsLoaded();
       }
     } catch (_) {}
   }
 
-  /// Грузит PDF привязанной к заказу формы для показа в read-only сводке.
-  /// Не трогает состояние редактора формы (_oldFormSavedPdfs/_oldFormPdfsFormId),
-  /// поэтому отмена/сохранение формы не сбрасывают этот список.
-  Future<void> _loadAssignedFormPdfs({
-    String? formCode,
-    String? formSeries,
-    int? formNo,
-  }) async {
-    if (_assignedFormPdfsRequested) return;
-    _assignedFormPdfsRequested = true;
-    if (mounted) setState(() => _loadingAssignedFormPdfs = true);
+  /// Резолвит id привязанной к заказу формы и подтягивает её PDF.
+  Future<void> _ensureAssignedFormPdfsLoaded() async {
     try {
       final formId = await findFormIdByOrderFormRef(
-        formCode: formCode,
-        formSeries: formSeries,
-        formNo: formNo,
+        formId: _orderFormId,
+        formCode: _orderFormCode,
+        formSeries: _orderFormSeries,
+        formNo: _orderFormNo,
       );
-      if (!mounted) return;
-      if (formId == null) {
-        setState(() => _loadingAssignedFormPdfs = false);
-        return;
-      }
-      final files = await listFormFiles(formId);
-      if (!mounted) return;
-      setState(() {
-        _assignedFormPdfs = files;
-        _loadingAssignedFormPdfs = false;
-      });
+      if (!mounted || formId == null || formId.isEmpty) return;
+      if (_oldFormPdfsFormId == formId && _oldFormSavedPdfs.isNotEmpty) return;
+      await _loadOldFormPdfsFor(formId);
     } catch (_) {
-      _assignedFormPdfsRequested = false; // разрешим повтор при следующем заходе
-      if (mounted) setState(() => _loadingAssignedFormPdfs = false);
+      // Отсутствие PDF формы не должно ломать открытие заказа.
     }
   }
 
@@ -702,7 +744,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   // переноса. Реальные объекты Storage/order_files архивного заказа при этом
   // не трогаются — удаление до сохранения только локальное.
   final Set<String> _draftRemovedOrderPdfPaths = <String>{};
-  bool _lengthExceeded = false;
   // Краски (мультисекция)
   final List<_PaintEntry> _paints = <_PaintEntry>[];
   String _paintInfo = '';
@@ -721,6 +762,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   int? _orderFormNo;
   String? _orderFormSeries;
   String? _orderFormCode;
+  String? _orderFormId;
+  String? _editingFormInitialText;
   String? _orderFormDisplay;
   // Детали формы для существующего заказа
   String? _orderFormSize;
@@ -737,12 +780,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   String? _oldFormPdfsFormId;
   List<Map<String, dynamic>> _oldFormSavedPdfs = [];
   bool _loadingOldFormPdfs = false;
-  // PDF привязанной формы для read-only сводки заказа (Bug-2). Отдельное
-  // состояние от _oldFormSavedPdfs (редактор), чтобы отмена/сохранение формы
-  // не сбрасывали список при показе сводки.
-  List<Map<String, dynamic>> _assignedFormPdfs = [];
-  bool _loadingAssignedFormPdfs = false;
-  bool _assignedFormPdfsRequested = false;
   // Выбранный номер старой формы
   String? _selectedOldForm;
   // Фактическое количество (пока не вычисляется)
@@ -753,6 +790,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool _stockExtraAutoloaded = false;
   bool _launchedNoStartedStages = false;
   bool _launchedWithStartedStages = false;
+  // Расход бумаги по факту: после первого списания бумага в форме заперта.
+  PaperUsageState? _paperUsage;
   bool _isSavingOrder = false;
 
   Future<void> _loadCategoriesForProduct() async {
@@ -791,6 +830,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   /// null нельзя: сохранение заказа стирало бы уже проставленный тип.
   String? _currentProductTypeId() =>
       ProductTypeSettings.instance.resolveProductTypeId(_product.type);
+
+  // ===== Дополнительные опции заказа =====
+
+  final OrderExtraOptionsRepository _extraOptionsRepo =
+      OrderExtraOptionsRepository();
+
+  List<OrderExtraOptionRow> _extraOptionRows = const <OrderExtraOptionRow>[];
+
+  /// Справочник опций уже прочитан хотя бы раз.
+  ///
+  /// До этого момента сохранение НЕ отправляет `extra_options`: пустые строки
+  /// на недогруженном справочнике означали бы «опций не выбрано», и быстрый
+  /// сейв стёр бы выбранное в заказе. Отсутствие ключа оставляет колонку
+  /// нетронутой — см. [OrderModel.extraOptions].
+  bool _extraOptionsReady = false;
+
+  /// Читает справочник опций для текущего типа продукта и кладёт поверх него
+  /// снимок заказа.
+  ///
+  /// Кэша нет намеренно: техлид правит опции без публикации, и закэшированный
+  /// на сессию список означал бы «добавил вариант, а менеджер его не видит до
+  /// перезапуска» — ровно то, чего просили избежать.
+  Future<void> _loadExtraOptions({
+    required List<OrderOptionSelection> saved,
+  }) async {
+    List<OrderOptionDef> defs = const <OrderOptionDef>[];
+    try {
+      await ProductTypeSettings.instance.ensureLoaded();
+      final typeId = _currentProductTypeId();
+      if (typeId != null) {
+        defs = await _extraOptionsRepo.loadForProductType(typeId);
+      }
+    } catch (e) {
+      // Справочник недоступен — строки всё равно строим: сохранённые значения
+      // придут из снимка как снятые с учёта и не потеряются при сохранении.
+      debugPrint('❌ extra options load failed: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _extraOptionRows = buildOrderExtraOptionRows(defs: defs, saved: saved);
+      _extraOptionsReady = true;
+    });
+  }
+
+  /// Снимок для записи; `null` — справочник ещё не читался.
+  List<OrderOptionSelection>? _extraOptionsForPersist() =>
+      _extraOptionsReady ? selectionsFromRows(_extraOptionRows) : null;
 
   /// Активен ли блок формы для текущего типа продукта.
   ///
@@ -938,6 +1024,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _orderFormNo = t.newFormNo;
         _orderFormSeries = t.formSeries;
         _orderFormCode = t.formCode;
+        _orderFormId = t.formId;
         _orderFormDisplay = _buildFormDisplayValue(
           code: t.formCode,
           series: t.formSeries,
@@ -958,6 +1045,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           if (!mounted) return;
           if (t.isOldForm) {
             findFormIdByOrderFormRef(
+              formId: t.formId,
               formCode: t.formCode,
               formSeries: t.formSeries,
               formNo: t.newFormNo,
@@ -966,12 +1054,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 _loadOldFormPdfsFor(formId);
               }
             }).catchError((_) {});
-          } else {
-            _loadAssignedFormPdfs(
-              formCode: t.formCode,
-              formSeries: t.formSeries,
-              formNo: t.newFormNo,
-            );
           }
         });
       }
@@ -1034,6 +1116,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _scheduleStagePreviewUpdate(immediate: true);
       });
     }
+
+    // Снимок берём из шаблона: при возобновлении из архива опции переезжают
+    // в новое поколение вместе с остальными реквизитами заказа.
+    _loadExtraOptions(
+      saved: List<OrderOptionSelection>.from(
+        template?.extraOptions ?? const <OrderOptionSelection>[],
+      ),
+    );
   }
 
   String _formatActualQuantity(double value) {
@@ -1069,9 +1159,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return false;
   }
 
+  Future<void> _loadPaperUsageLock(String orderId) async {
+    try {
+      final usage = await OrdersRepository().getPaperUsageState(orderId);
+      if (!mounted) return;
+      setState(() => _paperUsage = usage);
+    } catch (e) {
+      debugPrint('⚠️ не удалось проверить расход бумаги заказа: $e');
+    }
+  }
+
   Future<void> _loadRuntimeEditLocks() async {
     final order = widget.order;
     if (order == null || !order.assignmentCreated) return;
+    unawaited(_loadPaperUsageLock(order.id));
     try {
       final taskRows = await _sb
           .from('tasks')
@@ -1135,20 +1236,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         try {
           final wpRows = await _sb
               .from('workplaces')
-              .select('id,name,title,short_name,stage_name')
+              // У workplaces нет title/short_name/stage_name: с ними запрос
+              // всегда падал, и флексопечать здесь не распознавалась.
+              .select('id,name')
               .inFilter('id', stageIds);
           if (wpRows is List) {
             for (final raw in wpRows.whereType<Map>()) {
               final map = Map<String, dynamic>.from(raw);
               final id = (map['id'] ?? '').toString().trim();
               if (id.isEmpty) continue;
-              final probes = [
-                map['name'],
-                map['title'],
-                map['short_name'],
-                map['stage_name'],
-                id,
-              ];
+              final probes = [map['name'], id];
               final isFlexo =
                   probes.any((value) => _looksLikeFlexo((value ?? '').toString()));
               if (isFlexo) {
@@ -1270,22 +1367,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
 
-  OrderHandleType _resolveSelectedHandleType() {
-    final normalized = _selectedHandleDescription.trim().toLowerCase();
-    if (normalized.isEmpty || normalized == '-') {
-      return OrderHandleType.none;
-    }
-    if (normalized.contains('круч') || normalized.contains('twist')) {
-      return OrderHandleType.twisted;
-    }
-    if (normalized.contains('плоск') || normalized.contains('flat')) {
-      return OrderHandleType.flat;
-    }
-    if (normalized.contains('выруб') || normalized.contains('die cut')) {
-      return OrderHandleType.dieCut;
-    }
-    return OrderHandleType.none;
-  }
+  /// Разбор переехал в `order_handle_type.dart`: тот же тип ручки спрашивает
+  /// проверка обязательных блоков, а две копии сопоставления разошлись бы на
+  /// первом же новом названии ручки.
+  OrderHandleType _resolveSelectedHandleType() =>
+      orderHandleTypeFromDescription(_selectedHandleDescription);
 
   MaterialModel? _mainMaterialForStageQueue() {
     if (_selectedMaterial != null) return _selectedMaterial;
@@ -1385,6 +1471,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         selectedId == kTubeStageId) {
       return kPMainSwitchStageKey;
     }
+
+    // Этап, заведённый в редакторе типов продукта: ключ переключателя — его
+    // собственный ключ. Без этой ветки карточка такого этапа вообще не
+    // оборачивалась в нажимаемый слой, и клик по нему ничего не делал.
+    if (isRouteSwitchableStageKey(
+      ProductTypeSettings.instance.routeFor(_product.type),
+      stageKey,
+    )) {
+      return stageKey;
+    }
     return null;
   }
 
@@ -1418,8 +1514,35 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         _SwitchableStageOption(kTubeStageId, 'Труба'),
       ];
     }
+    // Переключаемые этапы, заведённые в редакторе типов продукта. Раньше
+    // список вариантов был только для двух зашитых этапов, а для остальных
+    // возвращался пустым — из-за этого переключатель у своих этапов не
+    // предлагал ничего и молча не работал.
+    final route = ProductTypeSettings.instance.routeFor(_product.type);
+    if (route != null) {
+      for (final stage in route.stages) {
+        if (stage.key != stageKey || !stage.isSwitchable) continue;
+        return <_SwitchableStageOption>[
+          for (final workplace in stage.workplaces)
+            _SwitchableStageOption(
+              workplace.workplaceId,
+              (workplace.variantTitle ?? '').trim().isNotEmpty
+                  ? workplace.variantTitle!.trim()
+                  : ProductTypeSettings.instance
+                      .workplaceName(workplace.workplaceId),
+            ),
+        ];
+      }
+    }
     return const <_SwitchableStageOption>[];
   }
+
+  /// Выбор варианта для этапов из редактора.
+  ///
+  /// У двух зашитых переключателей выбор хранится в полях заказа
+  /// (`selected_v_stage` / `selected_p_stage`), а у этапов маршрута такого
+  /// поля нет: держим выбор здесь и отдаём сборщику очереди по ключу этапа.
+  final Map<String, String> _routeSwitchableSelections = <String, String>{};
 
   String? _selectedSwitchableStageIdForPreview(
     String stageKey,
@@ -1429,7 +1552,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ? _selectedVStage
         : stageKey == kPMainSwitchStageKey
             ? _selectedPStage
-            : null;
+            : _routeSwitchableSelections[stageKey];
     final selected =
         (stateSelected ?? _selectedSwitchableIdFromPreviewStage(stage))
             ?.trim();
@@ -1502,7 +1625,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ? _selectedVStage
         : stageKey == kPMainSwitchStageKey
             ? _selectedPStage
-            : null;
+            : _routeSwitchableSelections[stageKey];
     final effectiveCurrent = current ??
         (_switchableOptionsForStageKey(stageKey).isNotEmpty
             ? _switchableOptionsForStageKey(stageKey).first.stageId
@@ -1516,7 +1639,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       } else if (stageKey == kPMainSwitchStageKey) {
         _selectedPStage = selectedStageId;
       } else {
-        return;
+        // Этап из редактора: раньше здесь стоял return, и выбор молча
+        // терялся — переключатель «не работал».
+        _routeSwitchableSelections[stageKey] = selectedStageId;
       }
 
       final currentStages = _stagePreviewStages
@@ -1577,10 +1702,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         : _stagePreviewStages;
     final selectedSwitchableStageIdsByStageKey = <String, String>{
       ...collectSwitchableStageSelectionsByStageKey(switchableSelectionSource),
+      // Выбор по этапам маршрута читаем из уже собранной очереди: у них нет
+      // своего поля в заказе, а зашитый сборщик такие ключи отбрасывает.
+      ...collectRouteSwitchableSelections(
+        ProductTypeSettings.instance.routeFor(_product.type),
+        switchableSelectionSource,
+      ),
       if ((_selectedVStage ?? '').trim().isNotEmpty)
         kVMainSwitchStageKey: _selectedVStage!.trim(),
       if ((_selectedPStage ?? '').trim().isNotEmpty)
         kPMainSwitchStageKey: _selectedPStage!.trim(),
+      // Явный выбор пользователя перекрывает прочитанное из очереди.
+      ..._routeSwitchableSelections,
     };
     return _orderQueueService.buildPreviewQueue(
       draft.copyWithSwitchableSelections(selectedSwitchableStageIdsByStageKey),
@@ -1677,6 +1810,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       newFormNo: _orderFormNo,
       formSeries: _orderFormSeries,
       formCode: _orderFormCode,
+      formId: _orderFormId,
     );
   }
 
@@ -1712,13 +1846,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     });
   }
 
-  bool _hasInvalidPaintNames() {
-    for (final paint in _paints) {
-      if (paint.nameNotFound) return true;
-    }
-    return false;
-  }
-
   String _deriveSharedPaintInfo(List<_PaintEntry> paints) {
     for (final paint in paints) {
       final memo = paint.memo.trim();
@@ -1742,9 +1869,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   /// редактируемый. Свой резерв возвращаем обратно — иначе при открытии
   /// существующего заказа его собственные 400 г выглядели бы занятыми и
   /// поле подсвечивалось бы как «Недостаточно».
+  /// Свободный остаток краски: склад − чужая бронь − неприкасаемый запас.
+  ///
+  /// Своя бронь возвращается обратно, иначе заказ не проходит проверку по
+  /// собственным же граммам. Запас снимается ОДИН раз (см.
+  /// [kUntouchablePaintGrams]) и переводится в единицы этой карточки склада:
+  /// краски заводят и в граммах, и в килограммах.
   double _paintAvailableQty(TmcModel tmc) {
     final own = _ownPaintReservations[tmc.id] ?? 0;
-    return tmc.availableQty + own;
+    final untouchable = _gramsToStockUnit(kUntouchablePaintGrams, tmc);
+    final free = tmc.availableQty + own - untouchable;
+    return free > 0 ? free : 0;
   }
 
   /// Резерв текущего заказа по краскам: paint_id → количество в единицах
@@ -1776,6 +1911,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ..clear()
           ..addAll(next);
       });
+      // Пересчитываем подсветку: до этого момента собственная бронь заказа
+      // считалась чужой, и поля показывали «Недостаточно материала» на своих
+      // же граммах. Обратный случай тоже важен — краску мог забрать сосед,
+      // пока заказ лежал, и увидеть это надо сразу при открытии, а не после
+      // правки поля.
+      _validatePaintNames();
     } catch (_) {
       // Не критично: без своих резервов остаток будет чуть занижен.
     }
@@ -2147,6 +2288,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   @override
   void dispose() {
+    _createdLease?.dispose();
     _customerController.dispose();
     _formExtraInfoController.dispose();
     _commentsController.dispose();
@@ -2359,9 +2501,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       grammage: tmc.grammage ?? '',
       weight: tmc.weight,
     );
-    if (_product.length != null) {
-      _lengthExceeded = _product.length! > tmc.quantity;
-    }
     setState(() {});
     _scheduleStagePreviewUpdate();
   }
@@ -2379,7 +2518,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void _applyPaperSelection(TmcModel paper) {
     if (_activePaperSlotIndex > 0) {
-      final extraIndex = _activePaperSlotIndex - 1;
+      // Индекс вне диапазона — это рассинхрон состояния, а не выбор основной
+      // бумаги. Прежний код в таком случае молча проваливался вниз и
+      // переписывал первую бумагу: сотрудник выбирал материал для второй, а
+      // менялась первая. Лучше прижать к последнему дополнительному слоту —
+      // выбор останется там, куда сотрудник целился.
+      final extraIndex = _activePaperSlotIndex - 1 < _extraPaperMaterials.length
+          ? _activePaperSlotIndex - 1
+          : _extraPaperMaterials.length - 1;
       if (extraIndex >= 0 && extraIndex < _extraPaperMaterials.length) {
         final currentExtra = _extraPaperMaterials[extraIndex];
         setState(() {
@@ -2426,6 +2572,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     final List<MaterialModel> selected = <MaterialModel>[];
     final double fallbackQty =
         (_product.length ?? _selectedMaterial?.quantity ?? 0).toDouble();
+    // «Длина L» основной бумаги. Именно это поле правит менеджер, и оно
+    // обязано побеждать количество, сохранённое в материале раньше: иначе
+    // первое записанное значение застывает навсегда — правка поля меняла
+    // только product.length, а потребность считалась по material.quantity,
+    // и заказ продолжал требовать старый метраж.
+    final double mainPaperLength = (_product.length ?? 0).toDouble();
     TmcModel? resolvePaperByMaterial(MaterialModel paper) {
       final paperId = (paper.id ?? '').trim();
       if (paperId.isNotEmpty) {
@@ -2451,9 +2603,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       selected.add(
         _selectedMaterial!.copyWith(
           id: resolved?.id ?? _selectedMaterial!.id,
-          quantity: _selectedMaterial!.quantity > 0
-              ? _selectedMaterial!.quantity
-              : fallbackQty,
+          quantity: persistedPaperQuantity(
+            editedLength: mainPaperLength,
+            storedQuantity: _selectedMaterial!.quantity,
+          ),
           unit: 'м',
         ),
       );
@@ -2463,13 +2616,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final resolved = resolvePaperByMaterial(paper);
       final id = (resolved?.id ?? paper.id ?? '').trim();
       if (id.isEmpty) continue;
+      // Та же приоритетность, что и у основной бумаги: отредактированное
+      // поле «Длина L» важнее ранее сохранённого количества.
       final extraLength = _paperExtraDouble(paper, 'lengthL');
-      final resolvedQty =
-          extraLength != null && extraLength > 0 ? extraLength : fallbackQty;
+      final resolvedQty = persistedPaperQuantity(
+        editedLength: extraLength ?? 0,
+        storedQuantity: paper.quantity,
+        fallback: fallbackQty,
+      );
       selected.add(
         paper.copyWith(
           id: id,
-          quantity: paper.quantity > 0 ? paper.quantity : resolvedQty,
+          quantity: resolvedQty,
           unit: 'м',
         ),
       );
@@ -2495,7 +2653,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       _activePaperSlotIndex = _extraPaperMaterials.length;
     });
-    _scheduleStagePreviewUpdate();
+    // Очередь здесь не пересобираем: слот пока пустой, в черновик он не
+    // попадает (`_collectSelectedPapers` отбрасывает записи без id), а
+    // пересборка показывала «этапы по умолчанию» на заказе, где тип продукта
+    // ещё не выбран. Маршрут обновят обработчики полей самого слота, когда
+    // сотрудник выберет материал.
   }
 
   double? _paperExtraDouble(MaterialModel paper, String key) {
@@ -2676,9 +2838,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       } catch (e) {
         // Ошибки резервирования (недостаток краски, краска не найдена) не
         // блокируют сохранение заказа — только сообщаем пользователю.
-        final message = e is PostgrestException && e.message.trim().isNotEmpty
-            ? e.message.trim()
-            : e.toString();
+        final message = _describeSaveError(e);
         debugPrint('⚠️ syncPaintReservations error: $message');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2692,9 +2852,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         'product': _product.toMap(),
       }).eq('id', orderId);
     } catch (e) {
-      final message = e is PostgrestException && e.message.trim().isNotEmpty
-          ? e.message.trim()
-          : e.toString();
+      final message = _describeSaveError(e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
@@ -2885,6 +3043,44 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
+  /// Удаляет файл, пришедший от печатной формы.
+  ///
+  /// Раньше такие файлы были в заказе только для чтения — «удалять их нужно в
+  /// модуле Формы». На деле кладовщик прикладывает PDF к форме на складе, а
+  /// замечает ошибку уже в заказе, и путь «закрой заказ, найди форму, удали,
+  /// вернись» никто не проходил: файл оставался висеть.
+  ///
+  /// Поэтому удаление есть, но ПОСЛЕДСТВИЕ названо прямо в подтверждении —
+  /// оно разное у двух источников:
+  ///   * `source = 'form'` — файл лежит в самой форме и исчезнет во ВСЕХ
+  ///     заказах, где эта форма используется;
+  ///   * `source = 'order'` — это ссылка на файл другого заказа; снимется
+  ///     только связь с формой, сам файл останется у своего заказа.
+  Future<void> _removeFormPdf(Map<String, dynamic> file) async {
+    final fileName =
+        (file['filename'] ?? file['objectPath'] ?? 'Файл.pdf').toString();
+    final source = (file['source'] ?? 'form').toString();
+    final confirmed = await _confirmDeletePdf(
+      fileName,
+      message: source == 'order'
+          ? 'Файл "$fileName" принадлежит другому заказу. Здесь снимется '
+              'только его связь с формой — сам файл останется в своём заказе.'
+          : 'Файл "$fileName" загружен в саму печатную форму. Он исчезнет '
+              'во ВСЕХ заказах, где используется эта форма. Отменить нельзя.',
+    );
+    if (!confirmed) return;
+    try {
+      await deleteFormFile(file);
+      if (mounted) setState(() => _oldFormSavedPdfs.remove(file));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось удалить файл формы: $e')),
+        );
+      }
+    }
+  }
+
   /// Построчный виджет вложения PDF: иконка, имя, необязательная метка
   /// источника, кнопка "Открыть" и кнопка удаления/снятия выбора.
   Widget _buildPdfTile({
@@ -2926,13 +3122,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               constraints: const BoxConstraints(),
               onPressed: onOpen,
             ),
-          IconButton(
-            tooltip: removeTooltip,
-            icon: Icon(removeIcon, size: 16, color: Colors.red),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: onRemove,
-          ),
+          if (onRemove != null)
+            IconButton(
+              tooltip: removeTooltip,
+              icon: Icon(removeIcon, size: 16, color: Colors.red),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: onRemove,
+            ),
         ],
       ),
     );
@@ -3021,7 +3218,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (!mounted) {
       return null;
     }
-    final wp = Provider.of<WarehouseProvider>(context, listen: false);
     TmcModel? tmc = _selectedMaterialTmc ?? _resolvePaperByText();
     if (tmc == null) {
       // Попробуем найти по выбранному в каскаде триплету
@@ -3042,11 +3238,131 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     }
     if (tmc == null) return null;
-    // Берём самый свежий остаток из провайдера по id
+    return availablePaperQtyById(tmc.id, fallbackStock: tmc.quantity);
+  }
+
+  /// Доступный остаток бумаги: склад минус брони ЧУЖИХ заказов.
+  ///
+  /// Складскую цифру показывать нельзя — занятое соседями взять всё равно не
+  /// получится, и менеджер планировал бы по метрам, которых у него нет.
+  /// Собственная бронь заказа из вычета исключается: свои метры ему доступны.
+  ///
+  /// `null` возвращается только когда бумаги нет в справочнике; ещё не
+  /// приехавший кэш броней даёт складскую цифру, а не пустоту.
+  double? availablePaperQtyById(String? paperId, {double? fallbackStock}) {
+    if (!mounted) return null;
+    final id = (paperId ?? '').trim();
+    if (id.isEmpty) return null;
+    final wp = Provider.of<WarehouseProvider>(context, listen: false);
+
+    double? stock = fallbackStock;
     for (final t in wp.allTmc) {
-      if (t.id == tmc!.id) return t.quantity;
+      if (t.id == id) {
+        stock = t.quantity;
+        break;
+      }
     }
-    return tmc.quantity;
+    if (stock == null) return null;
+
+    final reservedByOthers = wp.cachedPaperReservedQty(
+      id,
+      excludeOrderId: widget.order?.id,
+    );
+    if (reservedByOthers == null) return stock;
+    final available = stock - reservedByOthers;
+    return available < 0 ? 0 : available;
+  }
+
+  /// Подпись «сколько доступно» — внутри карточки самой бумаги.
+  ///
+  /// Общий список под заголовком «Склад и материалы» показывал все бумаги
+  /// сразу, и сопоставлять строку списка со слотом приходилось глазами. Цифра
+  /// принадлежит конкретной бумаге, поэтому и живёт рядом с её полями.
+  /// Не хватает ли доступного метража под введённую «Длину L».
+  ///
+  /// Сравнение идёт с доступным (склад минус брони ЧУЖИХ заказов), а не со
+  /// складским остатком: обещанные соседям метры этому заказу не достанутся, и
+  /// узнать об этом менеджер должен в поле, а не из статуса «Ожидание
+  /// материалов» после сохранения. Собственную бронь заказа
+  /// [availablePaperQtyById] не вычитает — иначе при открытии сохранённого
+  /// заказа его же метры выглядели бы занятыми.
+  bool _paperLengthExceedsAvailable(TmcModel? paper, double? length) {
+    if (paper == null || length == null || length <= 0) return false;
+    final available =
+        availablePaperQtyById(paper.id, fallbackStock: paper.quantity) ??
+            paper.quantity;
+    return length > available;
+  }
+
+  /// Строка блока бумаг: подпись слева, карточка материала справа.
+  ///
+  /// «Доступно» живёт в левой колонке — там же, где подпись «Склад и
+  /// материалы». Эта колонка и так пустует под подписью, поэтому цифра ничего
+  /// не отнимает у полей материала: они и без того тесные, надписи «Ширина b»,
+  /// «Количество», «Длина L» обрезаются до «Ши…», «Ко…», «Дл…». Внутри
+  /// карточки цифра стояла как раз за счёт этой ширины.
+  Widget _paperGutterRow({
+    required double labelWidth,
+    required Widget card,
+    String? label,
+    double? availableQty,
+  }) {
+    final gutter = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (label != null)
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: OrderFormColors.label,
+            ),
+          ),
+        if (availableQty != null) ...[
+          if (label != null) const SizedBox(height: 2),
+          Text(
+            'Доступно: ${availableQty.toStringAsFixed(2)} м',
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.15,
+              color: OrderFormColors.muted,
+            ),
+          ),
+        ],
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // На узкой раскладке колонка подписи съела бы всю ширину полей —
+        // ту же защиту держит _buildLabelRow. Тогда подпись уходит над
+        // карточкой, как и у остальных строк формы.
+        if (constraints.maxWidth < labelWidth + 160) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(alignment: Alignment.centerLeft, child: gutter),
+              const SizedBox(height: 4),
+              card,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: labelWidth,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8, top: 6),
+                child: gutter,
+              ),
+            ),
+            Expanded(child: card),
+          ],
+        );
+      },
+    );
   }
 
   bool _matchesWarehouseQuery(String query, Iterable<String> fields) {
@@ -3107,14 +3423,43 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return '';
   }
 
+  /// Resolve a real record before any order writes or closing the editor.
+  /// Display text is never parsed for numbers: names can contain digits.
+  Future<bool> _prepareExistingFormForSave() async {
+    if (!_hasForm || !_isOldForm) return true;
+    final selectedId = _selectedOldFormRow?['id']?.toString();
+    final unchanged = !_editingForm ||
+        _selectedOldForm == _editingFormInitialText;
+    final id = await findFormIdByOrderFormRef(
+      formId: selectedId ?? (unchanged ? _orderFormId : null),
+      formCode: unchanged ? _orderFormCode : _selectedOldForm,
+      formSeries: unchanged ? _orderFormSeries : null,
+      formNo: unchanged ? _orderFormNo : null,
+    );
+    if (!mounted) return false;
+    if (id == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Выберите существующую форму из списка склада'),
+      ));
+      return false;
+    }
+    final row = await _sb.from('forms').select().eq('id', id).single();
+    if (!mounted) return false;
+    _selectedOldFormRow = Map<String, dynamic>.from(row);
+    return true;
+  }
+
   Future<void> _saveOrder() async {
     if (_isSavingOrder) return;
+    final sourceOrder = widget.order ?? _createdDuringSave;
     setState(() => _isSavingOrder = true);
     try {
+    await (widget.lease ?? _createdLease)?.ensureOwned();
     // Флаг: создаём новый заказ или редактируем
-    final bool isCreating = (widget.order == null);
+    final bool isCreating = (sourceOrder == null);
     final messenger = ScaffoldMessenger.of(context);
     if (!_formKey.currentState!.validate()) return;
+    if (!await _prepareExistingFormForSave()) return;
     _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
     final params = {..._selectedParams};
     if (_trimming) {
@@ -3145,16 +3490,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return;
     }
     _validatePaintNames();
-    if (_hasInvalidPaintNames()) {
-      if (mounted)
-        messenger.showSnackBar(
-          const SnackBar(
-              content: Text('Данной краски нет на складе. Уточните название.')),
-        );
-      return;
-    }
-    final managerName = widget.order != null
-        ? widget.order!.manager
+    // Краска, которой нет на складе, сохранение больше НЕ отменяет.
+    //
+    // Раньше форма упиралась: «Данной краски нет на складе. Уточните
+    // название» — и заказ нельзя было ни сохранить, ни поставить в очередь на
+    // закупку. Менеджеру приходилось либо выдумывать похожую краску, либо
+    // держать заказ у себя, пока снабженец не заведёт карточку. Теперь такой
+    // заказ сохраняется и уходит в «Ожидание материалов» с фиолетовой
+    // карточкой, где написано, сколько краски заказать (потребность +
+    // неприкасаемый запас), и есть кнопка «Завести краску».
+    final unknownPaints = _paints
+        .where((p) => p.nameNotFound)
+        .map((p) => p.displayName.trim())
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
+    final managerName = sourceOrder != null
+        ? sourceOrder.manager
         : (_selectedManager?.trim().isNotEmpty ?? false)
             ? _selectedManager!.trim()
             : '';
@@ -3172,18 +3523,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         nextQueueBuildStatus != QueueBuildStatus.outdated) {
       nextQueueBuildStatus = QueueBuildStatus.notBuilt;
     } else if (!isCreating &&
-        widget.order?.queueBuildStatus == QueueBuildStatus.built &&
+        sourceOrder?.queueBuildStatus == QueueBuildStatus.built &&
         !_sameQueueSignature(
-            widget.order?.queueSignature, currentQueueSignature)) {
+            sourceOrder?.queueSignature, currentQueueSignature)) {
       nextQueueBuildStatus = QueueBuildStatus.outdated;
     }
 
-    // Запущенный заказ: правки применяются целиком, включая смену типа
-    // продукта. Очередь пересобираем сами — требовать ручного нажатия
-    // «Собрать очередь» здесь нельзя, иначе заказ сохранился бы с новым
-    // типом продукта, но со старым маршрутом этапов.
+    // Заказ с уже собранной очередью: правки применяются целиком, включая
+    // смену типа продукта. Очередь пересобираем сами — требовать ручного
+    // нажатия «Собрать очередь» здесь нельзя, иначе заказ сохранился бы с
+    // новым типом продукта, но со старым маршрутом этапов.
+    //
+    // Раньше авто-пересборка работала только для запущенных заказов. Из-за
+    // этого правка заказа в статусе «Готов к запуску» или «Ожидание
+    // материалов» роняла его в черновик: подпись очереди менялась, статус
+    // становился outdated, очередь не сохранялась — и приходилось сохранять
+    // второй раз, чтобы заказ вернулся на место. Признак тот же: очередь у
+    // заказа уже была собрана, значит маршрут менеджер видел и подтверждал.
+    final bool hadBuiltQueue =
+        sourceOrder?.queueBuildStatus == QueueBuildStatus.built;
     if (!isCreating &&
-        (widget.order?.assignmentCreated ?? false) &&
+        ((sourceOrder?.assignmentCreated ?? false) || hadBuiltQueue) &&
         nextQueueBuildStatus != QueueBuildStatus.built) {
       _buildStageQueue();
       nextQueueBuildStatus = QueueBuildStatus.built;
@@ -3193,6 +3553,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
     bool hasEnoughPaperForLaunch() {
       if (selectedPapers.isEmpty) return true;
+      // Склад ещё не подтянулся — не выносим приговор «нет материала» по
+      // пустому списку. Сразу после сохранения OrdersProvider перепроверит
+      // остаток запросом в базу и поставит верный статус.
+      if (warehouse.allTmc.isEmpty) return true;
       for (final paper in selectedPapers) {
         final paperId = (paper.id ?? '').trim();
         final double need = paper.quantity > 0
@@ -3209,7 +3573,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return true;
     }
 
-    final bool wasAlreadyLaunched = widget.order?.assignmentCreated ?? false;
+    /// Хватает ли краски — по тем же правилам, что и на сервере.
+    ///
+    /// Считаем прямо здесь, чтобы карточка не мигала: без этой проверки заказ
+    /// с ненайденной краской сначала сохранялся «Готов к запуску», и только
+    /// следующий за сохранением `applyMaterialAvailability` опускал его в
+    /// «Ожидание материалов».
+    bool hasEnoughPaintForLaunch() {
+      if (warehouse.allTmc.isEmpty) return true;
+      for (final row in _paints) {
+        final name = row.displayName.trim();
+        final need = row.qtyGrams ?? 0;
+        if (name.isEmpty || need <= 0) continue;
+        // Краски нет в справочнике — обеспечить заказ нечем.
+        if (row.tmc == null) return false;
+        if (_gramsToStockUnit(need, row.tmc!) > _paintAvailableQty(row.tmc!)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    final bool wasAlreadyLaunched = sourceOrder?.assignmentCreated ?? false;
     if (wasAlreadyLaunched) {
       await _loadRuntimeEditLocks();
     }
@@ -3230,28 +3615,107 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       _syncSwitchableStageSelectionFields(stageMaps);
     }
     final bool hasQueueForStatus = hasEffectiveStageQueue;
-    final bool hasEnoughMaterialsForQueue = hasEnoughPaperForLaunch();
+    // Форма есть, а краска не выбрана — заказ печатать нечем. Это не нехватка
+    // на складе: докупать нечего, пока менеджер не назовёт краску. Правило —
+    // paintSelectionMissing, пересчёт в OrdersProvider повторяет его по
+    // сохранённому составу.
+    final bool paintNotSelected = paintSelectionMissing(
+      hasForm: _hasForm,
+      paintLineCount:
+          _paints.where((p) => p.displayName.trim().isNotEmpty).length,
+    );
+    final bool hasEnoughMaterialsForQueue = !paintNotSelected &&
+        hasEnoughPaperForLaunch() &&
+        hasEnoughPaintForLaunch();
+
+    // Бумага без «Длины L» и краска без граммовки — незаконченный заказ, а не
+    // нехватка на складе: такой заказ сохраняется черновиком. Раньше пустое
+    // количество читалось всеми проверками как «нехватки нет», и заказ уходил
+    // в «Готов к запуску», не проверив материал ни разу. Правило и его разбор —
+    // в materialsWithoutQuantity.
+    final List<String> materialsMissingQuantity = materialsWithoutQuantity(
+      papers: selectedPapers,
+      paints: _paints.map(
+        (paint) => OrderPaintLine(
+          name: paint.displayName,
+          qtyGrams: paint.qtyGrams,
+        ),
+      ),
+    );
+    final bool materialDataComplete = materialsMissingQuantity.isEmpty;
+
     final bool canLaunchProductionNow =
-        hasQueueForStatus && hasEnoughMaterialsForQueue;
+        hasQueueForStatus && hasEnoughMaterialsForQueue && materialDataComplete;
     final String nextOrderStatus = wasAlreadyLaunched
-        ? widget.order!.status
-        : (!hasQueueForStatus
+        ? sourceOrder!.status
+        : ((!hasQueueForStatus || !materialDataComplete)
             ? OrderStatus.draft.name
             : (canLaunchProductionNow
                 ? OrderStatus.ready_to_start.name
                 : OrderStatus.waiting_materials.name));
     final bool nextHasMaterialShortage = wasAlreadyLaunched
-        ? widget.order!.hasMaterialShortage
-        : (hasQueueForStatus && !hasEnoughMaterialsForQueue);
+        ? sourceOrder!.hasMaterialShortage
+        : (hasQueueForStatus &&
+            materialDataComplete &&
+            !hasEnoughMaterialsForQueue);
+    // Текст нехватки для ненайденной краски пишем сразу и подробно: сколько
+    // и чего заказать. Общая фраза «недостаточно материала» снабженцу
+    // бесполезна — по ней не понять ни краски, ни граммов.
+    final String unknownPaintMessage = unknownPaints.isEmpty
+        ? ''
+        : unknownPaints.map((name) {
+            final row = _paints.firstWhere(
+              (p) => p.displayName.trim() == name,
+              orElse: () => _PaintEntry(name: name),
+            );
+            return missingPaintShortageMessage(
+              paintName: name,
+              neededGrams: row.qtyGrams ?? 0,
+            );
+          }).join(' ');
+
     final String shortageMessage = wasAlreadyLaunched
-        ? widget.order!.materialShortageMessage
-        : (!hasQueueForStatus
+        ? sourceOrder!.materialShortageMessage
+        : (!hasQueueForStatus || !materialDataComplete
             ? ''
             : (hasEnoughMaterialsForQueue
                 ? ''
-                : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'));
+                : (paintNotSelected
+                    ? kPaintNotSelectedShortageMessage
+                    : (unknownPaintMessage.isNotEmpty
+                        ? unknownPaintMessage
+                        : 'Недостаточно материала на складе. Пополните склад и запустите заказ вручную.'))));
+
+    // Сообщаем до pop: экран закрывается сразу, а SnackBar живёт в корневом
+    // ScaffoldMessenger и доедет до списка заказов. Молча уронить заказ в
+    // черновик нельзя — менеджер не поймёт, почему он не запускается.
+    if (!wasAlreadyLaunched && unknownPaints.isNotEmpty && mounted) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Заказ сохранён и ждёт материалов: '
+            '${unknownPaints.length == 1 ? 'краски' : 'красок'} '
+            '${unknownPaints.map((n) => '«$n»').join(', ')} нет на складе.',
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+    if (!wasAlreadyLaunched && !materialDataComplete && mounted) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Заказ сохранён черновиком: не указано количество — '
+            '${materialsMissingQuantity.join(', ')}.',
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+
+    // Keep the editor and its lease alive through every save operation.
     late OrderModel createdOrUpdatedOrder;
-    if (widget.order == null) {
+    if (sourceOrder == null) {
       // создаём новый заказ
       final _created = await provider.createOrder(
         manager: managerName,
@@ -3264,7 +3728,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ? '-'
             : _selectedHandleDescription,
         cardboard: _selectedCardboard,
-        material: _selectedMaterial,
+        // Не `_selectedMaterial`: он приходит из панели склада без метража и
+        // с единицей «шт». Первая позиция selectedPapers — та же бумага, но
+        // уже с «Длиной L» и в метрах. Раньше в orders.material улетало
+        // quantity = 0, и все экраны, читающие это поле, показывали ноль,
+        // хотя в material_list лежало правильное количество.
+        material: selectedPapers.isNotEmpty
+            ? selectedPapers.first
+            : _selectedMaterial,
         paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
@@ -3273,6 +3744,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         pdfUrl: widget.initialOrder?.pdfUrl,
         stageTemplateId: _stageTemplateId,
         hasForm: _hasForm,
+        formId: _hasForm
+            ? (_selectedOldFormRow?['id']?.toString() ??
+                (!_editingForm ? _orderFormId : null))
+            : null,
+        isOldForm: _isOldForm,
         // Временно отключено в форме создания/редактирования заказа.
         contractSigned: false,
         paymentDone: false,
@@ -3288,16 +3764,33 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         restartRootOrderId: widget.initialOrder?.restartRootOrderId,
         restartGeneration: widget.initialOrder?.restartGeneration ?? 0,
         productTypeId: _currentProductTypeId(),
+        extraOptions: _extraOptionsForPersist(),
       );
       if (_created == null) {
-        if (mounted) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Не удалось создать заказ')),
-          );
-        }
+        _showBackgroundSaveSnackBar('Не удалось создать заказ', isError: true);
         return;
       }
       createdOrUpdatedOrder = _created;
+      if (widget.order == null) _createdDuringSave = createdOrUpdatedOrder;
+      _createdDuringSave = _created;
+      // Заказ уже вставлен в базу. Второго редактора у только что созданного
+      // заказа быть не может, поэтому неудачный захват (нет серверных функций,
+      // оборвалась сеть) не должен прерывать сохранение: краски, файлы, форма
+      // и очередь пишутся следующими шагами, и без них заказ остался бы
+      // наполовину записанным.
+      final createdLease = OrderEditLease(_created.id);
+      var leaseAcquired = false;
+      try {
+        leaseAcquired =
+            await createdLease.acquire() == OrderEditLeaseStatus.acquired;
+      } catch (e) {
+        debugPrint('❌ order edit lease: не удалось занять новый заказ: $e');
+      }
+      if (leaseAcquired) {
+        _createdLease = createdLease;
+      } else {
+        createdLease.dispose();
+      }
       // Возобновление из архива: переносим метаданные PDF-файлов исходного
       // заказа на новый order id. Объекты в Storage не дублируются —
       // используются те же objectPath (компромисс: удаление файла в одном
@@ -3336,21 +3829,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ((_orderFormNo != null) ||
                   (_orderFormCode != null &&
                       _orderFormCode!.trim().isNotEmpty))) ||
-          widget.order!.hasForm;
+          sourceOrder.hasForm;
       final bool effectivePersistedIsOldForm =
-          _orderFormIsOld ?? widget.order!.isOldForm;
+          _orderFormIsOld ?? sourceOrder.isOldForm;
       final int? effectivePersistedFormNo =
-          _orderFormNo ?? widget.order!.newFormNo;
+          _orderFormNo ?? sourceOrder.newFormNo;
       final String? effectivePersistedFormSeries =
-          _orderFormSeries ?? widget.order!.formSeries;
+          _orderFormSeries ?? sourceOrder.formSeries;
       final String? effectivePersistedFormCode =
-          _orderFormCode ?? widget.order!.formCode;
+          _orderFormCode ?? sourceOrder.formCode;
 
       final List<MaterialModel> oldPapers =
-          widget.order!.paperMaterials.isNotEmpty
-              ? widget.order!.paperMaterials
+          sourceOrder.paperMaterials.isNotEmpty
+              ? sourceOrder.paperMaterials
               : <MaterialModel>[
-                  if (widget.order!.material != null) widget.order!.material!,
+                  if (sourceOrder.material != null) sourceOrder.material!,
                 ];
       final bool paperChanged = oldPapers.length != selectedPapers.length ||
           oldPapers.asMap().entries.any((entry) {
@@ -3362,7 +3855,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           });
       // обновляем существующий заказ, сохраняя assignmentId/assignmentCreated
       final updated = OrderModel(
-        id: widget.order!.id,
+        id: sourceOrder.id,
         manager: managerName,
         customer: _customerController.text.trim(),
         orderDate: _orderDate!,
@@ -3373,11 +3866,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             ? '-'
             : _selectedHandleDescription,
         cardboard: _selectedCardboard,
-        material: _selectedMaterial,
+        // Не `_selectedMaterial`: он приходит из панели склада без метража и
+        // с единицей «шт». Первая позиция selectedPapers — та же бумага, но
+        // уже с «Длиной L» и в метрах. Раньше в orders.material улетало
+        // quantity = 0, и все экраны, читающие это поле, показывали ноль,
+        // хотя в material_list лежало правильное количество.
+        material: selectedPapers.isNotEmpty
+            ? selectedPapers.first
+            : _selectedMaterial,
         paperMaterials: selectedPapers,
         makeready: _makeready,
         val: _val,
-        pdfUrl: widget.order!.pdfUrl,
+        pdfUrl: sourceOrder.pdfUrl,
         stageTemplateId: _stageTemplateId,
         // На этапе базового сохранения не перетираем уже привязанную форму.
         // Фактическая запись формы всегда выполняется позже в _processFormAssignment.
@@ -3386,6 +3886,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         newFormNo: effectivePersistedFormNo,
         formSeries: effectivePersistedFormSeries,
         formCode: effectivePersistedFormCode,
+        formId: _selectedOldFormRow?['id']?.toString() ??
+            _orderFormId ?? sourceOrder.formId,
         // Временно отключено в форме создания/редактирования заказа.
         contractSigned: false,
         paymentDone: false,
@@ -3393,8 +3895,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         status: nextOrderStatus,
         hasMaterialShortage: nextHasMaterialShortage,
         materialShortageMessage: shortageMessage,
-        assignmentId: widget.order!.assignmentId,
-        assignmentCreated: widget.order!.assignmentCreated,
+        assignmentId: sourceOrder.assignmentId,
+        assignmentCreated: sourceOrder.assignmentCreated,
         queueBuildStatus: nextQueueBuildStatus,
         selectedVStage: _persistedSelectedVStage(nextQueueBuildStatus),
         selectedPStage: _persistedSelectedPStage(nextQueueBuildStatus),
@@ -3404,22 +3906,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         // Связи возобновления обязаны переживать пересохранение:
         // updateOrder пишет toMap(includeNulls: true), и без этих полей
         // каждый сейв затирал бы цепочку поколений в БД.
-        restartedFromOrderId: widget.order!.restartedFromOrderId,
-        restartRootOrderId: widget.order!.restartRootOrderId,
-        restartGeneration: widget.order!.restartGeneration,
+        restartedFromOrderId: sourceOrder.restartedFromOrderId,
+        restartRootOrderId: sourceOrder.restartRootOrderId,
+        restartGeneration: sourceOrder.restartGeneration,
         // По той же причине сохраняем данные производства/отгрузки:
         // без них пересохранение завершённого заказа обнуляло бы
         // actual_qty/shipped_* в БД.
-        actualQty: widget.order!.actualQty,
-        shippedAt: widget.order!.shippedAt,
-        shippedBy: widget.order!.shippedBy,
-        shippedQty: widget.order!.shippedQty,
+        actualQty: sourceOrder.actualQty,
+        shippedAt: sourceOrder.shippedAt,
+        shippedBy: sourceOrder.shippedBy,
+        shippedQty: sourceOrder.shippedQty,
         // Если тип продукта не выбран, здесь остаётся null, и toMap не кладёт
         // ключ в payload вовсе — прежнее значение колонки не затирается.
-        productTypeId: _currentProductTypeId() ?? widget.order!.productTypeId,
+        productTypeId: _currentProductTypeId() ?? sourceOrder.productTypeId,
+        // Справочник ещё не читался — ключ не уйдёт в payload, и выбранные
+        // опции заказа останутся нетронутыми (см. [_extraOptionsForPersist]).
+        extraOptions: _extraOptionsForPersist() ?? sourceOrder.extraOptions,
       );
       await provider.updateOrder(updated);
       createdOrUpdatedOrder = updated;
+      if (widget.order == null) _createdDuringSave = createdOrUpdatedOrder;
     }
 
     final String effectiveNextOrderStatus = nextOrderStatus;
@@ -3433,6 +3939,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       );
       await provider.updateOrder(normalized);
       createdOrUpdatedOrder = normalized;
+      if (widget.order == null) _createdDuringSave = createdOrUpdatedOrder;
     }
 
     // Присвоим читаемый номер заказа (ЗК-YYYY.MM.DD-N), если ещё не присвоен
@@ -3448,7 +3955,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             createdOrUpdatedOrder.copyWith(assignmentId: humanId);
         await provider.updateOrder(withReadable);
         createdOrUpdatedOrder = withReadable;
-      } catch (_) {}
+      if (widget.order == null) _createdDuringSave = createdOrUpdatedOrder;
+      } catch (_) { rethrow; }
     }
     // Загружаем все выбранные PDF заказа при необходимости.
     // Привязка PDF к форме выполняется НЕ здесь, а после _processFormAssignment
@@ -3465,11 +3973,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           );
         } catch (e) {
           debugPrint('❌ upload order pdf ${f.name}: $e');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Ошибка загрузки ${f.name}: $e')),
-            );
-          }
+          rethrow;
         }
       }
       if (lastUploaded != null) {
@@ -3477,7 +3981,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         await provider.updateOrder(createdOrUpdatedOrder);
       }
       _pickedOrderPdfs = [];
-      await _loadSavedOrderPdfs();
+      // Экран уже мог быть закрыт (фоновое сохранение) — эта загрузка нужна
+      // только для обновления списка файлов на самом экране редактирования.
+      if (mounted) {
+        await _loadSavedOrderPdfs();
+      }
     }
     if (willSaveBuiltStageQueue) {
       // Сохраняем фактическую очередь заказа через общий сервис.
@@ -3509,22 +4017,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           );
         }
       } on OrderQueueSyncBlockedException catch (error) {
-        if (!isCreating && widget.order != null) {
+        if (!isCreating && sourceOrder != null) {
           final restoredQueueState = createdOrUpdatedOrder.copyWith(
-            stageTemplateId: widget.order!.stageTemplateId,
-            queueBuildStatus: widget.order!.queueBuildStatus,
-            selectedVStage: widget.order!.selectedVStage,
-            selectedPStage: widget.order!.selectedPStage,
-            queueSignature: widget.order!.queueSignature,
+            stageTemplateId: sourceOrder.stageTemplateId,
+            queueBuildStatus: sourceOrder.queueBuildStatus,
+            selectedVStage: sourceOrder.selectedVStage,
+            selectedPStage: sourceOrder.selectedPStage,
+            queueSignature: sourceOrder.queueSignature,
           );
           await provider.updateOrder(restoredQueueState);
           createdOrUpdatedOrder = restoredQueueState;
-          _queueBuildStatus = widget.order!.queueBuildStatus;
-          _queueSignature = widget.order!.queueSignature;
+      if (widget.order == null) _createdDuringSave = createdOrUpdatedOrder;
+          _queueBuildStatus = sourceOrder.queueBuildStatus;
+          _queueSignature = sourceOrder.queueSignature;
         }
-        if (mounted) {
-          messenger.showSnackBar(SnackBar(content: Text(error.message)));
-        }
+        _showBackgroundSaveSnackBar(error.message, isError: true);
         return;
       } catch (error) {
         final failedOrder = createdOrUpdatedOrder.copyWith(
@@ -3535,24 +4042,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               isCreating ? false : createdOrUpdatedOrder.hasMaterialShortage,
           materialShortageMessage:
               isCreating ? '' : createdOrUpdatedOrder.materialShortageMessage,
-          stageTemplateId: !isCreating && widget.order != null
-              ? widget.order!.stageTemplateId
+          stageTemplateId: !isCreating && sourceOrder != null
+              ? sourceOrder.stageTemplateId
               : createdOrUpdatedOrder.stageTemplateId,
           queueBuildStatus: isCreating
               ? QueueBuildStatus.notBuilt
-              : (widget.order?.queueBuildStatus ??
+              : (sourceOrder?.queueBuildStatus ??
                   createdOrUpdatedOrder.queueBuildStatus),
           selectedVStage: isCreating
               ? ''
-              : (widget.order?.selectedVStage ??
+              : (sourceOrder?.selectedVStage ??
                   createdOrUpdatedOrder.selectedVStage),
           selectedPStage: isCreating
               ? ''
-              : (widget.order?.selectedPStage ??
+              : (sourceOrder?.selectedPStage ??
                   createdOrUpdatedOrder.selectedPStage),
           queueSignature: isCreating
               ? const <String, dynamic>{}
-              : (widget.order?.queueSignature ??
+              : (sourceOrder?.queueSignature ??
                   createdOrUpdatedOrder.queueSignature),
         );
         await provider.updateOrder(failedOrder);
@@ -3560,17 +4067,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           _queueBuildStatus = QueueBuildStatus.notBuilt;
           _queueSignature = null;
         }
-        if (mounted) {
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text(
-                error is OrderQueueSaveException
-                    ? error.message
-                    : '$kCreateProductionTasksFailedMessage: $error',
-              ),
-            ),
-          );
-        }
+        _showBackgroundSaveSnackBar(
+          error is OrderQueueSaveException
+              ? error.message
+              : '$kCreateProductionTasksFailedMessage: $error',
+          isError: true,
+        );
         return;
       }
       if (!queueSaveResult.productionTasksCreated) {
@@ -3586,13 +4088,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         await provider.updateOrder(failedOrder);
         _queueBuildStatus = QueueBuildStatus.notBuilt;
         _queueSignature = null;
-        if (mounted) {
-          messenger.showSnackBar(
-            const SnackBar(
-              content: Text(kCreateProductionTasksFailedMessage),
-            ),
-          );
-        }
+        _showBackgroundSaveSnackBar(kCreateProductionTasksFailedMessage,
+            isError: true);
         return;
       }
       createdOrUpdatedOrder = createdOrUpdatedOrder.copyWith(
@@ -3601,6 +4098,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         selectedPStage: _selectedPStage,
         queueSignature: currentQueueSignature,
       );
+      if (widget.order == null) _createdDuringSave = createdOrUpdatedOrder;
       _queueBuildStatus = QueueBuildStatus.built;
       _queueSignature = currentQueueSignature;
     }
@@ -3608,6 +4106,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     // Сначала синхронизируем список красок, чтобы в просмотре заказа
     // изменения были видны сразу после сохранения.
     await _persistPaints(createdOrUpdatedOrder.id);
+
+    // Пересчёт обеспеченности ПОСЛЕ красок — иначе нехватка краски заказ не
+    // останавливает.
+    //
+    // Бронь краски пишется в order_paint_reservations, а записать её можно
+    // только зная id заказа, поэтому _persistPaints идёт последним. Проверка
+    // же (_hasEnoughPaintForLaunch) читает ровно эту таблицу, и вызывалась она
+    // раньше — внутри createOrder/updateOrder. У нового заказа брони там ещё
+    // не было вовсе, у правленого лежала прежняя, поэтому краски не хватало,
+    // а заказ уходил в «Готов к запуску». Бумага работала правильно только
+    // потому, что живёт в самом заказе и сохраняется вместе с ним.
+    if (!wasAlreadyLaunched) {
+      await provider.applyMaterialAvailability(createdOrUpdatedOrder.id);
+    }
 
     // === Обработка формы ===
     // _editingForm сбрасывается внутри _processFormAssignment — запоминаем
@@ -3625,6 +4137,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           await uploadPickedFormPdf(formId: assignedFormId, file: f);
         } catch (e) {
           debugPrint('❌ upload new form pdf ${f.name}: $e');
+          rethrow;
         }
       }
       if (mounted) setState(() => _newFormPdfs = []);
@@ -3636,69 +4149,88 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         (didUploadOrderPdfs || isCreating || wasEditingForm)) {
       await _syncOrderPdfsToForm(createdOrUpdatedOrder.id, assignedFormId);
     }
+    // _processFormAssignment обнуляет список PDF формы — возвращаем его,
+    // иначе после сохранения документы формы исчезали из открытого экрана.
+    if (assignedFormId != null && mounted && _isOldForm) {
+      await _loadOldFormPdfsFor(assignedFormId);
+    }
     // === Конец обработки формы ===
 
     // _processFormAssignment пишет в БД напрямую, минуя provider.
-    // Обновляем provider, чтобы карточка деталей заказа сразу показала форму.
+    // Обновляем provider, чтобы список/карточка заказа сразу показали
+    // актуальные данные (экран редактирования к этому моменту уже закрыт).
     await provider.refresh();
-
-    if (!mounted) return;
 
     // Бизнес-правило: в создании/редактировании заказа списание бумаги отключено полностью.
 
     if (!createdOrUpdatedOrder.assignmentCreated &&
         nextQueueBuildStatus == QueueBuildStatus.outdated) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
-            'иначе заказ останется черновиком',
-          ),
-        ),
+      _showBackgroundSaveSnackBar(
+        'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
+        'иначе заказ останется черновиком',
       );
     } else if (!createdOrUpdatedOrder.assignmentCreated &&
         !hasQueueForStatus) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Очередь этапов пока не построена автоматически: выберите тип '
-            'продукта и параметры заказа',
-          ),
-        ),
+      _showBackgroundSaveSnackBar(
+        'Очередь этапов пока не построена автоматически: выберите тип '
+        'продукта и параметры заказа',
+      );
+    } else if (!createdOrUpdatedOrder.assignmentCreated && paintNotSelected) {
+      // «Недостаточно материала» здесь соврало бы: склад ни при чём, заказу
+      // не хватает решения менеджера.
+      _showBackgroundSaveSnackBar(
+        'Заказ сохранён и ждёт материалов: в заказе есть форма, но не '
+        'выбрана краска. Добавьте краску — заказ сам станет готов к запуску.',
       );
     } else if (!createdOrUpdatedOrder.assignmentCreated &&
         !canLaunchProductionNow) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Заказ сохранён без запуска: недостаточно материала на складе. '
-            'Запустите заказ позже кнопкой «Запустить».',
-          ),
-        ),
+      _showBackgroundSaveSnackBar(
+        'Заказ сохранён без запуска: недостаточно материала на складе. '
+        'Запустите заказ позже кнопкой «Запустить».',
       );
     } else if (!createdOrUpdatedOrder.assignmentCreated &&
         canLaunchProductionNow) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('Заказ сохранён и готов к запуску. Нажмите «Запустить».'),
-        ),
+      _showBackgroundSaveSnackBar(
+        'Заказ сохранён и готов к запуску. Нажмите «Запустить».',
       );
+    } else {
+      _showBackgroundSaveSnackBar('Заказ сохранён');
     }
 
+    // Release only after every write has completed successfully.
+    if (mounted) {
+      setState(() => _isSavingOrder = false);
+      await WidgetsBinding.instance.endOfFrame;
+      if (mounted) Navigator.of(context).pop();
+    }
     // Списание лишнего выполняется на этапе отгрузки.
-
-    await _goToOrdersModuleHome();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось сохранить заказ: $e')),
-        );
-      }
+      // Показываем причину, а не дамп исключения: `$e` на PostgrestException
+      // разворачивается в «PostgrestException(message: …, code: …, details:
+      // Bad Request, hint: null)», и сотрудник читает служебные поля вместо
+      // единственной значимой строки — текста, который написал сервер.
+      _showBackgroundSaveSnackBar(
+          'Не удалось сохранить заказ: ${_describeSaveError(e)}',
+          isError: true);
     } finally {
       if (mounted) {
         setState(() => _isSavingOrder = false);
       }
     }
+  }
+
+  /// Текст ошибки сохранения для человека.
+  ///
+  /// У серверных запретов (`raise exception` в триггерах и RPC) вся суть — в
+  /// `message`; остальные поля PostgrestException для сотрудника шум.
+  static String _describeSaveError(Object error) {
+    if (error is PostgrestException) {
+      final message = error.message.trim();
+      if (message.isNotEmpty) return message;
+      final details = (error.details ?? '').toString().trim();
+      if (details.isNotEmpty) return details;
+    }
+    return error.toString();
   }
 
   String _formatDecimal(double value, {int fractionDigits = 2}) {
@@ -3847,14 +4379,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     int? persistedFormNo;
     String? persistedFormSeries;
     String? persistedFormCode;
+    String? persistedFormId;
     try {
       final persisted = await _sb
           .from('orders')
-          .select('has_form, is_old_form, new_form_no, form_series, form_code')
+          .select('has_form, is_old_form, form_id, new_form_no, form_series, form_code')
           .eq('id', order.id)
           .maybeSingle();
       final persistedHasFormFlag = persisted?['has_form'] as bool?;
       persistedIsOldForm = persisted?['is_old_form'] as bool?;
+      persistedFormId = persisted?['form_id']?.toString();
       persistedFormNo = ((persisted?['new_form_no'] as num?)?.toInt());
       final persistedSeriesRaw = (persisted?['form_series'] ?? '').toString();
       final persistedCodeRaw = (persisted?['form_code'] ?? '').toString();
@@ -3891,13 +4425,14 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // Форма не менялась, но id нужен вызывающему коду для линковки PDF.
       try {
         return await findFormIdByOrderFormRef(
+          formId: persistedFormId ?? _orderFormId,
           formCode: persistedFormCode ?? _orderFormCode,
           formSeries: persistedFormSeries ?? _orderFormSeries,
           formNo: persistedFormNo ?? _orderFormNo,
         );
       } catch (e) {
         debugPrint('❌ _processFormAssignment: resolve form id failed: $e');
-        return null;
+        rethrow;
       }
     }
 
@@ -3912,6 +4447,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             .from('orders')
             .update({
               'has_form': false,
+              'form_id': null,
               'is_old_form': false,
               'new_form_no': null,
               'form_series': null,
@@ -3921,6 +4457,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (!mounted) return null;
         setState(() {
           _orderFormIsOld = null;
+          _orderFormId = null;
           _orderFormNo = null;
           _orderFormSeries = null;
           _orderFormCode = null;
@@ -3967,18 +4504,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           rawProductType = form['product_type'];
           rawColors = form['colors'] ?? form['description'];
           rawImageUrl = form['image_url'];
-        } else if (_selectedOldForm != null &&
-            _selectedOldForm!.trim().isNotEmpty) {
-          final code = _selectedOldForm!.trim();
-          final digitsMatch = RegExp(r'\d+').firstMatch(code);
-          final digits = digitsMatch?.group(0);
-          if (digits != null) {
-            selectedFormNumber = int.tryParse(digits);
-          }
-          final seriesMatch = RegExp(r'^[A-Za-zА-Яа-я]+').firstMatch(code);
-          rawSeries = seriesMatch?.group(0);
-          rawCode = code;
         } else if (hadFormBefore && (_orderFormIsOld ?? false)) {
+          resolvedFormId = persistedFormId ?? _orderFormId;
           selectedFormNumber = _orderFormNo;
           rawSeries = _orderFormSeries;
           rawCode = _orderFormCode;
@@ -3990,7 +4517,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
         final hasCode = rawCode != null && rawCode.toString().trim().isNotEmpty;
         if (selectedFormNumber == null && !hasCode) {
-          return null;
+          throw StateError('Выберите существующую форму из списка склада');
         }
       } else {
         final formColors = _composeFormColors();
@@ -4009,6 +4536,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         final bool reuseAssignedForm =
             _hasAssignedForm() && !(_orderFormIsOld ?? false) && !_editingForm;
         if (reuseAssignedForm) {
+          resolvedFormId = persistedFormId ?? _orderFormId;
           selectedFormNumber = _orderFormNo;
           rawSeries = _orderFormSeries;
           rawCode = _orderFormCode;
@@ -4065,14 +4593,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       final String? sanitizedColors = _sanitizeText(rawColors);
       final String? sanitizedImageUrl = _sanitizeText(rawImageUrl);
 
+      resolvedFormId ??= await findFormIdByOrderFormRef(
+        formCode: sanitizedCode,
+        formSeries: sanitizedSeries,
+        formNo: selectedFormNumber,
+      );
+      if (resolvedFormId == null) {
+        throw StateError('Не удалось найти форму на складе');
+      }
+
       final response = await _sb
           .from('orders')
           .update({
             'has_form': true,
+            'form_id': resolvedFormId,
             'is_old_form': isOldFormValue,
-            'new_form_no': selectedFormNumber,
-            'form_series': sanitizedSeries,
-            'form_code': sanitizedCode,
           })
           .eq('id', order.id)
           .select()
@@ -4082,23 +4617,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         throw 'empty response';
       }
 
-      // Фолбэк-ветки (реюз реквизитов) не знают id формы — резолвим по
-      // только что записанным реквизитам.
-      if (resolvedFormId == null) {
-        try {
-          resolvedFormId = await findFormIdByOrderFormRef(
-            formCode: sanitizedCode,
-            formSeries: sanitizedSeries,
-            formNo: selectedFormNumber,
-          );
-        } catch (e) {
-          debugPrint('❌ _processFormAssignment: resolve form id failed: $e');
-        }
-      }
-
       if (!mounted) return resolvedFormId;
 
       setState(() {
+        _orderFormId = resolvedFormId;
         _orderFormIsOld = isOldFormValue;
         _orderFormNo = selectedFormNumber;
         _orderFormSeries = sanitizedSeries;
@@ -4127,18 +4649,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       return resolvedFormId;
     } catch (e) {
       debugPrint('❌ _processFormAssignment error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось сохранить форму')),
-        );
-      }
-      return null;
+      rethrow;
     }
   }
 
   /// Линкует все PDF заказа к форме [formId] (source='order', без
   /// физического копирования файлов). Уже существующие связи (по objectPath)
-  /// не дублируются. Ошибки не прерывают сохранение заказа, но логируются.
+  /// не дублируются. Ошибка оставляет редактор открытым для повторного сохранения.
   Future<void> _syncOrderPdfsToForm(String orderId, String formId) async {
     try {
       final orderFiles = await listOrderFiles(orderId);
@@ -4166,11 +4683,35 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     } catch (e) {
       debugPrint('❌ _syncOrderPdfsToForm($orderId -> $formId): $e');
+      rethrow;
     }
   }
 
+  /// Закреплена ли выдвижная панель материалов кнопкой в шапке. По умолчанию
+  /// закрыта: она нужна точечно, при подборе бумаги, а постоянная колонка
+  /// сжимала форму.
+  bool _materialsPanelOpen = false;
+
+  /// Курсор у правого края экрана — панель материалов выезжает без клика.
+  bool _materialsEdgeHover = false;
+
+  /// Курсор внутри самой панели — держим её открытой, пока он не ушёл.
+  bool _materialsPanelHover = false;
+
+  static OutlineInputBorder _orderFieldBorder(Color color, [double w = 1]) =>
+      OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(OrderFormMetrics.fieldRadius),
+        borderSide: BorderSide(color: color, width: w),
+      );
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_isSavingOrder,
+    child: AbsorbPointer(absorbing: _isSavingOrder, child: _buildEditor(context)),
+  );
+
+  Widget _buildEditor(BuildContext context) {
     final isEditing = widget.order != null;
     final hasAssignedForm = _hasAssignedForm();
     final showFormSummary = isEditing && hasAssignedForm && !_editingForm;
@@ -4187,13 +4728,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // Use the densest visual density available to minimize vertical space.
       visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
       textTheme: compactTextTheme,
+      // Вид полей задаём темой, а не в каждом TextFormField: их на экране
+      // несколько десятков, и правка по месту разъехалась бы на первом же
+      // новом поле.
       inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
         isDense: true,
-        // Tighten content padding to reduce field height further.
+        filled: true,
+        fillColor: OrderFormColors.fieldFill,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: 1,
+          horizontal: 10,
+          vertical: 8,
         ),
+        hintStyle: const TextStyle(
+          fontSize: 12,
+          color: OrderFormColors.placeholder,
+        ),
+        labelStyle:
+            const TextStyle(fontSize: 12, color: OrderFormColors.label),
+        border: _orderFieldBorder(OrderFormColors.border),
+        enabledBorder: _orderFieldBorder(OrderFormColors.border),
+        focusedBorder: _orderFieldBorder(OrderFormColors.accent, 1.4),
+        disabledBorder: _orderFieldBorder(OrderFormColors.border),
       ),
     );
     final formSections = [
@@ -4206,7 +4761,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
     ];
     return Scaffold(
+      backgroundColor: OrderFormColors.background,
       appBar: AppBar(
+        backgroundColor: OrderFormColors.surface,
+        surfaceTintColor: OrderFormColors.surface,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: const Border(
+          bottom: BorderSide(color: OrderFormColors.border),
+        ),
+        titleTextStyle: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: OrderFormColors.text,
+        ),
+        iconTheme: const IconThemeData(color: OrderFormColors.muted),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed:
@@ -4232,22 +4801,65 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 );
               },
             ),
+          // Переключатель панели материалов: активная кнопка — сиреневая.
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: FilledButton.tonalIcon(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: OutlinedButton.icon(
+              onPressed: () => setState(
+                  () => _materialsPanelOpen = !_materialsPanelOpen),
+              icon: const Icon(Icons.view_sidebar_outlined, size: 15),
+              label: const Text('Материалы'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                textStyle: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600),
+                foregroundColor: _materialsPanelOpen
+                    ? OrderFormColors.accent
+                    : OrderFormColors.muted,
+                backgroundColor: _materialsPanelOpen
+                    ? OrderFormColors.accentSoft
+                    : OrderFormColors.surface,
+                side: BorderSide(
+                  color: _materialsPanelOpen
+                      ? OrderFormColors.accentBorder
+                      : OrderFormColors.border,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: FilledButton.icon(
               style: FilledButton.styleFrom(
                 visualDensity: VisualDensity.compact,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                backgroundColor: OrderFormColors.accent,
+                foregroundColor: Colors.white,
+                textStyle: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: _isSavingOrder ? null : _saveOrder,
               icon: _isSavingOrder
                   ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
-                  : const Icon(Icons.save_outlined, size: 18),
+                  : const Icon(Icons.save_outlined, size: 15),
               label: Text(_isSavingOrder ? 'Сохранение…' : 'Сохранить'),
             ),
           ),
@@ -4278,8 +4890,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 if (confirmed && mounted) {
                   final provider =
                       Provider.of<OrdersProvider>(context, listen: false);
-                  await provider.deleteOrder(widget.order!.id);
-                  if (mounted) Navigator.of(context).pop();
+                  final messenger = ScaffoldMessenger.of(context);
+                  final error = await provider.deleteOrder(widget.order!.id);
+                  if (!mounted) return;
+                  if (error != null) {
+                    // Молчаливый откат раньше выглядел как «заказ исчез и
+                    // сразу вернулся»: причину не видел никто.
+                    messenger.showSnackBar(SnackBar(content: Text(error)));
+                    return;
+                  }
+                  Navigator.of(context).pop();
                 }
               },
             ),
@@ -4342,24 +4962,53 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 return formList;
               }
 
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              // Панель материалов больше не отнимает колонку постоянно: она
+              // выезжает поверх формы по кнопке «Материалы» в шапке или при
+              // наведении курсора на правый край. Форме остаётся вся ширина —
+              // четыре колонки перестают тесниться.
+              const panelWidth = 300.0;
+              final bool materialsVisible = _materialsPanelOpen ||
+                  _materialsEdgeHover ||
+                  _materialsPanelHover;
+              return Stack(
                 children: [
-                  Expanded(
-                    // Give more space to the form area for multi-column rows.
-                    flex: 6,
-                    child: SizedBox(
-                      height: constraints.maxHeight,
-                      child: formList,
+                  SizedBox(
+                    height: constraints.maxHeight,
+                    width: constraints.maxWidth,
+                    child: formList,
+                  ),
+                  // Полоса-триггер у правого края: курсор доходит до края —
+                  // панель выезжает. Когда она открыта, полоса накрыта самой
+                  // панелью, поэтому закрытие считает уже её MouseRegion.
+                  Positioned(
+                    top: 0,
+                    bottom: 0,
+                    right: 0,
+                    width: 12,
+                    child: MouseRegion(
+                      onEnter: (_) =>
+                          setState(() => _materialsEdgeHover = true),
+                      onExit: (_) =>
+                          setState(() => _materialsEdgeHover = false),
+                      child: const SizedBox.expand(),
                     ),
                   ),
-                  // Slightly reduce the warehouse panel width for better balance.
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: SizedBox(
-                      height: constraints.maxHeight,
-                      child: _buildWarehousePreviewPanel(),
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutCubic,
+                    top: 0,
+                    bottom: 0,
+                    right: materialsVisible ? 0 : -(panelWidth + 24),
+                    width: panelWidth,
+                    child: MouseRegion(
+                      onEnter: (_) =>
+                          setState(() => _materialsPanelHover = true),
+                      onExit: (_) =>
+                          setState(() => _materialsPanelHover = false),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: _buildWarehousePreviewPanel(),
+                      ),
                     ),
                   ),
                 ],
@@ -4384,7 +5033,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       builder: (context, constraints) {
         const spacing = 16.0;
 
-        return Row(
+        final sheet = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
@@ -4441,96 +5090,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       labelWidth: labelWidth,
                       child: _buildDimensionsField(),
                     ),
-                    _buildLabelRow(
-                      label: 'Ручки и картон',
-                      labelWidth: labelWidth,
-                      child: _buildHandlesSection(context, wrapWithCard: false),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: spacing),
-            Expanded(
-              child: _buildOrderSectionCard(
-                title: 'Печать',
-                icon: Icons.print_outlined,
-                backgroundColor: const Color(0xFFFFF4DE),
-                accentColor: const Color(0xFFF4A12F),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildLabelRow(
-                      label: 'Краски',
-                      labelWidth: labelWidth,
-                      child: _buildPaintsSection(wrapWithCard: false),
-                    ),
-                    _buildLabelRow(
-                      label: 'Форма',
-                      labelWidth: labelWidth,
-                      child: _buildFormSection(
-                        context: context,
-                        showFormSummary: showFormSummary,
-                        showFormEditor: showFormEditor,
-                        isEditing: isEditing,
-                        hasAssignedForm: hasAssignedForm,
-                        wrapWithCard: false,
+                    if (_isBlockVisible(kOrderFormBlockHandle) ||
+                        _isBlockVisible(kOrderFormBlockCardboard) ||
+                        _isBlockVisible(kOrderFormBlockTrimming))
+                      _buildLabelRow(
+                        label: 'Ручки и картон',
+                        labelWidth: labelWidth,
+                        child:
+                            _buildHandlesSection(context, wrapWithCard: false),
                       ),
-                    ),
-                    _buildLabelRow(
-                      label: 'PDF',
-                      labelWidth: labelWidth,
-                      child: _buildPdfAttachmentRow(),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: spacing),
-            Expanded(
-              child: _buildOrderSectionCard(
-                title: 'Бобинорезка',
-                icon: Icons.content_cut,
-                backgroundColor: const Color(0xFFEFEAFF),
-                accentColor: const Color(0xFF7A4CF0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildLabelRow(
-                      label: 'Склад и материалы',
-                      labelWidth: labelWidth,
-                      labelNote: () {
-                        final paperQty = _currentAvailablePaperQty();
-                        if (paperQty == null) return null;
-                        return 'Остаток бумаги по выбранному материалу: '
-                            '${paperQty.toStringAsFixed(2)}';
-                      }(),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildProductMaterialAndExtras(_product),
-                        ],
-                      ),
-                    ),
-                    _buildLabelRow(
-                      label: 'Приладка',
-                      labelWidth: labelWidth,
-                      child: _buildMakereadyFields(),
-                    ),
-                    _buildLabelRow(
-                      label: 'Комментарий',
-                      labelWidth: labelWidth,
-                      child: _buildCommentsSection(context, wrapWithCard: false),
-                    ),
-                    _buildLabelRow(
-                      label: 'Очередь',
-                      labelWidth: labelWidth,
-                      child: _buildProductionSection(
-                        context,
-                        wrapWithCard: false,
-                        includeMakeready: false,
-                      ),
-                    ),
+                    // Менеджер — в конце этой колонки, а не в «Бобинорезке»:
+                    // он относится к самому заказу, а не к материалу.
                     _buildLabelRow(
                       label: 'Менеджер',
                       labelWidth: labelWidth,
@@ -4540,9 +5110,247 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ),
               ),
             ),
+            // Карточки «Печать» нет вовсе, когда техлид выключил все три её
+            // блока: пустая карточка занимала бы колонку и сбивала с толку.
+            if (_isBlockVisible(kOrderFormBlockPaints) ||
+                _isBlockVisible(kOrderFormBlockForm) ||
+                _isBlockVisible(kOrderFormBlockPdf)) ...[
+              const SizedBox(width: spacing),
+              Expanded(
+                child: _buildOrderSectionCard(
+                  title: 'Печать',
+                  icon: Icons.print_outlined,
+                  backgroundColor: const Color(0xFFFFF4DE),
+                  accentColor: const Color(0xFFF4A12F),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_isBlockVisible(kOrderFormBlockPaints))
+                        _buildLabelRow(
+                          label: 'Краски',
+                          labelWidth: labelWidth,
+                          child: _buildPaintsSection(wrapWithCard: false),
+                        ),
+                      if (_isBlockVisible(kOrderFormBlockForm))
+                        _buildLabelRow(
+                          label: 'Форма',
+                          labelWidth: labelWidth,
+                          child: _buildFormSection(
+                            context: context,
+                            showFormSummary: showFormSummary,
+                            showFormEditor: showFormEditor,
+                            isEditing: isEditing,
+                            hasAssignedForm: hasAssignedForm,
+                            wrapWithCard: false,
+                          ),
+                        ),
+                      if (_isBlockVisible(kOrderFormBlockPdf))
+                        _buildLabelRow(
+                          label: 'PDF',
+                          labelWidth: labelWidth,
+                          child: _buildPdfAttachmentRow(),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(width: spacing),
+            // Колонка, а не одна карточка: «Дополнительные опции» заказчик
+            // просил разместить сразу под «Бобинорезкой».
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildOrderSectionCard(
+                    title: 'Бобинорезка',
+                    icon: Icons.content_cut,
+                    backgroundColor: const Color(0xFFEFEAFF),
+                    accentColor: const Color(0xFF7A4CF0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Блок бумаг строит подпись сам: у каждой бумаги своя
+                        // строка «Доступно» в левой колонке, напротив её карточки.
+                        // Общий _buildLabelRow дал бы одну подпись на весь блок.
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          decoration: const BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(color: OrderFormColors.divider),
+                            ),
+                          ),
+                          child: _buildProductMaterialAndExtras(
+                            _product,
+                            labelWidth: labelWidth,
+                          ),
+                        ),
+                        if (_isBlockVisible(kOrderFormBlockMakeready))
+                          _buildLabelRow(
+                            label: 'Приладка',
+                            labelWidth: labelWidth,
+                            child: _buildMakereadyFields(),
+                          ),
+                        _buildLabelRow(
+                          label: 'Комментарий',
+                          labelWidth: labelWidth,
+                          child: _buildCommentsSection(context, wrapWithCard: false),
+                        ),
+                        _buildLabelRow(
+                          label: 'Лишнее на складе',
+                          labelWidth: labelWidth,
+                          child: _buildStockExtraSection(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Карточки нет, пока показывать нечего: у типа продукта не
+                  // заведено опций и в заказе ничего не выбрано. Пустая
+                  // карточка занимала бы место в самой плотной части формы.
+                  if (_extraOptionRows.isNotEmpty) ...[
+                    const SizedBox(height: spacing),
+                    _buildExtraOptionsCard(labelWidth: labelWidth),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: spacing),
+            // Очередь — своя, четвёртая колонка: сборка маршрута не про
+            // бобинорезку, а внутри чужой карточки её было не найти.
+            Expanded(
+              child: _buildOrderSectionCard(
+                title: 'Очередь',
+                icon: Icons.format_list_numbered,
+                backgroundColor: OrderFormColors.blueBg,
+                accentColor: OrderFormColors.blueText,
+                child: _buildProductionSection(
+                  context,
+                  wrapWithCard: false,
+                  includeMakeready: false,
+                ),
+              ),
+            ),
           ],
         );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [_buildRequiredBlocksBanner(), sheet],
+        );
       },
+    );
+  }
+
+  // ===== Обязательные блоки =====
+
+  /// Черновик заказа для проверки обязательных блоков.
+  ///
+  /// Собирается из текущего состояния формы, а не из `widget.order`: подсказка
+  /// обязана гаснуть в тот момент, когда поле заполнили, а не после
+  /// сохранения. Правило «что считать заполненным» при этом одно на форму и на
+  /// пересчёт статусов — [filledOrderBlocks], иначе форма и сервер разошлись бы
+  /// в том, готов заказ или нет.
+  OrderModel _draftForRequiredBlocks() {
+    final papers = _collectSelectedPapers();
+    return OrderModel(
+      id: widget.order?.id ?? '',
+      manager: '',
+      customer: _customerController.text,
+      orderDate: _orderDate ?? DateTime.now(),
+      dueDate: _dueDate,
+      product: _product,
+      paperMaterials: papers,
+      material: papers.isNotEmpty ? papers.first : _selectedMaterial,
+      handle: _selectedHandleDescription,
+      cardboard: _selectedCardboard,
+      makeready: _makeready,
+      additionalParams: _selectedParams,
+      hasForm: _hasForm,
+      newFormNo: _orderFormNo,
+      formCode: _orderFormCode,
+      formId: _orderFormId,
+      pdfUrl: widget.order?.pdfUrl,
+    );
+  }
+
+  /// Незаполненные обязательные блоки текущего типа продукта.
+  List<String> _missingRequiredBlockCodes() {
+    final settings = ProductTypeSettings.instance;
+    if (!settings.isLoaded) return const <String>[];
+    final required = settings.requiredBlockCodes(_product.type);
+    if (required.isEmpty) return const <String>[];
+
+    final draft = _draftForRequiredBlocks();
+    return missingRequiredBlocksForOrder(
+      requiredCodes: required,
+      filledCodes: filledOrderBlocks(
+        order: draft,
+        paintLineCount: _paints
+            .where((row) => row.displayName.trim().isNotEmpty)
+            .length,
+        hasPdf: _pickedOrderPdfs.isNotEmpty || _savedOrderPdfs.isNotEmpty,
+      ),
+      conditionsFor: (code) => settings.blockConditions(_product.type, code),
+      handleTypeName: orderHandleTypeName(draft),
+      order: settings.formBlockCodes,
+    );
+  }
+
+  /// Полоса «чего не хватает для готовности».
+  ///
+  /// Живёт в форме, а не на карточке заказа в списке: карточка показывает
+  /// причину только у заказа в «Ожидании материалов», а такой заказ уходит в
+  /// черновик. Читать объяснение сотрудник должен там, где он его исправляет.
+  Widget _buildRequiredBlocksBanner() {
+    final missing = _missingRequiredBlockCodes();
+    if (missing.isEmpty) return const SizedBox.shrink();
+
+    final titles = ProductTypeSettings.instance.formBlockTitles;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: OrderFormColors.orangeBg,
+        borderRadius: BorderRadius.circular(OrderFormMetrics.cardRadius),
+        border: Border.all(color: OrderFormColors.orangeText.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline,
+              size: 18, color: OrderFormColors.orangeText),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Заказ останется черновиком, пока не заполнено: '
+              '${missing.map((code) => titles[code] ?? code).join(', ')}.',
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.35,
+                color: OrderFormColors.orangeText,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Карточка «Дополнительные опции» — сразу под «Бобинорезкой».
+  ///
+  /// Состав задаёт техлид в редакторе опций, здесь не зашито ничего: строки
+  /// приходят из справочника типа продукта поверх снимка заказа.
+  Widget _buildExtraOptionsCard({required double labelWidth}) {
+    return _buildOrderSectionCard(
+      title: 'Дополнительные опции',
+      icon: Icons.tune,
+      backgroundColor: OrderFormColors.orangeBg,
+      accentColor: OrderFormColors.orangeText,
+      child: OrderExtraOptionsBlock(
+        rows: _extraOptionRows,
+        labelWidth: labelWidth,
+        onChanged: (rows) => setState(() => _extraOptionRows = rows),
+      ),
     );
   }
 
@@ -4561,11 +5369,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildExtraPaperSelectors() {
+  Widget _buildExtraPaperSelectors({required double labelWidth}) {
+    // Блок выключен техлидом — в форме его нет вовсе. Уже выбранные бумаги при
+    // этом остаются в заказе: скрытие настраивает форму, а не правит данные.
+    if (!_isBlockVisible(kOrderFormBlockExtraPapers)) {
+      return const SizedBox.shrink();
+    }
     if (_extraPaperMaterials.isEmpty) return const SizedBox.shrink();
 
     final papers = _paperItems();
-    final warehouse = Provider.of<WarehouseProvider>(context, listen: false);
     final nameSet = <String>{};
     for (final t in papers) {
       final n = t.description.trim();
@@ -4624,13 +5436,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       if (length == null || length <= 0) return false;
       final resolved = resolveExtraPaper(paper);
       if (resolved == null) return false;
-      var available = resolved.quantity;
-      for (final t in warehouse.allTmc) {
-        if (t.id == resolved.id) {
-          available = t.quantity;
-          break;
-        }
-      }
+      // Сверяем с ДОСТУПНЫМ, а не со складским: метры, обещанные другим
+      // заказам, этому заказу не достанутся. Раньше проверка брала складской
+      // остаток, поле оставалось белым — и заказ уходил в «Ожидание
+      // материалов» уже после сохранения, хотя нехватку было видно сразу.
+      final available = availablePaperQtyById(
+            resolved.id,
+            fallbackStock: resolved.quantity,
+          ) ??
+          resolved.quantity;
       return length > available;
     }
 
@@ -4659,347 +5473,352 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       children: [
         const SizedBox(height: 6),
         for (var i = 0; i < _extraPaperMaterials.length; i++) ...[
-          InkWell(
-            onTap: () => setState(() => _activePaperSlotIndex = i + 1),
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _activePaperSlotIndex == i + 1
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).dividerColor.withOpacity(0.8),
-                  width: _activePaperSlotIndex == i + 1 ? 1.4 : 1,
+          _paperGutterRow(
+            labelWidth: labelWidth,
+            availableQty: availablePaperQtyById(_extraPaperMaterials[i].id),
+            card: InkWell(
+              onTap: () => setState(() => _activePaperSlotIndex = i + 1),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _activePaperSlotIndex == i + 1
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).dividerColor.withOpacity(0.8),
+                    width: _activePaperSlotIndex == i + 1 ? 1.4 : 1,
+                  ),
                 ),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Autocomplete<String>(
-                          optionsBuilder: (text) => filter(allNames, text.text),
-                          displayStringForOption: (value) => value,
-                          fieldViewBuilder:
-                              (ctx, controller, focusNode, onFieldSubmitted) {
-                            final currentName = _extraPaperMaterials[i].name;
-                            if (controller.text != currentName) {
-                              controller.value = TextEditingValue(
-                                text: currentName,
-                                selection: TextSelection.collapsed(
-                                  offset: currentName.length,
+                child: Column(
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Autocomplete<String>(
+                            optionsBuilder: (text) => filter(allNames, text.text),
+                            displayStringForOption: (value) => value,
+                            fieldViewBuilder:
+                                (ctx, controller, focusNode, onFieldSubmitted) {
+                              final currentName = _extraPaperMaterials[i].name;
+                              if (controller.text != currentName) {
+                                controller.value = TextEditingValue(
+                                  text: currentName,
+                                  selection: TextSelection.collapsed(
+                                    offset: currentName.length,
+                                  ),
+                                );
+                              }
+                              return TextField(
+                                controller: controller,
+                                focusNode: focusNode,
+                                decoration: paperDecoration(
+                                  'Материал (бумага №${i + 2})',
+                                  _activePaperSlotIndex == i + 1,
                                 ),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _activePaperSlotIndex = i + 1;
+                                    _extraPaperMaterials[i] =
+                                        _extraPaperMaterials[i].copyWith(
+                                      name: value,
+                                      format: null,
+                                      grammage: null,
+                                    );
+                                  });
+                                  _scheduleStagePreviewUpdate();
+                                },
+                                onSubmitted: (_) => onFieldSubmitted(),
                               );
-                            }
-                            return TextField(
-                              controller: controller,
-                              focusNode: focusNode,
-                              decoration: paperDecoration(
-                                'Материал (бумага №${i + 2})',
-                                _activePaperSlotIndex == i + 1,
-                              ),
-                              onChanged: (value) {
-                                setState(() {
-                                  _activePaperSlotIndex = i + 1;
-                                  _extraPaperMaterials[i] =
-                                      _extraPaperMaterials[i].copyWith(
-                                    name: value,
-                                    format: null,
-                                    grammage: null,
-                                  );
-                                });
-                                _scheduleStagePreviewUpdate();
-                              },
-                              onSubmitted: (_) => onFieldSubmitted(),
-                            );
+                            },
+                            onSelected: (value) {
+                              setState(() {
+                                _activePaperSlotIndex = i + 1;
+                                _extraPaperMaterials[i] =
+                                    _extraPaperMaterials[i].copyWith(
+                                  name: value,
+                                  format: null,
+                                  grammage: null,
+                                );
+                              });
+                              _scheduleStagePreviewUpdate();
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Удалить бумагу',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () {
+                            setState(() {
+                              _extraPaperMaterials.removeAt(i);
+                              if (_activePaperSlotIndex >
+                                  _extraPaperMaterials.length) {
+                                _activePaperSlotIndex =
+                                    _extraPaperMaterials.isEmpty
+                                        ? 0
+                                        : _extraPaperMaterials.length;
+                              }
+                            });
+                            _scheduleStagePreviewUpdate();
                           },
-                          onSelected: (value) {
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Autocomplete<String>(
+                      optionsBuilder: (text) {
+                        final name = _extraPaperMaterials[i].name.trim();
+                        if (name.isEmpty) return const Iterable<String>.empty();
+                        return filter(formatsFor(name), text.text);
+                      },
+                      displayStringForOption: (value) => value,
+                      fieldViewBuilder:
+                          (ctx, controller, focusNode, onFieldSubmitted) {
+                        final currentFormat = _extraPaperMaterials[i].format ?? '';
+                        if (controller.text != currentFormat) {
+                          controller.value = TextEditingValue(
+                            text: currentFormat,
+                            selection: TextSelection.collapsed(
+                              offset: currentFormat.length,
+                            ),
+                          );
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          enabled: _extraPaperMaterials[i].name.trim().isNotEmpty,
+                          decoration: paperDecoration(
+                            'Формат',
+                            _activePaperSlotIndex == i + 1,
+                          ).copyWith(
+                            helperText: _extraPaperMaterials[i].name.trim().isNotEmpty
+                                ? null
+                                : 'Сначала выберите материал',
+                          ),
+                          onChanged: (value) {
                             setState(() {
                               _activePaperSlotIndex = i + 1;
-                              _extraPaperMaterials[i] =
-                                  _extraPaperMaterials[i].copyWith(
-                                name: value,
-                                format: null,
+                              _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
+                                format: value,
                                 grammage: null,
                               );
                             });
                             _scheduleStagePreviewUpdate();
                           },
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: 'Удалить бумагу',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () {
-                          setState(() {
-                            _extraPaperMaterials.removeAt(i);
-                            if (_activePaperSlotIndex >
-                                _extraPaperMaterials.length) {
-                              _activePaperSlotIndex =
-                                  _extraPaperMaterials.isEmpty
-                                      ? 0
-                                      : _extraPaperMaterials.length;
-                            }
-                          });
-                          _scheduleStagePreviewUpdate();
-                        },
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Autocomplete<String>(
-                    optionsBuilder: (text) {
-                      final name = _extraPaperMaterials[i].name.trim();
-                      if (name.isEmpty) return const Iterable<String>.empty();
-                      return filter(formatsFor(name), text.text);
-                    },
-                    displayStringForOption: (value) => value,
-                    fieldViewBuilder:
-                        (ctx, controller, focusNode, onFieldSubmitted) {
-                      final currentFormat = _extraPaperMaterials[i].format ?? '';
-                      if (controller.text != currentFormat) {
-                        controller.value = TextEditingValue(
-                          text: currentFormat,
-                          selection: TextSelection.collapsed(
-                            offset: currentFormat.length,
-                          ),
+                          onSubmitted: (_) => onFieldSubmitted(),
                         );
-                      }
-                      return TextField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        enabled: _extraPaperMaterials[i].name.trim().isNotEmpty,
-                        decoration: paperDecoration(
-                          'Формат',
-                          _activePaperSlotIndex == i + 1,
-                        ).copyWith(
-                          helperText: _extraPaperMaterials[i].name.trim().isNotEmpty
-                              ? null
-                              : 'Сначала выберите материал',
-                        ),
-                        onChanged: (value) {
-                          setState(() {
-                            _activePaperSlotIndex = i + 1;
-                            _extraPaperMaterials[i] = _extraPaperMaterials[i].copyWith(
-                              format: value,
-                              grammage: null,
-                            );
-                          });
-                          _scheduleStagePreviewUpdate();
-                        },
-                        onSubmitted: (_) => onFieldSubmitted(),
-                      );
-                    },
-                    onSelected: (value) {
-                      setState(() {
-                        _activePaperSlotIndex = i + 1;
-                        _extraPaperMaterials[i] =
-                            _extraPaperMaterials[i].copyWith(
-                          format: value,
-                          grammage: null,
-                        );
-                      });
-                      _scheduleStagePreviewUpdate();
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  Autocomplete<String>(
-                    optionsBuilder: (text) {
-                      final name = _extraPaperMaterials[i].name.trim();
-                      final format = (_extraPaperMaterials[i].format ?? '').trim();
-                      if (name.isEmpty || format.isEmpty) {
-                        return const Iterable<String>.empty();
-                      }
-                      return filter(gramsFor(name, format), text.text);
-                    },
-                    displayStringForOption: (value) => value,
-                    fieldViewBuilder:
-                        (ctx, controller, focusNode, onFieldSubmitted) {
-                      final currentGrammage = _extraPaperMaterials[i].grammage ?? '';
-                      if (controller.text != currentGrammage) {
-                        controller.value = TextEditingValue(
-                          text: currentGrammage,
-                          selection: TextSelection.collapsed(
-                            offset: currentGrammage.length,
-                          ),
-                        );
-                      }
-                      return TextField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        enabled: _extraPaperMaterials[i].name.trim().isNotEmpty &&
-                            (_extraPaperMaterials[i].format ?? '')
-                                .trim()
-                                .isNotEmpty,
-                        decoration: paperDecoration(
-                          'Грамаж',
-                          _activePaperSlotIndex == i + 1,
-                        ).copyWith(
-                          helperText: _extraPaperMaterials[i].name.trim().isNotEmpty &&
-                                  (_extraPaperMaterials[i].format ?? '')
-                                      .trim()
-                                      .isNotEmpty
-                              ? null
-                              : 'Сначала выберите формат',
-                        ),
-                        onChanged: (value) {
-                          setState(() {
-                            _activePaperSlotIndex = i + 1;
-                            _extraPaperMaterials[i] =
-                                _extraPaperMaterials[i].copyWith(
-                              grammage: value,
-                            );
-                          });
-                          _scheduleStagePreviewUpdate();
-                        },
-                        onSubmitted: (_) => onFieldSubmitted(),
-                      );
-                    },
-                    onSelected: (value) {
-                      setState(() {
-                        _activePaperSlotIndex = i + 1;
-                        _extraPaperMaterials[i] =
-                            _extraPaperMaterials[i].copyWith(
-                          grammage: value,
-                        );
-                      });
-                      _scheduleStagePreviewUpdate();
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          initialValue: _paperExtraDouble(
-                                    _extraPaperMaterials[i],
-                                    'widthB',
-                                  ) !=
-                                  null
-                              ? _formatDecimal(_paperExtraDouble(
-                                  _extraPaperMaterials[i], 'widthB')!)
-                              : '',
-                          autovalidateMode:
-                              AutovalidateMode.onUserInteraction,
-                          decoration: const InputDecoration(
-                            labelText: 'Ширина b',
-                            border: OutlineInputBorder(),
-                          ),
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          validator: (value) {
-                            final parsed =
-                                double.tryParse((value ?? '').replaceAll(',', '.'));
-                            return _validatePaperWidthB(
-                              widthB: parsed,
-                              paper: _extraPaperMaterials[i],
-                              isMain: false,
-                            );
-                          },
-                          onChanged: (value) {
-                            final parsed =
-                                double.tryParse(value.replaceAll(',', '.'));
-                            setState(() {
-                              final nextExtra = Map<String, dynamic>.from(
-                                _extraPaperMaterials[i].extra ?? const {},
-                              );
-                              if (parsed == null) {
-                                nextExtra.remove('widthB');
-                              } else {
-                                nextExtra['widthB'] = parsed;
-                              }
-                              _extraPaperMaterials[i] =
-                                  _extraPaperMaterials[i].copyWith(
-                                extra: nextExtra.isEmpty ? null : nextExtra,
-                              );
-                            });
-                            _scheduleStagePreviewUpdate();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          initialValue:
-                              _paperExtraString(_extraPaperMaterials[i], 'blQuantity') ??
-                                  '',
-                          decoration: const InputDecoration(
-                            labelText: 'Количество',
-                            border: OutlineInputBorder(),
-                          ),
-                          onChanged: (value) {
-                            final trimmed = value.trim();
-                            setState(() {
-                              final nextExtra = Map<String, dynamic>.from(
-                                _extraPaperMaterials[i].extra ?? const {},
-                              );
-                              if (trimmed.isEmpty) {
-                                nextExtra.remove('blQuantity');
-                              } else {
-                                nextExtra['blQuantity'] = trimmed;
-                              }
-                              _extraPaperMaterials[i] =
-                                  _extraPaperMaterials[i].copyWith(
-                                extra: nextExtra.isEmpty ? null : nextExtra,
-                              );
-                            });
-                            _scheduleStagePreviewUpdate();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          initialValue: _paperExtraDouble(
-                                    _extraPaperMaterials[i],
-                                    'lengthL',
-                                  ) !=
-                                  null
-                              ? _formatDecimal(_paperExtraDouble(
-                                  _extraPaperMaterials[i], 'lengthL')!)
-                              : '',
-                          decoration: const InputDecoration(
-                            labelText: 'Длина L',
-                            border: OutlineInputBorder(),
+                      },
+                      onSelected: (value) {
+                        setState(() {
+                          _activePaperSlotIndex = i + 1;
+                          _extraPaperMaterials[i] =
+                              _extraPaperMaterials[i].copyWith(
+                            format: value,
+                            grammage: null,
+                          );
+                        });
+                        _scheduleStagePreviewUpdate();
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Autocomplete<String>(
+                      optionsBuilder: (text) {
+                        final name = _extraPaperMaterials[i].name.trim();
+                        final format = (_extraPaperMaterials[i].format ?? '').trim();
+                        if (name.isEmpty || format.isEmpty) {
+                          return const Iterable<String>.empty();
+                        }
+                        return filter(gramsFor(name, format), text.text);
+                      },
+                      displayStringForOption: (value) => value,
+                      fieldViewBuilder:
+                          (ctx, controller, focusNode, onFieldSubmitted) {
+                        final currentGrammage = _extraPaperMaterials[i].grammage ?? '';
+                        if (controller.text != currentGrammage) {
+                          controller.value = TextEditingValue(
+                            text: currentGrammage,
+                            selection: TextSelection.collapsed(
+                              offset: currentGrammage.length,
+                            ),
+                          );
+                        }
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          enabled: _extraPaperMaterials[i].name.trim().isNotEmpty &&
+                              (_extraPaperMaterials[i].format ?? '')
+                                  .trim()
+                                  .isNotEmpty,
+                          decoration: paperDecoration(
+                            'Грамаж',
+                            _activePaperSlotIndex == i + 1,
                           ).copyWith(
-                            errorText: extraLengthExceeded(_extraPaperMaterials[i])
-                                ? 'Недостаточно'
-                                : null,
+                            helperText: _extraPaperMaterials[i].name.trim().isNotEmpty &&
+                                    (_extraPaperMaterials[i].format ?? '')
+                                        .trim()
+                                        .isNotEmpty
+                                ? null
+                                : 'Сначала выберите формат',
                           ),
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
                           onChanged: (value) {
-                            final parsed =
-                                double.tryParse(value.replaceAll(',', '.'));
                             setState(() {
-                              final nextExtra = Map<String, dynamic>.from(
-                                _extraPaperMaterials[i].extra ?? const {},
-                              );
-                              if (parsed == null) {
-                                nextExtra.remove('lengthL');
-                              } else {
-                                nextExtra['lengthL'] = parsed;
-                              }
+                              _activePaperSlotIndex = i + 1;
                               _extraPaperMaterials[i] =
                                   _extraPaperMaterials[i].copyWith(
-                                quantity: parsed != null && parsed > 0
-                                    ? parsed
-                                    : _extraPaperMaterials[i].quantity,
-                                extra: nextExtra.isEmpty ? null : nextExtra,
+                                grammage: value,
                               );
                             });
                             _scheduleStagePreviewUpdate();
                           },
+                          onSubmitted: (_) => onFieldSubmitted(),
+                        );
+                      },
+                      onSelected: (value) {
+                        setState(() {
+                          _activePaperSlotIndex = i + 1;
+                          _extraPaperMaterials[i] =
+                              _extraPaperMaterials[i].copyWith(
+                            grammage: value,
+                          );
+                        });
+                        _scheduleStagePreviewUpdate();
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: _paperExtraDouble(
+                                      _extraPaperMaterials[i],
+                                      'widthB',
+                                    ) !=
+                                    null
+                                ? _formatDecimal(_paperExtraDouble(
+                                    _extraPaperMaterials[i], 'widthB')!)
+                                : '',
+                            autovalidateMode:
+                                AutovalidateMode.onUserInteraction,
+                            decoration: const InputDecoration(
+                              labelText: 'Ширина b',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            validator: (value) {
+                              final parsed =
+                                  double.tryParse((value ?? '').replaceAll(',', '.'));
+                              return _validatePaperWidthB(
+                                widthB: parsed,
+                                paper: _extraPaperMaterials[i],
+                                isMain: false,
+                              );
+                            },
+                            onChanged: (value) {
+                              final parsed =
+                                  double.tryParse(value.replaceAll(',', '.'));
+                              setState(() {
+                                final nextExtra = Map<String, dynamic>.from(
+                                  _extraPaperMaterials[i].extra ?? const {},
+                                );
+                                if (parsed == null) {
+                                  nextExtra.remove('widthB');
+                                } else {
+                                  nextExtra['widthB'] = parsed;
+                                }
+                                _extraPaperMaterials[i] =
+                                    _extraPaperMaterials[i].copyWith(
+                                  extra: nextExtra.isEmpty ? null : nextExtra,
+                                );
+                              });
+                              _scheduleStagePreviewUpdate();
+                            },
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            initialValue:
+                                _paperExtraString(_extraPaperMaterials[i], 'blQuantity') ??
+                                    '',
+                            decoration: const InputDecoration(
+                              labelText: 'Количество',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (value) {
+                              final trimmed = value.trim();
+                              setState(() {
+                                final nextExtra = Map<String, dynamic>.from(
+                                  _extraPaperMaterials[i].extra ?? const {},
+                                );
+                                if (trimmed.isEmpty) {
+                                  nextExtra.remove('blQuantity');
+                                } else {
+                                  nextExtra['blQuantity'] = trimmed;
+                                }
+                                _extraPaperMaterials[i] =
+                                    _extraPaperMaterials[i].copyWith(
+                                  extra: nextExtra.isEmpty ? null : nextExtra,
+                                );
+                              });
+                              _scheduleStagePreviewUpdate();
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: _paperExtraDouble(
+                                      _extraPaperMaterials[i],
+                                      'lengthL',
+                                    ) !=
+                                    null
+                                ? _formatDecimal(_paperExtraDouble(
+                                    _extraPaperMaterials[i], 'lengthL')!)
+                                : '',
+                            decoration: const InputDecoration(
+                              labelText: 'Длина L',
+                              border: OutlineInputBorder(),
+                            ).copyWith(
+                              errorMaxLines: 2,
+                              errorText: extraLengthExceeded(_extraPaperMaterials[i])
+                                  ? kNotEnoughMaterialError
+                                  : null,
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            onChanged: (value) {
+                              final parsed =
+                                  double.tryParse(value.replaceAll(',', '.'));
+                              setState(() {
+                                final nextExtra = Map<String, dynamic>.from(
+                                  _extraPaperMaterials[i].extra ?? const {},
+                                );
+                                if (parsed == null) {
+                                  nextExtra.remove('lengthL');
+                                } else {
+                                  nextExtra['lengthL'] = parsed;
+                                }
+                                _extraPaperMaterials[i] =
+                                    _extraPaperMaterials[i].copyWith(
+                                  quantity: parsed != null && parsed > 0
+                                      ? parsed
+                                      : _extraPaperMaterials[i].quantity,
+                                  extra: nextExtra.isEmpty ? null : nextExtra,
+                                );
+                              });
+                              _scheduleStagePreviewUpdate();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -5008,9 +5827,12 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  /// Дополнительные параметры продукта: материал, складские остатки и вложения
-  Widget _buildProductMaterialAndExtras(ProductModel product) {
-    final stockExtraWidget = _buildStockExtraLayout(
+  /// Списание лишнего со склада: поиск позиции, остаток и количество.
+  ///
+  /// Живёт отдельным методом, потому что в карточке «Бобинорезка» стоит не
+  /// рядом с материалами, а последней строкой — после комментария.
+  Widget _buildStockExtraSection() {
+    return _buildStockExtraLayout(
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -5105,421 +5927,483 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
       const SizedBox.shrink(),
     );
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        stockExtraWidget,
-        const SizedBox(height: 3),
-        Builder(
-          builder: (context) {
-            final papers = _paperItems();
-            final nameSet = <String>{};
-            for (final t in papers) {
-              final n = (t.description).trim();
-              if (n.isNotEmpty) nameSet.add(n);
-            }
-            final allNames = nameSet.toList()
-              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-
-            List<String> formatsFor(String name) {
-              final s = <String>{};
-              for (final t in papers) {
-                if (t.description.trim().toLowerCase() ==
-                    name.trim().toLowerCase()) {
-                  final f = (t.format ?? '').trim();
-                  if (f.isNotEmpty) s.add(f);
+  /// Дополнительные параметры продукта: материал и вложения.
+  Widget _buildProductMaterialAndExtras(
+    ProductModel product, {
+    required double labelWidth,
+  }) {
+    // Подписка на склад обязательна: резерв бумаги приезжает отдельным
+    // запросом уже после открытия формы, и до его прихода доступное равно
+    // складскому. Без подписки «Доступно» и красное «Недостаточно материала»
+    // так и остались бы посчитанными по неполным данным — форма не
+    // перерисовывалась бы, потому что читает провайдер с listen: false.
+    final section = Consumer<WarehouseProvider>(
+      builder: (context, warehouse, child) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _paperGutterRow(
+            labelWidth: labelWidth,
+            label: 'Склад и материалы',
+            availableQty: _currentAvailablePaperQty(),
+            card: Builder(
+              builder: (context) {
+                final papers = _paperItems();
+                final nameSet = <String>{};
+                for (final t in papers) {
+                  final n = (t.description).trim();
+                  if (n.isNotEmpty) nameSet.add(n);
                 }
-              }
-              final list = s.toList()
-                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-              return list;
-            }
+                final allNames = nameSet.toList()
+                  ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
-            List<String> gramsFor(String name, String fmt) {
-              final s = <String>{};
-              for (final t in papers) {
-                if (t.description.trim().toLowerCase() ==
-                        name.trim().toLowerCase() &&
-                    (t.format ?? '').trim().toLowerCase() ==
-                        fmt.trim().toLowerCase()) {
-                  final g = (t.grammage ?? '').trim();
-                  if (g.isNotEmpty) s.add(g);
+                List<String> formatsFor(String name) {
+                  final s = <String>{};
+                  for (final t in papers) {
+                    if (t.description.trim().toLowerCase() ==
+                        name.trim().toLowerCase()) {
+                      final f = (t.format ?? '').trim();
+                      if (f.isNotEmpty) s.add(f);
+                    }
+                  }
+                  final list = s.toList()
+                    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+                  return list;
                 }
-              }
-              final list = s.toList()
-                ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-              return list;
-            }
 
-            TmcModel? findExact(String name, String fmt, String gram) {
-              for (final t in papers) {
-                if (t.description.trim().toLowerCase() ==
-                        name.trim().toLowerCase() &&
-                    (t.format ?? '').trim().toLowerCase() ==
-                        fmt.trim().toLowerCase() &&
-                    (t.grammage ?? '').trim().toLowerCase() ==
-                        gram.trim().toLowerCase()) {
-                  return t;
+                List<String> gramsFor(String name, String fmt) {
+                  final s = <String>{};
+                  for (final t in papers) {
+                    if (t.description.trim().toLowerCase() ==
+                            name.trim().toLowerCase() &&
+                        (t.format ?? '').trim().toLowerCase() ==
+                            fmt.trim().toLowerCase()) {
+                      final g = (t.grammage ?? '').trim();
+                      if (g.isNotEmpty) s.add(g);
+                    }
+                  }
+                  final list = s.toList()
+                    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+                  return list;
                 }
-              }
-              return null;
-            }
 
-            Iterable<String> filter(Iterable<String> source, String q) {
-              final query = q.trim().toLowerCase();
-              if (query.isEmpty) return source;
-              return source.where((o) => o.toLowerCase().contains(query));
-            }
+                TmcModel? findExact(String name, String fmt, String gram) {
+                  for (final t in papers) {
+                    if (t.description.trim().toLowerCase() ==
+                            name.trim().toLowerCase() &&
+                        (t.format ?? '').trim().toLowerCase() ==
+                            fmt.trim().toLowerCase() &&
+                        (t.grammage ?? '').trim().toLowerCase() ==
+                            gram.trim().toLowerCase()) {
+                      return t;
+                    }
+                  }
+                  return null;
+                }
 
-            final formatOptions = _matSelectedName != null
-                ? formatsFor(_matSelectedName!)
-                : const <String>[];
-            final gramOptions =
-                (_matSelectedName != null && _matSelectedFormat != null)
-                    ? gramsFor(_matSelectedName!, _matSelectedFormat!)
+                Iterable<String> filter(Iterable<String> source, String q) {
+                  final query = q.trim().toLowerCase();
+                  if (query.isEmpty) return source;
+                  return source.where((o) => o.toLowerCase().contains(query));
+                }
+
+                final formatOptions = _matSelectedName != null
+                    ? formatsFor(_matSelectedName!)
                     : const <String>[];
+                final gramOptions =
+                    (_matSelectedName != null && _matSelectedFormat != null)
+                        ? gramsFor(_matSelectedName!, _matSelectedFormat!)
+                        : const <String>[];
 
-            InputDecoration mainPaperDecoration(String label) {
-              final bool active = _activePaperSlotIndex == 0;
-              return InputDecoration(
-                labelText: label,
-                border: const OutlineInputBorder(),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(
-                    color: active
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).dividerColor,
-                  ),
-                ),
-              );
-            }
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                InkWell(
-                  onTap: () => setState(() => _activePaperSlotIndex = 0),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: _activePaperSlotIndex == 0
+                InputDecoration mainPaperDecoration(String label) {
+                  final bool active = _activePaperSlotIndex == 0;
+                  return InputDecoration(
+                    labelText: label,
+                    border: const OutlineInputBorder(),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: active
                             ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).dividerColor.withOpacity(0.8),
-                        width: _activePaperSlotIndex == 0 ? 1.4 : 1,
+                            : Theme.of(context).dividerColor,
                       ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Autocomplete<String>(
-                          optionsBuilder: (text) => filter(allNames, text.text),
-                          displayStringForOption: (s) => s,
-                          fieldViewBuilder:
-                              (ctx, controller, focusNode, onFieldSubmitted) {
-                            controller.text = _matNameCtl.text;
-                            controller.selection = _matNameCtl.selection;
-                            controller.addListener(() {
-                              if (controller.text != _matNameCtl.text) {
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    InkWell(
+                      onTap: () => setState(() => _activePaperSlotIndex = 0),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _activePaperSlotIndex == 0
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).dividerColor.withOpacity(0.8),
+                            width: _activePaperSlotIndex == 0 ? 1.4 : 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Autocomplete<String>(
+                              optionsBuilder: (text) => filter(allNames, text.text),
+                              displayStringForOption: (s) => s,
+                              fieldViewBuilder:
+                                  (ctx, controller, focusNode, onFieldSubmitted) {
+                                // Синхронизация значения — только когда оно
+                                // разошлось. Безусловное присваивание на каждой
+                                // перестройке сбивало курсор в конец строки.
+                                if (controller.text != _matNameCtl.text) {
+                                  controller.value = _matNameCtl.value;
+                                }
+                                return TextField(
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  decoration:
+                                      mainPaperDecoration('Материал').copyWith(
+                                    errorText: _matNameError,
+                                  ),
+                                  // Правка основной бумаги ловится через onChanged,
+                                  // а не через controller.addListener в билдере.
+                                  //
+                                  // fieldViewBuilder вызывается на КАЖДОЙ
+                                  // перестройке формы, и слушатель добавлялся
+                                  // заново — их накапливались десятки, и все они
+                                  // срабатывали на программную запись в
+                                  // контроллер, а не только на ввод сотрудника.
+                                  // Каждый ставил _activePaperSlotIndex = 0, то
+                                  // есть «активна первая бумага». Из-за этого
+                                  // выбор материала со склада для второй бумаги
+                                  // уезжал в первую: слот подсвечен второй, а
+                                  // индекс к моменту клика уже сброшен.
+                                  // onChanged срабатывает только на ввод.
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _activePaperSlotIndex = 0;
+                                      _matNameCtl.text = value;
+                                      _matNameCtl.selection = controller.selection;
+                                      _matSelectedName = null;
+                                      _matSelectedFormat = null;
+                                      _matSelectedGrammage = null;
+                                      _matFormatCtl.text = '';
+                                      _matGramCtl.text = '';
+                                      _matNameError = (value.trim().isEmpty ||
+                                              allNames
+                                                  .map((e) => e.toLowerCase())
+                                                  .contains(
+                                                      value.trim().toLowerCase()))
+                                          ? null
+                                          : 'Выберите материал из списка';
+                                      _matFormatError = null;
+                                      _matGramError = null;
+                                      final lowerNames =
+                                          allNames.map((e) => e.toLowerCase()).toList();
+                                      final typed = value.trim().toLowerCase();
+                                      if (lowerNames.contains(typed)) {
+                                        _matSelectedName =
+                                            allNames[lowerNames.indexOf(typed)];
+                                      }
+                                    });
+                                    _scheduleStagePreviewUpdate();
+                                  },
+                                  onSubmitted: (_) => onFieldSubmitted(),
+                                );
+                              },
+                              onSelected: (value) {
                                 setState(() {
                                   _activePaperSlotIndex = 0;
-                                  _matNameCtl.text = controller.text;
-                                  _matNameCtl.selection = controller.selection;
-                                  _matSelectedName = null;
+                                  _matNameCtl.text = value;
+                                  _matSelectedName = value;
                                   _matSelectedFormat = null;
                                   _matSelectedGrammage = null;
                                   _matFormatCtl.text = '';
                                   _matGramCtl.text = '';
-                                  _matNameError = (_matNameCtl.text.trim().isEmpty ||
-                                          allNames
-                                              .map((e) => e.toLowerCase())
-                                              .contains(_matNameCtl.text
-                                                  .trim()
-                                                  .toLowerCase()))
-                                      ? null
-                                      : 'Выберите материал из списка';
+                                  _matNameError = null;
                                   _matFormatError = null;
                                   _matGramError = null;
-                                  final lowerNames =
-                                      allNames.map((e) => e.toLowerCase()).toList();
-                                  final typed =
-                                      _matNameCtl.text.trim().toLowerCase();
-                                  if (lowerNames.contains(typed)) {
-                                    _matSelectedName =
-                                        allNames[lowerNames.indexOf(typed)];
-                                  }
+                                  _selectedMaterialTmc = null;
+                                  _selectedMaterial = null;
                                 });
                                 _scheduleStagePreviewUpdate();
-                              }
-                            });
-                            return TextField(
-                              controller: controller,
-                              focusNode: focusNode,
-                              decoration:
-                                  mainPaperDecoration('Материал').copyWith(
-                                errorText: _matNameError,
-                              ),
-                              onSubmitted: (_) => onFieldSubmitted(),
-                            );
-                          },
-                          onSelected: (value) {
-                            setState(() {
-                              _activePaperSlotIndex = 0;
-                              _matNameCtl.text = value;
-                              _matSelectedName = value;
-                              _matSelectedFormat = null;
-                              _matSelectedGrammage = null;
-                              _matFormatCtl.text = '';
-                              _matGramCtl.text = '';
-                              _matNameError = null;
-                              _matFormatError = null;
-                              _matGramError = null;
-                              _selectedMaterialTmc = null;
-                              _selectedMaterial = null;
-                            });
-                            _scheduleStagePreviewUpdate();
-                          },
-                        ),
-                        const SizedBox(height: 4),
-                        Autocomplete<String>(
-                          optionsBuilder: (text) => filter(formatOptions, text.text),
-                          displayStringForOption: (s) => s,
-                          fieldViewBuilder:
-                              (ctx, controller, focusNode, onFieldSubmitted) {
-                            controller.text = _matFormatCtl.text;
-                            controller.selection = _matFormatCtl.selection;
-                            controller.addListener(() {
-                              if (controller.text != _matFormatCtl.text) {
-                                setState(() {
-                                  _activePaperSlotIndex = 0;
-                                  _matFormatCtl.text = controller.text;
-                                  _matFormatCtl.selection = controller.selection;
-                                  _matSelectedFormat = null;
-                                  _matSelectedGrammage = null;
-                                  _matGramCtl.text = '';
-                                  _matFormatError =
-                                      (_matFormatCtl.text.trim().isEmpty ||
+                              },
+                            ),
+                            const SizedBox(height: 4),
+                            Autocomplete<String>(
+                              optionsBuilder: (text) => filter(formatOptions, text.text),
+                              displayStringForOption: (s) => s,
+                              fieldViewBuilder:
+                                  (ctx, controller, focusNode, onFieldSubmitted) {
+                                if (controller.text != _matFormatCtl.text) {
+                                  controller.value = _matFormatCtl.value;
+                                }
+                                return TextField(
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  enabled: _matSelectedName != null,
+                                  decoration:
+                                      mainPaperDecoration('Формат').copyWith(
+                                    helperText: _matSelectedName != null
+                                        ? null
+                                        : 'Сначала выберите материал',
+                                    errorText:
+                                        _matSelectedName != null ? _matFormatError : null,
+                                  ),
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _activePaperSlotIndex = 0;
+                                      _matFormatCtl.text = value;
+                                      _matFormatCtl.selection = controller.selection;
+                                      _matSelectedFormat = null;
+                                      _matSelectedGrammage = null;
+                                      _matGramCtl.text = '';
+                                      _matFormatError = (value.trim().isEmpty ||
                                               formatOptions
                                                   .map((e) => e.toLowerCase())
-                                                  .contains(_matFormatCtl.text
-                                                      .trim()
-                                                      .toLowerCase()))
+                                                  .contains(
+                                                      value.trim().toLowerCase()))
                                           ? null
                                           : 'Выберите формат из списка';
-                                  final lowerF = formatOptions
-                                      .map((e) => e.toLowerCase())
-                                      .toList();
-                                  final typed =
-                                      _matFormatCtl.text.trim().toLowerCase();
-                                  if (lowerF.contains(typed)) {
-                                    _matSelectedFormat =
-                                        formatOptions[lowerF.indexOf(typed)];
-                                  }
-                                });
-                                _scheduleStagePreviewUpdate();
-                              }
-                            });
-                            return TextField(
-                              controller: controller,
-                              focusNode: focusNode,
-                              enabled: _matSelectedName != null,
-                              decoration:
-                                  mainPaperDecoration('Формат').copyWith(
-                                helperText: _matSelectedName != null
-                                    ? null
-                                    : 'Сначала выберите материал',
-                                errorText:
-                                    _matSelectedName != null ? _matFormatError : null,
-                              ),
-                              onSubmitted: (_) => onFieldSubmitted(),
-                            );
-                          },
-                          onSelected: (value) {
-                            setState(() {
-                              _activePaperSlotIndex = 0;
-                              _matFormatCtl.text = value;
-                              _matSelectedFormat = value;
-                              _matSelectedGrammage = null;
-                              _matGramCtl.text = '';
-                              _matFormatError = null;
-                              _matGramError = null;
-                            });
-                            _scheduleStagePreviewUpdate();
-                          },
-                        ),
-                        const SizedBox(height: 4),
-                        Autocomplete<String>(
-                          optionsBuilder: (text) => filter(gramOptions, text.text),
-                          displayStringForOption: (s) => s,
-                          fieldViewBuilder:
-                              (ctx, controller, focusNode, onFieldSubmitted) {
-                            controller.text = _matGramCtl.text;
-                            controller.selection = _matGramCtl.selection;
-                            controller.addListener(() {
-                              if (controller.text != _matGramCtl.text) {
+                                      final lowerF = formatOptions
+                                          .map((e) => e.toLowerCase())
+                                          .toList();
+                                      final typed = value.trim().toLowerCase();
+                                      if (lowerF.contains(typed)) {
+                                        _matSelectedFormat =
+                                            formatOptions[lowerF.indexOf(typed)];
+                                      }
+                                    });
+                                    _scheduleStagePreviewUpdate();
+                                  },
+                                  onSubmitted: (_) => onFieldSubmitted(),
+                                );
+                              },
+                              onSelected: (value) {
                                 setState(() {
                                   _activePaperSlotIndex = 0;
-                                  _matGramCtl.text = controller.text;
-                                  _matGramCtl.selection = controller.selection;
+                                  _matFormatCtl.text = value;
+                                  _matSelectedFormat = value;
                                   _matSelectedGrammage = null;
-                                  _matGramError = (_matGramCtl.text.trim().isEmpty ||
-                                          gramOptions
-                                              .map((e) => e.toLowerCase())
-                                              .contains(_matGramCtl.text
-                                                  .trim()
-                                                  .toLowerCase()))
-                                      ? null
-                                      : 'Выберите грамаж из списка';
-                                  final lowerG =
-                                      gramOptions.map((e) => e.toLowerCase()).toList();
-                                  final typed =
-                                      _matGramCtl.text.trim().toLowerCase();
-                                  if (lowerG.contains(typed)) {
-                                    _matSelectedGrammage =
-                                        gramOptions[lowerG.indexOf(typed)];
-                                  }
+                                  _matGramCtl.text = '';
+                                  _matFormatError = null;
+                                  _matGramError = null;
                                 });
                                 _scheduleStagePreviewUpdate();
-                              }
-                            });
-                            return TextField(
-                              controller: controller,
-                              focusNode: focusNode,
-                              enabled: _matSelectedName != null &&
-                                  _matSelectedFormat != null,
-                              decoration:
-                                  mainPaperDecoration('Грамаж').copyWith(
-                                helperText: (_matSelectedName != null &&
-                                        _matSelectedFormat != null)
-                                    ? null
-                                    : 'Сначала выберите формат',
-                                errorText: (_matSelectedName != null &&
-                                        _matSelectedFormat != null)
-                                    ? _matGramError
-                                    : null,
-                              ),
-                              onSubmitted: (_) => onFieldSubmitted(),
-                            );
-                          },
-                          onSelected: (value) {
-                            setState(() {
-                              _activePaperSlotIndex = 0;
-                              _matGramCtl.text = value;
-                              _matSelectedGrammage = value;
-                              _matGramError = null;
-                              final tmc = findExact(
-                                  _matSelectedName!, _matSelectedFormat!, value);
-                              if (tmc != null) {
-                                _selectMaterial(tmc);
-                              }
-                            });
-                          },
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: product.widthB != null
-                                    ? _formatDecimal(product.widthB!)
-                                    : '',
-                                autovalidateMode:
-                                    AutovalidateMode.onUserInteraction,
-                                decoration: mainPaperDecoration('Ширина b'),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  final parsed = double.tryParse(
-                                      (value ?? '').replaceAll(',', '.'));
-                                  final paper =
-                                      _selectedMaterial ?? const MaterialModel(name: '');
-                                  return _validatePaperWidthB(
-                                    widthB: parsed,
-                                    paper: paper,
-                                    isMain: true,
-                                  );
-                                },
-                                onChanged: (val) {
-                                  final normalized = val.replaceAll(',', '.');
-                                  product.widthB = double.tryParse(normalized);
-                                  _scheduleStagePreviewUpdate();
-                                },
-                              ),
+                              },
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: product.blQuantity?.toString() ?? '',
-                                decoration: mainPaperDecoration('Количество'),
-                                keyboardType: TextInputType.text,
-                                onChanged: (val) {
-                                  final trimmed = val.trim();
-                                  product.blQuantity = trimmed.isEmpty ? null : trimmed;
-                                  _scheduleStagePreviewUpdate();
-                                },
-                              ),
+                            const SizedBox(height: 4),
+                            Autocomplete<String>(
+                              optionsBuilder: (text) => filter(gramOptions, text.text),
+                              displayStringForOption: (s) => s,
+                              fieldViewBuilder:
+                                  (ctx, controller, focusNode, onFieldSubmitted) {
+                                if (controller.text != _matGramCtl.text) {
+                                  controller.value = _matGramCtl.value;
+                                }
+                                return TextField(
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  enabled: _matSelectedName != null &&
+                                      _matSelectedFormat != null,
+                                  decoration:
+                                      mainPaperDecoration('Грамаж').copyWith(
+                                    helperText: (_matSelectedName != null &&
+                                            _matSelectedFormat != null)
+                                        ? null
+                                        : 'Сначала выберите формат',
+                                    errorText: (_matSelectedName != null &&
+                                            _matSelectedFormat != null)
+                                        ? _matGramError
+                                        : null,
+                                  ),
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _activePaperSlotIndex = 0;
+                                      _matGramCtl.text = value;
+                                      _matGramCtl.selection = controller.selection;
+                                      _matSelectedGrammage = null;
+                                      _matGramError = (value.trim().isEmpty ||
+                                              gramOptions
+                                                  .map((e) => e.toLowerCase())
+                                                  .contains(
+                                                      value.trim().toLowerCase()))
+                                          ? null
+                                          : 'Выберите грамаж из списка';
+                                      final lowerG =
+                                          gramOptions.map((e) => e.toLowerCase()).toList();
+                                      final typed = value.trim().toLowerCase();
+                                      if (lowerG.contains(typed)) {
+                                        _matSelectedGrammage =
+                                            gramOptions[lowerG.indexOf(typed)];
+                                      }
+                                    });
+                                    _scheduleStagePreviewUpdate();
+                                  },
+                                  onSubmitted: (_) => onFieldSubmitted(),
+                                );
+                              },
+                              onSelected: (value) {
+                                setState(() {
+                                  _activePaperSlotIndex = 0;
+                                  _matGramCtl.text = value;
+                                  _matSelectedGrammage = value;
+                                  _matGramError = null;
+                                  final tmc = findExact(
+                                      _matSelectedName!, _matSelectedFormat!, value);
+                                  if (tmc != null) {
+                                    _selectMaterial(tmc);
+                                  }
+                                });
+                              },
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextFormField(
-                                initialValue:
-                                    product.length != null ? _formatDecimal(product.length!) : '',
-                                decoration: mainPaperDecoration('Длина L').copyWith(
-                                  errorText: _lengthExceeded ? 'Недостаточно' : null,
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    initialValue: product.widthB != null
+                                        ? _formatDecimal(product.widthB!)
+                                        : '',
+                                    autovalidateMode:
+                                        AutovalidateMode.onUserInteraction,
+                                    decoration: mainPaperDecoration('Ширина b'),
+                                    keyboardType: TextInputType.number,
+                                    validator: (value) {
+                                      final parsed = double.tryParse(
+                                          (value ?? '').replaceAll(',', '.'));
+                                      final paper =
+                                          _selectedMaterial ?? const MaterialModel(name: '');
+                                      return _validatePaperWidthB(
+                                        widthB: parsed,
+                                        paper: paper,
+                                        isMain: true,
+                                      );
+                                    },
+                                    onChanged: (val) {
+                                      final normalized = val.replaceAll(',', '.');
+                                      product.widthB = double.tryParse(normalized);
+                                      _scheduleStagePreviewUpdate();
+                                    },
+                                  ),
                                 ),
-                                keyboardType: TextInputType.number,
-                                onChanged: (val) {
-                                  final normalized = val.replaceAll(',', '.');
-                                  final d = double.tryParse(normalized);
-                                  setState(() {
-                                    product.length = d;
-                                    final materialTmc =
-                                        _selectedMaterialTmc ?? _resolvePaperByText();
-                                    if (materialTmc != null && d != null) {
-                                      _lengthExceeded = () {
-                                        final current = Provider.of<WarehouseProvider>(
-                                                context,
-                                                listen: false)
-                                            .allTmc
-                                            .where((t) => t.id == materialTmc.id)
-                                            .toList();
-                                        final available = current.isNotEmpty
-                                            ? current.first.quantity
-                                            : materialTmc.quantity;
-                                        return d > available;
-                                      }();
-                                    } else {
-                                      _lengthExceeded = false;
-                                    }
-                                  });
-                                  _scheduleStagePreviewUpdate();
-                                },
-                              ),
+                                if (_isBlockVisible(
+                                    kOrderFormBlockBlQuantity)) ...[
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextFormField(
+                                      initialValue:
+                                          product.blQuantity?.toString() ?? '',
+                                      decoration:
+                                          mainPaperDecoration('Количество'),
+                                      keyboardType: TextInputType.text,
+                                      onChanged: (val) {
+                                        final trimmed = val.trim();
+                                        product.blQuantity =
+                                            trimmed.isEmpty ? null : trimmed;
+                                        _scheduleStagePreviewUpdate();
+                                      },
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextFormField(
+                                    initialValue:
+                                        product.length != null ? _formatDecimal(product.length!) : '',
+                                    decoration: mainPaperDecoration('Длина L')
+                                        .copyWith(
+                                      errorMaxLines: 2,
+                                      // Считаем на месте, а не по флагу
+                                      // состояния: резерв бумаги приезжает
+                                      // после открытия формы, и заказ с уже
+                                      // сохранённой «Длиной L» оставался бы
+                                      // без подсветки, пока сотрудник не
+                                      // тронет поле.
+                                      errorText: _paperLengthExceedsAvailable(
+                                        _selectedMaterialTmc ??
+                                            _resolvePaperByText(),
+                                        product.length,
+                                      )
+                                          ? kNotEnoughMaterialError
+                                          : null,
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                    onChanged: (val) {
+                                      final normalized = val.replaceAll(',', '.');
+                                      final d = double.tryParse(normalized);
+                                      setState(() {
+                                        product.length = d;
+                                      });
+                                      _scheduleStagePreviewUpdate();
+                                    },
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 3),
+          _buildExtraPaperSelectors(labelWidth: labelWidth),
+          _paperGutterRow(
+            labelWidth: labelWidth,
+            card: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _addExtraPaperSlot,
+                icon: const Icon(Icons.add),
+                label:
+                    Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+        ],
+      ),
+    );
+    if (!_paperLockedByUsage) return section;
+    // Бумагу уже списали на этапе бумаги (или закрыли этап): правка здесь
+    // разошлась бы со складом. Менять бумагу можно только в окне расхода
+    // бумаги на самом этапе.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              const Icon(Icons.lock_outline, size: 16, color: Colors.black54),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Бумага уже списана на этапе — изменить её можно только '
+                  'сотруднику этапа в окне «Расход бумаги».',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
                 ),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 3),
-        _buildExtraPaperSelectors(),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _addExtraPaperSlot,
-            icon: const Icon(Icons.add),
-            label: Text('Добавить бумагу №${_extraPaperMaterials.length + 2}'),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 3),
+        IgnorePointer(child: Opacity(opacity: 0.6, child: section)),
       ],
     );
+  }
+
+  /// Бумага заказа уже списывалась по факту или этап бумаги закрыт.
+  bool get _paperLockedByUsage {
+    final usage = _paperUsage;
+    if (usage == null) return false;
+    return usage.closed || usage.totalWritten > 0;
   }
 
   Widget _buildFieldGrid(
@@ -5594,49 +6478,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     required Color accentColor,
     required Widget child,
   }) {
+    // Карточка белая с тонкой рамкой: цветом теперь отвечает только значок
+    // в шапке. Заливка всей колонки цветом делала форму пёстрой, а поля в
+    // ней — малоконтрастными.
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: accentColor.withOpacity(0.35)),
-        boxShadow: [
+        color: OrderFormColors.surface,
+        borderRadius: BorderRadius.circular(OrderFormMetrics.cardRadius),
+        border: Border.all(color: OrderFormColors.border),
+        boxShadow: const [
           BoxShadow(
-            color: accentColor.withOpacity(0.12),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
+            color: Color(0x0A000000),
+            blurRadius: 3,
+            offset: Offset(0, 1),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: accentColor,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: accentColor.withOpacity(0.95),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Divider(height: 1),
+          OrderSectionHead(
+            icon: icon,
+            label: title,
+            color: accentColor,
+            background: backgroundColor,
           ),
           child,
         ],
@@ -5647,7 +6513,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   Widget _buildLabelRow({
     required String label,
     required Widget child,
-    double labelWidth = 150,
+    double labelWidth = OrderFormMetrics.labelWidth,
     String? labelNote,
   }) {
     final labelWidget = Column(
@@ -5655,8 +6521,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '$label:',
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          label,
+          style: const TextStyle(fontSize: 12, color: OrderFormColors.label),
         ),
         if (labelNote != null) ...[
           const SizedBox(height: 2),
@@ -5677,9 +6543,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final bool stackVertically = constraints.maxWidth < labelWidth + 80;
-        return Padding(
-          // Reduce vertical padding to make rows even more compact.
-          padding: const EdgeInsets.symmetric(vertical: 1.0),
+        // Строки разделены тонкой линией, как в макете: подпись слева
+        // фиксированной ширины, поле — на остатке.
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: OrderFormColors.divider),
+            ),
+          ),
           child: stackVertically
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -5690,14 +6562,13 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   ],
                 )
               : Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     SizedBox(
                       width: labelWidth,
                       child: labelWidget,
                     ),
-                    // Narrow the gap between label and field.
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Expanded(child: child),
                   ],
                 ),
@@ -5792,6 +6663,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             _scheduleStagePreviewUpdate(
               immediate: shouldUpdateStagePreview,
             );
+            // Опции заведены на тип продукта: выбранное для прежнего типа к
+            // новому отношения не имеет, поэтому снимок не переносим.
+            _loadExtraOptions(saved: const <OrderOptionSelection>[]);
             _stockExtraSearchDebounce?.cancel();
             _stockExtraSearchController.clear();
             _updateStockExtraQtyController();
@@ -5976,34 +6850,36 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               spacing: 6,
               runSpacing: 3,
               children: [
-                _buildCompactCheckboxTile(
-                  value: _cardboardChecked,
-                  enabled: supportsCardboard,
-                  onChanged: supportsCardboard
-                      ? (val) => setState(() {
-                            _cardboardChecked = val ?? false;
-                            _selectedCardboard =
-                                _cardboardChecked ? 'есть' : 'нет';
-                            _scheduleStagePreviewUpdate(immediate: true);
-                          })
-                      : null,
-                  label: 'Картон',
-                  width: 100,
-                ),
-                _buildCompactCheckboxTile(
-                  value: _trimming,
-                  onChanged: (val) => setState(() {
-                    _trimming = val ?? false;
-                    _scheduleStagePreviewUpdate(immediate: true);
-                  }),
-                  label: 'Подрезка',
-                  width: 100,
-                ),
+                // Выключенный блок не показывается вовсе, а не гаснет: серая
+                // галочка выглядит как «сейчас нельзя, но вообще бывает» и
+                // сотрудник ищет, чем её включить.
+                if (supportsCardboard)
+                  _buildCompactCheckboxTile(
+                    value: _cardboardChecked,
+                    onChanged: (val) => setState(() {
+                      _cardboardChecked = val ?? false;
+                      _selectedCardboard = _cardboardChecked ? 'есть' : 'нет';
+                      _scheduleStagePreviewUpdate(immediate: true);
+                    }),
+                    label: 'Картон',
+                    width: 100,
+                  ),
+                if (_isBlockVisible(kOrderFormBlockTrimming))
+                  _buildCompactCheckboxTile(
+                    value: _trimming,
+                    onChanged: (val) => setState(() {
+                      _trimming = val ?? false;
+                      _scheduleStagePreviewUpdate(immediate: true);
+                    }),
+                    label: 'Подрезка',
+                    width: 100,
+                  ),
               ],
             );
 
             return _buildFieldGrid([
-              DropdownButtonFormField<String?>(
+              if (_isBlockVisible(kOrderFormBlockHandle))
+                DropdownButtonFormField<String?>(
                 value: hasSelectedHandle
                     ? _selectedHandleId
                     : (_selectedHandleId != null &&
@@ -6274,19 +7150,44 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ));
         final categoryItems = _stockExtraResults;
 
-        return Card(
-          // Use symmetric margins reduced by 20% to keep the panel centred and compact.
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        return Container(
+          decoration: BoxDecoration(
+            color: OrderFormColors.surface,
+            borderRadius:
+                BorderRadius.circular(OrderFormMetrics.cardRadius),
+            border: Border.all(color: OrderFormColors.border),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1A000000),
+                blurRadius: 24,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
           child: DefaultTabController(
             length: 3,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const TabBar(
+                  labelColor: OrderFormColors.accent,
+                  unselectedLabelColor: OrderFormColors.label,
+                  indicatorColor: OrderFormColors.accent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  dividerColor: OrderFormColors.border,
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  unselectedLabelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                   tabs: [
-                    Tab(text: 'Бумага'),
-                    Tab(text: 'Краски'),
-                    Tab(text: 'Категории'),
+                    Tab(height: 40, text: 'Бумага'),
+                    Tab(height: 40, text: 'Краски'),
+                    Tab(height: 40, text: 'Категории'),
                   ],
                 ),
                 Expanded(
@@ -6306,17 +7207,72 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  /// Строка склада в панели материалов: название и спецификация мелким.
+  Widget _warehouseTile({
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        hoverColor: OrderFormColors.fieldFill,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: OrderFormColors.text,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                // Спецификация — формат, граммаж, остаток — это то, по чему
+                // менеджер и выбирает строку, а не второстепенная подпись.
+                // Серым (label) она читалась хуже названия, хотя решение
+                // принимают именно по ней.
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  color: OrderFormColors.text,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPaperWarehouseView(List<TmcModel> papers) {
     if (papers.isEmpty) {
       return const Center(child: Text('На складе нет бумаги'));
     }
+    // Панель показывает ДОСТУПНОЕ, а не складское. Складская цифра включает
+    // метры, забронированные чужими заказами: выбрав по ней бумагу, менеджер
+    // получал заказ, который тут же вставал в «Ожидание материалов».
+    double availableOf(TmcModel paper) =>
+        availablePaperQtyById(paper.id, fallbackStock: paper.quantity) ??
+        paper.quantity;
+
     final filtered = papers.where((paper) {
       return _matchesWarehouseQuery(_paperSearch, [
         paper.description,
         paper.format ?? '',
         paper.grammage ?? '',
         paper.note ?? '',
-        paper.quantity.toStringAsFixed(2),
+        availableOf(paper).toStringAsFixed(2),
       ]);
     }).toList();
     return Column(
@@ -6358,31 +7314,24 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     itemBuilder: (context, index) {
                       final paper = filtered[index];
+                      // Спецификация сокращена до «Ф • Г • М»: панель узкая,
+                      // и полные подписи обрезались на первом же слове.
                       final subtitle = [
                         if ((paper.format ?? '').isNotEmpty)
-                          'Формат: ${paper.format}',
+                          'Ф: ${paper.format}',
                         if ((paper.grammage ?? '').isNotEmpty)
-                          'Грамаж: ${paper.grammage}',
-                        'Метраж: ${paper.quantity.toStringAsFixed(2)}',
+                          'Г: ${paper.grammage}',
+                        'М: ${availableOf(paper).toStringAsFixed(2)}',
                       ].where((part) => part.trim().isNotEmpty).join(' • ');
-                      return ListTile(
-                        dense: true,
-                        title: Text(
-                          paper.description.isEmpty
-                              ? 'Без названия'
-                              : paper.description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      return _warehouseTile(
+                        title: paper.description.isEmpty
+                            ? 'Без названия'
+                            : paper.description,
+                        subtitle: subtitle,
                         onTap: () => _applyPaperSelection(paper),
                       );
                     },
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, __) => const SizedBox(height: 2),
                     itemCount: filtered.length,
                   ),
                 ),
@@ -6579,18 +7528,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       if (sizeLabel.isNotEmpty) {
                         subtitleParts.add('Размер: $sizeLabel');
                       }
-                      return ListTile(
-                        dense: true,
-                        title: Text(
-                          description.isEmpty ? 'Без названия' : description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          subtitleParts.join(' • '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      return _warehouseTile(
+                        title:
+                            description.isEmpty ? 'Без названия' : description,
+                        subtitle: subtitleParts.join(' • '),
                         onTap: () => _selectStockExtraRow(row),
                       );
                     },
@@ -6626,14 +7567,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
     );
     if (_queueBuildStatus == QueueBuildStatus.outdated) {
+      // Заказ, у которого очередь уже была собрана, сохранение пересоберёт
+      // само и в черновик не уронит — пугать этим нельзя. Требование нажать
+      // кнопку остаётся только для заказов, где маршрут ещё не подтверждали.
+      final bool willRebuildOnSave =
+          (widget.order?.assignmentCreated ?? false) ||
+              widget.order?.queueBuildStatus == QueueBuildStatus.built;
       children.add(
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            'Очередь изменилась. Нажмите «Собрать очередь» перед сохранением, '
-            'иначе заказ останется черновиком',
+            willRebuildOnSave
+                ? 'Очередь изменилась — при сохранении она будет пересобрана '
+                    'автоматически. Нажмите «Собрать очередь», чтобы увидеть '
+                    'маршрут заранее'
+                : 'Очередь изменилась. Нажмите «Собрать очередь» перед '
+                    'сохранением, иначе заказ останется черновиком',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.error,
+                  color: willRebuildOnSave
+                      ? Theme.of(context).colorScheme.onSurfaceVariant
+                      : Theme.of(context).colorScheme.error,
                   fontWeight: FontWeight.w600,
                 ),
           ),
@@ -7025,20 +7978,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       final provider = Provider.of<WarehouseProvider>(context,
                           listen: false);
                       final list = provider.getTmcByType('Краска');
-                      final query = text.text.toLowerCase();
-                      if (query.isEmpty) return list;
-                      return list.where(
-                          (t) => t.description.toLowerCase().contains(query));
+                      // Тот же разбор на слова, что и в диалоге склада:
+                      // «красный 192» обязан находить «192D Красный».
+                      // Подстрочный contains этого не умел, а именно так
+                      // краску и ищут — по цвету и номеру в любом порядке.
+                      return list.where((t) => _matchesWarehouseQuery(
+                            text.text,
+                            [t.description, t.note ?? ''],
+                          ));
                     },
                     displayStringForOption: (tmc) => tmc.description,
                     fieldViewBuilder:
                         (context, controller, focusNode, onFieldSubmitted) {
-                      final display = row.displayName;
-                      if (controller.text != display) {
+                      // Пока сотрудник печатает, поле принадлежит ему:
+                      // возвращаем текст к модели только если он ещё ничего
+                      // не набирал (rawInput == null) или строку изменили
+                      // извне — выбором из списка, загрузкой заказа.
+                      final expected = row.rawInput ?? row.displayName;
+                      if (controller.text != expected) {
                         controller
-                          ..text = display
+                          ..text = expected
                           ..selection = TextSelection.fromPosition(
-                            TextPosition(offset: controller.text.length),
+                            TextPosition(offset: expected.length),
                           );
                       }
                       return TextFormField(
@@ -7047,13 +8008,21 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         decoration: InputDecoration(
                           labelText: 'Краска (необязательно)',
                           border: const OutlineInputBorder(),
+                          // Не ошибка ввода, а состояние заказа: такой
+                          // заказ сохраняется и ждёт, пока краску заведут.
                           errorText: row.nameNotFound
-                              ? 'Такой краски нет на складе'
+                              ? 'Нет на складе — заказ уйдёт в ожидание '
+                                  'материалов'
+                              : null,
+                          errorMaxLines: 2,
+                          errorStyle: row.nameNotFound
+                              ? const TextStyle(color: Color(0xFF7C3AED))
                               : null,
                         ),
                         onChanged: (value) {
                           final trimmed = value.trim();
                           setState(() {
+                            row.rawInput = value;
                             row.name = trimmed.isEmpty ? null : trimmed;
                             if (row.tmc != null &&
                                 row.tmc!.description.toLowerCase() !=
@@ -7071,6 +8040,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       setState(() {
                         row.tmc = tmc;
                         row.name = tmc.description;
+                        row.rawInput = tmc.description;
                         row.nameNotFound = false;
                         if (row.qtyGrams != null) {
                           final need = _gramsToStockUnit(row.qtyGrams!, tmc);
@@ -7126,7 +8096,10 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                     decoration: InputDecoration(
                       labelText: 'Кол-во (г)',
                       border: const OutlineInputBorder(),
-                      errorText: row.exceeded ? 'Недостаточно' : null,
+                      // Поле узкое (130 px), в одну строку подпись не влезает
+                      // и обрезалась бы многоточием.
+                      errorMaxLines: 2,
+                      errorText: row.exceeded ? kNotEnoughMaterialError : null,
                     ),
                     initialValue: _formatGramsForInput(row.qtyGrams),
                     keyboardType: TextInputType.number,
@@ -7212,11 +8185,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  /// PDF выбранной формы, которых ещё нет среди файлов заказа. Дедуп идёт по
+  /// objectPath: связь заказ↔форма двусторонняя, и один документ иначе попал
+  /// бы в список дважды.
+  List<Map<String, dynamic>> _formPdfsNotOnOrder() {
+    if (_oldFormSavedPdfs.isEmpty) return const [];
+    final orderPaths = _savedOrderPdfs
+        .map((f) => (f['objectPath'] ?? '').toString().trim())
+        .where((p) => p.isNotEmpty)
+        .toSet();
+    return _oldFormSavedPdfs.where((f) {
+      final path = (f['objectPath'] ?? '').toString().trim();
+      return path.isNotEmpty && !orderPaths.contains(path);
+    }).toList(growable: false);
+  }
+
   Widget _buildPdfAttachmentRow() {
+    final formPdfs = _formPdfsNotOnOrder();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (_loadingOrderPdfs)
+        if (_loadingOrderPdfs || _loadingOldFormPdfs)
           const Padding(
             padding: EdgeInsets.only(bottom: 4),
             child: LinearProgressIndicator(minHeight: 2),
@@ -7229,6 +8218,19 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             removeIcon: Icons.delete_outline,
             removeTooltip: 'Удалить',
           ),
+        // Файлы самой формы правятся прямо здесь — см. [_removeFormPdf].
+        // Метка «форма» остаётся: по ней видно, что файл общий, а не этого
+        // заказа, и подтверждение об этом предупредит.
+        for (final f in formPdfs)
+          _buildPdfTile(
+            name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
+            sourceTag: 'форма',
+            onOpen: () => _openSavedPdf(f),
+            onRemove: () => _removeFormPdf(f),
+            removeIcon: Icons.delete_outline,
+            removeTooltip: 'Удалить из формы',
+            iconColor: OrderFormColors.muted,
+          ),
         for (final f in _pickedOrderPdfs)
           _buildPdfTile(
             name: f.name,
@@ -7236,27 +8238,37 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             onRemove: () => setState(() => _pickedOrderPdfs.remove(f)),
             removeTooltip: 'Убрать',
           ),
-        if (_savedOrderPdfs.isNotEmpty || _pickedOrderPdfs.isNotEmpty)
+        if (_savedOrderPdfs.isNotEmpty ||
+            _pickedOrderPdfs.isNotEmpty ||
+            formPdfs.isNotEmpty)
           const SizedBox(height: 4),
-        ElevatedButton.icon(
-          onPressed: _pickPdf,
-          icon: const Icon(Icons.attach_file),
-          label: const Text('Прикрепить PDF'),
+        // По макету это не «тяжёлая» основная кнопка, а вторичная: рядом
+        // фиолетовая «Сохранить», и две заливки спорили бы за внимание.
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _pickPdf,
+            icon: const Icon(Icons.attach_file, size: 14),
+            label: const Text('Прикрепить'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              textStyle:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              foregroundColor: OrderFormColors.muted,
+              backgroundColor: OrderFormColors.fieldFill,
+              side: const BorderSide(color: OrderFormColors.border),
+              shape: RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(OrderFormMetrics.fieldRadius),
+              ),
+            ),
+          ),
         ),
       ],
     );
-  }
-
-  Future<void> _pickNewFormPdfs() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-      allowMultiple: true,
-      withData: true,
-    );
-    if (result != null && result.files.isNotEmpty) {
-      setState(() => _newFormPdfs.addAll(result.files));
-    }
   }
 
   Future<void> _loadOldFormPdfsFor(String formId) async {
@@ -7273,53 +8285,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       });
     } catch (_) {
       if (mounted) setState(() => _loadingOldFormPdfs = false);
-    }
-  }
-
-  Future<void> _pickOldFormPdfs() async {
-    final formId = _oldFormPdfsFormId;
-    if (formId == null) return;
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-      allowMultiple: true,
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-    for (final f in result.files) {
-      try {
-        await uploadPickedFormPdf(formId: formId, file: f);
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Ошибка загрузки ${f.name}: $e')),
-          );
-        }
-      }
-    }
-    await _loadOldFormPdfsFor(formId);
-  }
-
-  Future<void> _removeOldFormSavedPdf(Map<String, dynamic> file) async {
-    final fileName =
-        (file['filename'] ?? file['objectPath'] ?? 'Файл.pdf').toString();
-    final source = (file['source'] ?? 'form').toString();
-    final confirmed = await _confirmDeletePdf(
-      fileName,
-      message: source == 'order'
-          ? 'Файл "$fileName" будет отвязан от формы (сам файл заказа останется).'
-          : 'Файл "$fileName" будет удалён безвозвратно.',
-    );
-    if (!confirmed) return;
-    try {
-      await deleteFormFile(file);
-      if (mounted) setState(() => _oldFormSavedPdfs.remove(file));
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось удалить файл: $e')),
-        );
-      }
     }
   }
 
@@ -7433,75 +8398,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         ));
       }
       widgets.add(const SizedBox(height: 4));
-      if (_oldFormPdfsFormId != null) {
-        if (_loadingOldFormPdfs) {
-          widgets.add(const Padding(
-            padding: EdgeInsets.only(bottom: 4),
-            child: LinearProgressIndicator(minHeight: 2),
-          ));
-        }
-        for (final f in _oldFormSavedPdfs) {
-          final source = (f['source'] ?? 'form').toString();
-          widgets.add(_buildPdfTile(
-            name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
-            sourceTag: source == 'order' ? 'из заказа' : null,
-            iconColor: source == 'order' ? Colors.grey : Colors.red,
-            onOpen: () => _openSavedPdf(f),
-            onRemove: () => _removeOldFormSavedPdf(f),
-            removeIcon: Icons.delete_outline,
-            removeTooltip: 'Удалить',
-          ));
-        }
-        widgets.add(ElevatedButton.icon(
-          onPressed: _pickOldFormPdfs,
-          icon: const Icon(Icons.attach_file),
-          label: const Text('Прикрепить PDF'),
-        ));
-      }
+      // PDF формы здесь больше не прикрепляем: единственная точка загрузки —
+      // «Прикрепить PDF» в блоке заказа (см. _buildPdfAttachmentRow).
+      // Файлы, уже привязанные к форме, видны единым списком «Файлы»
+      // в карточке заказа; управлять ими можно в модуле «Формы».
     } else {
       widgets.add(const SizedBox(height: 4));
       widgets.add(_buildFormExtraInfoField());
       widgets.add(const SizedBox(height: 8));
-      // Черновик возобновления: файлы реюзаемой формы, read-only «Открыть».
-      // Гейт !_editingForm повторяет условие реюз-ветки сохранения: как только
-      // пользователь тронул тумблеры (форма будет создана заново), чужие файлы
-      // из списка убираем, чтобы не выглядели прикреплёнными к новой форме.
-      if (widget.order == null && !_editingForm) {
-        if (_loadingAssignedFormPdfs) {
-          widgets.add(const Padding(
-            padding: EdgeInsets.only(bottom: 4),
-            child: LinearProgressIndicator(minHeight: 2),
-          ));
-        } else if (_assignedFormPdfs.isNotEmpty) {
-          widgets.add(const Padding(
-            padding: EdgeInsets.only(bottom: 2),
-            child: Text('Файлы формы:',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-          ));
-          for (final f in _assignedFormPdfs) {
-            final source = (f['source'] ?? 'form').toString();
-            widgets.add(_buildPdfTile(
-              name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
-              sourceTag: source == 'order' ? 'из заказа' : null,
-              iconColor: source == 'order' ? Colors.grey : Colors.red,
-              onOpen: () => _openSavedPdf(f),
-            ));
-          }
-        }
-      }
-      for (final f in _newFormPdfs) {
-        widgets.add(_buildPdfTile(
-          name: f.name,
-          onOpen: f.bytes == null ? null : () => _openPdfBytes(f.bytes!, f.name),
-          onRemove: () => setState(() => _newFormPdfs.remove(f)),
-          removeTooltip: 'Убрать',
-        ));
-      }
-      widgets.add(ElevatedButton.icon(
-        onPressed: _pickNewFormPdfs,
-        icon: const Icon(Icons.attach_file),
-        label: const Text('Прикрепить PDF'),
-      ));
+      // PDF новой формы здесь тоже не прикрепляем — единственная точка
+      // загрузки живёт в блоке заказа. Прикреплённые к заказу файлы всё так
+      // же линкуются к форме (_syncOrderPdfsToForm), поэтому связь
+      // форма↔заказ не теряется.
     }
 
     return widgets;
@@ -7538,31 +8446,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ));
     }
 
-    // Bug-2: файлы привязанной формы в read-only сводке. Только «Открыть» —
-    // кнопки удаления здесь нет (удаление доступно лишь в редакторе формы),
-    // чтобы случайный клик при просмотре не сносил файл.
-    if (_loadingAssignedFormPdfs) {
-      items.add(const Padding(
-        padding: EdgeInsets.only(top: 6),
-        child: LinearProgressIndicator(minHeight: 2),
-      ));
-    } else if (_assignedFormPdfs.isNotEmpty) {
-      items.add(const Padding(
-        padding: EdgeInsets.only(top: 6, bottom: 2),
-        child: Text('Файлы формы:',
-            style: TextStyle(fontSize: 12, color: Colors.grey)),
-      ));
-      for (final f in _assignedFormPdfs) {
-        final source = (f['source'] ?? 'form').toString();
-        items.add(_buildPdfTile(
-          name: (f['filename'] ?? f['objectPath'] ?? 'Файл.pdf').toString(),
-          sourceTag: source == 'order' ? 'из заказа' : null,
-          iconColor: source == 'order' ? Colors.grey : Colors.red,
-          onOpen: () => _openSavedPdf(f),
-          // read-only: onRemove не передаём → кнопки удаления нет.
-        ));
-      }
-    }
+    // Отдельного списка «Файлы формы» здесь нет: PDF заказа и PDF формы
+    // сведены в один список «Файлы» карточки заказа, а прикрепляются в
+    // единственном месте — блоке заказа.
 
     if (items.isEmpty) {
       return Text(
@@ -7605,6 +8491,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             selection: TextSelection.collapsed(offset: display.length),
           );
           _selectedOldForm = display;
+          _editingFormInitialText = display;
         }
       }
     });
@@ -7619,6 +8506,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       // Форма уже привязана к заказу — резолвим её id, чтобы показать/
       // редактировать список уже загруженных PDF немедленно.
       findFormIdByOrderFormRef(
+        formId: _orderFormId,
         formCode: _orderFormCode,
         formSeries: _orderFormSeries,
         formNo: _orderFormNo,

@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'order_model.dart';
 import 'order_queue_sync_service.dart';
+import 'product_type_settings.dart';
 import 'stage_queue_builder.dart';
 
 export 'order_queue_sync_service.dart'
@@ -128,6 +129,11 @@ class OrderQueueService {
           draft.selectedSwitchableStageIdsByStageKey,
       existingStages: existingStages,
       templateStages: templateStages,
+      // Маршрут, настроенный техлидом в «Типах продукта». До этого заказ
+      // собирался только зашитыми ветками по uuid типа продукта, и правки в
+      // редакторе на реальный заказ не влияли вообще — публикация меняла
+      // лишь превью. Кэш синхронный: справочник прогревается на старте.
+      route: ProductTypeSettings.instance.routeFor(draft.productTypeId),
     );
   }
 
@@ -283,40 +289,10 @@ class OrderQueueService {
       'selected_p_stage': selections['selected_p_stage'],
       'queue_signature': signature,
     };
-    final attempts = <Map<String, dynamic>>[
-      {
-        ...basePayload,
-        'stage_queue': rows,
-        'saved_stage_queue': rows,
-        'order_stage_queue': rows,
-      },
-      {...basePayload, 'stage_queue': rows},
-      {...basePayload, 'saved_stage_queue': rows},
-      {...basePayload, 'order_stage_queue': rows},
-      basePayload,
-    ];
-
-    Object? lastError;
-    for (final payload in attempts) {
-      try {
-        await _client.from('orders').update(payload).eq('id', orderId);
-        return;
-      } catch (error) {
-        lastError = error;
-        if (!_isMissingColumnError(error)) rethrow;
-      }
-    }
-    if (lastError != null) throw lastError;
-  }
-
-  static bool _isMissingColumnError(Object error) {
-    if (error is! PostgrestException) return false;
-    final code = (error.code ?? '').trim();
-    final message = error.message.toLowerCase();
-    return code == '42703' ||
-        code == 'PGRST204' ||
-        message.contains('column') ||
-        message.contains('schema cache');
+    // Очередь этапов живёт в prod_plans/prod_plan_stages. Колонок
+    // stage_queue/saved_stage_queue/order_stage_queue у orders нет: прежние
+    // попытки записать их давали 4 ошибочных запроса на каждое сохранение.
+    await _client.from('orders').update(basePayload).eq('id', orderId);
   }
 
   static bool _isLegacyNormalizedQueueSchemaError(Object error) {
@@ -440,12 +416,9 @@ class OrderQueueService {
     if (loadSources != null) {
       return loadSources.loadOrderQueueColumns(orderId);
     }
-    final order = await _client
-        .from('orders')
-        .select('stage_queue, saved_stage_queue, order_stage_queue')
-        .eq('id', orderId)
-        .maybeSingle();
-    return order != null ? Map<String, dynamic>.from(order) : null;
+    // В базе этих колонок нет — запрос всегда отвечал 400. Источник остаётся
+    // точкой подмены для тестов и старых данных, но в сеть не ходит.
+    return null;
   }
 
   Future<Map<String, dynamic>?> _loadOrderData(String orderId) async {
@@ -453,14 +426,8 @@ class OrderQueueService {
     if (loadSources != null) {
       return loadSources.loadOrderData(orderId);
     }
-    final order = await _client
-        .from('orders')
-        .select('data')
-        .eq('id', orderId)
-        .maybeSingle();
-    return order != null && order['data'] is Map
-        ? Map<String, dynamic>.from(order['data'] as Map)
-        : null;
+    // Колонки orders.data нет — см. _loadOrderQueueColumns.
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> _loadLegacyProductionPlanRows(
@@ -508,8 +475,9 @@ class OrderQueueService {
     // фактическим порядком: упаковка со «скромным» seq оказывалась раньше
     // этапов с несколькими рабочими местами. Поэтому первый ключ — step_no,
     // второй — seq, он держит стабильный порядок внутри одного шага.
+    // Попытки со stage_name убраны: такой колонки у prod_plan_stages нет, а у
+    // плана без строк цикл доходил до них и давал 4 ошибки на каждое чтение.
     const attempts = <({String columns, List<String> orderColumns})>[
-      // Рабочие попытки (без stage_name, который отсутствует в схеме)
       (
         columns: 'stage_id,stage_group_key,name,step_no,seq,status,'
             'started_at,finished_at,assigned_employee_id',
@@ -522,24 +490,6 @@ class OrderQueueService {
       (
         columns: 'stage_id,stage_group_key,name,seq,status',
         orderColumns: ['seq'],
-      ),
-      // Запасные попытки для схем со stage_name
-      (
-        columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status,'
-            'started_at,finished_at,assigned_employee_id',
-        orderColumns: ['step_no', 'seq'],
-      ),
-      (
-        columns: 'stage_id,stage_group_key,name,stage_name,step_no,seq,status',
-        orderColumns: ['step_no', 'seq'],
-      ),
-      (
-        columns: 'stage_id,stage_group_key,stage_name,step_no,seq,status',
-        orderColumns: ['step_no', 'seq'],
-      ),
-      (
-        columns: 'stage_id,stage_group_key,stage_name,step_no,status',
-        orderColumns: ['step_no'],
       ),
     ];
 

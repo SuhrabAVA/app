@@ -10,7 +10,6 @@ import 'warehouse_provider.dart';
 /// Расширение добавляет методы:
 /// - loadWriteoffs(type: ..., itemId: ...)
 /// - loadInventories(type: ..., itemId: ...)
-/// - subscribeWoInv(type: ..., itemId: ..., onChange: ...)
 extension WarehouseProviderWoInv on WarehouseProvider {
   // Карта соответствий: тип -> таблица списаний и имя FK
   static const Map<String, Map<String, String>> _woMap = {
@@ -78,36 +77,5 @@ extension WarehouseProviderWoInv on WarehouseProvider {
         .order('created_at', ascending: false);
 
     return (data as List).cast<Map<String, dynamic>>();
-  }
-
-  /// Подписка на изменения в таблицах списаний/инвентаризаций (реал-тайм).
-  RealtimeChannel subscribeWoInv({
-    required String type,
-    required String itemId,
-    void Function()? onChange,
-  }) {
-    final key = _normalizeType(type);
-
-    final tables = <String>[];
-    if (_woMap.containsKey(key)) tables.add(_woMap[key]!['table']!);
-    if (_invMap.containsKey(key)) tables.add(_invMap[key]!['table']!);
-
-    final s = Supabase.instance.client;
-    final ch = s.channel('woinv:$key:$itemId');
-
-    for (final t in tables) {
-      ch.onPostgresChanges(
-        event: PostgresChangeEvent.all,
-        schema: 'public',
-        table: t,
-        filter: PostgresChangeFilter.eq(
-          column: (_woMap[key]?['fk'] ?? _invMap[key]!['fk'])!,
-          value: itemId,
-        ),
-        callback: (_) => onChange?.call(),
-      );
-    }
-    ch.subscribe();
-    return ch;
   }
 }

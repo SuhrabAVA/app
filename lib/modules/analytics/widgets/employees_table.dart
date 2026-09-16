@@ -127,6 +127,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
       final breakdown = SalaryCalculator.compute(
         events: list,
         coefficients: state.coefficients,
+      helperCoefficients: state.helperCoefficients,
         settings: state.settings,
         adjustments: adj,
         halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
@@ -137,6 +138,7 @@ class _EmployeesTableState extends State<EmployeesTable> {
         statusPayRates: state.statusPayRates,
         statusNames: {for (final s in state.statuses) s.id: s.name},
         setupPrices: setupPrices,
+        scheduledShifts: state.scheduledShiftsFor(emp.id),
       );
       final statusName =
           statusById[state.employeeStatusIds[emp.id] ?? '']?.name;

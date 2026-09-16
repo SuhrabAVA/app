@@ -53,7 +53,10 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
     int daySelected,
     AnalyticsState state,
   ) {
-    final midnight = DateTime(state.month.year, state.month.month, daySelected);
+    // Полночь — в Костанайской рамке (UTC+5), как и c.timestamp: иначе
+    // позиция маркера уезжала бы на таймзону устройства.
+    final midnight =
+        DateTime.utc(state.month.year, state.month.month, daySelected);
     String hhmm(DateTime dt) =>
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return [
@@ -200,6 +203,10 @@ class _WorkplaceDetailScreenState extends State<WorkplaceDetailScreen> {
                 timeline: timeline,
                 workplaceById: {for (final w in personnel.workplaces) w.id: w},
                 comments: dayComments,
+                // Правка количества — только техлиду: она меняет и аналитику
+                // сотрудника, и комментарии заказа, и фактическое количество.
+                canEditQuantity: widget.permission.canEdit,
+                onQuantityEdited: () => widget.service.refresh(),
                 employeeNameOf: (id) {
                   try {
                     final e = personnel.employees.firstWhere((x) => x.id == id);

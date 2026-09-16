@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:sheet_clone/modules/orders/order_generation_switcher.dart';
 import 'package:sheet_clone/modules/orders/order_model.dart';
 import 'package:sheet_clone/modules/orders/order_restart_history_repository.dart';
 import 'package:sheet_clone/modules/orders/order_timeline_dialog.dart';
@@ -68,15 +69,15 @@ void main() {
     final service = RestartHistoryService(_FakeHistoryRepository([
       const OrderGenerationEntry(id: 'solo', generation: 0, isCurrent: true),
     ]));
-    await tester.pumpWidget(_host(OrderTimelineDialog(
+    await tester.pumpWidget(_host(OrderHistoryView(
       order: _order('solo'),
-      events: [_event('Единственная жизнь')],
+      initialEvents: [_event('Единственная жизнь')],
       loadEvents: (_) async => const [],
       historyService: service,
     )));
     await tester.pumpAndSettle();
 
-    expect(find.byType(ChoiceChip), findsNothing);
+    expect(find.byType(OrderGenerationChip), findsNothing);
     expect(find.text('Единственная жизнь'), findsOneWidget);
   });
 
@@ -98,16 +99,16 @@ void main() {
       return [_event('История $orderId')];
     }
 
-    await tester.pumpWidget(_host(OrderTimelineDialog(
+    await tester.pumpWidget(_host(OrderHistoryView(
       order: _order('cur'),
-      events: [_event('История текущего')],
+      initialEvents: [_event('История текущего')],
       loadEvents: loadEvents,
       historyService: RestartHistoryService(_FakeHistoryRepository(chain)),
     )));
     await tester.pumpAndSettle();
 
     // 4 вкладки: текущий + 3 предыдущих поколения с датами создания.
-    expect(find.byType(ChoiceChip), findsNWidgets(4));
+    expect(find.byType(OrderGenerationChip), findsNWidgets(4));
     expect(find.text('Этот заказ'), findsOneWidget);
     expect(find.text('12.03.2026'), findsOneWidget);
     expect(find.text('15.04.2026'), findsOneWidget);
@@ -148,9 +149,9 @@ void main() {
       OrderGenerationEntry(
           id: 'revival', generation: 1, orderDate: DateTime(2026, 6, 2)),
     ];
-    await tester.pumpWidget(_host(OrderTimelineDialog(
+    await tester.pumpWidget(_host(OrderHistoryView(
       order: _order('root'),
-      events: [_event('История оригинала')],
+      initialEvents: [_event('История оригинала')],
       loadEvents: (id) async => [_event('История $id')],
       historyService: RestartHistoryService(_FakeHistoryRepository(chain)),
     )));

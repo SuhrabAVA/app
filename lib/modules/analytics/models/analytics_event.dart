@@ -26,6 +26,41 @@ extension AnalyticsEventTypeX on AnalyticsEventType {
   }
 }
 
+/// Запись количества, из которой сложилось [AnalyticsEvent.qty].
+///
+/// Нужна, чтобы по числу в таблице можно было добраться до исходного
+/// комментария и исправить его: одно событие часто вбирает несколько записей
+/// (перерывы + завершение), и без ссылок непонятно, какую из них править.
+class AnalyticsQtySource {
+  /// id комментария в `tasks.comments`.
+  final String commentId;
+
+  /// `quantity_done` / `quantity_team_total` / `quantity_share`.
+  final String type;
+
+  /// Что этот комментарий дал в [AnalyticsEvent.qty] — уже в единицах
+  /// рабочего места (для упаковки это упаковки, а не введённые штуки).
+  final double qty;
+
+  /// Момент фиксации — по нему сотрудник узнаёт свою запись в списке.
+  final DateTime timestamp;
+
+  /// Исходный текст комментария (payload количества).
+  ///
+  /// Нужен диалогу правки: в аналитике упаковка показана в УПАКОВКАХ, а
+  /// правится введённое число — штуки. Без payload не узнать ни единицу
+  /// хранения, ни фасовку.
+  final String rawText;
+
+  const AnalyticsQtySource({
+    required this.commentId,
+    required this.type,
+    required this.qty,
+    required this.timestamp,
+    this.rawText = '',
+  });
+}
+
 /// Единое событие аналитики, на основе TaskTimeEvent + qty из comments.
 class AnalyticsEvent {
   final String id;
@@ -40,10 +75,21 @@ class AnalyticsEvent {
   final String? note;
   /// Количество, выполненное в рамках этого события (для работы).
   final double qty;
+
+  /// Записи, из которых сложилось [qty] — для правки количества техлидом.
+  final List<AnalyticsQtySource> qtySources;
   /// Количество приладки (для наладки).
   final double setupQty;
   /// Сделано ли событие сегодня (для подсветки активности).
   final bool isActive;
+
+  /// Помощник в совместной работе: этап начал и ведёт другой сотрудник.
+  ///
+  /// Количество после завершения этапа засчитывается всем участникам
+  /// целиком, поэтому по одному только qty помощника от основного
+  /// исполнителя не отличить — роль приходится нести в самом событии.
+  /// Оплачивается по своей ставке (см. WorkplaceCoefficient.helperCoefficient).
+  final bool isHelper;
 
   const AnalyticsEvent({
     required this.id,
@@ -57,8 +103,10 @@ class AnalyticsEvent {
     this.customer,
     this.note,
     this.qty = 0,
+    this.qtySources = const <AnalyticsQtySource>[],
     this.setupQty = 0,
     this.isActive = false,
+    this.isHelper = false,
   });
 
   /// Длительность события в минутах. Если endTime отсутствует — возвращает 0
@@ -82,6 +130,7 @@ class AnalyticsEvent {
     double? qty,
     double? setupQty,
     bool? isActive,
+    bool? isHelper,
     String? customer,
   }) {
     return AnalyticsEvent(
@@ -96,8 +145,10 @@ class AnalyticsEvent {
       customer: customer ?? this.customer,
       note: note ?? this.note,
       qty: qty ?? this.qty,
+      qtySources: qtySources,
       setupQty: setupQty ?? this.setupQty,
       isActive: isActive ?? this.isActive,
+      isHelper: isHelper ?? this.isHelper,
     );
   }
 }

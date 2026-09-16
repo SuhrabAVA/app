@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../utils/shift_day.dart';
 import 'employee_status_model.dart';
 
 /// Статусы сотрудников: справочник + история присвоения с датами.
@@ -131,18 +132,28 @@ class EmployeeStatusRepository {
 
   /// Присваивает статус сотруднику (или снимает, если [statusId] == null),
   /// с сохранением истории: закрывает текущий открытый период (если есть)
-  /// и открывает новый (если [statusId] задан). День смены целиком
-  /// принадлежит новому состоянию (см. план: date_to старого периода
-  /// исключительна, date_from нового периода включительна, оба равны дню
-  /// смены).
+  /// и открывает новый (если [statusId] задан).
+  ///
+  /// Граница — начало СЛЕДУЮЩЕЙ смены, а не текущий день. Раньше оба
+  /// периода резались сегодняшним числом, и снятие статуса в середине смены
+  /// задним числом переводило уже отработанную часть дня на другую оплату:
+  /// стажёр, у которого статус сняли в обед, получал за это утро сдельно.
+  /// Текущий день смены целиком остаётся за прежним состоянием (date_to
+  /// исключительна), новое начинается со следующего дня — см. [shiftDayOf]:
+  /// правка после полуночи, но до 06:00, относится к текущей ночной смене.
   Future<void> assignStatus({
     required String employeeId,
     required String? statusId,
+    DateTime? now,
   }) async {
-    final today = DateTime.now();
-    await closeOpenPeriod(employeeId: employeeId, to: today);
+    final boundary = nextShiftDayAfter(now ?? DateTime.now());
+    await closeOpenPeriod(employeeId: employeeId, to: boundary);
     if (statusId != null && statusId.isNotEmpty) {
-      await openPeriod(employeeId: employeeId, statusId: statusId, from: today);
+      await openPeriod(
+        employeeId: employeeId,
+        statusId: statusId,
+        from: boundary,
+      );
     }
   }
 

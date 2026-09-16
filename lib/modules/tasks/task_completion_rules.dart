@@ -44,3 +44,23 @@ bool isOrderFinallyCompleted(Iterable<TaskModel> orderTasks) {
   if (tasksByGroup.isEmpty) return false;
   return tasksByGroup.values.every(isStageGroupFinallyCompleted);
 }
+
+/// Начало ТЕКУЩЕГО круга работы по этапу — момент последнего возобновления
+/// завершённого этапа (комментарий `stage_reopened`, пишет
+/// [TaskProvider.reopenStageGroup]). 0 — этап ни разу не возобновляли.
+///
+/// Возобновление намеренно сохраняет историю: время и количество после него
+/// дополняются, а не переписываются. Но состояние сотрудника «завершил
+/// участие» относится к прошлому кругу — если считать его и после
+/// возобновления, этап нельзя начать заново: в совместном режиме кнопка
+/// «Начать» после личного завершения выключена, и запуск блокируется как
+/// конфликт.
+int stageRoundStartMillis(TaskModel task) {
+  var latest = 0;
+  for (final c in task.comments) {
+    if (c.type != 'stage_reopened') continue;
+    final ts = normalizeEpochToMillis(c.timestamp);
+    if (ts > latest) latest = ts;
+  }
+  return latest;
+}

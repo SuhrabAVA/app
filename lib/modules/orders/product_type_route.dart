@@ -78,6 +78,8 @@ class RouteStage {
     this.selectionMode = 'all',
     this.isEnabled = true,
     this.isPinnedLast = false,
+    this.executionMode = 'sequential',
+    this.parallelWithStageId,
     this.workplaces = const <RouteStageWorkplace>[],
     this.conditions = const <RouteCondition>[],
   });
@@ -100,6 +102,18 @@ class RouteStage {
   final String selectionMode;
   final bool isEnabled;
   final bool isPinnedLast;
+
+  /// Когда этап может начаться: `sequential`, `free_of_chain`,
+  /// `parallel_with`, `parallel_with_previous` — см. комментарий к колонке
+  /// `product_type_stages.execution_mode`.
+  ///
+  /// Пока читается только редактором: рантайм переходит на эти значения в
+  /// фазах T5–T6, до тех пор очерёдность по-прежнему зашита в tasks_screen.
+  final String executionMode;
+
+  /// Партнёр для `parallel_with` — `product_type_stages.id` той же версии.
+  final String? parallelWithStageId;
+
   final List<RouteStageWorkplace> workplaces;
   final List<RouteCondition> conditions;
 
@@ -119,6 +133,17 @@ class RouteStage {
           (map['selectionMode'] ?? map['selection_mode'] ?? 'all').toString(),
       isEnabled: (map['isEnabled'] ?? map['is_enabled']) != false,
       isPinnedLast: (map['isPinnedLast'] ?? map['is_pinned_last']) == true,
+      executionMode: (map['executionMode'] ??
+              map['execution_mode'] ??
+              'sequential')
+          .toString(),
+      parallelWithStageId: switch ((map['parallelWithStageId'] ??
+              map['parallel_with_stage_id'])
+          ?.toString()) {
+        null => null,
+        final id when id.isEmpty => null,
+        final id => id,
+      },
       workplaces: <RouteStageWorkplace>[
         for (final w in (map['workplaces'] as List? ?? const []))
           RouteStageWorkplace.fromMap(Map<String, dynamic>.from(w as Map)),
@@ -395,6 +420,61 @@ String _stageName(RouteStage stage, String selectedWorkplaceId) {
 /// (`v_bottom_stage`, `p_package_stage`), которых в схеме нет — там
 /// `switchableStageKey` сверяется и с ними. Здесь сверка идёт только с
 /// ключом этапа.
+/// Можно ли переключать вариант у этапа очереди с ключом [stageKey].
+///
+/// Требуется не меньше двух вариантов: у этапа с одним рабочим местом
+/// переключать нечего, и делать карточку нажимаемой — обманывать.
+bool isRouteSwitchableStageKey(ProductTypeRoute? route, String? stageKey) {
+  if (route == null) return false;
+  final key = stageKey?.trim();
+  if (key == null || key.isEmpty) return false;
+  for (final stage in route.stages) {
+    if (stage.key != key) continue;
+    return stage.isSwitchable && stage.workplaces.length > 1;
+  }
+  return false;
+}
+
+/// Выбранные варианты переключаемых этапов МАРШРУТА, прочитанные из уже
+/// собранной очереди.
+///
+/// Зашитый сборщик отбирает такие выборы по своему списку легаси-этапов и
+/// всё чужое молча выбрасывает. Здесь проверка идёт по самому маршруту:
+/// вариант принимается, если он действительно принадлежит этому этапу.
+Map<String, String> collectRouteSwitchableSelections(
+  ProductTypeRoute? route,
+  List<Map<String, dynamic>> stages,
+) {
+  if (route == null) return const <String, String>{};
+  final allowed = <String, Set<String>>{
+    for (final stage in route.stages)
+      if (stage.isSwitchable)
+        stage.key: <String>{
+          for (final workplace in stage.workplaces) workplace.workplaceId,
+        },
+  };
+  if (allowed.isEmpty) return const <String, String>{};
+
+  final selections = <String, String>{};
+  for (final stage in stages) {
+    final stageKey = (stage['stageKey'] ??
+            stage['stage_key'] ??
+            stage['switchableGroupKey'])
+        ?.toString()
+        .trim();
+    if (stageKey == null || stageKey.isEmpty) continue;
+    final selected = (stage['selectedWorkplaceId'] ??
+            stage['selected_workplace_id'])
+        ?.toString()
+        .trim();
+    if (selected == null || selected.isEmpty) continue;
+    if (allowed[stageKey]?.contains(selected) ?? false) {
+      selections[stageKey] = selected;
+    }
+  }
+  return selections;
+}
+
 RouteStageWorkplace _selectedVariant(
   OrderStageQueueDraft draft,
   RouteStage stage,

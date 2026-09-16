@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../warehouse/paint_stock_rules.dart';
 import '../warehouse/supplier_provider.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
@@ -26,7 +27,22 @@ class PaperOption {
 class AddEntryDialog extends StatefulWidget {
   final String? initialTable;
   final TmcModel? existing;
-  const AddEntryDialog({super.key, this.initialTable, this.existing});
+
+  /// Название, с которым открыть форму создания.
+  ///
+  /// Приходит с карточки заказа, которому не хватает краски: менеджер вписал
+  /// «192D Красный», такой карточки на складе нет, и кнопка «Завести краску»
+  /// открывает эту форму уже заполненной. Разбирается так же, как при
+  /// редактировании: известный цвет уходит в выпадающий список, остаток — в
+  /// название. Сотруднику остаётся ввести только количество.
+  final String? initialName;
+
+  const AddEntryDialog({
+    super.key,
+    this.initialTable,
+    this.existing,
+    this.initialName,
+  });
 
   @override
   State<AddEntryDialog> createState() => _AddEntryDialogState();
@@ -116,6 +132,29 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
   String? _selectedMaterial;
   String? _selectedSupplierId;
   String? _selectedColor;
+
+  /// Имя краски, которое запросил заказ, — ровно как оно записано в заказе.
+  ///
+  /// Заказ и склад связывает только текст, поэтому карточка, заведённая по
+  /// запросу заказа, обязана получить ЭТО описание, а не пересобранное из
+  /// полей формы. Раньше описание всегда клеилось как «название + цвет», а
+  /// цвет обязателен: запрос «невидимая краска» превращался на складе в
+  /// «невидимая краска Красный», заказ такой карточки не находил и навсегда
+  /// оставался фиолетовым. Совпадало только когда имя в заказе само
+  /// заканчивалось известным цветом.
+  String _requestedPaintName = '';
+
+  /// Что префилл положил в поле «Название». Пока пользователь это поле не
+  /// правил, описание берём из [_requestedPaintName].
+  String _prefilledPaintName = '';
+
+  /// Заводим ли краску по запросу заказа с нераспознанным цветом.
+  ///
+  /// В этом случае цвет в описание не попадёт, поэтому и требовать его
+  /// бессмысленно: форма просила бы данные, которые тут же выбрасывает.
+  bool get _paintNameComesFromRequest =>
+      _requestedPaintName.isNotEmpty &&
+      (_controllers['name']?.text.trim() ?? '') == _prefilledPaintName;
   String? _selectedRollId;
   String? _selectedProductType;
 
@@ -262,7 +301,32 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
       _existingImageUrl = widget.existing!.imageUrl;
     } else if (widget.initialTable != null) {
       _selectedTable = widget.initialTable;
+      _prefillNameFromRequest();
     }
+  }
+
+  /// Раскладывает [AddEntryDialog.initialName] по полям формы краски.
+  void _prefillNameFromRequest() {
+    final requested = (widget.initialName ?? '').trim();
+    if (requested.isEmpty || _selectedTable != 'Краска') return;
+
+    var paintName = requested;
+    for (final c in _colors) {
+      if (paintName.toLowerCase() == c.toLowerCase()) {
+        paintName = '';
+        _selectedColor = c;
+        break;
+      }
+      if (paintName.toLowerCase().endsWith(' ${c.toLowerCase()}')) {
+        paintName =
+            paintName.substring(0, paintName.length - c.length - 1).trim();
+        _selectedColor = c;
+        break;
+      }
+    }
+    _controllers['name']!.text = paintName;
+    _requestedPaintName = requested;
+    _prefilledPaintName = paintName;
   }
 
   @override
@@ -754,9 +818,25 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
           );
           return;
         }
-        if (existing.first.quantity < length) {
+        // Списывать можно только доступное: метры, обещанные заказам, за
+        // сотрудником не числятся. Раньше здесь стоял складской остаток, и
+        // ручное списание уносило чужой резерв — заказ, уже показанный
+        // менеджеру как обеспеченный, оставался без бумаги.
+        final reservedByOrders = await wh.paperReservedQty(existing.first.id);
+        final availableForWriteoff = existing.first.quantity - reservedByOrders;
+        if (availableForWriteoff < length) {
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Недостаточно бумаги для списания.')),
+            SnackBar(
+              content: Text(
+                reservedByOrders > 0
+                    ? 'Недостаточно бумаги: доступно '
+                        '${(availableForWriteoff < 0 ? 0 : availableForWriteoff).toStringAsFixed(2)} м, '
+                        'ещё ${reservedByOrders.toStringAsFixed(2)} м '
+                        'забронировано заказами.'
+                    : 'Недостаточно бумаги для списания.',
+              ),
+            ),
           );
           return;
         }
@@ -886,7 +966,12 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
         final grams = double.tryParse(
                 _controllers['weight']!.text.trim().replaceAll(',', '.')) ??
             0;
-        final description = color.isNotEmpty ? '$name $color' : name;
+        final description = paintCardDescription(
+          name: name,
+          color: color,
+          requestedName:
+              _paintNameComesFromRequest ? _requestedPaintName : null,
+        );
 
         await wh.addTmc(
           id: const Uuid().v4(),
@@ -1784,7 +1869,9 @@ class _AddEntryDialogState extends State<AddEntryDialog> {
                     )
                     .toList(),
                 onChanged: (v) => setState(() => _selectedColor = v),
-                validator: (val) => val == null ? 'Выберите цвет' : null,
+                validator: (val) => val == null && !_paintNameComesFromRequest
+                    ? 'Выберите цвет'
+                    : null,
               ),
             ),
             _buildField(

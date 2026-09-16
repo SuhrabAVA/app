@@ -128,6 +128,29 @@ bool isFirstPendingStageInOrder({
   String groupKey(String stageId) =>
       groupResolver?.call(orderId, stageId) ?? stageId;
 
+  // Уже начатый этап очередью не запирается.
+  //
+  // Правило последовательности решает, МОЖНО ЛИ ВОЙТИ в этап, который ещё не
+  // трогали. К этапу, на котором уже работали, оно неприменимо: работа —
+  // свершившийся факт, отменить её запретом входа нельзя, а запрет означал бы,
+  // что этап нельзя ни продолжить, ни доукомплектовать людьми.
+  //
+  // Регрессия, ради которой правило появилось: у заказа «Хороший год» на
+  // «Сборке дно+картон» с 13:10 работали трое, все отметили количество и
+  // завершили участие — этап встал на паузу незакрытым. В 13:30 маршрут
+  // пересобрали, и в него добавился неначатый предшественник «Резка картона».
+  // Этап заперло задним числом: ни продолжить, ни войти новому сотруднику —
+  // кнопка «Начать» гасла у всех, а строка «Вы» не показывалась вовсе.
+  final String currentKeyForStartedCheck = groupKey(currentStageId);
+  for (final state in stageStates) {
+    final sameStage = state.stageId == currentStageId ||
+        groupKey(state.stageId) == currentKeyForStartedCheck ||
+        (currentStageGroupKey != null &&
+            state.stageGroupKey == currentStageGroupKey);
+    if (!sameStage) continue;
+    if (state.started || state.completed || state.problem) return true;
+  }
+
   final stages = <String, Map<String, bool>>{};
   var currentIsPackaging = isPackagingStage(
     stageId: currentStageId,

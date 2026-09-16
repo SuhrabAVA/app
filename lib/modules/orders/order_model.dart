@@ -1,5 +1,6 @@
 // lib/modules/orders/order_model.dart
 import 'dart:convert';
+import 'order_extra_options.dart';
 import 'product_model.dart';
 import 'material_model.dart';
 
@@ -128,11 +129,21 @@ class OrderModel {
   final int? newFormNo;
   final String? formSeries;
   final String? formCode;
+  final String? formId;
   bool contractSigned;
   bool paymentDone;
   String comments;
 
   double? actualQty;
+
+  /// Когда закончилось ПРОИЗВОДСТВО (`orders.completed_at`).
+  ///
+  /// Отдельная дата от [shippedAt]: заказ доделали, товар лежит на складе, а
+  /// уехал он через неделю. Пишется при закрытии последнего этапа
+  /// (`TaskProvider`), а отгрузка её больше не затирает — иначе у всех
+  /// отгруженных заказов «завершение» совпадало бы с отгрузкой, и фильтр
+  /// архива по этой дате не имел бы смысла.
+  DateTime? completedAt;
   DateTime? shippedAt;
   String? shippedBy;
   double? shippedQty;
@@ -158,6 +169,29 @@ class OrderModel {
   /// категории. Заполняется только когда значение известно — см. [toMap].
   String? productTypeId;
 
+  /// `orders.promised_at` — когда ПРОИЗВОДСТВО обещает закончить.
+  ///
+  /// Отдельно от [dueDate] намеренно: тот — срок заказчика, и переписывать его
+  /// из цеха нельзя, иначе исчезнет сам факт сдвига. Назначается в МУПЗ,
+  /// меняется сколько угодно раз, каждая правка пишется в историю.
+  ///
+  /// `null` означает «не назначали» — и это же значение отличает обычный показ
+  /// срока от назначенного вручную.
+  DateTime? promisedAt;
+
+  /// `orders.extra_options` — снимок дополнительных опций заказа.
+  ///
+  /// `null` означает «не знаем», а НЕ «опций нет»: заказ, собранный в коде из
+  /// отдельных полей (правка бумаги из рабочего пространства, например), про
+  /// опции ничего не знает, и [toMap] такой ключ не отправляет — колонка
+  /// остаётся нетронутой. Пустой список — это уже утверждение «опций не
+  /// выбрано», и оно колонку перезапишет. Разница та же, что у
+  /// [productTypeId], и заведена по тому же живому дефекту: сохранение из
+  /// чужого экрана не должно стирать то, чего этот экран не показывал.
+  ///
+  /// Разбор и показ — в `order_extra_options.dart`.
+  List<OrderOptionSelection>? extraOptions;
+
   OrderModel({
     required this.id,
     required this.manager,
@@ -180,6 +214,7 @@ class OrderModel {
     this.newFormNo,
     this.formSeries,
     this.formCode,
+    this.formId,
     bool? contractSigned,
     bool? paymentDone,
     String? comments,
@@ -189,6 +224,7 @@ class OrderModel {
     this.assignmentId,
     bool? assignmentCreated,
     this.actualQty,
+    this.completedAt,
     this.shippedAt,
     this.shippedBy,
     this.shippedQty,
@@ -200,6 +236,8 @@ class OrderModel {
     this.restartRootOrderId,
     this.restartGeneration = 0,
     this.productTypeId,
+    this.extraOptions,
+    this.promisedAt,
   })  : additionalParams = additionalParams ?? const <String>[],
         handle = handle ?? '-',
         cardboard = cardboard ?? 'нет',
@@ -252,7 +290,7 @@ class OrderModel {
   ///
   /// [includeNulls] нужен для UPDATE-сценариев, когда необходимо явно
   /// сбросить значение колонки в `null` (например, при удалении очереди этапов).
-  Map<String, dynamic> toMap({bool includeNulls = false}) => {
+  Map<String, dynamic> toMap({bool includeNulls = false, bool canonicalFormReference = false}) => {
         'id': id,
         'manager': manager,
         'customer': customer,
@@ -274,9 +312,15 @@ class OrderModel {
         'val': val,
         'has_form': hasForm,
         'is_old_form': isOldForm,
-        if (includeNulls || newFormNo != null) 'new_form_no': newFormNo,
-        if (includeNulls || formSeries != null) 'form_series': formSeries,
-        if (includeNulls || formCode != null) 'form_code': formCode,
+        // A linked write sends identity only. A stale screen must not restore
+        // the number/name that the warehouse has already changed.
+        if (!canonicalFormReference || formId == null) ...{
+          if (includeNulls || newFormNo != null) 'new_form_no': newFormNo,
+          if (includeNulls || formSeries != null) 'form_series': formSeries,
+          if (includeNulls || formCode != null) 'form_code': formCode,
+        },
+        // Unknown IDs from older callers must not detach an existing form.
+        if (formId != null) 'form_id': formId,
         if (includeNulls || pdfUrl != null) 'pdf_url': pdfUrl,
         if (includeNulls || stageTemplateId != null)
           'stage_template_id': stageTemplateId,
@@ -289,6 +333,8 @@ class OrderModel {
         if (includeNulls || assignmentId != null) 'assignment_id': assignmentId,
         'assignment_created': assignmentCreated,
         if (includeNulls || actualQty != null) 'actual_qty': actualQty,
+        if (includeNulls || completedAt != null)
+          'completed_at': completedAt?.toIso8601String(),
         if (includeNulls || shippedAt != null)
           'shipped_at': shippedAt?.toIso8601String(),
         if (includeNulls || shippedBy != null) 'shipped_by': shippedBy,
@@ -313,6 +359,16 @@ class OrderModel {
         // ключ отправляется только когда значение известно, иначе его в
         // payload нет вовсе и колонка остаётся нетронутой.
         if (productTypeId != null) 'product_type_id': productTypeId,
+        // Условие по той же причине не включает includeNulls — см. поле
+        // [extraOptions]. Пустой список отправляется, null не отправляется
+        // никогда: колонка NOT NULL, и «не знаем» выражается отсутствием ключа.
+        if (extraOptions != null)
+          'extra_options': encodeOrderExtraOptions(extraOptions!),
+        // includeNulls намеренно не участвует — см. [productTypeId]: снятие
+        // срока делается явным вызовом, а обычное сохранение заказа не должно
+        // его стирать.
+        if (promisedAt != null)
+          'promised_at': promisedAt!.toUtc().toIso8601String(),
       };
 
   /// Парсим и camelCase, и snake_case.
@@ -415,6 +471,7 @@ class OrderModel {
       newFormNo: newFormNoVal,
       formSeries: formSeriesVal,
       formCode: formCodeVal,
+      formId: _pickAny(map, const ['form_id', 'formId']) as String?,
       contractSigned: contractSignedBool,
       paymentDone: paymentDoneBool,
       comments: (_pickAny(map, const ['comments']) as String?) ?? '',
@@ -435,6 +492,8 @@ class OrderModel {
       assignmentCreated: assignmentCreatedBool,
       actualQty: _parseDouble(
           _pickAny(map, const ['actual_qty', 'actualQty', 'actualQuantity'])),
+      completedAt:
+          _parseDate(_pickAny(map, const ['completed_at', 'completedAt'])),
       shippedAt:
           _parseDate(_pickAny(map, const ['shipped_at', 'shippedAt'])),
       shippedBy: (_pickAny(map, const ['shipped_by', 'shippedBy']) as String?),
@@ -469,6 +528,14 @@ class OrderModel {
             .trim();
         return (raw == null || raw.isEmpty) ? null : raw;
       })(),
+      // Ключа нет — оставляем null («не знаем»), а не пустой список: иначе
+      // заказ, прочитанный запросом без этой колонки, при первом же
+      // сохранении стёр бы выбранные опции.
+      extraOptions: (() {
+        final raw = _pickAny(map, const ['extra_options', 'extraOptions']);
+        return raw == null ? null : decodeOrderExtraOptions(raw);
+      })(),
+      promisedAt: _parseDate(_pickAny(map, const ['promised_at', 'promisedAt'])),
     );
   }
 
@@ -498,6 +565,7 @@ class OrderModel {
     String? assignmentId,
     bool? assignmentCreated,
     double? actualQty,
+    DateTime? completedAt,
     DateTime? shippedAt,
     String? shippedBy,
     double? shippedQty,
@@ -506,6 +574,7 @@ class OrderModel {
     int? newFormNo,
     String? formSeries,
     String? formCode,
+    String? formId,
     String? queueBuildStatus,
     String? selectedVStage,
     String? selectedPStage,
@@ -514,6 +583,8 @@ class OrderModel {
     String? restartRootOrderId,
     int? restartGeneration,
     String? productTypeId,
+    List<OrderOptionSelection>? extraOptions,
+    DateTime? promisedAt,
   }) {
     return OrderModel(
       id: id,
@@ -538,6 +609,7 @@ class OrderModel {
       newFormNo: newFormNo ?? this.newFormNo,
       formSeries: formSeries ?? this.formSeries,
       formCode: formCode ?? this.formCode,
+      formId: formId ?? this.formId,
       contractSigned: contractSigned ?? this.contractSigned,
       paymentDone: paymentDone ?? this.paymentDone,
       comments: comments ?? this.comments,
@@ -548,6 +620,7 @@ class OrderModel {
       assignmentId: assignmentId ?? this.assignmentId,
       assignmentCreated: assignmentCreated ?? this.assignmentCreated,
       actualQty: actualQty ?? this.actualQty,
+      completedAt: completedAt ?? this.completedAt,
       shippedAt: shippedAt ?? this.shippedAt,
       shippedBy: shippedBy ?? this.shippedBy,
       shippedQty: shippedQty ?? this.shippedQty,
@@ -562,6 +635,11 @@ class OrderModel {
       restartRootOrderId: restartRootOrderId ?? this.restartRootOrderId,
       restartGeneration: restartGeneration ?? this.restartGeneration,
       productTypeId: productTypeId ?? this.productTypeId,
+      extraOptions: extraOptions ??
+          (this.extraOptions == null
+              ? null
+              : List<OrderOptionSelection>.from(this.extraOptions!)),
+      promisedAt: promisedAt ?? this.promisedAt,
     );
   }
 }

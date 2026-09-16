@@ -6,8 +6,21 @@ void main() {
   // Единицы в tasks.comments смешанные: старые метки в секундах, новые в
   // миллисекундах. Порог нормализации — kEpochSecondsThreshold (2e9), и оба
   // варианта должны давать одну и ту же дату.
-  int secondsOf(DateTime local) => local.millisecondsSinceEpoch ~/ 1000;
-  int millisOf(DateTime local) => local.millisecondsSinceEpoch;
+  //
+  // formatTaskCommentTimestamp показывает Костанайское время (UTC+5). Метки в
+  // БД — UTC epoch, поэтому тест задаёт ЖЕЛАЕМОЕ костанайское время показа и
+  // переводит его в исходный UTC-epoch (−5 ч). Так ожидания в expect остаются
+  // прежними и не зависят от таймзоны машины CI.
+  int _epochMsFor(DateTime kostanayWall) => DateTime.utc(
+        kostanayWall.year,
+        kostanayWall.month,
+        kostanayWall.day,
+        kostanayWall.hour,
+        kostanayWall.minute,
+        kostanayWall.second,
+      ).subtract(const Duration(hours: 5)).millisecondsSinceEpoch;
+  int secondsOf(DateTime kostanayWall) => _epochMsFor(kostanayWall) ~/ 1000;
+  int millisOf(DateTime kostanayWall) => _epochMsFor(kostanayWall);
 
   group('formatTaskCommentTimestamp — год в дате', () {
     test('текущий год — без года', () {

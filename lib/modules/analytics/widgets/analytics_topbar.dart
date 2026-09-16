@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../utils/analytics_colors.dart';
 
 /// Верхняя панель: брэнд + три таб-кнопки.
-enum AnalyticsTopTab { employees, workplaces, schedule }
+enum AnalyticsTopTab { employees, workplaces, schedule, statusStaff }
 
 class AnalyticsTopbar extends StatelessWidget {
   const AnalyticsTopbar({
@@ -175,6 +175,13 @@ class _TabsBlock extends StatelessWidget {
           label: 'Графики работы',
           isActive: selected == AnalyticsTopTab.schedule,
           onTap: () => onTabChanged(AnalyticsTopTab.schedule),
+        ),
+        // Сотрудники со статусом и без должности (уборщик, охранник):
+        // в общей таблице у них пусто — заданий они не выполняют.
+        _Tab(
+          label: 'По статусу',
+          isActive: selected == AnalyticsTopTab.statusStaff,
+          onTap: () => onTabChanged(AnalyticsTopTab.statusStaff),
         ),
       ],
     );

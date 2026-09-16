@@ -3,18 +3,49 @@ import 'package:provider/provider.dart';
 
 import '../../utils/auth_helper.dart';
 import 'employee_status_model.dart';
+import 'personnel_list_controls.dart';
+import 'personnel_list_filters.dart';
 import 'personnel_provider.dart';
 
 /// Статусы сотрудников с фиксированной оплатой (например «Стажер»,
 /// «Грузчик»). Создавать/редактировать/удалять может только технический
 /// лидер — остальным доступен только просмотр списка.
-class StatusesScreen extends StatelessWidget {
+class StatusesScreen extends StatefulWidget {
   const StatusesScreen({super.key});
+
+  @override
+  State<StatusesScreen> createState() => _StatusesScreenState();
+}
+
+class _StatusesScreenState extends State<StatusesScreen> {
+  final StatusListFilter _filter = StatusListFilter();
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _reset() {
+    _search.clear();
+    setState(_filter.clear);
+  }
 
   @override
   Widget build(BuildContext context) {
     final pr = context.watch<PersonnelProvider>();
-    final items = pr.statuses;
+    // Статус «присвоен», если он текущий хотя бы у одного действующего.
+    final assignedCount = <String, int>{};
+    for (final e in pr.employees.where((e) => !e.isFired)) {
+      final id = pr.currentStatusIdFor(e.id);
+      if (id == null || id.isEmpty) continue;
+      assignedCount[id] = (assignedCount[id] ?? 0) + 1;
+    }
+    final items = pr.statuses
+        .where((s) =>
+            _filter.matches(s, assignedCount: assignedCount[s.id] ?? 0))
+        .toList();
     final canEdit = AuthHelper.isTechLeader;
     return Scaffold(
       appBar: AppBar(
@@ -28,19 +59,47 @@ class StatusesScreen extends StatelessWidget {
             ),
         ],
       ),
-      body: items.isEmpty
-          ? const Center(child: Text('Статусов пока нет'))
+      body: Column(
+        children: [
+          PersonnelFilterBar(
+            controller: _search,
+            hint: 'Название или описание статуса…',
+            onQueryChanged: (v) => setState(() => _filter.query = v),
+            shown: items.length,
+            total: pr.statuses.length,
+            isActive: _filter.isActive,
+            onReset: _reset,
+            filters: [
+              TriFilterChip(
+                label: 'Присвоен сотрудникам',
+                value: _filter.assigned,
+                yes: 'да',
+                no: 'нет',
+                onChanged: (v) => setState(() => _filter.assigned = v),
+              ),
+            ],
+          ),
+          Expanded(
+            child: items.isEmpty
+          ? PersonnelEmptyResult(
+              isFiltered: _filter.isActive,
+              emptyText: 'Статусов пока нет',
+              onReset: _reset,
+            )
           : ListView.separated(
               itemCount: items.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, i) {
                 final EmployeeStatus status = items[i];
+                final description = (status.description ?? '').trim();
+                final count = assignedCount[status.id] ?? 0;
                 return ListTile(
                   leading: const Icon(Icons.workspace_premium_outlined),
                   title: Text(status.name),
-                  subtitle: (status.description ?? '').trim().isEmpty
-                      ? null
-                      : Text(status.description!.trim()),
+                  subtitle: Text([
+                    if (description.isNotEmpty) description,
+                    'Сотрудников: $count',
+                  ].join('\n')),
                   trailing: canEdit
                       ? Row(
                           mainAxisSize: MainAxisSize.min,
@@ -61,6 +120,9 @@ class StatusesScreen extends StatelessWidget {
                 );
               },
             ),
+          ),
+        ],
+      ),
     );
   }
 

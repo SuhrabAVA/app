@@ -10,41 +10,35 @@
 --   2. Единственное значение из результата целиком положить в
 --      supabase/functions_dump.sql, заменив прежнее содержимое.
 --
--- Сортировка по (proname, аргументы) — чтобы у перегруженных функций
--- (arrival_add, writeoff, recalculate_paint_reserved_qty) был устойчивый
--- порядок и следующий дамп давал читаемый diff.
+-- Строка md5 у каждой функции — md5(pg_get_functiondef). То же значение пишет
+-- журнал изменений схемы (schema_change_log.definition_md5, шаг 13 от
+-- 14.09.2026). Разошёлся md5 в снимке и в базе — функцию меняли мимо
+-- репозитория: смотреть schema_change_log, кто и когда.
+--
+-- Сортировка по (proname, сигнатура) — чтобы у перегруженных функций был
+-- устойчивый порядок и следующий дамп давал читаемый diff. Функции расширений
+-- (pg_net и др.) в снимок не входят.
 --
 -- ВАЖНО: новые функции создаются миграцией в supabase/migrations/, а не
 -- правкой в дашборде. Этот дамп — только снимок того, что уже существует.
 
-select
-  '-- Снимок определений public-функций Supabase' || chr(10) ||
-  '-- Снят: ' || to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC' || chr(10) ||
-  '-- Проект: ' || current_database() || chr(10) ||
-  '-- Функций: ' || count(*) || chr(10) ||
-  '-- Сгенерировано: scripts/dump_supabase_functions.sql' || chr(10) ||
-  '--' || chr(10) ||
-  '-- ЭТО СНИМОК ПРОДА, НЕ МИГРАЦИЯ.' || chr(10) ||
-  '-- Не применять на чистой базе как есть: порядок и зависимости здесь не' || chr(10) ||
-  '-- восстанавливаются, таблиц и типов файл не создаёт. Только для чтения и' || chr(10) ||
-  '-- сравнения версий.' || chr(10) ||
-  '--' || chr(10) ||
-  '-- Новые функции создавать миграцией в supabase/migrations/.' || chr(10) ||
-  chr(10) ||
+select concat_ws(E'\n',
+  '-- Снимок определений public-функций Supabase',
+  '-- Снят: ' || to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC',
+  '-- Функций: ' || count(*),
+  '-- Снимает: MCP execute_sql (запрос в scripts/dump_supabase_functions.sql)',
+  '--',
+  '-- ЭТО СНИМОК ПРОДА, НЕ МИГРАЦИЯ. Не применять как есть.',
+  '-- Зачем: видеть в git, какая версия функции была на проде, и ловить',
+  '-- расхождение с миграциями (строка md5 у каждой функции совпадает с',
+  '-- schema_change_log.definition_md5).',
+  '',
   string_agg(
-    '-- ' || repeat('=', 74) || chr(10) ||
-    '-- ' || signature || chr(10) ||
-    '-- ' || repeat('=', 74) || chr(10) ||
-    definition || ';' || chr(10),
-    chr(10) order by proname, signature
-  ) as dump
-from (
-  select
-    p.proname,
-    p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as signature,
-    pg_get_functiondef(p.oid) as definition
-  from pg_proc p
-  join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public'
-    and p.prokind in ('f', 'p')
-) s;
+    '-- ' || p.oid::regprocedure::text || E'\n-- md5: ' || md5(pg_get_functiondef(p.oid)) || E'\n' || pg_get_functiondef(p.oid) || ';',
+    E'\n\n' order by p.proname, p.oid::regprocedure::text)
+) as dump
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.prokind in ('f', 'p')
+  and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e');

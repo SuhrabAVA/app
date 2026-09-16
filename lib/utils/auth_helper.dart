@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// Helper class to store information about the currently logged in user.
 ///
 /// This class exposes static fields that are set during the login
@@ -5,6 +7,10 @@
 /// determine the current user identifier, display name and whether
 /// they are the technical leader.
 class AuthHelper {
+  /// Изменяется при каждом логическом входе/выходе сотрудника. Сетевые сервисы
+  /// используют ревизию, чтобы закрыть старые подписки и создать их заново.
+  static final ValueNotifier<int> sessionRevision = ValueNotifier<int>(0);
+
   /// Unique identifier of the currently logged‑in user. For regular
   /// employees this corresponds to their Firebase key. For the
   /// technical leader we use the special identifier `tech_leader`.
@@ -25,6 +31,7 @@ class AuthHelper {
     currentUserId = 'tech_leader';
     currentUserName = name;
     isTechLeader = true;
+    _bumpSessionRevision();
   }
 
   /// Sets the current user as a regular employee. Pass both the
@@ -33,6 +40,7 @@ class AuthHelper {
     currentUserId = id;
     currentUserName = name;
     isTechLeader = false;
+    _bumpSessionRevision();
   }
 
   /// Resets the stored user information. This can be used when
@@ -41,5 +49,10 @@ class AuthHelper {
     currentUserId = null;
     currentUserName = null;
     isTechLeader = false;
+    _bumpSessionRevision();
+  }
+
+  static void _bumpSessionRevision() {
+    sessionRevision.value = sessionRevision.value + 1;
   }
 }

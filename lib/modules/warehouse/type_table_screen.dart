@@ -14,6 +14,7 @@ import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
 import '../../utils/kostanay_time.dart';
+import 'stock_journal_repository.dart';
 import 'warehouse_logs_repository.dart';
 import 'warehouse_table_styles.dart';
 
@@ -163,7 +164,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   }
 
   late final TabController _tabs;
-  RealtimeChannel? _rt;
+  WarehouseProvider? _warehouseProvider;
+  Timer? _providerRefreshDebounce;
   // Основные позиции
   List<TmcModel> _items = [];
 
@@ -322,9 +324,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
-      if (typeKey == 'paper') 'paper_writeoffs',
-      if (typeKey == 'paint') 'paint_writeoffs',
-      if (typeKey == 'material') 'material_writeoffs',
     ];
     final seen = <String>{};
     return base.where((e) => seen.add(e)).toList();
@@ -390,19 +389,40 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (mounted) setState(() {});
     });
     _loadAll();
-    _setupRealtime();
   }
 
-  Future<void> _loadAll() async {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<WarehouseProvider>();
+    if (identical(_warehouseProvider, provider)) return;
+    _warehouseProvider?.removeListener(_onWarehouseChanged);
+    _warehouseProvider = provider;
+    provider.addListener(_onWarehouseChanged);
+  }
+
+  void _onWarehouseChanged() {
+    _providerRefreshDebounce?.cancel();
+    _providerRefreshDebounce = Timer(const Duration(milliseconds: 50), () {
+      if (mounted) _loadAll(refreshRemote: false);
+    });
+  }
+
+  Future<void> _loadAll({bool refreshRemote = true}) async {
     if (!mounted) return;
     final provider = Provider.of<WarehouseProvider>(context, listen: false);
-    try {
-      await provider.fetchTmc();
-    } catch (_) {}
+    if (refreshRemote) {
+      try {
+        await provider.fetchTmc();
+      } catch (_) {}
+    }
 
     final items = provider.getTmcByType(widget.type);
     final typeKey = _normalizeType(widget.type);
-    final bundle = await provider.fetchLogsBundle(typeKey, forceRefresh: true);
+    final bundle = await provider.fetchLogsBundle(
+      typeKey,
+      forceRefresh: refreshRemote,
+    );
 
     final writeoffs = _mapBundleLogs(bundle.writeoffs);
     final inventories = _mapBundleLogs(bundle.inventories);
@@ -437,54 +457,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         .toList();
   }
 
-  void _setupRealtime() {
-    try {
-      final s = Supabase.instance.client;
-      _rt?.unsubscribe();
-
-      final typeKey = _normalizeType(widget.type);
-      final bases = _baseTables(typeKey);
-      final woTables = _writeoffTables(typeKey);
-      final invTables = _inventoryTables(typeKey);
-      final arrTables = _arrivalTables(typeKey);
-
-      final ch = s.channel('wh_${DateTime.now().millisecondsSinceEpoch}');
-      final watchedTables = <String>[
-        ...bases,
-        ...woTables,
-        ...invTables,
-        ...arrTables,
-        // Бизнес-логика резерва: для бумаги и краски обновляем таблицу
-        // при любом изменении активных резервов.
-        if (typeKey == 'paper') 'order_paper_reservations',
-        if (typeKey == 'paint') 'order_paint_reservations',
-      ];
-      for (final t in watchedTables) {
-        ch.onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: t,
-          callback: (payload) => _loadAll(),
-        );
-        ch.onPostgresChanges(
-          event: PostgresChangeEvent.update,
-          schema: 'public',
-          table: t,
-          callback: (payload) => _loadAll(),
-        );
-        ch.onPostgresChanges(
-          event: PostgresChangeEvent.delete,
-          schema: 'public',
-          table: t,
-          callback: (payload) => _loadAll(),
-        );
-      }
-      ch.subscribe();
-      _rt = ch;
-    } catch (_) {}
-  }
-
-  bool _isReserveAwareType(String typeKey) => typeKey == 'paper' || typeKey == 'paint';
+  bool _isReserveAwareType(String typeKey) =>
+      typeKey == 'paper' || typeKey == 'paint';
 
   Future<double> _reservedQtyForItem(TmcModel item, String typeKey) {
     if (typeKey == 'paper') {
@@ -586,16 +560,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
   void didUpdateWidget(covariant TypeTableTabsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.type != widget.type) {
-      _setupRealtime();
       _loadAll();
     }
   }
 
   @override
   void dispose() {
-    try {
-      _rt?.unsubscribe();
-    } catch (_) {}
+    _providerRefreshDebounce?.cancel();
+    _warehouseProvider?.removeListener(_onWarehouseChanged);
     _tabs.dispose();
     super.dispose();
   }
@@ -710,7 +682,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         } on PostgrestException catch (e) {
           final code = e.code?.toLowerCase() ?? '';
           final message = e.message?.toLowerCase() ?? '';
-          final details = e.details?.toLowerCase() ?? '';
+          final details = e.details.toString().toLowerCase();
           final columnMissing = order != null &&
               (code == '42703' ||
                   message.contains(order.toLowerCase()) &&
@@ -739,7 +711,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     final normalized = value.trim();
     if (normalized.isEmpty) return false;
     final lower = normalized.toLowerCase();
-    if (lower == 'null' || lower == 'undefined' || lower == 'nan' || lower == '-') {
+    if (lower == 'null' ||
+        lower == 'undefined' ||
+        lower == 'nan' ||
+        lower == '-') {
       return false;
     }
     if (_uuidLikePattern.hasMatch(normalized)) return false;
@@ -762,14 +737,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     return match.group(0);
   }
 
-  Future<Map<String, String>> _loadOrderLabelsByIds(Set<String> orderIds) async {
+  Future<Map<String, String>> _loadOrderLabelsByIds(
+      Set<String> orderIds) async {
     if (orderIds.isEmpty) return const <String, String>{};
     final labels = <String, String>{};
     try {
       final rows = await Supabase.instance.client
           .from('orders')
-          .select(
-              'id, assignment_id, title, name, order_name, product_name, new_form_no, data, product')
+          // Только существующие колонки — см. type_table_tabs_screen.dart.
+          .select('id, assignment_id, product_name, new_form_no, '
+              'product_name_j:product->>name, product_title_j:product->>title')
           .inFilter('id', orderIds.toList(growable: false));
       if (rows is! List) return labels;
       for (final raw in rows.whereType<Map>()) {
@@ -777,37 +754,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         final orderId = (row['id'] ?? '').toString().trim();
         if (orderId.isEmpty) continue;
 
-        final dataRaw = row['data'];
-        final data = dataRaw is Map
-            ? Map<String, dynamic>.from(dataRaw as Map)
-            : <String, dynamic>{};
-        final topProductRaw = row['product'];
-        final topProduct = topProductRaw is Map
-            ? Map<String, dynamic>.from(topProductRaw as Map)
-            : <String, dynamic>{};
-        final dataProductRaw = data['product'];
-        final dataProduct = dataProductRaw is Map
-            ? Map<String, dynamic>.from(dataProductRaw as Map)
-            : <String, dynamic>{};
-
         final label = _firstOrderLabel([
           row['assignment_id'],
-          row['title'],
-          row['order_name'],
           row['product_name'],
-          data['title'],
-          data['assignment_id'],
-          data['order_name'],
-          data['product_name'],
-          topProduct['name'],
-          topProduct['title'],
-          dataProduct['name'],
-          dataProduct['title'],
-          row['name'],
-          data['name'],
+          row['product_name_j'],
+          row['product_title_j'],
         ]);
 
-        final formNo = _firstOrderLabel([row['new_form_no'], data['new_form_no']]);
+        final formNo = _firstOrderLabel([row['new_form_no']]);
         if (label.isNotEmpty) {
           labels[orderId] = label;
         } else if (formNo.isNotEmpty) {
@@ -820,7 +774,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     return labels;
   }
 
-  String _humanizeWriteoffNote(String? rawNote, Map<String, String> orderLabels) {
+  String _humanizeWriteoffNote(
+      String? rawNote, Map<String, String> orderLabels) {
     final note = (rawNote ?? '').trim();
     if (note.isEmpty) return '';
     final match = _uuidLikePattern.firstMatch(note);
@@ -913,8 +868,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     final baseMap = {for (final r in baseRows) r['id']: r};
 
     final orderIdsInNotes = logs
-        .map((e) => _extractOrderIdFromWriteoffNote(
-            _pickStr(e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment'])))
+        .map((e) => _extractOrderIdFromWriteoffNote(_pickStr(
+            e, [_woMap[typeKey]?['note'], 'note', 'reason', 'comment'])))
         .whereType<String>()
         .toSet();
     final orderLabels = await _loadOrderLabelsByIds(orderIdsInNotes);
@@ -1619,7 +1574,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                         ])),
                         if (showAvailableColumn)
                           DataCell(Text(
-                            fmtNum(item.availableQty < 0 ? 0 : item.availableQty,
+                            fmtNum(
+                                item.availableQty < 0 ? 0 : item.availableQty,
                                 frac: 2),
                           )),
                         if (showReserveColumns)
@@ -1627,7 +1583,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                             FutureBuilder<double>(
                               future: _reservedQtyForItem(item, typeKey),
                               builder: (context, snapshot) {
-                                final reserved = snapshot.data ?? item.reservedQty;
+                                final reserved =
+                                    snapshot.data ?? item.reservedQty;
                                 final unit = _reserveUnitLabel(item, typeKey);
                                 final reserveLabel =
                                     '${reserved.toStringAsFixed(2)} $unit';
@@ -1635,10 +1592,10 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                                   style: ButtonStyle(
                                     foregroundColor:
                                         WidgetStateProperty.resolveWith(
-                                      (states) => states
-                                              .contains(WidgetState.disabled)
-                                          ? Colors.red.shade200
-                                          : Colors.red.shade700,
+                                      (states) =>
+                                          states.contains(WidgetState.disabled)
+                                              ? Colors.red.shade200
+                                              : Colors.red.shade700,
                                     ),
                                     overlayColor: WidgetStateProperty.all(
                                       Colors.red.withValues(alpha: 0.12),
@@ -2280,6 +2237,7 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     final diameterC = TextEditingController();
     final noteC = TextEditingController();
     final isPaper = _normalizeType(widget.type) == 'paper';
+    final unitLabel = isPaper ? 'Рј' : item.unit;
     final paperDetails = isPaper ? _paperDetails(item) : '';
     final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
     String method = 'meters';
@@ -2379,7 +2337,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                       controller: diameterC,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Диаметр (см)'),
+                      decoration:
+                          const InputDecoration(labelText: 'Диаметр (см)'),
                       validator: (v) {
                         final d =
                             double.tryParse((v ?? '').replaceAll(',', '.'));
@@ -2437,20 +2396,26 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     double? factual = double.tryParse(qtyC.text.replaceAll(',', '.'));
     if (isPaper) {
       if (method == 'weight') {
-        if (format == null || format == 0 || grammage == null || grammage == 0) {
+        if (format == null ||
+            format == 0 ||
+            grammage == null ||
+            grammage == 0) {
           if (mounted) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('Укажите формат и грамаж')));
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Укажите формат и грамаж')));
           }
           return;
         }
         final w = double.tryParse(weightC.text.replaceAll(',', '.')) ?? 0;
         factual = _computeFromWeight(w, format!, grammage!);
       } else if (method == 'diameter') {
-        if (format == null || format == 0 || grammage == null || grammage == 0) {
+        if (format == null ||
+            format == 0 ||
+            grammage == null ||
+            grammage == 0) {
           if (mounted) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('Укажите формат и грамаж')));
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Укажите формат и грамаж')));
           }
           return;
         }
@@ -2472,6 +2437,16 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         await provider.inventorySet(
           itemId: item.id,
           newQty: factual,
+          note: noteC.text.trim().isEmpty ? null : noteC.text.trim(),
+        );
+      } else if (isJournaledStockType(typeKey)) {
+        // Бумага и краска: одна запись журнала с остатком до пересчёта
+        // (см. type_table_tabs_screen — там тот же путь).
+        final provider = Provider.of<WarehouseProvider>(context, listen: false);
+        await provider.recordStockCount(
+          itemId: item.id,
+          type: typeKey,
+          quantity: factual,
           note: noteC.text.trim().isEmpty ? null : noteC.text.trim(),
         );
       } else {

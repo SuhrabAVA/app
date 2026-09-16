@@ -1,6 +1,9 @@
+import '../../../utils/kostanay_time.dart';
 import '../models/analytics_event.dart';
 
-/// Расчётные функции по списку событий.
+/// Расчётные функции по списку событий. Активные (незакрытые) события
+/// тянутся до «сейчас» в Костанайском времени (UTC+5) — в той же рамке,
+/// в которой [TaskAnalyticsMapper] отдаёт startTime/endTime событий.
 class AnalyticsCalculator {
   AnalyticsCalculator._();
 
@@ -10,7 +13,7 @@ class AnalyticsCalculator {
   /// Полезные минуты — только тип Работа.
   static int usefulMinutes(Iterable<AnalyticsEvent> events,
       {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? nowInKostanay();
     var sum = 0;
     for (final e in events) {
       if (e.type == AnalyticsEventType.work) sum += _minutes(e, ref);
@@ -19,7 +22,7 @@ class AnalyticsCalculator {
   }
 
   static int setupMinutes(Iterable<AnalyticsEvent> events, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? nowInKostanay();
     var sum = 0;
     for (final e in events) {
       if (e.type == AnalyticsEventType.setup) sum += _minutes(e, ref);
@@ -28,7 +31,7 @@ class AnalyticsCalculator {
   }
 
   static int pauseMinutes(Iterable<AnalyticsEvent> events, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? nowInKostanay();
     var sum = 0;
     for (final e in events) {
       if (e.type == AnalyticsEventType.pause) sum += _minutes(e, ref);
@@ -37,7 +40,7 @@ class AnalyticsCalculator {
   }
 
   static int problemMinutes(Iterable<AnalyticsEvent> events, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? nowInKostanay();
     var sum = 0;
     for (final e in events) {
       if (e.type == AnalyticsEventType.problem) sum += _minutes(e, ref);
@@ -72,7 +75,7 @@ class AnalyticsCalculator {
 
   /// Суммарная длительность ВСЕХ событий (любого типа) в минутах.
   static int totalMinutes(Iterable<AnalyticsEvent> events, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? nowInKostanay();
     var sum = 0;
     for (final e in events) {
       sum += _minutes(e, ref);
@@ -86,7 +89,7 @@ class AnalyticsCalculator {
   /// средней прошлых, [KpdCalculator]); поэтому отдельный расчёт по времени.
   /// При нулевом общем времени — 0.
   static int timeKpdPercent(Iterable<AnalyticsEvent> events, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? nowInKostanay();
     final useful = usefulMinutes(events, now: ref);
     final total = totalMinutes(events, now: ref);
     if (total <= 0) return 0;

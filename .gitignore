@@ -51,6 +51,8 @@ app.*.map.json
 
 # Secrets
 .env
+# .env.scripts — ключ service_role для scripts/; .env.backup-* — резервные копии.
+.env.*
 
 # Android build artifacts
 /android/build/
@@ -61,3 +63,6 @@ app.*.map.json
 .agents/
 .mcp.json
 .claude.zip
+
+# Supabase CLI local cache
+supabase/.temp/

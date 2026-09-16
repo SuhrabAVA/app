@@ -377,28 +377,16 @@ Future<void> deleteFormFile(Map<String, dynamic> fileRow) async {
 /// Ищет id формы по реквизитам, привязанным к заказу.
 /// Возвращает null если форма не найдена.
 Future<String?> findFormIdByOrderFormRef({
+  String? formId,
   String? formCode,
   String? formSeries,
   int? formNo,
 }) async {
-  if (formCode != null && formCode.trim().isNotEmpty) {
-    final res = await supabase
-        .from('forms')
-        .select('id')
-        .eq('code', formCode.trim())
-        .maybeSingle();
-    final id = res?['id']?.toString();
-    if (id != null && id.isNotEmpty) return id;
-  }
-  if (formSeries != null && formSeries.trim().isNotEmpty && formNo != null) {
-    final res = await supabase
-        .from('forms')
-        .select('id')
-        .eq('series', formSeries.trim())
-        .eq('number', formNo)
-        .maybeSingle();
-    final id = res?['id']?.toString();
-    if (id != null && id.isNotEmpty) return id;
-  }
-  return null;
+  final id = await supabase.rpc('resolve_order_form', params: {
+    'p_form_id': formId,
+    'p_form_code': formCode,
+    'p_form_series': formSeries,
+    'p_form_no': formNo,
+  });
+  return id?.toString();
 }

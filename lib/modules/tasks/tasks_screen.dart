@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/order_model.dart';
 import '../orders/order_details_card.dart';
+import '../orders/order_manager_comment_banner.dart';
 import '../orders/orders_repository.dart';
 import '../orders/id_format.dart';
 import '../orders/orders_provider.dart';
@@ -18,24 +19,38 @@ import '../orders/restart_history_service.dart';
 import '../personnel/employee_model.dart';
 import '../personnel/personnel_provider.dart';
 import '../personnel/workplace_model.dart';
+import '../personnel/workspace_access_rules.dart';
 import '../../services/audit_log_service.dart';
+import '../../services/employee_password_service.dart';
 import '../production/production_queue_provider.dart';
 import '../production_planning/template_provider.dart';
 import '../production_planning/template_model.dart';
 import '../warehouse/tmc_model.dart';
 import '../warehouse/warehouse_provider.dart';
 import '../orders/production_ids.dart' as production_ids;
+import '../orders/paper_usage_rules.dart';
+import 'paper_usage_dialog.dart';
 import 'task_buttons_state.dart';
 import 'task_comment_presentation.dart';
 import 'task_model.dart';
 import 'task_completion_rules.dart';
+import 'helper_interval_rules.dart';
+import 'material_picker_dialog.dart';
 import 'task_provider.dart';
+import 'task_run_state.dart' show taskTimeEvents;
+import 'workspace_change_comments.dart';
 import 'setup_count.dart';
 import 'workplace_setup_history_repository.dart';
 import '../../services/error_log_service.dart';
+import '../../utils/network_failures.dart';
 import 'task_visibility.dart';
 import 'quantity_status_service.dart';
+import 'stage_event_ops.dart';
+import 'stage_setup_rules.dart';
+import 'stage_quantity_records.dart';
 import 'stage_sequence_utils.dart' as stage_sequence;
+import 'stage_status_colors.dart';
+import 'workplace_queue_gate.dart' as queue_gate;
 import 'workspace_design.dart';
 import '../../services/storage_service.dart';
 import '../../services/attachment_service.dart';
@@ -45,13 +60,9 @@ import '../../utils/media_viewer.dart';
 const String kCardboardCuttingStageId = stage_sequence.kCardboardCuttingStageId;
 const String kPackagingStageId = stage_sequence.kPackagingStageId;
 
-String formatTaskInitialQuantity(double value) {
-  if (value % 1 == 0) return value.toStringAsFixed(0);
-  return value
-      .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0+$'), '')
-      .replaceFirst(RegExp(r'\.$'), '');
-}
+/// Разбор один на проект — см. formatQuantityNumber в quantity_status_service:
+/// подпись количества строится и здесь, и при правке числа техлидом.
+String formatTaskInitialQuantity(double value) => formatQuantityNumber(value);
 
 /// Parses a paint usage value entered in the dialog as grams.
 ///
@@ -246,17 +257,12 @@ String _timeTypeLabel(TaskTimeType type) {
   }
 }
 
-List<TaskTimeEvent> _taskTimeEvents(TaskModel task) {
-  final events = <TaskTimeEvent>[];
-  for (final comment in task.comments) {
-    if (comment.type != 'time_event') continue;
-    final parsed = TaskTimeEvent.fromPayload(
-        comment.text, comment.id, comment.timestamp, comment.userId);
-    if (parsed != null) events.add(parsed);
-  }
-  events.sort((a, b) => a.startTime.compareTo(b.startTime));
-  return events;
-}
+/// Тот же разбор интервалов, что и во всём приложении.
+///
+/// Здесь лежала вторая копия функции — и она разбирала JSON заново на каждый
+/// вызов. Теперь это псевдоним общего [task_run_state.taskTimeEvents] с кэшем
+/// по объекту задачи.
+List<TaskTimeEvent> _taskTimeEvents(TaskModel task) => taskTimeEvents(task);
 
 List<TaskTimeEvent> _timeEventsForUser(TaskModel task, String userId) {
   return _taskTimeEvents(task).where((e) => e.subjectUserId == userId).toList();
@@ -372,10 +378,13 @@ Duration _setupElapsedFromTimeEvents(TaskModel task) {
 }
 
 UserRunState _userRunState(TaskModel task, String userId) {
-  final timeEvents = _timeEventsForUser(task, userId);
+  final roundStart = stageRoundStartMillis(task);
+  final timeEvents = _timeEventsForUser(task, userId)
+      .where((e) => e.startTime.millisecondsSinceEpoch >= roundStart)
+      .toList(growable: false);
   if (timeEvents.isNotEmpty) {
     final open = _openEventForUser(task, userId);
-    if (open != null) {
+    if (open != null && open.startTime.millisecondsSinceEpoch >= roundStart) {
       switch (open.type) {
         case TaskTimeType.production:
         case TaskTimeType.setup:
@@ -387,8 +396,10 @@ UserRunState _userRunState(TaskModel task, String userId) {
           return UserRunState.problem;
       }
     }
-    final doneEvents =
-        task.comments.where((c) => c.type == 'user_done' && c.userId == userId);
+    final doneEvents = task.comments.where((c) =>
+        c.type == 'user_done' &&
+        c.userId == userId &&
+        normalizeEpochToMillis(c.timestamp) >= roundStart);
     if (doneEvents.isNotEmpty) {
       doneEvents.toList().sort((a, b) => a.timestamp.compareTo(b.timestamp));
       final lastDone = doneEvents.last.timestamp;
@@ -405,6 +416,7 @@ UserRunState _userRunState(TaskModel task, String userId) {
   final events = task.comments
       .where((c) =>
           c.userId == userId &&
+          normalizeEpochToMillis(c.timestamp) >= roundStart &&
           (c.type == 'start' ||
               c.type == 'pause' ||
               c.type == 'resume' ||
@@ -475,12 +487,104 @@ List<String> _helperIds(TaskModel task) {
   return jointUsers.where((id) => id != ownerId).toList();
 }
 
+/// Операции добавления помощника: назначение, записи режима, отметка
+/// «присоединился» и — если этап уже идёт — его собственный интервал.
+///
+/// Решение об интервале берёт [decideHelperInterval]: правило одно на все
+/// точки вызова, и дублировать его здесь нельзя.
+List<Map<String, dynamic>> _addHelperOps({
+  required TaskModel task,
+  required String helperId,
+  required String actorId,
+  required bool needsStageModeRecord,
+}) {
+  final jointCode = _executionModeCode(ExecutionMode.joint);
+  final decision = decideHelperInterval(
+    assignees: task.assignees,
+    timeEvents: _taskTimeEvents(task),
+    helperId: helperId,
+  );
+  final ownerId =
+      task.assignees.isNotEmpty ? task.assignees.first : actorId;
+  final ownerOpen = _openEventForUser(task, ownerId);
+  return StageEventPlans.addHelper(
+    helperId: helperId,
+    actorId: actorId,
+    workplaceId: task.stageId,
+    participants: _participantsSnapshot(task, helperId),
+    stageModeCode: needsStageModeRecord ? jointCode : null,
+    actorModeCode:
+        _needsExecModeRecord(task, actorId, ExecutionMode.joint)
+            ? jointCode
+            : null,
+    helperModeCode:
+        _needsExecModeRecord(task, helperId, ExecutionMode.joint)
+            ? jointCode
+            : null,
+    openIntervalType: decision.shouldOpen && decision.type != null
+        ? taskTimeTypeToString(decision.type!)
+        : null,
+    intervalExecutionModeCode: ownerOpen?.executionMode,
+  );
+}
+
+
+/// Показывает цеху, что действие НЕ сохранено.
+///
+/// Раньше сбой записи был не виден: ошибка уходила в debugPrint, а на экране
+/// оставался оптимистичный результат. Оператор был уверен, что этап начат
+/// или пересмена оформлена, а в базе не было ни того, ни другого.
+void _showStageWriteFailure(BuildContext context, TaskProvider provider) {
+  if (!context.mounted) return;
+  final message = provider.lastStageWriteError ??
+      'Действие не сохранено. Повторите попытку.';
+  provider.clearStageWriteError();
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: WorkspaceColors.danger,
+      duration: const Duration(seconds: 6),
+    ),
+  );
+}
+
 List<String> _participantsSnapshot(TaskModel task, String userId) {
   final participants = List<String>.from(task.assignees);
   if (!participants.contains(userId)) {
     participants.add(userId);
   }
   return participants;
+}
+
+/// Открывает помощнику собственный интервал, если этап уже идёт.
+/// Правило вынесено в [decideHelperInterval] — оно чистое и покрыто тестами.
+Future<void> _openHelperIntervalIfRunning({
+  required TaskModel task,
+  required TaskProvider provider,
+  required String helperId,
+  required String initiatedBy,
+}) async {
+  final events = _taskTimeEvents(task);
+  final decision = decideHelperInterval(
+    assignees: task.assignees,
+    timeEvents: events,
+    helperId: helperId,
+  );
+  if (!decision.shouldOpen) return;
+
+  final ownerId = task.assignees.first;
+  final ownerOpen = _openEventForUser(task, ownerId);
+
+  await provider.recordTimeEvent(
+    task: task,
+    type: decision.type!,
+    initiatedBy: initiatedBy,
+    subjectUserId: helperId,
+    workplaceId: task.stageId,
+    participantsSnapshot: _participantsSnapshot(task, helperId),
+    executionMode: ownerOpen?.executionMode,
+    helperId: helperId,
+  );
 }
 
 Duration _userElapsed(TaskModel task, String userId) {
@@ -516,9 +620,15 @@ Duration _userElapsed(TaskModel task, String userId) {
   return Duration(milliseconds: acc);
 }
 
-bool _anyUserActive(TaskModel task, {String? exceptUserId}) {
+/// Есть ли на этапе сотрудник «в работе», кроме перечисленных в [except].
+///
+/// [except] — не только сам инициатор действия: в совместном режиме кнопки
+/// основного исполнителя применяются ко всей группе (его помощникам интервалы
+/// заводит и закрывает он же), поэтому их активность не должна считаться
+/// чужой работой.
+bool _anyUserActive(TaskModel task, {Set<String> except = const <String>{}}) {
   for (final uid in task.assignees) {
-    if (exceptUserId != null && uid == exceptUserId) continue;
+    if (except.contains(uid)) continue;
     if (_userRunState(task, uid) == UserRunState.active) return true;
   }
   if (task.assignees.isEmpty) {
@@ -717,13 +827,6 @@ bool canStartPackagingOutOfQueue({
   );
 }
 
-bool _hasWorkplaceQueueActivity(TaskModel task) {
-  if (task.status != TaskStatus.waiting) return true;
-  return task.comments.any(
-    (c) => c.type == 'start' || c.type == 'resume' || c.type == 'user_done',
-  );
-}
-
 class _StageComment {
   final TaskComment comment;
   final String stageId;
@@ -734,6 +837,26 @@ class _StageComment {
     required this.stageId,
     required this.taskId,
   });
+}
+
+/// Чем закончилось окно расхода бумаги.
+class _PaperUsageOutcome {
+  const _PaperUsageOutcome._(this.ok, this.recordedTotal);
+
+  /// Этап не бумажный (или бумаги в заказе нет) — окна не было.
+  static const skipped = _PaperUsageOutcome._(true, null);
+
+  /// Сотрудник отменил, не было связи или склад не позволил списать.
+  static const failed = _PaperUsageOutcome._(false, null);
+
+  /// Расход записан; [recordedTotal] — сумма метров по всем бумагам.
+  const _PaperUsageOutcome.recorded(double total) : this._(true, total);
+
+  /// Можно продолжать действие, ради которого открывали окно.
+  final bool ok;
+
+  /// Не null — количество этапа берётся отсюда, отдельное окно не нужно.
+  final double? recordedTotal;
 }
 
 class _QuantityInput {
@@ -861,6 +984,11 @@ class _TasksScreenState extends State<TasksScreen>
 
   /// Поиск по списку заданий.
   final TextEditingController _taskSearchController = TextEditingController();
+
+  /// Прокрутка панели управления этапом: нужна, когда отдельных исполнителей
+  /// столько, что их строки не помещаются по высоте. Собственный контроллер —
+  /// ради видимой полосы Scrollbar: без неё непонятно, что список продолжается.
+  final ScrollController _controlPanelScrollController = ScrollController();
   String _taskSearch = '';
   bool _selectionUpdateScheduled = false;
   String? _lastQueueSyncGroupId;
@@ -869,6 +997,12 @@ class _TasksScreenState extends State<TasksScreen>
   bool _taskRefreshAfterLaunchScheduled = false;
   final Set<String> _startingTaskIds = <String>{};
   final Set<String> _startingSetupTaskIds = <String>{};
+  // Пересмена и завершение идут через диалоги (бумага, количество, заметка) и
+  // занимают секунды. Пока действие выполняется, его кнопка выключена: иначе
+  // второе нажатие писало вторую пересмену, второе количество и второе
+  // списание бумаги (16.09, ЗК-2026.09.16-2 — 10 м и ещё 1 м).
+  final Set<String> _shiftingTaskIds = <String>{};
+  final Set<String> _finishingTaskIds = <String>{};
   String? get _selectedWorkplaceId => _selection.workplaceId;
   set _selectedWorkplaceId(String? value) {
     final normalized = value?.trim();
@@ -890,6 +1024,11 @@ class _TasksScreenState extends State<TasksScreen>
   final Map<String, List<Map<String, dynamic>>> _orderPaintsCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderPaintsPending =
       {};
+  // Расход бумаги по заказу для подписи «списано» в деталях. Сбрасывается
+  // после каждой записи расхода.
+  final Map<String, PaperUsageState?> _paperUsageStateCache = {};
+  final Map<String, Future<PaperUsageState?>> _paperUsageStatePending = {};
+  final Map<String, DateTime> _paperUsageStateFetchedAt = {};
   final Map<String, List<Map<String, dynamic>>> _orderFilesCache = {};
   final Map<String, Future<List<Map<String, dynamic>>>> _orderFilesPending = {};
   final Map<String, List<Map<String, dynamic>>> _formFilesCache = {};
@@ -944,6 +1083,7 @@ class _TasksScreenState extends State<TasksScreen>
     _clockTicker?.cancel();
     _clock.dispose();
     _taskSearchController.dispose();
+    _controlPanelScrollController.dispose();
     _commentsScrollController.dispose();
     _chatController.dispose();
     super.dispose();
@@ -1207,12 +1347,15 @@ class _TasksScreenState extends State<TasksScreen>
     OrdersProvider ordersProvider, {
     String? workplaceId,
   }) {
-    return WorkplaceQueueEntry(
-      workplaceId: (workplaceId ?? task.stageId).trim(),
+    // Общий конструктор слота: МУПЗ строит элемент тем же вызовом, иначе
+    // ключи двух экранов расходятся — см. [WorkplaceQueueEntry.forSlot].
+    // Здесь stageId и так всегда равен рабочему месту: список отобран
+    // условием `task.stageId == _selectedWorkplaceId`.
+    return WorkplaceQueueEntry.forSlot(
+      workplaceId: workplaceId ?? task.stageId,
       taskId: task.id,
       orderId: _queueOrderIdForTask(task, ordersProvider),
-      stageId: task.stageId.trim(),
-      stageGroupKey: task.stageGroupKey.trim(),
+      stageGroupKey: task.stageGroupKey,
     );
   }
 
@@ -1323,74 +1466,18 @@ class _TasksScreenState extends State<TasksScreen>
   Future<TmcModel?> _pickPaintForSlot({
     required BuildContext context,
     required List<TmcModel> paints,
-  }) async {
-    var search = '';
-    return showDialog<TmcModel>(
+  }) {
+    return showMaterialPickerDialog(
       context: context,
-      builder: (pickerContext) => StatefulBuilder(
-        builder: (pickerContext, setPickerState) {
-          final filtered = paints
-              .where((paint) => _matchPaintSearch(paint, search))
-              .toList(growable: false);
-          return AlertDialog(
-            title: const Text('Выбор краски'),
-            content: SizedBox(
-              width: 540,
-              height: 420,
-              child: Column(
-                children: [
-                  TextFormField(
-                    key: ValueKey(search.isEmpty),
-                    initialValue: search,
-                    decoration: InputDecoration(
-                      labelText: 'Поиск краски',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: search.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: () =>
-                                  setPickerState(() => search = ''),
-                              icon: const Icon(Icons.clear),
-                            ),
-                    ),
-                    onChanged: (value) => setPickerState(() => search = value),
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: filtered.isEmpty
-                        ? const Center(child: Text('Ничего не найдено.'))
-                        : ListView.separated(
-                            itemCount: filtered.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final paint = filtered[index];
-                              final available = paint.availableQty < 0
-                                  ? 0
-                                  : paint.availableQty;
-                              return ListTile(
-                                title: Text(paint.description),
-                                subtitle: Text(
-                                  'Доступно: ${available.toStringAsFixed(2)} ${paint.unit.isEmpty ? 'ед.' : paint.unit}',
-                                ),
-                                onTap: () =>
-                                    Navigator.of(pickerContext).pop(paint),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(pickerContext).pop(),
-                child: const Text('Отмена'),
-              ),
-            ],
-          );
-        },
-      ),
+      title: 'Выбор краски',
+      searchLabel: 'Поиск краски',
+      items: paints,
+      matches: _matchPaintSearch,
+      subtitleOf: (paint) {
+        final available = paint.availableQty < 0 ? 0 : paint.availableQty;
+        final unit = paint.unit.isEmpty ? 'ед.' : paint.unit;
+        return 'Доступно: ${available.toStringAsFixed(2)} $unit';
+      },
     );
   }
 
@@ -1517,84 +1604,19 @@ class _TasksScreenState extends State<TasksScreen>
   Future<TmcModel?> _pickPaperForSlot({
     required BuildContext context,
     required List<TmcModel> papers,
-  }) async {
-    var search = '';
-    return showDialog<TmcModel>(
+  }) {
+    // Одну и ту же бумагу можно выбрать в разных слотах (например, как
+    // дополнительную бумагу того же типа) — уже выбранные не исключаем.
+    return showMaterialPickerDialog(
       context: context,
-      builder: (pickerContext) {
-        return StatefulBuilder(
-          builder: (pickerContext, setPickerState) {
-            final filtered = papers.where((paper) {
-              // В рабочем пространстве разрешаем повторно выбирать ту же бумагу
-              // в разных слотах (например, как дополнительную бумагу того же типа).
-              // Поэтому intentionally НЕ исключаем уже выбранные id.
-              return _matchPaperSearch(paper, search);
-            }).toList(growable: false);
-            return AlertDialog(
-              title: const Text('Выбор бумаги'),
-              content: SizedBox(
-                width: 540,
-                height: 420,
-                child: Column(
-                  children: [
-                    TextFormField(
-                      key: ValueKey(search.isEmpty),
-                      initialValue: search,
-                      decoration: InputDecoration(
-                        labelText: 'Поиск бумаги',
-                        hintText: 'Наименование, формат, грамаж',
-                        prefixIcon: const Icon(Icons.search),
-                        suffixIcon: search.isEmpty
-                            ? null
-                            : IconButton(
-                                onPressed: () {
-                                  setPickerState(() {
-                                    search = '';
-                                  });
-                                },
-                                icon: const Icon(Icons.clear),
-                              ),
-                      ),
-                      onChanged: (value) =>
-                          setPickerState(() => search = value),
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: filtered.isEmpty
-                          ? const Center(
-                              child: Text('Ничего не найдено.'),
-                            )
-                          : ListView.separated(
-                              itemCount: filtered.length,
-                              separatorBuilder: (_, __) =>
-                                  const Divider(height: 1),
-                              itemBuilder: (context, index) {
-                                final paper = filtered[index];
-                                return ListTile(
-                                  title: Text(paper.description),
-                                  subtitle: Text(
-                                    'Формат: ${_paperFormatText(paper.format)} • '
-                                    'Грамаж: ${_paperGrammageText(paper.grammage)}',
-                                  ),
-                                  onTap: () =>
-                                      Navigator.of(pickerContext).pop(paper),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(pickerContext).pop(),
-                  child: const Text('Отмена'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      title: 'Выбор бумаги',
+      searchLabel: 'Поиск бумаги',
+      searchHint: 'Наименование, формат, грамаж',
+      items: papers,
+      matches: _matchPaperSearch,
+      subtitleOf: (paper) =>
+          'Формат: ${_paperFormatText(paper.format)} • '
+          'Грамаж: ${_paperGrammageText(paper.grammage)}',
     );
   }
 
@@ -1607,77 +1629,49 @@ class _TasksScreenState extends State<TasksScreen>
     double? afterPrimaryWidthB,
     String? afterPrimaryBlQuantity,
   }) {
-    String paperLabel(MaterialModel material) {
-      final format = (material.format ?? '').trim();
-      final grammage = (material.grammage ?? '').trim();
-      final shortMeta = <String>[
-        if (format.isNotEmpty) 'Ф $format',
-        if (grammage.isNotEmpty) 'Гр $grammage',
-      ].join(' / ');
-      final parts = <String>[
-        material.name.trim().isEmpty ? 'Без названия' : material.name.trim(),
-        if (shortMeta.isNotEmpty) shortMeta,
-      ];
-      return parts.join(', ');
+    double? asDouble(dynamic raw) {
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
     }
 
-    String paperMetrics(
+    PaperChangeRow toRow(
       MaterialModel material, {
       double? fallbackWidthB,
       String? fallbackBlQuantity,
     }) {
-      double? asDouble(dynamic raw) {
-        if (raw is num) return raw.toDouble();
-        return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
-      }
-
       final parsedWidthB = asDouble(material.extra?['widthB']) ?? 0;
       final widthB = parsedWidthB > 0 ? parsedWidthB : (fallbackWidthB ?? 0);
-      final blQuantity =
-          (material.extra?['blQuantity'] ?? fallbackBlQuantity ?? '')
-              .toString()
-              .trim();
-      final widthText = widthB <= 0
-          ? '—'
-          : (widthB % 1 == 0
-              ? widthB.toStringAsFixed(0)
-              : widthB.toStringAsFixed(2));
-      final quantityText = blQuantity.isEmpty ? '—' : blQuantity;
-      return 'Ш $widthText, К $quantityText, L ${material.quantity.toStringAsFixed(2)} м';
+      return PaperChangeRow(
+        name: material.name,
+        format: material.format,
+        grammage: material.grammage,
+        widthB: widthB > 0 ? widthB : null,
+        blQuantity:
+            (material.extra?['blQuantity'] ?? fallbackBlQuantity ?? '')
+                .toString(),
+        lengthMeters: material.quantity,
+      );
     }
 
-    final lines = <String>[
-      'Изменение бумаги из рабочего пространства.',
-    ];
-    final maxLen = before.length > after.length ? before.length : after.length;
-    for (var i = 0; i < maxLen; i++) {
-      final oldMaterial = i < before.length ? before[i] : null;
-      final newMaterial = i < after.length ? after[i] : null;
-      final slot = i + 1;
-      if (oldMaterial != null && newMaterial != null) {
-        final delta = newMaterial.quantity - oldMaterial.quantity;
-        final deltaPrefix = delta >= 0 ? '+' : '';
-        lines.add(
-          'Бумага №$slot Было: ${paperLabel(oldMaterial)} '
-          '${paperMetrics(oldMaterial, fallbackWidthB: i == 0 ? beforePrimaryWidthB : null, fallbackBlQuantity: i == 0 ? beforePrimaryBlQuantity : null)}. '
-          'Стало: ${paperLabel(newMaterial)} '
-          '${paperMetrics(newMaterial, fallbackWidthB: i == 0 ? afterPrimaryWidthB : null, fallbackBlQuantity: i == 0 ? afterPrimaryBlQuantity : null)}. '
-          'Δ $deltaPrefix${delta.toStringAsFixed(2)} м.',
-        );
-      } else if (oldMaterial == null && newMaterial != null) {
-        lines.add(
-          'Бумага №$slot Добавлена: ${paperLabel(newMaterial)} '
-          '${paperMetrics(newMaterial, fallbackWidthB: i == 0 ? afterPrimaryWidthB : null, fallbackBlQuantity: i == 0 ? afterPrimaryBlQuantity : null)}.',
-        );
-      } else if (oldMaterial != null && newMaterial == null) {
-        lines.add(
-          'Бумага №$slot Удалена: ${paperLabel(oldMaterial)} '
-          '${paperMetrics(oldMaterial, fallbackWidthB: i == 0 ? beforePrimaryWidthB : null, fallbackBlQuantity: i == 0 ? beforePrimaryBlQuantity : null)}.',
-        );
-      }
-    }
-    lines.add('Причина: ${reason.trim()}');
-    return lines.join('\n');
+    return buildPaperChangeComment(
+      before: [
+        for (var i = 0; i < before.length; i++)
+          toRow(
+            before[i],
+            fallbackWidthB: i == 0 ? beforePrimaryWidthB : null,
+            fallbackBlQuantity: i == 0 ? beforePrimaryBlQuantity : null,
+          ),
+      ],
+      after: [
+        for (var i = 0; i < after.length; i++)
+          toRow(
+            after[i],
+            fallbackWidthB: i == 0 ? afterPrimaryWidthB : null,
+            fallbackBlQuantity: i == 0 ? afterPrimaryBlQuantity : null,
+          ),
+      ],
+      reason: reason,
+    );
   }
 
   Future<void> _addWorkspacePaperChangeComment({
@@ -1741,33 +1735,20 @@ class _TasksScreenState extends State<TasksScreen>
     required List<Map<String, dynamic>> after,
     required String reason,
   }) {
-    String label(Map<String, dynamic> row) {
-      final name = _paintNameFromRow(row).trim();
-      final info = (row['info'] ?? '').toString().trim();
+    PaintChangeRow toRow(Map<String, dynamic> row) {
       final qtyKg = _paintQtyKgFromRow(row) ?? 0;
-      final qtyGrams = qtyKg * 1000;
-      final qtyText =
-          qtyGrams <= 0 ? '— г' : '${_formatAmountForDialog(qtyGrams)} г';
-      return '${name.isEmpty ? 'Краска' : name} • $qtyText${info.isEmpty ? '' : ' • $info'}';
+      return PaintChangeRow(
+        name: _paintNameFromRow(row),
+        grams: qtyKg > 0 ? qtyKg * 1000 : null,
+        info: (row['info'] ?? '').toString(),
+      );
     }
 
-    final lines = <String>['Изменение красок из рабочего пространства.'];
-    final maxLen = math.max(before.length, after.length);
-    for (var i = 0; i < maxLen; i++) {
-      final oldRow = i < before.length ? before[i] : null;
-      final newRow = i < after.length ? after[i] : null;
-      final slot = i + 1;
-      if (oldRow != null && newRow != null) {
-        lines.add(
-            'Краска №$slot Было: ${label(oldRow)}. Стало: ${label(newRow)}.');
-      } else if (oldRow == null && newRow != null) {
-        lines.add('Краска №$slot Добавлена: ${label(newRow)}.');
-      } else if (oldRow != null) {
-        lines.add('Краска №$slot Удалена: ${label(oldRow)}.');
-      }
-    }
-    lines.add('Причина: ${reason.trim()}');
-    return lines.join('\n');
+    return buildPaintChangeComment(
+      before: before.map(toRow).toList(growable: false),
+      after: after.map(toRow).toList(growable: false),
+      reason: reason,
+    );
   }
 
   Future<void> _addWorkspacePaintChangeComment({
@@ -2151,8 +2132,16 @@ class _TasksScreenState extends State<TasksScreen>
     reasonController.dispose();
   }
 
-  Future<void> _openPaperEditDialog(OrderModel baseOrder) async {
+  Future<void> _openPaperEditDialog(
+    OrderModel baseOrder, {
+    PaperUsageState? paperState,
+  }) async {
     final latest = _orderById(baseOrder.id) ?? baseOrder;
+    // Бумага, по которой уже есть расход, остаётся в заказе как есть:
+    // заменить её другой, удалить или уменьшить длину ниже списанного нельзя.
+    // Другая бумага добавляется новой строкой.
+    double writtenFor(MaterialModel item) =>
+        paperState?.writtenByPaperId[(item.id ?? '').trim()] ?? 0;
     final currentMaterials = latest.paperMaterials.isNotEmpty
         ? List<MaterialModel>.from(latest.paperMaterials)
         : <MaterialModel>[
@@ -2315,7 +2304,7 @@ class _TasksScreenState extends State<TasksScreen>
                                 Expanded(
                                   flex: 2,
                                   child: InkWell(
-                                    onTap: saving
+                                    onTap: saving || writtenFor(selected[i]) > 0
                                         ? null
                                         : () async {
                                             final paper =
@@ -2413,8 +2402,11 @@ class _TasksScreenState extends State<TasksScreen>
                                         const TextInputType.numberWithOptions(
                                       decimal: true,
                                     ),
-                                    decoration: const InputDecoration(
+                                    decoration: InputDecoration(
                                       labelText: 'Длина L (м)',
+                                      helperText: writtenFor(selected[i]) > 0
+                                          ? 'списано ${formatPaperMeters(writtenFor(selected[i]))} м'
+                                          : null,
                                     ),
                                     validator: (value) {
                                       final normalized = (value ?? '')
@@ -2424,11 +2416,15 @@ class _TasksScreenState extends State<TasksScreen>
                                       if (qty == null || qty <= 0) {
                                         return 'Введите > 0';
                                       }
+                                      final written = writtenFor(selected[i]);
+                                      if (qty + 0.0005 < written) {
+                                        return 'Не меньше ${formatPaperMeters(written)}';
+                                      }
                                       return null;
                                     },
                                   ),
                                 ),
-                                if (i > 0)
+                                if (i > 0 && writtenFor(selected[i]) <= 0)
                                   IconButton(
                                     tooltip: 'Удалить бумагу',
                                     onPressed: () {
@@ -2749,9 +2745,12 @@ class _TasksScreenState extends State<TasksScreen>
     }
 
     if (!alreadyAssigned) {
-      final newAssignees = List<String>.from(task.assignees);
-      newAssignees.add(userId);
-      await provider.updateAssignees(task.id, newAssignees);
+      // Добавление, а не перезапись списка: соседний планшет мог назначить
+      // кого-то ещё, пока этот экран держал свой снимок задачи.
+      if (!await provider.addAssignee(task.id, userId)) {
+        _showStageWriteFailure(context, provider);
+        return;
+      }
     }
 
     if (stageMode != null && _needsExecModeRecord(task, userId, stageMode)) {
@@ -2770,6 +2769,14 @@ class _TasksScreenState extends State<TasksScreen>
         type: 'joined',
         text: 'Присоединился(лась) к этапу',
         userIdOverride: userId,
+      );
+      // Этап мог быть уже запущен основным исполнителем — тогда помощнику
+      // нужен свой интервал с этого момента, иначе его время потеряется.
+      await _openHelperIntervalIfRunning(
+        task: task,
+        provider: provider,
+        helperId: userId,
+        initiatedBy: userId,
       );
     } else {
       // separate performer immediately starts; write a 'start' comment
@@ -3036,6 +3043,11 @@ class _TasksScreenState extends State<TasksScreen>
     final selectedOrder =
         currentTask != null ? findOrder(currentTask.orderId) : null;
     final activeTasks = _activeTasksForEmployee(taskProvider);
+    // Очередь рабочего места для проверки «предыдущие задания начаты»: это
+    // ровно allSectionedTasks — тот же getSortedByWorkplaceQueue по тем же
+    // задачам, уже посчитанный выше. Берём готовый список именно до фильтра
+    // поиска: позиция в очереди от поискового запроса зависеть не должна.
+    final workplaceQueue = allSectionedTasks;
 
     Widget buildLeftPanel({required bool scrollable}) {
       final String workplaceLabel = _selectedWorkplaceId == null
@@ -3240,7 +3252,10 @@ class _TasksScreenState extends State<TasksScreen>
         );
       }
 
-      Widget content = Column(
+      // Шапка панели: заголовок, ярлыки активных заданий, выбор рабочего
+      // места и поиск. Отделена от списка, чтобы список можно было отдать
+      // ленивому вьюпорту — см. ниже.
+      final Widget headerSection = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           LayoutBuilder(
@@ -3369,89 +3384,125 @@ class _TasksScreenState extends State<TasksScreen>
             onChanged: (value) => setState(() => _taskSearch = value),
           ),
           SizedBox(height: sectionSpacing),
-          if (sectionedTasks.isEmpty)
-            Center(
-              child: Text(
-                _taskSearch.trim().isEmpty
-                    ? 'Нет доступных заданий для этого рабочего места'
-                    : 'По запросу «${_taskSearch.trim()}» ничего не найдено',
-                textAlign: TextAlign.center,
-              ),
-            )
-          else
-            ListView(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                for (int i = 0; i < sectionedTasks.length; i++)
-                  Builder(builder: (context) {
-                    final task = sectionedTasks[i];
-                    final workplace = personnel.workplaceById(task.stageId);
-                    final unlockedByQueue = _isUnlockedByWorkplaceQueue(
-                      task,
-                      taskProvider,
-                      queue,
-                      workplace,
-                    );
-                    final canStartEarlyPackaging = canStartPackagingOutOfQueue(
-                      task: task,
-                      tasks: taskProvider,
-                      personnel: personnel,
-                      employeeId: widget.employeeId,
-                      groupResolver: _stageGroupKey,
-                    );
-                    final readyForStage = task.status == TaskStatus.waiting &&
-                        unlockedByQueue &&
-                        (_isFirstPendingStage(
-                              taskProvider,
-                              personnel,
-                              task,
-                              groupResolver: _stageGroupKey,
-                            ) ||
-                            canStartEarlyPackaging);
-                    const canOpen = true;
-                    return _TaskCard(
-                      task: task,
-                      order: findOrder(task.orderId),
-                      readyForStage: readyForStage,
-                      shiftPaused: _isShiftPausedForStage(taskProvider, task),
-                      selected: _selectedTask?.id == task.id,
-                      scale: scale,
-                      compact: isCompactTablet || widget.compactList,
-                      showStageHint: task.status == TaskStatus.waiting,
-                      sequenceNumber: i + 1,
-                      enabled: canOpen,
-                      onTap: () {
-                        if (!canOpen) return;
-                        _persistTask(task.id);
-                        setState(() {
-                          _selectedTask = task;
-                          _selectedStatus = _sectionForTask(task);
-                        });
-                        DefaultTabController.of(context)?.animateTo(1);
-                      },
-                    );
-                  }),
-              ],
-            ),
         ],
       );
 
-      if (!scrollable) return content;
+      // Одна карточка списка. Раньше её тело лежало прямо в `Column`, и все
+      // карточки рабочего места строились на каждый кадр: на Упаковке их 133,
+      // и каждая считает статусы всех этапов заказа, состояние исполнителей и
+      // очередь. Пока едет анимация клавиатуры, Scaffold пересобирает панель
+      // на каждый кадр — отсюда «клавиатура выходит секундами» и рывки при
+      // скролле. Теперь тело вызывается ровно для видимых карточек.
+      Widget buildTaskCard(BuildContext context, int i) {
+        final task = sectionedTasks[i];
+        final unlockedByQueue = _isUnlockedByWorkplaceQueue(
+          task,
+          taskProvider,
+          queue,
+          sortedQueue: workplaceQueue,
+        );
+        final canStartEarlyPackaging = canStartPackagingOutOfQueue(
+          task: task,
+          tasks: taskProvider,
+          personnel: personnel,
+          employeeId: widget.employeeId,
+          groupResolver: _stageGroupKey,
+        );
+        final readyForStage = task.status == TaskStatus.waiting &&
+            unlockedByQueue &&
+            (_isFirstPendingStage(
+                  taskProvider,
+                  personnel,
+                  task,
+                  groupResolver: _stageGroupKey,
+                ) ||
+                canStartEarlyPackaging);
+        const canOpen = true;
+        final cardOrder = findOrder(task.orderId);
+        return _TaskCard(
+          task: task,
+          order: cardOrder,
+          stageStatuses: cardOrder == null
+              ? const <_OrderStageStatus>[]
+              : _orderStageStatuses(cardOrder),
+          readyForStage: readyForStage,
+          shiftPaused: _isShiftPausedForStage(taskProvider, task),
+          selected: _selectedTask?.id == task.id,
+          scale: scale,
+          compact: isCompactTablet || widget.compactList,
+          showStageHint: task.status == TaskStatus.waiting,
+          sequenceNumber: i + 1,
+          enabled: canOpen,
+          onTap: () {
+            if (!canOpen) return;
+            _persistTask(task.id);
+            setState(() {
+              _selectedTask = task;
+              _selectedStatus = _sectionForTask(task);
+            });
+            DefaultTabController.of(context)?.animateTo(1);
+          },
+        );
+      }
 
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final double minHeight =
-              constraints.hasBoundedHeight ? constraints.maxHeight : 0;
+      final Widget emptyPlaceholder = Center(
+        child: Text(
+          _taskSearch.trim().isEmpty
+              ? 'Нет доступных заданий для этого рабочего места'
+              : 'По запросу «${_taskSearch.trim()}» ничего не найдено',
+          textAlign: TextAlign.center,
+        ),
+      );
 
-          return SingleChildScrollView(
-            padding: EdgeInsets.zero,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: minHeight),
-              child: content,
+      if (!scrollable) {
+        // Панель вложена в чужой вьюпорт: своей высоты у неё нет, ленивый
+        // список тут невозможен — строим сплошным столбцом, как раньше.
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            headerSection,
+            if (sectionedTasks.isEmpty)
+              emptyPlaceholder
+            else
+              Column(
+                // stretch обязателен: у Column по умолчанию карточки сжались
+                // бы по содержимому.
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (int i = 0; i < sectionedTasks.length; i++)
+                    Builder(builder: (context) => buildTaskCard(context, i)),
+                ],
+              ),
+          ],
+        );
+      }
+
+      // Ленивый вьюпорт: шапка одним куском, карточки — по мере появления на
+      // экране. Прокрутка и внешний вид те же, что у прежнего
+      // SingleChildScrollView: пустое место внизу добирается
+      // SliverFillRemaining, поэтому короткий список по-прежнему растягивает
+      // карточку панели на всю высоту.
+      return CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(child: headerSection),
+          if (sectionedTasks.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: emptyPlaceholder,
+            )
+          else ...[
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                buildTaskCard,
+                childCount: sectionedTasks.length,
+              ),
             ),
-          );
-        },
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: SizedBox.shrink(),
+            ),
+          ],
+        ],
       );
     }
 
@@ -3515,8 +3566,19 @@ class _TasksScreenState extends State<TasksScreen>
       body: SafeArea(
         top: appBar == null,
         bottom: false,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
+        child: Column(
+          children: [
+            // Действия, которые ещё не долетели до сервера. Пока их не видно
+            // было вообще: оператор видел разовую ошибку и не знал, ушло его
+            // действие или нет.
+            if (taskProvider.pendingStageWrites > 0)
+              _PendingWritesBanner(
+                count: taskProvider.pendingStageWrites,
+                scale: scale,
+              ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
             final bool isNarrow =
                 constraints.maxWidth < (isTablet ? 700 : 1000);
             final bool showList = !widget.hideListPanel;
@@ -3648,6 +3710,11 @@ class _TasksScreenState extends State<TasksScreen>
               scale,
             );
             final commentsPanel = _buildCommentsPanel(currentTask, scale);
+            // Комментарий менеджера — отдельным красным блоком над карточкой
+            // заказа, вне её рамки.
+            final managerComment = selectedOrder.comments;
+            final hasManagerComment =
+                OrderManagerCommentBanner.hasComment(managerComment);
 
             if (constraints.maxWidth >= 900) {
               return Padding(
@@ -3662,17 +3729,73 @@ class _TasksScreenState extends State<TasksScreen>
                   children: [
                     SizedBox(
                       width: 392,
-                      child: detailsCard(independentlyScrollable: true),
-                    ),
-                    SizedBox(width: columnGap),
-                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          controlPanel,
-                          const SizedBox(height: 12),
-                          Expanded(child: commentsPanel),
+                          if (hasManagerComment) ...[
+                            // Длинный комментарий не должен съесть карточку
+                            // заказа: не больше 40% высоты, дальше прокрутка.
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxHeight: constraints.maxHeight * 0.4,
+                              ),
+                              child: SingleChildScrollView(
+                                child: OrderManagerCommentBanner(
+                                  comment: managerComment,
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: columnGap),
+                          ],
+                          Expanded(
+                            child: detailsCard(independentlyScrollable: true),
+                          ),
                         ],
+                      ),
+                    ),
+                    SizedBox(width: columnGap),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, rightBox) {
+                          // Один этап может вести много отдельных
+                          // исполнителей, и панель управления растёт вместе с
+                          // их числом. Пока она занимала высоту по содержимому,
+                          // комментариям доставался остаток: при пяти
+                          // исполнителях он обращался в ноль и панель
+                          // обрезалась снизу без прокрутки, при трёх —
+                          // комментарии сжимались в узкую полоску.
+                          //
+                          // Поэтому делим высоту, а не остаток: панели не
+                          // больше 55%, дальше она прокручивается внутри себя,
+                          // а комментарии всегда получают минимум 45%. Когда
+                          // исполнитель один и панель низкая, она занимает
+                          // столько, сколько нужно, и комментарии забирают всё
+                          // остальное — как раньше.
+                          const double controlHeightShare = 0.55;
+                          final double maxControlHeight =
+                              rightBox.hasBoundedHeight
+                                  ? rightBox.maxHeight * controlHeightShare
+                                  : double.infinity;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxHeight: maxControlHeight,
+                                ),
+                                child: Scrollbar(
+                                  controller: _controlPanelScrollController,
+                                  child: SingleChildScrollView(
+                                    controller: _controlPanelScrollController,
+                                    child: controlPanel,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Expanded(child: commentsPanel),
+                            ],
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -3690,6 +3813,10 @@ class _TasksScreenState extends State<TasksScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (hasManagerComment) ...[
+                    OrderManagerCommentBanner(comment: managerComment),
+                    SizedBox(height: columnGap),
+                  ],
                   detailsCard(independentlyScrollable: false),
                   SizedBox(height: columnGap),
                   controlPanel,
@@ -3698,7 +3825,10 @@ class _TasksScreenState extends State<TasksScreen>
                 ],
               ),
             );
-          },
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -3838,9 +3968,26 @@ class _TasksScreenState extends State<TasksScreen>
     );
   }
 
+  /// Персональная доля количества, рассчитанная сервером.
+  ///
+  /// Берём только записи с пометкой `generated`: ими управляет пересчёт, и
+  /// именно они попадают в выработку и зарплату.
+  double _personalShare(TaskModel task, String userId) {
+    double total = 0;
+    for (final comment in task.comments) {
+      if (comment.type != 'quantity_share') continue;
+      if (comment.userId != userId) continue;
+      final payload = tryDecodeQuantityPayload(comment.text);
+      if (payload?['generated'] != true) continue;
+      total += _parseQuantity(comment.text);
+    }
+    return total;
+  }
+
   Widget _buildPerformersPanel(TaskModel task, double scale, bool isTablet) {
     final personnel = context.read<PersonnelProvider>();
     final allAssignees = task.assignees;
+    final unit = _workplaceUnit(personnel, task.stageId) ?? '';
     final performerTiles = <Widget>[];
     for (final id in allAssignees) {
       final name = _employeeDisplayName(personnel, id);
@@ -3863,8 +4010,22 @@ class _TasksScreenState extends State<TasksScreen>
           stateLabel = 'Ожидание';
           break;
       }
+      // Время показываем ТОЛЬКО производственное — по нему и делится
+      // количество. Приладка идёт отдельной оплатой и в долю не входит,
+      // поэтому смешивать их в одной строке нельзя: человек не сойдётся.
+      final worked = _timeForUser(task, id, const {TaskTimeType.production});
+      final share = _personalShare(task, id);
+      final parts = <String>['$name — $stateLabel'];
+      if (worked > Duration.zero) parts.add(_formatDuration(worked));
+      if (share > 0) {
+        parts.add(
+          unit.isEmpty
+              ? formatQuantityNumber(share)
+              : '${formatQuantityNumber(share)} $unit',
+        );
+      }
       performerTiles.add(
-        Text('$name — $stateLabel', style: TextStyle(fontSize: scale * 12.5)),
+        Text(parts.join(' · '), style: TextStyle(fontSize: scale * 12.5)),
       );
     }
 
@@ -3905,29 +4066,40 @@ class _TasksScreenState extends State<TasksScreen>
     return getQuantityStatus(actual: actual, expected: expected);
   }
 
-  // Количество этапа = сумма всех фиксаций: quantity_share (перерывы) +
-  // quantity_done/quantity_team_total (завершение — «сделано с последнего
-  // перерыва»). Та же семантика, что в аналитике (TaskAnalyticsMapper).
-  static const _stageQuantityCommentTypes = {
-    'quantity_share',
-    'quantity_done',
-    'quantity_team_total',
-  };
+  // Количество ЭТАПА: quantity_stage_total (тираж сегмента) + легаси-записи
+  // (quantity_done/quantity_team_total и доли на пересменах до перехода).
+  // Персональные доли участников сюда не входят — их сумма это тираж,
+  // умноженный на число участников. Правило одно на проект, см.
+  // [countsTowardOrderQuantity].
+  List<TaskComment> _stageQuantityComments(TaskModel task) {
+    final raw = task.comments
+        .map((c) => <String, dynamic>{
+              'type': c.type,
+              'text': c.text,
+              'userId': c.userId,
+            })
+        .toList(growable: false);
+    final helperIds = helperIdsFromComments(
+      assignees: task.assignees,
+      comments: raw,
+    );
+    return [
+      for (var i = 0; i < task.comments.length; i++)
+        if (countsTowardOrderQuantity(comment: raw[i], helperIds: helperIds))
+          task.comments[i],
+    ];
+  }
 
   double _sumQuantities(TaskModel task) {
     double total = 0;
-    for (final comment in task.comments) {
-      if (_stageQuantityCommentTypes.contains(comment.type)) {
-        total += _parseQuantity(comment.text);
-      }
+    for (final comment in _stageQuantityComments(task)) {
+      total += _parseQuantity(comment.text);
     }
     return total;
   }
 
   String _latestQuantityLabel(TaskModel task) {
-    final items = task.comments
-        .where((c) => _stageQuantityCommentTypes.contains(c.type))
-        .toList()
+    final items = _stageQuantityComments(task)
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     if (items.isEmpty) return '—';
     return items.last.text;
@@ -3942,9 +4114,7 @@ class _TasksScreenState extends State<TasksScreen>
     final totalStatus = totalQty > 0
         ? getQuantityStatus(actual: totalQty, expected: expected)
         : QuantityStatus.unknown;
-    final lastComment = task.comments
-        .where((c) => _stageQuantityCommentTypes.contains(c.type))
-        .toList()
+    final lastComment = _stageQuantityComments(task)
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final lastStatus = lastComment.isEmpty
         ? QuantityStatus.unknown
@@ -4544,12 +4714,14 @@ class _TasksScreenState extends State<TasksScreen>
         _getOrderPaintsFuture(order.id),
         _getOrderFilesFuture(order.id),
         _getFormFilesFuture(order),
+        _getPaperUsageFuture(order.id),
       ]),
       initialData: <dynamic>[
         cachedFormImageUrl,
         _orderPaintsCache[order.id] ?? const <Map<String, dynamic>>[],
         _orderFilesCache[order.id] ?? const <Map<String, dynamic>>[],
         _formFilesCache[order.id] ?? const <Map<String, dynamic>>[],
+        _paperUsageStateCache[order.id],
       ],
       builder: (context, snapshot) {
         final data = snapshot.data;
@@ -4577,6 +4749,9 @@ class _TasksScreenState extends State<TasksScreen>
               stageTemplateName: templateName,
               formDetails: resolvedFormDetails,
               workspaceStyle: true,
+              paperUsage: data != null && data.length > 4
+                  ? data[4] as PaperUsageState?
+                  : _paperUsageStateCache[order.id],
               extraSections: [
                 _buildStageList(order, scale),
               ],
@@ -4585,6 +4760,31 @@ class _TasksScreenState extends State<TasksScreen>
         );
       },
     );
+  }
+
+  Future<PaperUsageState?> _getPaperUsageFuture(String orderId) {
+    final id = orderId.trim();
+    if (id.isEmpty) return Future.value(null);
+    // Расход пишут и с других планшетов (пересмена) — кэш живёт полминуты.
+    final fetchedAt = _paperUsageStateFetchedAt[id];
+    if (_paperUsageStateCache.containsKey(id) &&
+        fetchedAt != null &&
+        DateTime.now().difference(fetchedAt) < const Duration(seconds: 30)) {
+      return Future.value(_paperUsageStateCache[id]);
+    }
+    return _paperUsageStatePending.putIfAbsent(id, () async {
+      try {
+        final state = await OrdersRepository().getPaperUsageState(id);
+        _paperUsageStateCache[id] = state;
+        _paperUsageStateFetchedAt[id] = DateTime.now();
+        return state;
+      } catch (_) {
+        // Подпись «списано» — подсказка, а не условие показа деталей.
+        return null;
+      } finally {
+        _paperUsageStatePending.remove(id);
+      }
+    });
   }
 
   Future<List<Map<String, dynamic>>> _getOrderPaintsFuture(String orderId) {
@@ -4652,6 +4852,7 @@ class _TasksScreenState extends State<TasksScreen>
 
     final future = () async {
       final formId = await findFormIdByOrderFormRef(
+        formId: order.formId,
         formCode: order.formCode?.trim(),
         formSeries: order.formSeries?.trim(),
         formNo: order.newFormNo,
@@ -4818,44 +5019,48 @@ class _TasksScreenState extends State<TasksScreen>
                       final stageTasks = tasksForOrder
                           .where((t) => groupIds.contains(t.stageId))
                           .toList();
-                      final bool completed = stageTasks.isNotEmpty &&
-                          (groupIds.length > 1
-                              ? stageTasks.any(_isEffectivelyCompleted)
-                              : stageTasks.every(_isEffectivelyCompleted));
+                      final status = _stageRunStatus(
+                        taskProvider: taskProvider,
+                        order: order,
+                        stageTasks: stageTasks,
+                      );
+                      final color = stageRunStatusColor(status);
                       final label = _stageLabelForOrder(personnel, templates,
                           ordersProvider, taskProvider, order.id, repId);
-                      return Container(
-                        margin: EdgeInsets.only(right: chipGap),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: scaled(8),
-                          vertical: scaled(4),
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(scaled(16)),
-                          border: Border.all(
-                            color: completed
-                                ? Colors.green.shade200
-                                : Colors.orange.shade200,
+                      return Tooltip(
+                        message:
+                            '$label — ${stageRunStatusLabel(status).toLowerCase()}',
+                        child: Container(
+                          margin: EdgeInsets.only(right: chipGap),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: scaled(8),
+                            vertical: scaled(4),
                           ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: dotSize,
-                              height: dotSize,
-                              decoration: BoxDecoration(
-                                color: completed ? Colors.green : Colors.orange,
-                                shape: BoxShape.circle,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(scaled(16)),
+                            border: Border.all(
+                              color: color.withValues(alpha: 0.45),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: dotSize,
+                                height: dotSize,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                            ),
-                            SizedBox(width: scaled(4)),
-                            Text(
-                              label,
-                              style: stageTextStyle,
-                            ),
-                          ],
+                              SizedBox(width: scaled(4)),
+                              Text(
+                                label,
+                                style: stageTextStyle,
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
@@ -4865,6 +5070,150 @@ class _TasksScreenState extends State<TasksScreen>
           ),
         ),
       ],
+    );
+  }
+
+  /// Маршрут заказа со статусами — в порядке прохождения.
+  ///
+  /// Один источник и для полосы этапов в «Задании», и для точек на карточке
+  /// списка заданий: расходиться они не должны, иначе сотрудник видит на
+  /// карточке одно, а открыв задание — другое.
+  ///
+  /// Порядок берётся из `stageSequenceForOrder` (он же чинит очерёдность
+  /// после пересборки маршрута); этапы, которых в последовательности нет,
+  /// дописываются в хвост, чтобы ни один не потерялся.
+  List<_OrderStageStatus> _orderStageStatuses(OrderModel order) {
+    final taskProvider = context.read<TaskProvider>();
+    final personnel = context.read<PersonnelProvider>();
+    final ordersProvider = context.read<OrdersProvider>();
+    final templates = context.read<TemplateProvider>();
+
+    final tasksForOrder =
+        taskProvider.tasks.where((t) => t.orderId == order.id).toList();
+    if (tasksForOrder.isEmpty) return const <_OrderStageStatus>[];
+
+    final orderedKeys = <String>[];
+    final membersByKey = <String, List<String>>{};
+    final representativeByKey = <String, String>{};
+
+    void register(String stageId) {
+      final key = _stageGroupKey(order.id, stageId);
+      final members = _stageGroupMembers(order.id, stageId);
+      membersByKey.putIfAbsent(key, () => members);
+      representativeByKey.putIfAbsent(
+        key,
+        () => members.isNotEmpty ? members.first : stageId,
+      );
+      if (!orderedKeys.contains(key)) orderedKeys.add(key);
+    }
+
+    for (final id in taskProvider.stageSequenceForOrder(order.id) ??
+        const <String>[]) {
+      register(id);
+    }
+    for (final task in tasksForOrder) {
+      register(task.stageId);
+    }
+
+    final result = <_OrderStageStatus>[];
+    final seenLabels = <String>{};
+    for (final key in orderedKeys) {
+      final members = membersByKey[key] ?? <String>[key];
+      final stageTasks = tasksForOrder
+          .where((t) => members.contains(t.stageId))
+          .toList(growable: false);
+      if (stageTasks.isEmpty) continue;
+      final label = _stageLabelForOrder(
+        personnel,
+        templates,
+        ordersProvider,
+        taskProvider,
+        order.id,
+        representativeByKey[key] ?? members.first,
+      ).trim();
+      // Переключаемые этапы приходят несколькими строками с одной подписью —
+      // в маршруте это один шаг.
+      final labelKey = label.toLowerCase();
+      if (labelKey.isNotEmpty && !seenLabels.add(labelKey)) continue;
+      result.add(
+        _OrderStageStatus(
+          label: label,
+          status: _stageRunStatus(
+            taskProvider: taskProvider,
+            order: order,
+            stageTasks: stageTasks,
+          ),
+        ),
+      );
+    }
+    return result;
+  }
+
+  /// Статус этапа для цветовой индикации в списке этапов.
+  ///
+  /// Собирает состояния ВСЕХ задач группы (у переключаемых этапов их
+  /// несколько) и всех исполнителей внутри каждой, а решение принимает чистая
+  /// [resolveStageRunStatus] — правила приоритета описаны там.
+  StageRunStatus _stageRunStatus({
+    required TaskProvider taskProvider,
+    required OrderModel order,
+    required List<TaskModel> stageTasks,
+  }) {
+    if (stageTasks.isEmpty) return StageRunStatus.notStarted;
+
+    var finalized = false;
+    var anyProblem = false;
+    var anyActive = false;
+    var anyPaused = false;
+    var shiftPaused = false;
+    var started = false;
+    var hasPerformers = false;
+    var allPerformersFinished = true;
+
+    for (final task in stageTasks) {
+      if (_isEffectivelyCompleted(task)) finalized = true;
+      if (task.status == TaskStatus.problem) anyProblem = true;
+      if (_isShiftPausedForStage(taskProvider, task)) shiftPaused = true;
+      if (_hasProductionStartedForStage(task)) started = true;
+      if (task.assignees.isNotEmpty) {
+        hasPerformers = true;
+        if (!_allPerformersFinished(task)) allPerformersFinished = false;
+      }
+      for (final userId in task.assignees) {
+        switch (_userRunState(task, userId)) {
+          case UserRunState.problem:
+            anyProblem = true;
+            break;
+          case UserRunState.active:
+            anyActive = true;
+            break;
+          case UserRunState.paused:
+            anyPaused = true;
+            break;
+          case UserRunState.idle:
+          case UserRunState.finished:
+            break;
+        }
+      }
+    }
+
+    // У переключаемых этапов достаточно, чтобы завершилась ОДНА выбранная
+    // ветка: остальные варианты так и остаются нетронутыми.
+    return resolveStageRunStatus(
+      finalized: finalized,
+      anyProblem: anyProblem,
+      anyActive: anyActive,
+      shiftPaused: shiftPaused,
+      hasPerformers: hasPerformers,
+      allPerformersFinished: hasPerformers && allPerformersFinished,
+      anyPaused: anyPaused,
+      started: started,
+      availableToStart: _isFirstPendingStage(
+        taskProvider,
+        context.read<PersonnelProvider>(),
+        stageTasks.first,
+        groupResolver: _stageGroupKey,
+      ),
     );
   }
 
@@ -4889,6 +5238,12 @@ class _TasksScreenState extends State<TasksScreen>
   // Доступность «Завершить задание» считает computeTaskButtons
   // (task_buttons_state.dart) по флагам productionStarted /
   // allPerformersFinished / anyUserActive.
+
+  /// Рабочее место по id этапа; null — справочник ещё не загружен.
+  WorkplaceModel? _workplaceById(String stageId) {
+    final personnel = context.read<PersonnelProvider>();
+    return personnel.workplaceById(stageId);
+  }
 
   /// Имена сотрудников по id — для понятных сообщений.
   String _employeeNameById(String id) {
@@ -4944,6 +5299,17 @@ class _TasksScreenState extends State<TasksScreen>
       groupResolver: _stageGroupKey,
     )) {
       message = 'Сначала должен начаться предыдущий этап заказа.';
+    } else if (!_isUnlockedByWorkplaceQueue(
+      task,
+      provider,
+      context.read<ProductionQueueProvider>(),
+    )) {
+      // Ветки не было вовсе: очередь рабочего места гасила кнопку, а
+      // объяснение сваливалось в бесполезное «Начать пока нельзя».
+      message = 'Задание не первое в очереди рабочего места — '
+          'сначала начните предыдущие.';
+    } else if (!isTaskOrderLaunchedForWorkspace(_orderById(task.orderId))) {
+      message = 'Заказ не запущен в производство.';
     } else {
       final busy = provider.tasks.where((t) =>
           t.id != task.id &&
@@ -5463,16 +5829,13 @@ class _TasksScreenState extends State<TasksScreen>
             ),
           ),
           actions: [
-            if (allowPaperEdit) ...[
+            // «Изменить бумагу» здесь нет: бумагу меняют только в окне
+            // расхода бумаги на этапе бумаги (правило от 15.09.2026).
+            if (allowPaperEdit)
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(paintEditValue),
                 child: const Text('Изменить краски'),
               ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(paperEditValue),
-                child: const Text('Изменить бумагу'),
-              ),
-            ],
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Отмена'),
@@ -5576,6 +5939,135 @@ class _TasksScreenState extends State<TasksScreen>
     return raw;
   }
 
+  /// Расход бумаги на этапе бумаги (первый рулонный этап заказа).
+  ///
+  /// Каждый исполнитель и каждая смена пишут свою часть: при пересмене, при
+  /// «Завершить участие» и при закрытии этапа. Записанное сразу списывается со
+  /// склада И засчитывается этапу как сделанное количество — отдельного окна
+  /// количества здесь нет, иначе одно и то же число спрашивали бы дважды. При
+  /// нескольких бумагах в заказе количеством считается их сумма.
+  ///
+  /// На остальных этапах окна нет: возвращается [_PaperUsageOutcome.skipped],
+  /// и количество спрашивает обычное окно.
+  Future<_PaperUsageOutcome> _collectPaperUsage(
+    TaskModel task,
+    PaperUsageKind kind, {
+    bool skipIfAlreadyRecorded = false,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = OrdersRepository();
+    Future<PaperUsageState?> load() async {
+      try {
+        return await repo.getPaperUsageState(task.orderId);
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(
+            'Не удалось загрузить бумагу заказа — действие не выполнено: '
+            '${_humanizeRpcError(e)}',
+          ),
+        ));
+        return null;
+      }
+    }
+
+    var state = await load();
+    if (state == null) return _PaperUsageOutcome.failed;
+    if (!state.isPaperStage(task)) return _PaperUsageOutcome.skipped;
+    if (skipIfAlreadyRecorded && state.hasFactUsage) {
+      return _PaperUsageOutcome.skipped;
+    }
+    // В заказе нет бумаги: списывать нечего, количество спросит обычное окно.
+    if (state.orderPapers.isEmpty) return _PaperUsageOutcome.skipped;
+
+    final actionLabel = switch (kind) {
+      PaperUsageKind.shift => 'за вашу смену',
+      PaperUsageKind.participant => 'за вашу часть работы',
+      PaperUsageKind.finish => 'с момента последней записи',
+    };
+    final actor = _employeeDisplayName(
+      context.read<PersonnelProvider>(),
+      widget.employeeId,
+    );
+
+    while (true) {
+      if (!mounted) return _PaperUsageOutcome.failed;
+      final result = await showPaperUsageDialog(
+        context,
+        state: state!,
+        actionLabel: actionLabel,
+      );
+      if (!mounted || result == null) return _PaperUsageOutcome.failed;
+      if (result.openPaperEditor) {
+        final order = _orderById(task.orderId);
+        if (order == null) {
+          messenger.showSnackBar(const SnackBar(
+            content: Text('Не удалось найти заказ для редактирования бумаги.'),
+          ));
+          return _PaperUsageOutcome.failed;
+        }
+        await _openPaperEditDialog(order, paperState: state);
+        state = await load();
+        if (state == null) return _PaperUsageOutcome.failed;
+        continue;
+      }
+      final toWrite = <String, double>{
+        for (final entry in result.qtyByPaperId.entries)
+          if (entry.value > 0) entry.key: entry.value,
+      };
+      final total = toWrite.values.fold<double>(0, (sum, v) => sum + v);
+      try {
+        await repo.recordPaperUsage(
+          orderId: task.orderId,
+          taskId: task.id,
+          qtyByPaperId: toWrite,
+          kind: kind,
+          actor: actor.isEmpty ? widget.employeeId : actor,
+          employeeId: widget.employeeId,
+        );
+        _paperUsageStateCache.remove(task.orderId);
+        return _PaperUsageOutcome.recorded(total);
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(content: Text(_humanizeRpcError(e))));
+        // Остаток мог поменяться (или запись всё же дошла) — окно покажет
+        // актуальные «уже списано» и «на складе».
+        state = await load();
+        if (state == null) return _PaperUsageOutcome.failed;
+      }
+    }
+  }
+
+  /// Сделанное количество этапа бумаги = сумма записанных метров.
+  ///
+  /// Собирается тем же payload, что и обычное окно количества, иначе история
+  /// этапа, аналитика и доли участников не увидят числа.
+  _QuantityInput _quantityFromPaperUsage({
+    required TaskModel task,
+    required double totalMeters,
+    required String? unitLabel,
+  }) {
+    final order = _orderById(task.orderId);
+    final expected = order == null
+        ? null
+        : getExpectedQuantity(
+            order: order, task: task, unit: unitLabel ?? '');
+    final status = getQuantityStatus(actual: totalMeters, expected: expected);
+    final inputUnit = quantityInputUnit(unitLabel);
+    final display = quantityDisplayLabel(actual: totalMeters, unit: inputUnit);
+    return _QuantityInput(
+      quantity: totalMeters,
+      displayText: display,
+      expected: expected,
+      status: status,
+      commentText: quantityStatusToJson(
+        actual: totalMeters,
+        unit: inputUnit,
+        expected: expected,
+        status: status,
+        displayText: display,
+      ),
+    );
+  }
+
   /// For ink-confirmation stages, finalization must run in strict order:
   /// quantity input -> ink adjustment -> completion RPC. Any cancel/close
   /// on intermediate steps exits early without completing the stage.
@@ -5596,12 +6088,32 @@ class _TasksScreenState extends State<TasksScreen>
     final isSeparateFinalizeWithoutPrefilledQty =
         stageMode == ExecutionMode.separate && qtyInput == null;
 
+    // Этап бумаги: одно окно вместо двух. Сотрудник пишет расход бумаги, он
+    // же становится сделанным количеством этапа (при нескольких бумагах —
+    // сумма). В отдельном режиме «Завершить задание» жмут после того, как
+    // каждый исполнитель записал свою часть при «Завершить участие»; окно
+    // нужно, только если не записал никто (флексопечать закрывается и без
+    // личных завершений).
+    final paperUsage = await _collectPaperUsage(
+      task,
+      PaperUsageKind.finish,
+      skipIfAlreadyRecorded: stageMode == ExecutionMode.separate,
+    );
+    if (!paperUsage.ok) return false;
+    if (paperUsage.recordedTotal != null && qtyInput == null) {
+      qtyInput = _quantityFromPaperUsage(
+        task: task,
+        totalMeters: paperUsage.recordedTotal!,
+        unitLabel: unitLabel,
+      );
+    }
+
     if (!isSeparateFinalizeWithoutPrefilledQty) {
       while (qtyInput == null) {
         final result = await _askQuantity(
           context,
           unit: unitLabel,
-          allowPaperEdit: true,
+          allowPaperEdit: false,
           initialQuantity: _initialMeterQuantityForTask(task, unitLabel),
           order: _orderById(task.orderId),
           task: task,
@@ -5844,6 +6356,20 @@ class _TasksScreenState extends State<TasksScreen>
 
     final note = mounted ? await _askFinishNote() : null;
     try {
+      // Состав бригады передаём и отсюда. Раньше кнопка «Завершить задание»
+      // звала RPC без него, и совместный этап, закрытый этой кнопкой, не
+      // получал распределения вообще: помощникам не доставалось ничего.
+      final latestTask = tp.tasks.firstWhere(
+        (t) => t.id == task.id,
+        orElse: () => task,
+      );
+      final jointUserIds = stageMode == ExecutionMode.joint
+          ? (latestTask.assignees
+              .where((id) =>
+                  _execModeForUser(latestTask, id) == ExecutionMode.joint)
+              .toSet()
+              .toList(growable: false))
+          : const <String>[];
       await OrdersRepository().completeTaskStage(
         taskId: task.id,
         orderId: task.orderId,
@@ -5851,6 +6377,7 @@ class _TasksScreenState extends State<TasksScreen>
         employeeId: widget.employeeId,
         quantityDone: qtyInput?.commentText,
         comment: note,
+        jointUserIds: jointUserIds,
       );
       await tp.refresh();
       await tp.recomputeOrderActualQty(task.orderId);
@@ -5893,24 +6420,32 @@ class _TasksScreenState extends State<TasksScreen>
     }).toList(growable: false);
 
     if (employeeActiveTasks.isNotEmpty) {
+      final personnelProvider = context.read<PersonnelProvider>();
       final startingPackaging = stage_sequence.isPackagingStage(
         stageId: task.stageId,
         stageGroupKey: task.stageGroupKey,
-        stageName:
-            _stageDisplayName(context.read<PersonnelProvider>(), task.stageId),
+        stageName: _stageDisplayName(personnelProvider, task.stageId),
+      );
+      final activeIsPackaging = stage_sequence.isPackagingStage(
+        stageId: employeeActiveTasks.first.stageId,
+        stageGroupKey: employeeActiveTasks.first.stageGroupKey,
+        stageName: _stageDisplayName(
+          personnelProvider,
+          employeeActiveTasks.first.stageId,
+        ),
       );
 
-      final canPairWithPackagingInSameOrder = startingPackaging &&
-          employeeActiveTasks.length == 1 &&
+      // Пара «упаковка + другой этап того же заказа» допустима в ЛЮБОМ
+      // порядке запуска. Раньше условие начиналось с `startingPackaging &&`,
+      // то есть упаковкой обязан был быть именно ЗАПУСКАЕМЫЙ этап. Из-за
+      // этого, поставив паузу на обоих рабочих местах, сотрудник мог поднять
+      // только одно: если первой возобновляли упаковку, второй этап
+      // (например листорезка) уже считался конфликтом активных заданий.
+      // Через эту же проверку идут возобновление после проблемы и
+      // пересмены — там ломалось так же.
+      final canPairWithPackagingInSameOrder = employeeActiveTasks.length == 1 &&
           employeeActiveTasks.first.orderId == task.orderId &&
-          !stage_sequence.isPackagingStage(
-            stageId: employeeActiveTasks.first.stageId,
-            stageGroupKey: employeeActiveTasks.first.stageGroupKey,
-            stageName: _stageDisplayName(
-              context.read<PersonnelProvider>(),
-              employeeActiveTasks.first.stageId,
-            ),
-          );
+          startingPackaging != activeIsPackaging;
 
       if (!canPairWithPackagingInSameOrder) {
         return true;
@@ -5997,7 +6532,7 @@ class _TasksScreenState extends State<TasksScreen>
       tasksByGroup.putIfAbsent(key, () => []).add(task);
     }
 
-    return taskProvider.tasks
+    return _dedupeTaskRows(taskProvider.tasks
         .where((t) => t.stageId == _selectedWorkplaceId)
         .where((task) => isTaskOrderLaunchedForWorkspace(
               findTaskOrder(task.orderId),
@@ -6019,21 +6554,61 @@ class _TasksScreenState extends State<TasksScreen>
         return false;
       }
       return true;
-    }).toList();
+    }).toList());
   }
 
-  bool _isUnlockedByWorkplaceQueue(
-    TaskModel task,
+  /// Одна карточка на пару «заказ + этап», даже если строк задачи в базе две.
+  ///
+  /// Дубли задач — следствие гонки при запуске заказа: `OrderQueueSyncService`
+  /// читает существующие задачи и вставляет недостающие без транзакции и без
+  /// уникального ключа, поэтому два запуска, разошедшиеся на сотню
+  /// миллисекунд, создают по комплекту каждый. Сам запуск теперь защищён, но
+  /// уже накопившиеся пары (22 в базе) продолжали бы двоиться в списке.
+  ///
+  /// Оставляем ту строку, где есть работа: комментарии и не-`waiting` статус
+  /// означают, что сотрудники взаимодействовали именно с ней, и прятать её
+  /// нельзя. При равенстве берём меньший id — чтобы на всех устройствах
+  /// осталась одна и та же строка. Скрытая строка не теряется: завершение
+  /// этапа на сервере закрывает ВСЕ задачи группы одним запросом
+  /// (`advance_order_after_task_completion`), поэтому заказ закроется целиком.
+  List<TaskModel> _dedupeTaskRows(List<TaskModel> tasks) {
+    final byKey = <String, TaskModel>{};
+    for (final task in tasks) {
+      final key = '${task.orderId}::${task.stageId}';
+      final kept = byKey[key];
+      if (kept == null || _taskRowRank(task) > _taskRowRank(kept) ||
+          (_taskRowRank(task) == _taskRowRank(kept) &&
+              task.id.compareTo(kept.id) < 0)) {
+        byKey[key] = task;
+      }
+    }
+    // Порядок исходного списка сохраняем: он уже отсортирован очередью.
+    final keptIds = byKey.values.map((t) => t.id).toSet();
+    return tasks.where((t) => keptIds.contains(t.id)).toList(growable: false);
+  }
+
+  int _taskRowRank(TaskModel task) {
+    if (task.comments.isNotEmpty) return 2;
+    if (task.status != TaskStatus.waiting) return 1;
+    return 0;
+  }
+
+  /// Очередь рабочего места, отсортированная как её видит сотрудник.
+  ///
+  /// Считается один раз на построение списка и передаётся в
+  /// [_isUnlockedByWorkplaceQueue]: внутри она собирается по ВСЕМ заказам
+  /// (карты групп этапов + сортировка), и вызов на каждую карточку давал
+  /// O(карточки x заказы) на каждый layout. Клавиатура на планшете при этом
+  /// открывалась секундами: пока идёт её анимация, Scaffold пересчитывает
+  /// раскладку каждый кадр, и весь этот перебор повторялся 60 раз в секунду.
+  List<TaskModel> _sortedWorkplaceQueue(
     TaskProvider taskProvider,
     ProductionQueueProvider queue,
-    WorkplaceModel? workplace,
   ) {
-    if (task.status != TaskStatus.waiting) return true;
-    if (_selectedWorkplaceId?.trim().isEmpty ?? true) return true;
-
-    final queueGroupId = _selectedWorkplaceId!.trim();
+    final queueGroupId = (_selectedWorkplaceId ?? '').trim();
+    if (queueGroupId.isEmpty) return const <TaskModel>[];
     final ordersProvider = context.read<OrdersProvider>();
-    final queued = queue.getSortedByWorkplaceQueue(
+    return queue.getSortedByWorkplaceQueue(
       _tasksForWorkplace(taskProvider),
       (candidate) => _queueEntryForTask(
         candidate,
@@ -6041,12 +6616,22 @@ class _TasksScreenState extends State<TasksScreen>
         workplaceId: queueGroupId,
       ),
     );
+  }
+
+  bool _isUnlockedByWorkplaceQueue(
+    TaskModel task,
+    TaskProvider taskProvider,
+    ProductionQueueProvider queue, {
+    List<TaskModel>? sortedQueue,
+  }) {
+    if (task.status != TaskStatus.waiting) return true;
+    if (_selectedWorkplaceId?.trim().isEmpty ?? true) return true;
+
+    final queued = sortedQueue ?? _sortedWorkplaceQueue(taskProvider, queue);
 
     final index = queued.indexWhere((t) => t.id == task.id);
     if (index <= 0) return true;
 
-    final bool strictSequentialByPreviousCompletion = workplace != null &&
-        workplace.executionMode != WorkplaceExecutionMode.separate;
     final canStartPackagingEarlyNow = canStartPackagingOutOfQueue(
       task: task,
       tasks: taskProvider,
@@ -6073,26 +6658,9 @@ class _TasksScreenState extends State<TasksScreen>
       return true;
     }
 
-    for (var i = 0; i < index; i++) {
-      final previous = queued[i];
-      if (strictSequentialByPreviousCompletion) {
-        final bool previousCompleted = _isEffectivelyCompleted(previous);
-        final bool previousInProblem = previous.status == TaskStatus.problem ||
-            previous.comments.any((c) => c.type == 'problem');
-        // Бизнес-правило для "Одиночная/Совместная": следующий заказ можно
-        // стартовать только после завершения предыдущего, либо если он в "Проблеме".
-        // Исключение: для последнего этапа упаковки разрешаем ранний старт,
-        // когда непосредственный предыдущий этап уже начат.
-        if (!previousCompleted && !previousInProblem) {
-          return false;
-        }
-        continue;
-      }
-      if (!_hasWorkplaceQueueActivity(previous)) {
-        return false;
-      }
-    }
-    return true;
+    // Правило одно на все режимы рабочего места: начатый заказ открывает
+    // следующий за ним в очереди (см. queue_gate.isUnlockedByQueueOrder).
+    return queue_gate.isUnlockedByQueueOrder(queued, index);
   }
 
   Widget _buildControlPanel(TaskModel task, WorkplaceModel stage,
@@ -6114,16 +6682,16 @@ class _TasksScreenState extends State<TasksScreen>
     // Всё считается ОТНОСИТЕЛЬНО СТРОКИ (её сотрудника), а не текущего
     // пользователя экрана: сами кнопки никаких условий больше не содержат.
 
-    /// Полноправный ли исполнитель строки. Помощники в совместном режиме
-    /// управления заданием не получают.
-    bool isAssigneeForRow(String rowUserId) {
-      if (task.assignees.isEmpty) return true;
-      if (!task.assignees.contains(rowUserId)) return false;
-      final rowMode = _execModeForUser(task, rowUserId);
-      if (rowMode == ExecutionMode.separate) return true;
-      return stageMode == ExecutionMode.joint &&
-          task.assignees.first == rowUserId;
-    }
+    /// Полноправный ли исполнитель строки. Правило вынесено в
+    /// [isRowAssignee] — оно должно совпадать с `canAutoAssign` из
+    /// [startBlockedForRow] ниже, иначе строка сотрудника показывается с
+    /// выключенной кнопкой «Начать».
+    bool isAssigneeForRow(String rowUserId) => isRowAssignee(
+          assignees: task.assignees,
+          rowUserId: rowUserId,
+          stageMode: stageMode,
+          rowMode: _execModeForUser(task, rowUserId),
+        );
 
     /// Внешние запреты входа в работу — всё, что считается по провайдерам и не
     /// зависит от фазы этапа: статус задачи, доступ к заданию, очередь
@@ -6152,7 +6720,6 @@ class _TasksScreenState extends State<TasksScreen>
         task,
         provider,
         context.read<ProductionQueueProvider>(),
-        stage,
       )) {
         return true;
       }
@@ -6167,10 +6734,15 @@ class _TasksScreenState extends State<TasksScreen>
         return true;
       }
       // Этап уже шёл до возобновления смены — простаивающий сотрудник не
-      // подхватывает его обычной кнопкой «Начать».
+      // подхватывает его обычной кнопкой «Начать». Пересмену считаем только
+      // в текущем круге: у возобновлённого этапа пересмена из прошлой жизни
+      // иначе навсегда запирала бы старт.
+      final int roundStart = stageRoundStartMillis(task);
       final bool stageStartedBeforeShiftResume =
           _hasProductionStartedForStage(task) &&
-              task.comments.any((c) => c.type == 'shift_resume');
+              task.comments.any((c) =>
+                  c.type == 'shift_resume' &&
+                  normalizeEpochToMillis(c.timestamp) >= roundStart);
       if (stageStartedBeforeShiftResume && rowState == UserRunState.idle) {
         return true;
       }
@@ -6219,9 +6791,12 @@ class _TasksScreenState extends State<TasksScreen>
         shiftResumeBlocked: shiftResumeBlockedForRow(rowUserId),
         startInFlight: _startingTaskIds.contains(task.id),
         setupInFlight: _startingSetupTaskIds.contains(task.id),
+        shiftInFlight: _shiftingTaskIds.contains(task.id),
+        finishInFlight: _finishingTaskIds.contains(task.id),
         hasAssignees: task.assignees.isNotEmpty,
         allPerformersFinished: allPerformersFinished,
         anyUserActive: _anyUserActive(task),
+        stageReopened: stageRoundStartMillis(task) > 0,
       );
     }
 
@@ -6382,6 +6957,15 @@ class _TasksScreenState extends State<TasksScreen>
                       currentRowUserId = userId!;
                       isMyRow = userId == widget.employeeId;
                     }
+                    // В режиме отдельных исполнителей панель повторяется для
+                    // каждого сотрудника: кнопки делаем ниже, а над строкой
+                    // показываем личное время — верхний счётчик считает этап
+                    // целиком и по нему не понять, кто сколько отработал.
+                    final bool compactButtons =
+                        stageMode == ExecutionMode.separate;
+                    final bool showRowTimer = jointGroup != null
+                        ? false
+                        : task.assignees.contains(currentRowUserId);
                     final UserRunState stateRowUser =
                         _userRunState(task, currentRowUserId);
                     final bool isSetupActiveForRow =
@@ -6390,6 +6974,28 @@ class _TasksScreenState extends State<TasksScreen>
                     // строки. Ниже в разметке — только чтение результата.
                     final TaskButtonsState buttons =
                         buttonsForRow(currentRowUserId, isMyRow: isMyRow);
+                    /// Бригада на МОМЕНТ НАЖАТИЯ, а не на момент отрисовки.
+                    ///
+                    /// [jointGroup] считается в build, и между отрисовкой и
+                    /// нажатием к этапу успевают присоединиться люди. Пауза
+                    /// шла по устаревшему списку, и тем, кто присоединился
+                    /// последними, интервал не закрывался: их производственный
+                    /// отрезок тянулся через обед и они получали вдвое большую
+                    /// долю. Разбор — заказ ЗК-2026.08.26-1, «Ручка-склейка
+                    /// крученая»: пауза закрыла четверых из шести.
+                    List<String> currentHelpers() {
+                      final latest = tp.tasks.firstWhere(
+                        (t) => t.id == task.id,
+                        orElse: () => task,
+                      );
+                      // Само правило — в jointHelperIds, оно покрыто тестами.
+                      // Здесь только «взять свежую задачу».
+                      return jointHelperIds(
+                        assignees: latest.assignees,
+                        execModeOf: (id) => _execModeForUser(latest, id),
+                      );
+                    }
+
                     Future<void> recordTimeEventForUser(TaskTimeType type,
                         {String? note, bool includeHelpers = true}) async {
                       final participants =
@@ -6408,9 +7014,7 @@ class _TasksScreenState extends State<TasksScreen>
                       );
 
                       if (includeHelpers && jointGroup != null && isMyRow) {
-                        final helpers = jointGroup
-                            .where((id) => id != task.assignees.first)
-                            .toList();
+                        final helpers = currentHelpers();
                         for (final helperId in helpers) {
                           await tp.recordTimeEvent(
                             task: task,
@@ -6435,9 +7039,7 @@ class _TasksScreenState extends State<TasksScreen>
                         note: note,
                       );
                       if (jointGroup != null && isMyRow) {
-                        final helpers = jointGroup
-                            .where((id) => id != task.assignees.first)
-                            .toList();
+                        final helpers = currentHelpers();
                         for (final helperId in helpers) {
                           await tp.closeOpenTimeEvent(
                             task: task,
@@ -6495,7 +7097,6 @@ class _TasksScreenState extends State<TasksScreen>
                           task,
                           taskProvider,
                           context.read<ProductionQueueProvider>(),
-                          stage,
                         )) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -6516,7 +7117,10 @@ class _TasksScreenState extends State<TasksScreen>
                           return;
                         }
 
+                        // После «Возобновить» станок уже налажен прошлым
+                        // кругом: можно заново наладить, можно сразу начать.
                         if (_hasMachineForStage(stage) &&
+                            stageRoundStartMillis(task) <= 0 &&
                             !_hasPendingSetupForStage(task) &&
                             !_isSetupCompletedForStage(task) &&
                             !_hasProductionStartedForStage(task)) {
@@ -6547,58 +7151,66 @@ class _TasksScreenState extends State<TasksScreen>
                           return;
                         }
                         final ExecutionMode? selectedMode = stageExecMode;
-                        final alreadyAssigned =
-                            task.assignees.contains(widget.employeeId);
-                        if (explicitStageMode == null) {
-                          await taskProvider.addComment(
-                            taskId: task.id,
-                            type: 'exec_mode_stage',
-                            text: _executionModeCode(stageExecMode),
-                            userId: widget.employeeId,
-                          );
-                        }
-
-                        if (!alreadyAssigned) {
-                          final newAssignees = List<String>.from(task.assignees)
-                            ..add(widget.employeeId);
-                          await taskProvider.updateAssignees(
-                              task.id, newAssignees);
-                        }
-
-                        if (selectedMode != null &&
-                            _needsExecModeRecord(
-                                task, widget.employeeId, selectedMode)) {
-                          await taskProvider.addComment(
-                            taskId: task.id,
-                            type: 'exec_mode',
-                            text: _executionModeCode(selectedMode),
-                            userId: widget.employeeId,
-                          );
-                        }
 
                         // Наладка завершается по ЭТАПУ, а не по пользователю:
                         // setup_done (и приладку) получает только тот, у кого
                         // есть своя незакрытая setup_start. Сотрудник, просто
                         // нажавший «Начать» после чужой наладки, приладку не
                         // получает.
-                        if (_hasMachineForStage(stage) &&
-                            !_isSetupCompletedForStage(task) &&
-                            _hasUnfinishedSetupForUser(
-                                task, widget.employeeId)) {
-                          await _finishSetup(task, provider);
-                        }
+                        final setupDoneOps = (_hasMachineForStage(stage) &&
+                                !_isSetupCompletedForStage(task) &&
+                                _hasUnfinishedSetupForUser(
+                                    task, widget.employeeId))
+                            ? await _setupDoneOps(task)
+                            : const <Map<String, dynamic>>[];
+                        if (!mounted) return;
+
                         final isResumeAction =
                             stateRowUser == UserRunState.paused ||
                                 stateRowUser == UserRunState.problem;
-                        await taskProvider.addCommentAutoUser(
+                        final execModeForInterval = stageExecMode ??
+                            _execModeForUser(task, widget.employeeId);
+
+                        // Всё действие уходит одной транзакцией. Раньше это
+                        // была цепочка из четырёх независимых запросов, и
+                        // потеря назначения (самого первого из них) запирала
+                        // рабочее место: без строки в assignees экран не
+                        // показывал сотруднику кнопок, а незакрытый интервал
+                        // запрещал повторный старт.
+                        final applied = await taskProvider.applyStageEvents(
                           taskId: task.id,
-                          type: isResumeAction ? 'resume' : 'start',
-                          text: isResumeAction
-                              ? 'Возобновил(а) этап'
-                              : 'Начал(а) этап',
-                          userIdOverride: widget.employeeId,
+                          ops: StageEventPlans.stageStart(
+                            userId: currentRowUserId,
+                            workplaceId: task.stageId,
+                            participants: _participantsSnapshot(
+                                task, widget.employeeId),
+                            alreadyAssigned:
+                                task.assignees.contains(currentRowUserId),
+                            isResume: isResumeAction,
+                            stageExecutionModeCode: explicitStageMode == null
+                                ? _executionModeCode(stageExecMode)
+                                : null,
+                            personalExecutionModeCode: (selectedMode != null &&
+                                    _needsExecModeRecord(task,
+                                        widget.employeeId, selectedMode))
+                                ? _executionModeCode(selectedMode)
+                                : null,
+                            intervalExecutionModeCode:
+                                _executionModeCode(execModeForInterval),
+                            setupDoneOps: setupDoneOps,
+                            // Список бригады — на момент нажатия: между
+                            // отрисовкой и стартом к этапу успевают
+                            // присоединиться, и по устаревшему списку
+                            // последним пришедшим интервал не открывался.
+                            helperIds: (jointGroup != null && isMyRow)
+                                ? currentHelpers()
+                                : const <String>[],
+                          ),
                         );
-                        await recordTimeEventForUser(TaskTimeType.production);
+                        if (!applied) {
+                          _showStageWriteFailure(context, taskProvider);
+                          return;
+                        }
                       } finally {
                         if (mounted) {
                           setState(() => _startingTaskIds.remove(task.id));
@@ -6623,28 +7235,73 @@ class _TasksScreenState extends State<TasksScreen>
                           userIdOverride: widget.employeeId);
                       await recordTimeEventForUser(TaskTimeType.pause,
                           note: comment);
+                      // Помощников на паузу отправил тот же вызов
+                      // recordTimeEventForUser — они не «продолжают работу»,
+                      // и держать из-за них статус этапа в inProgress нельзя.
                       if (!_anyUserActive(task,
-                          exceptUserId: widget.employeeId)) {
+                          except: {widget.employeeId, ...?jointGroup})) {
                         await tp.updateStatus(task.id, TaskStatus.paused);
                       }
                     }
 
-                    Future<void> onFinish() async {
+                    // Само действие завершения. Обёртка [onFinish] держит
+                    // замок, пока оно идёт: см. [_finishingTaskIds].
+                    Future<void> runFinish() async {
                       // messenger захватываем до диалога количества, tp — из
                       // buildControlsFor: диалог живёт долго, и за это время
                       // строка кнопок успевает быть размонтирована.
                       final messenger = ScaffoldMessenger.of(context);
                       final unitLabel = _workplaceUnit(personnel, task.stageId);
                       final order = _orderById(task.orderId);
-                      _QuantityInput? qtyInput;
-                      while (true) {
+                      final taskProvider = tp;
+                      // Совместный этап закрывает эту строку целиком. Если на
+                      // нём ещё кто-то работает, спрашивать бумагу и
+                      // количество нельзя: списание бы прошло, а этап — нет.
+                      if (jointGroup != null) {
+                        final latest = taskProvider.tasks.firstWhere(
+                          (t) => t.id == task.id,
+                          orElse: () => task,
+                        );
+                        final jointNow = latest.assignees
+                            .where((id) =>
+                                _execModeForUser(latest, id) ==
+                                ExecutionMode.joint)
+                            .toSet();
+                        if (_anyUserActive(latest,
+                            except: {currentRowUserId, ...jointNow})) {
+                          messenger.showSnackBar(const SnackBar(
+                            content: Text(
+                              'Этап нельзя закрыть: на нём ещё работает другой исполнитель.',
+                            ),
+                          ));
+                          return;
+                        }
+                      }
+                      // Этап бумаги: одно окно. Введённый расход списывается
+                      // со склада и он же засчитывается как сделанное
+                      // количество (несколько бумаг — сумма).
+                      final paperUsage = await _collectPaperUsage(
+                        task,
+                        jointGroup != null
+                            ? PaperUsageKind.finish
+                            : PaperUsageKind.participant,
+                      );
+                      if (!mounted || !paperUsage.ok) return;
+                      _QuantityInput? qtyInput = paperUsage.recordedTotal == null
+                          ? null
+                          : _quantityFromPaperUsage(
+                              task: task,
+                              totalMeters: paperUsage.recordedTotal!,
+                              unitLabel: unitLabel,
+                            );
+                      while (qtyInput == null) {
                         // this.context — контекст экрана: он жив, пока
                         // mounted. Контекст строки кнопок пересобирается и
                         // на втором витке цикла может быть уже defunct.
                         qtyInput = await _askQuantity(
                           this.context,
                           unit: unitLabel,
-                          allowPaperEdit: true,
+                          allowPaperEdit: false,
                           initialQuantity:
                               _initialMeterQuantityForTask(task, unitLabel),
                           order: order,
@@ -6664,10 +7321,10 @@ class _TasksScreenState extends State<TasksScreen>
                         }
                         await _openPaperEditDialog(order);
                         if (!mounted) return;
+                        qtyInput = null;
                       }
                       if (qtyInput == null) return;
                       final qtyText = qtyInput.commentText;
-                      final taskProvider = tp;
                       var separateAllDone = false;
                       var jointUserIds = <String>[];
                       if (jointGroup != null) {
@@ -6688,29 +7345,27 @@ class _TasksScreenState extends State<TasksScreen>
                         // SEPARATE: write personal qty, require ALL separate-mode assignees to finish.
                         // This path does not complete the stage; final stage completion is
                         // performed by the backend RPC from the separate "Завершить задание" action.
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'quantity_done',
-                            text: qtyText,
-                            userIdOverride: widget.employeeId);
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'user_done',
-                            text: 'done',
-                            userIdOverride: widget.employeeId);
-                        // Закрываем свой интервал времени. Без этого отметка
-                        // «завершил» писалась, но открытый production-интервал
-                        // оставался — состояние исполнителя вычисляется прежде
-                        // всего по нему, поэтому человек продолжал числиться
-                        // «в работе»: кнопка визуально не срабатывала, время
-                        // тикало дальше, а «Завершить задание» не активировалось,
-                        // потому что кто-то всегда считался активным.
-                        await taskProvider.closeOpenTimeEvent(
-                          task: task,
-                          initiatedBy: widget.employeeId,
-                          subjectUserId: widget.employeeId,
-                          note: 'user_done',
+                        //
+                        // Количество, отметка «завершил» и закрытие интервала —
+                        // одной транзакцией. Тремя отдельными вызовами первый
+                        // уходил в очередь повторов, экран не менялся, и второе
+                        // нажатие записывало количество ещё раз. Интервал
+                        // закрывается здесь же: без этого человек продолжал
+                        // числиться «в работе», и «Завершить задание» не
+                        // активировалось.
+                        final finishApplied =
+                            await taskProvider.applyStageEvents(
+                          taskId: task.id,
+                          label: 'Завершение участия',
+                          ops: StageEventPlans.participantFinish(
+                            userId: widget.employeeId,
+                            quantityText: qtyText,
+                          ),
                         );
+                        if (!finishApplied) {
+                          _showStageWriteFailure(this.context, taskProvider);
+                          return;
+                        }
 
                         // Collect only assignees in 'separate' mode
                         final latestTask = taskProvider.tasks.firstWhere(
@@ -6758,9 +7413,15 @@ class _TasksScreenState extends State<TasksScreen>
                       // закрывается только отдельной кнопкой "Завершить задание"
                       // после того, как все отдельные исполнители отметились.
                       final shouldCloseStage = jointGroup != null;
+                      // Совместный режим: «Завершить» закрывает этап всей
+                      // группе, интервалы помощников закрывает
+                      // closeTimeEventForUser ниже. Своей кнопки «Завершить» у
+                      // помощника нет, поэтому если считать его активным, этап
+                      // с помощниками не закрыть вообще: нажатие проходило до
+                      // диалога количества и молча заканчивалось ничем.
                       final canApplyFinish = !_anyUserActive(
                         latestTask,
-                        exceptUserId: currentRowUserId,
+                        except: {currentRowUserId, ...jointUserIds},
                       );
                       if (canApplyFinish) {
                         final _secs = _elapsed(latestTask).inSeconds;
@@ -6815,6 +7476,34 @@ class _TasksScreenState extends State<TasksScreen>
                             ),
                           );
                         }
+                      } else {
+                        // Молчаливый выход здесь уже стоил дня разбирательств:
+                        // сотрудник вводил количество, жал «Завершить» и не
+                        // понимал, почему ничего не происходит.
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Этап нельзя закрыть: на нём ещё работает другой исполнитель.',
+                            ),
+                          ),
+                        );
+                      }
+                    }
+
+                    // Замок на время всего действия — вместе с диалогами
+                    // бумаги, количества и заметки. Без него сотрудник,
+                    // не дождавшись записи, жал «Завершить» второй раз.
+                    Future<void> onFinish() async {
+                      if (_finishingTaskIds.contains(task.id)) return;
+                      setState(() => _finishingTaskIds.add(task.id));
+                      try {
+                        await runFinish();
+                      } finally {
+                        if (mounted) {
+                          setState(() => _finishingTaskIds.remove(task.id));
+                        } else {
+                          _finishingTaskIds.remove(task.id);
+                        }
                       }
                     }
 
@@ -6864,9 +7553,13 @@ class _TasksScreenState extends State<TasksScreen>
                         return;
                       }
 
-                      final available = personnel.employees
-                          .where((e) => !task.assignees.contains(e.id))
-                          .toList();
+                      // Помощник — это вторая пара рук на этапе, значит те
+                      // же ограничения, что и у вкладок рабочего пространства:
+                      // без уволенных и без ролей с отдельным рабочим местом.
+                      final available = employeesForSharedWorkspace(
+                        personnel.employees,
+                        excludedIds: task.assignees.toSet(),
+                      );
                       if (available.isEmpty) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -6918,36 +7611,21 @@ class _TasksScreenState extends State<TasksScreen>
 
                       if (approved != true || selectedId == null) return;
 
-                      if (_needsExecModeRecord(
-                          task, widget.employeeId, ExecutionMode.joint)) {
-                        await taskProvider.addComment(
-                          taskId: task.id,
-                          type: 'exec_mode',
-                          text: _executionModeCode(ExecutionMode.joint),
-                          userId: widget.employeeId,
-                        );
-                      }
-
-                      final newAssignees = List<String>.from(task.assignees)
-                        ..add(selectedId!);
-                      await taskProvider.updateAssignees(task.id, newAssignees);
-
-                      if (_needsExecModeRecord(
-                          task, selectedId!, ExecutionMode.joint)) {
-                        await taskProvider.addComment(
-                          taskId: task.id,
-                          type: 'exec_mode',
-                          text: _executionModeCode(ExecutionMode.joint),
-                          userId: selectedId!,
-                        );
-                      }
-
-                      await taskProvider.addCommentAutoUser(
+                      // Назначение помощника и его интервал — одной
+                      // транзакцией. Раньше assignees перезаписывались
+                      // целиком из снимка задачи, и при добавлении двух
+                      // помощников подряд второй затирал первого: на задаче
+                      // 9d0e8fbd так потерялись сразу двое из шести.
+                      final added = await taskProvider.applyStageEvents(
                         taskId: task.id,
-                        type: 'joined',
-                        text: 'Присоединился(лась) к этапу',
-                        userIdOverride: selectedId!,
+                        ops: _addHelperOps(
+                          task: task,
+                          helperId: selectedId!,
+                          actorId: widget.employeeId,
+                          needsStageModeRecord: false,
+                        ),
                       );
+                      if (!added) _showStageWriteFailure(context, taskProvider);
                     }
 
                     Future<void> onRemoveHelper(String helperId) async {
@@ -6997,45 +7675,26 @@ class _TasksScreenState extends State<TasksScreen>
                           false;
                       if (!confirmed) return;
 
-                      final unitLabel = _workplaceUnit(personnel, task.stageId);
-                      final qtyInput = await _askQuantity(
-                        context,
-                        unit: unitLabel,
-                        initialQuantity:
-                            _initialMeterQuantityForTask(task, unitLabel),
-                        order: _orderById(task.orderId),
-                        task: task,
-                      );
-                      if (qtyInput == null) return;
-
-                      await taskProvider.closeOpenTimeEvent(
-                        task: latestTask,
-                        initiatedBy: widget.employeeId,
-                        subjectUserId: helperId,
-                        note: 'helper_removed',
-                      );
-
-                      final updatedAssignees = List<String>.from(
-                        latestTask.assignees.where((id) => id != helperId),
-                      );
-                      await taskProvider.updateAssignees(
-                          task.id, updatedAssignees);
-
-                      await taskProvider.addCommentAutoUser(
+                      // Количество здесь НЕ спрашиваем. В момент удаления
+                      // помощника ещё неизвестно, сколько сделает бригада до
+                      // конца этапа, а его доля считается от общего тиража по
+                      // отработанному времени. Закрытого интервала достаточно:
+                      // расчёт при завершении этапа увидит, сколько он
+                      // отработал, и выдаст долю.
+                      final removed = await taskProvider.applyStageEvents(
                         taskId: task.id,
-                        type: 'helper_removed',
-                        text: 'Помощник удалён: $helperName',
-                        userIdOverride: widget.employeeId,
+                        ops: StageEventPlans.removeHelper(
+                          helperId: helperId,
+                          actorId: widget.employeeId,
+                          helperName: helperName,
+                        ),
                       );
-                      await taskProvider.addCommentAutoUser(
-                        taskId: task.id,
-                        type: 'helper_removed_qty',
-                        text: '$helperName: ${qtyInput.displayText}',
-                        userIdOverride: widget.employeeId,
-                      );
+                      if (!removed) _showStageWriteFailure(context, taskProvider);
                     }
 
-                    Future<void> onShift() async {
+                    // Само действие пересмены. Обёртка [onShift] держит замок,
+                    // пока оно идёт: см. [_shiftingTaskIds].
+                    Future<void> runShift() async {
                       // messenger — до диалога подтверждения; провайдер берём
                       // из tp, захваченного в buildControlsFor.
                       final messenger = ScaffoldMessenger.of(context);
@@ -7091,45 +7750,10 @@ class _TasksScreenState extends State<TasksScreen>
                         );
                         final unitLabel =
                             _workplaceUnit(personnel, task.stageId);
-                        _QuantityInput? qtyInput;
-                        while (true) {
-                          // this.context — см. комментарий в onFinish.
-                          qtyInput = await _askQuantity(
-                            this.context,
-                            unit: unitLabel,
-                            allowPaperEdit: true,
-                            initialQuantity:
-                                _initialMeterQuantityForTask(task, unitLabel),
-                            order: _orderById(task.orderId),
-                            task: task,
-                          );
-                          if (!mounted) return;
-                          if (qtyInput == null) return;
-                          if (!qtyInput.openPaperEditor) break;
-                          final order = _orderById(task.orderId);
-                          if (order == null) {
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Не удалось найти заказ для редактирования бумаги.',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          await _openPaperEditDialog(order);
-                          if (!mounted) return;
-                        }
-                        if (qtyInput == null) return;
-                        final qtyText = qtyInput.commentText;
-                        final helperIds = jointGroup != null && isMyRow
-                            ? latestTask.assignees
-                                .where((id) =>
-                                    id != latestTask.assignees.first &&
-                                    _execModeForUser(latestTask, id) ==
-                                        ExecutionMode.joint)
-                                .toList()
-                            : const <String>[];
+
+                        // Состояние, в котором этап возобновится после
+                        // пересмены. Считаем ДО диалога количества: если идёт
+                        // наладка, продукции ещё нет и спрашивать нечего.
                         final hasPendingSetup =
                             _hasPendingSetupForStage(latestTask);
                         final isSetupInProgress = _isSetupInProgressForUser(
@@ -7138,44 +7762,124 @@ class _TasksScreenState extends State<TasksScreen>
                         );
                         final stageProductionStarted =
                             _hasProductionStartedForStage(latestTask);
+                        final isSetupPhase = !stageProductionStarted &&
+                            (isSetupActiveForRow ||
+                                isSetupInProgress ||
+                                hasPendingSetup);
                         final shiftResumeState =
                             stateRowUser == UserRunState.problem
                                 ? 'problem'
                                 : stateRowUser == UserRunState.paused
                                     ? 'paused'
-                                    : (!stageProductionStarted &&
-                                            (isSetupActiveForRow ||
-                                                isSetupInProgress ||
-                                                hasPendingSetup))
+                                    : isSetupPhase
                                         ? 'setup'
                                         : 'production';
 
-                        // Количество на пересмене фиксируется ОДИН раз — за
-                        // инициатором. Помощникам оно не дублируется, иначе
-                        // аналитика умножает объём на число участников.
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'quantity_share',
-                            text: qtyText,
-                            userIdOverride: widget.employeeId);
-
-                        for (final helperId in helperIds) {
-                          await taskProvider.closeOpenTimeEvent(
-                            task: task,
-                            initiatedBy: widget.employeeId,
-                            subjectUserId: helperId,
-                            note: 'shift_change',
+                        // Пересмена ВО ВРЕМЯ НАЛАДКИ: продукции ещё нет —
+                        // количество не спрашиваем и quantity_share не пишем,
+                        // смена просто передаётся дальше. Красок этот путь и
+                        // так не трогает: их списание живёт только в
+                        // _finalizeTask (завершение задания).
+                        _QuantityInput? qtyInput;
+                        if (!isSetupPhase) {
+                          // Этап бумаги: смена сдаёт израсходованную бумагу, и
+                          // это же количество закрывает отрезок этапа — одно
+                          // окно вместо двух.
+                          final paperUsage = await _collectPaperUsage(
+                            task,
+                            PaperUsageKind.shift,
                           );
+                          if (!mounted || !paperUsage.ok) return;
+                          if (paperUsage.recordedTotal != null) {
+                            qtyInput = _quantityFromPaperUsage(
+                              task: task,
+                              totalMeters: paperUsage.recordedTotal!,
+                              unitLabel: unitLabel,
+                            );
+                          }
+                          while (qtyInput == null) {
+                            // this.context — см. комментарий в onFinish.
+                            qtyInput = await _askQuantity(
+                              this.context,
+                              unit: unitLabel,
+                              allowPaperEdit: false,
+                              initialQuantity:
+                                  _initialMeterQuantityForTask(task, unitLabel),
+                              order: _orderById(task.orderId),
+                              task: task,
+                            );
+                            if (!mounted) return;
+                            if (qtyInput == null) return;
+                            if (!qtyInput.openPaperEditor) break;
+                            final order = _orderById(task.orderId);
+                            if (order == null) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Не удалось найти заказ для редактирования бумаги.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            await _openPaperEditDialog(order);
+                            if (!mounted) return;
+                            qtyInput = null;
+                          }
+                          if (qtyInput == null) return;
+                        }
+                        final helperIds = jointGroup != null && isMyRow
+                            ? latestTask.assignees
+                                .where((id) =>
+                                    id != latestTask.assignees.first &&
+                                    _execModeForUser(latestTask, id) ==
+                                        ExecutionMode.joint)
+                                .toList()
+                            : const <String>[];
+
+                        // Вся пересмена — одной транзакцией.
+                        //
+                        // Здесь и был баг «нет записей по пересмене»: раньше
+                        // это была цепочка из шести независимых запросов, и у
+                        // Ахтама (02.09, «Автомат маленький») долетел только
+                        // первый — интервал shift_change. Комментарии
+                        // shift_pause_state и shift_pause молча потерялись,
+                        // этап остался в пересмене без единого следа о том,
+                        // кто и когда её объявил.
+                        //
+                        // Количество на пересмене — это ТИРАЖ отрезка этапа, а
+                        // не чья-то личная выработка: он закрывает сегмент и
+                        // делится между теми, кто в этом сегменте работал.
+                        // Личные доли считаются один раз, при завершении
+                        // этапа, чтобы округление вверх случилось однажды, а
+                        // не на каждой пересмене.
+                        final pauseApplied =
+                            await taskProvider.applyStageEvents(
+                          taskId: task.id,
+                          ops: StageEventPlans.shiftPause(
+                            userId: currentRowUserId,
+                            workplaceId: task.stageId,
+                            participants: _participantsSnapshot(
+                                task, widget.employeeId),
+                            resumeState: shiftResumeState,
+                            helpersToRelease: helperIds,
+                            executionModeCode: _executionModeCode(
+                                stageExecMode ??
+                                    _execModeForUser(
+                                        task, widget.employeeId)),
+                            quantityCommentType:
+                                qtyInput == null ? null : kStageTotalCommentType,
+                            quantityCommentText: qtyInput?.commentText,
+                          ),
+                        );
+                        if (!pauseApplied) {
+                          _showStageWriteFailure(context, taskProvider);
+                          return;
                         }
 
-                        if (helperIds.isNotEmpty) {
-                          final updatedAssignees = latestTask.assignees
-                              .where((id) => !helperIds.contains(id))
-                              .toList();
-                          await taskProvider.updateAssignees(
-                              task.id, updatedAssignees);
-                        }
-
+                        // Смежные этапы того же заказа ставим на паузу уже
+                        // после того, как пересмена записана: это другие
+                        // строки, одной транзакцией с ней они не идут.
                         final related = _relatedTasks(taskProvider, task);
                         for (final rel in related) {
                           if (rel.status == TaskStatus.inProgress) {
@@ -7183,17 +7887,6 @@ class _TasksScreenState extends State<TasksScreen>
                                 rel.id, TaskStatus.paused);
                           }
                         }
-                        await recordTimeEventForUser(TaskTimeType.shiftChange);
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'shift_pause_state',
-                            text: shiftResumeState,
-                            userIdOverride: widget.employeeId);
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'shift_pause',
-                            text: 'Пересмена: этап приостановлен',
-                            userIdOverride: widget.employeeId);
                         await analytics.logEvent(
                           orderId: task.orderId,
                           stageId: task.stageId,
@@ -7207,12 +7900,6 @@ class _TasksScreenState extends State<TasksScreen>
                           (t) => t.id == task.id,
                           orElse: () => task,
                         );
-                        final assignees = latestTask.assignees;
-                        if (assignees.length != 1 ||
-                            assignees.first != widget.employeeId) {
-                          await taskProvider
-                              .updateAssignees(task.id, [widget.employeeId]);
-                        }
                         final related = _relatedTasks(taskProvider, latestTask);
                         for (final rel in related) {
                           final openShiftEvents = _taskTimeEvents(rel)
@@ -7240,111 +7927,118 @@ class _TasksScreenState extends State<TasksScreen>
                                 : 'production');
                         final startedAtTs = latestTask.startedAt ??
                             DateTime.now().millisecondsSinceEpoch;
-                        final participants = _participantsSnapshot(
-                            latestTask, widget.employeeId);
                         final execMode = _stageExecutionMode(latestTask);
 
-                        if (shiftResumeState == 'setup') {
-                          if (!_isSetupInProgressForUser(
-                                  latestTask, widget.employeeId) &&
-                              !_isSetupCompletedForUser(
-                                  latestTask, widget.employeeId)) {
-                            await taskProvider.addCommentAutoUser(
-                              taskId: task.id,
-                              type: 'setup_start',
-                              text: 'Начал(а) настройку станка',
-                              userIdOverride: widget.employeeId,
-                            );
-                          }
-                          await taskProvider.updateStatus(
-                            task.id,
-                            TaskStatus.inProgress,
-                            startedAt: startedAtTs,
-                          );
-                          await taskProvider.recordTimeEvent(
-                            task: latestTask,
-                            type: TaskTimeType.setup,
-                            initiatedBy: widget.employeeId,
-                            subjectUserId: widget.employeeId,
-                            workplaceId: latestTask.stageId,
-                            participantsSnapshot: participants,
-                            executionMode: execMode != null
-                                ? _executionModeCode(execMode)
-                                : null,
-                            note: 'shift_resume_setup',
-                          );
-                        } else if (shiftResumeState == 'paused') {
-                          await taskProvider.updateStatus(
-                              task.id, TaskStatus.paused);
-                          await taskProvider.recordTimeEvent(
-                            task: latestTask,
-                            type: TaskTimeType.pause,
-                            initiatedBy: widget.employeeId,
-                            subjectUserId: widget.employeeId,
-                            workplaceId: latestTask.stageId,
-                            participantsSnapshot: participants,
-                            executionMode: execMode != null
-                                ? _executionModeCode(execMode)
-                                : null,
-                            note: 'shift_resume_pause',
-                          );
-                        } else if (shiftResumeState == 'problem') {
-                          await taskProvider.updateStatus(
-                              task.id, TaskStatus.problem);
-                          await taskProvider.recordTimeEvent(
-                            task: latestTask,
-                            type: TaskTimeType.problem,
-                            initiatedBy: widget.employeeId,
-                            subjectUserId: widget.employeeId,
-                            workplaceId: latestTask.stageId,
-                            participantsSnapshot: participants,
-                            executionMode: execMode != null
-                                ? _executionModeCode(execMode)
-                                : null,
-                            note: 'shift_resume_problem',
-                          );
-                        } else {
-                          await taskProvider.updateStatus(
-                            task.id,
-                            TaskStatus.inProgress,
-                            startedAt: startedAtTs,
-                          );
-                          await taskProvider.recordTimeEvent(
-                            task: latestTask,
-                            type: TaskTimeType.production,
-                            initiatedBy: widget.employeeId,
-                            subjectUserId: widget.employeeId,
-                            workplaceId: latestTask.stageId,
-                            participantsSnapshot: participants,
-                            executionMode: execMode != null
-                                ? _executionModeCode(execMode)
-                                : null,
-                            note: 'shift_resume_production',
-                          );
-                        }
-                        final updated = taskProvider.tasks.firstWhere(
-                          (t) => t.id == task.id,
-                          orElse: () => task,
+                        // Состояние, в котором этап продолжится, определяет и
+                        // статус задачи, и тип интервала. Раньше это была
+                        // лесенка из четырёх веток, каждая со своими двумя
+                        // запросами, и ещё два запроса после неё.
+                        final resumeStatus = switch (shiftResumeState) {
+                          'paused' => TaskStatus.paused,
+                          'problem' => TaskStatus.problem,
+                          _ => TaskStatus.inProgress,
+                        };
+                        final resumeIntervalType = switch (shiftResumeState) {
+                          'setup' => StageIntervalType.setup,
+                          'paused' => StageIntervalType.pause,
+                          'problem' => StageIntervalType.problem,
+                          _ => StageIntervalType.production,
+                        };
+                        await taskProvider.updateStatus(
+                          task.id,
+                          resumeStatus,
+                          startedAt: resumeStatus == TaskStatus.inProgress
+                              ? startedAtTs
+                              : null,
                         );
-                        final resumeDetails =
-                            updated.status == TaskStatus.inProgress
-                                ? 'Пересмена: работа возобновлена'
-                                : 'Пересмена: состояние восстановлено';
-                        await taskProvider.addCommentAutoUser(
-                            taskId: task.id,
-                            type: 'shift_resume',
-                            text: resumeDetails,
-                            userIdOverride: widget.employeeId);
+
+                        // Захват этапа пришедшей сменой, отметка наладки,
+                        // интервал и запись shift_resume — одной транзакцией.
+                        // Раньше это были четыре независимых запроса, и потеря
+                        // любого из них оставляла пересмену недооформленной.
+                        //
+                        // Пришедший становится ЕДИНСТВЕННЫМ исполнителем
+                        // (claim_stage), а не дописывается в конец списка: в
+                        // совместном режиме кнопки доступны только
+                        // assignees.first (см. isRowAssignee), и сотрудник в
+                        // хвосте остался бы без управления этапом. Время
+                        // предыдущей смены при этом не теряется — оно живёт в
+                        // интервалах time_event, а не в составе исполнителей.
+                        final resumeApplied =
+                            await taskProvider.applyStageEvents(
+                          taskId: task.id,
+                          ops: StageEventPlans.shiftResume(
+                            userId: widget.employeeId,
+                            workplaceId: latestTask.stageId,
+                            participants: _participantsSnapshot(
+                                latestTask, widget.employeeId),
+                            intervalType: resumeIntervalType,
+                            resumeText:
+                                resumeStatus == TaskStatus.inProgress
+                                    ? 'Пересмена: работа возобновлена'
+                                    : 'Пересмена: состояние восстановлено',
+                            needsSetupStart: shiftResumeState == 'setup' &&
+                                !_isSetupInProgressForUser(
+                                    latestTask, widget.employeeId) &&
+                                !_isSetupCompletedForUser(
+                                    latestTask, widget.employeeId),
+                            // Интервалы прошлой смены закрываем в этой же
+                            // транзакции. Отдельный запрос выше остаётся ради
+                            // смежных задач этапа, но на ЭТУ задачу полагаться
+                            // на него нельзя: он теряется на плохой связи, а
+                            // без закрытого интервала защита не даст снять
+                            // прежнюю смену с этапа.
+                            //
+                            // Берём и всех назначенных: помощник мог
+                            // присоединиться уже после того, как экран собрал
+                            // снимок задачи, и его открытый интервал иначе
+                            // остался бы незакрытым — claim_stage снимает его
+                            // с этапа, и защита отклонила бы всю пересмену.
+                            // Закрытие без открытого интервала ничего не
+                            // делает.
+                            closeIntervalsFor: <String>{
+                              ..._taskTimeEvents(latestTask)
+                                  .where((e) => e.endTime == null)
+                                  .map((e) => e.subjectUserId),
+                              ...latestTask.assignees,
+                            }.toList(growable: false),
+                            executionModeCode: execMode != null
+                                ? _executionModeCode(execMode)
+                                : null,
+                          ),
+                        );
+                        if (!resumeApplied) {
+                          _showStageWriteFailure(context, taskProvider);
+                          return;
+                        }
                         await analytics.logEvent(
                           orderId: task.orderId,
                           stageId: task.stageId,
                           userId: widget.employeeId,
                           action: 'shift_resume',
                           category: 'production',
-                          details: updated.status == TaskStatus.inProgress
+                          details: resumeStatus == TaskStatus.inProgress
                               ? 'Работа возобновлена после пересмены'
                               : 'Восстановлено состояние этапа после пересмены',
                         );
+                      }
+                    }
+
+                    // Замок на время всего действия — вместе с диалогами
+                    // подтверждения, бумаги и количества. Первое нажатие уже
+                    // делало пересмену целиком, но пока шли диалоги, кнопка
+                    // оставалась активной.
+                    Future<void> onShift() async {
+                      if (_shiftingTaskIds.contains(task.id)) return;
+                      setState(() => _shiftingTaskIds.add(task.id));
+                      try {
+                        await runShift();
+                      } finally {
+                        if (mounted) {
+                          setState(() => _shiftingTaskIds.remove(task.id));
+                        } else {
+                          _shiftingTaskIds.remove(task.id);
+                        }
                       }
                     }
 
@@ -7406,6 +8100,7 @@ class _TasksScreenState extends State<TasksScreen>
                       if (buttons.setup.visible)
                         WorkspaceActionButton(
                           primary: true,
+                          compact: compactButtons,
                           icon: Icons.build_outlined,
                           label: cleanLabel(buttons.setup, setup: true),
                           accentColor: WorkspaceColors.setup,
@@ -7427,6 +8122,7 @@ class _TasksScreenState extends State<TasksScreen>
                               : null,
                           child: WorkspaceActionButton(
                             primary: true,
+                            compact: compactButtons,
                             icon: Icons.play_arrow_outlined,
                             label: cleanLabel(buttons.start),
                             accentColor: WorkspaceColors.success,
@@ -7447,6 +8143,7 @@ class _TasksScreenState extends State<TasksScreen>
                               : null,
                           child: WorkspaceActionButton(
                             primary: true,
+                            compact: compactButtons,
                             icon: Icons.check_circle_outline,
                             label: cleanLabel(buttons.finish),
                             accentColor: WorkspaceColors.blue,
@@ -7457,6 +8154,7 @@ class _TasksScreenState extends State<TasksScreen>
                       if (buttons.shift.visible)
                         WorkspaceActionButton(
                           primary: true,
+                          compact: compactButtons,
                           icon: Icons.autorenew,
                           label: cleanLabel(buttons.shift),
                           accentColor: WorkspaceColors.warning,
@@ -7468,6 +8166,7 @@ class _TasksScreenState extends State<TasksScreen>
                     final secondaryControls = <Widget>[
                       if (buttons.pause.visible)
                         WorkspaceActionButton(
+                          compact: compactButtons,
                           icon: Icons.pause_circle_outline,
                           label: cleanLabel(buttons.pause),
                           accentColor: WorkspaceColors.warning,
@@ -7476,6 +8175,7 @@ class _TasksScreenState extends State<TasksScreen>
                         ),
                       if (buttons.problem.visible)
                         WorkspaceActionButton(
+                          compact: compactButtons,
                           icon: Icons.warning_amber_rounded,
                           label: cleanLabel(buttons.problem),
                           accentColor: WorkspaceColors.danger,
@@ -7484,6 +8184,7 @@ class _TasksScreenState extends State<TasksScreen>
                         ),
                       if (buttons.helpers.visible)
                         WorkspaceActionButton(
+                          compact: compactButtons,
                           icon: Icons.person_add_alt_1_outlined,
                           label: cleanLabel(
                             buttons.helpers,
@@ -7500,15 +8201,40 @@ class _TasksScreenState extends State<TasksScreen>
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (showControlLabel) ...[
-                          Text(
-                            label!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: WorkspaceColors.mutedForeground,
-                              fontWeight: FontWeight.w500,
-                              fontSize: scaled(12),
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  label!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: WorkspaceColors.mutedForeground,
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: scaled(12),
+                                  ),
+                                ),
+                              ),
+                              if (showRowTimer) ...[
+                                SizedBox(width: gapSmall),
+                                // Тикер один на весь экран (см. initState):
+                                // свои Stream.periodic в строках когда-то
+                                // размножались на каждой пересборке и лагали.
+                                ValueListenableBuilder<DateTime>(
+                                  valueListenable: _clock,
+                                  builder: (context, _, __) => Text(
+                                    _formatDuration(
+                                      _userElapsed(task, currentRowUserId),
+                                    ),
+                                    style: TextStyle(
+                                      color: WorkspaceColors.foreground,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: scaled(13),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                           SizedBox(height: gapSmall),
                         ],
@@ -7628,12 +8354,30 @@ class _TasksScreenState extends State<TasksScreen>
                     enabled: panelButtons.finishTask.enabled,
                     explain: () => _explainFinalizeBlocked(task),
                     child: WorkspaceActionButton(
+                      compact: stageMode == ExecutionMode.separate,
                       icon: Icons.check_circle_outline,
                       label: panelButtons.finishTask.label,
                       accentColor: WorkspaceColors.success,
                       backgroundColor: WorkspaceColors.successBackground,
-                      onPressed: panelButtons.finishTask.enabled
-                          ? () => _finalizeTask(task)
+                      onPressed: panelButtons.finishTask.enabled &&
+                              !_finishingTaskIds.contains(task.id)
+                          // Замок на время диалогов: «Завершить задание» тоже
+                          // спрашивает бумагу и количество, и второе нажатие
+                          // писало всё это дважды.
+                          ? () async {
+                              if (_finishingTaskIds.contains(task.id)) return;
+                              setState(() => _finishingTaskIds.add(task.id));
+                              try {
+                                await _finalizeTask(task);
+                              } finally {
+                                if (mounted) {
+                                  setState(
+                                      () => _finishingTaskIds.remove(task.id));
+                                } else {
+                                  _finishingTaskIds.remove(task.id);
+                                }
+                              }
+                            }
                           : null,
                     ),
                   ),
@@ -7953,17 +8697,32 @@ class _TasksScreenState extends State<TasksScreen>
     return lastDoneTs > lastStartTs;
   }
 
+  /// Запись относится к текущему кругу этапа (после последнего
+  /// «Возобновить»). Наладка и запуск прошлого круга новый круг не запирают:
+  /// раньше после возобновления «Начать наладку» оставалась серой — система
+  /// видела setup_done и start из прошлой жизни этапа.
+  bool _inCurrentStageRound(TaskModel task, int timestamp) {
+    final roundStart = stageRoundStartMillis(task);
+    return roundStart <= 0 || normalizeEpochToMillis(timestamp) >= roundStart;
+  }
+
   bool _isSetupInProgressForUser(TaskModel task, String userId) {
     final openEvent = _openEventForUser(task, userId);
     if (openEvent != null) {
       return openEvent.type == TaskTimeType.setup;
     }
     final starts = task.comments
-        .where((c) => c.type == 'setup_start' && c.userId == userId)
+        .where((c) =>
+            c.type == 'setup_start' &&
+            c.userId == userId &&
+            _inCurrentStageRound(task, c.timestamp))
         .toList();
     if (starts.isEmpty) return false;
     final dones = task.comments
-        .where((c) => c.type == 'setup_done' && c.userId == userId)
+        .where((c) =>
+            c.type == 'setup_done' &&
+            c.userId == userId &&
+            _inCurrentStageRound(task, c.timestamp))
         .toList();
     final lastStartTs =
         starts.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b);
@@ -7989,10 +8748,22 @@ class _TasksScreenState extends State<TasksScreen>
     return lastType == 'start' || lastType == 'resume';
   }
 
-  bool _hasPendingSetupForStage(TaskModel task) {
+  /// Собирает состояние наладки этапа.
+  ///
+  /// Правило вынесено в [StageSetupState] — оно чистое и покрыто тестами.
+  /// Ключевое здесь: запуск производства закрывает наладку у всех. Пока это
+  /// не учитывалось, `setup_start` сотрудника, ушедшего со смены, висел
+  /// незакрытым вечно и запирал этап (этап «Фри», заказ Burger king, 09.09).
+  StageSetupState _stageSetupState(TaskModel task) {
     final lastStartByUser = <String, int>{};
     final lastDoneByUser = <String, int>{};
+    final productionStarts = <int>[];
     for (final c in task.comments) {
+      if (!_inCurrentStageRound(task, c.timestamp)) continue;
+      if (c.type == 'start') {
+        productionStarts.add(c.timestamp);
+        continue;
+      }
       final uid = c.userId;
       if (uid.isEmpty) continue;
       if (c.type == 'setup_start' || c.type == 'setup_resume') {
@@ -8003,27 +8774,25 @@ class _TasksScreenState extends State<TasksScreen>
         if (c.timestamp > prev) lastDoneByUser[uid] = c.timestamp;
       }
     }
-    for (final entry in lastStartByUser.entries) {
-      if (entry.value > (lastDoneByUser[entry.key] ?? 0)) {
-        return true;
+    for (final event in _taskTimeEvents(task)) {
+      final startMs = event.startTime.millisecondsSinceEpoch;
+      if (event.type == TaskTimeType.production &&
+          _inCurrentStageRound(task, startMs)) {
+        productionStarts.add(startMs);
       }
     }
-    return false;
+    return StageSetupState(
+      lastStartByUser: lastStartByUser,
+      lastDoneByUser: lastDoneByUser,
+      productionStarts: productionStarts,
+    );
   }
 
-  bool _hasUnfinishedSetupForUser(TaskModel task, String userId) {
-    var lastSetupStart = 0;
-    var lastSetupDone = 0;
-    for (final c in task.comments) {
-      if (c.userId != userId) continue;
-      if (c.type == 'setup_start' || c.type == 'setup_resume') {
-        if (c.timestamp > lastSetupStart) lastSetupStart = c.timestamp;
-      } else if (c.type == 'setup_done') {
-        if (c.timestamp > lastSetupDone) lastSetupDone = c.timestamp;
-      }
-    }
-    return lastSetupStart > 0 && lastSetupStart > lastSetupDone;
-  }
+  bool _hasPendingSetupForStage(TaskModel task) =>
+      _stageSetupState(task).pendingForStage;
+
+  bool _hasUnfinishedSetupForUser(TaskModel task, String userId) =>
+      _stageSetupState(task).unfinishedFor(userId);
 
   // Доступность «Начать наладку» / «Продолжить наладку» считает
   // computeTaskButtons (task_buttons_state.dart) по флагам
@@ -8031,13 +8800,18 @@ class _TasksScreenState extends State<TasksScreen>
 
   bool _isSetupCompletedForStage(TaskModel task) {
     if (_hasPendingSetupForStage(task)) return false;
-    return task.comments.any((c) => c.type == 'setup_done');
+    return task.comments.any((c) =>
+        c.type == 'setup_done' && _inCurrentStageRound(task, c.timestamp));
   }
 
   bool _hasProductionStartedForStage(TaskModel task) {
-    if (task.comments.any((c) => c.type == 'start')) return true;
-    return _taskTimeEvents(task)
-        .any((event) => event.type == TaskTimeType.production);
+    if (task.comments.any(
+        (c) => c.type == 'start' && _inCurrentStageRound(task, c.timestamp))) {
+      return true;
+    }
+    return _taskTimeEvents(task).any((event) =>
+        event.type == TaskTimeType.production &&
+        _inCurrentStageRound(task, event.startTime.millisecondsSinceEpoch));
   }
 
   Future<void> _startSetup(TaskModel task, TaskProvider provider) async {
@@ -8125,12 +8899,8 @@ class _TasksScreenState extends State<TasksScreen>
         }
       }
       if (!setupTask.assignees.contains(widget.employeeId)) {
-        try {
-          await (provider as dynamic).addAssignee(task.id, widget.employeeId);
-        } catch (_) {
-          final newAssignees = List<String>.from(setupTask.assignees)
-            ..add(widget.employeeId);
-          await provider.updateAssignees(task.id, newAssignees);
+        if (!await provider.addAssignee(task.id, widget.employeeId)) {
+          _showStageWriteFailure(context, provider);
         }
       }
     } finally {
@@ -8142,32 +8912,25 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
-  Future<void> _finishSetup(TaskModel task, TaskProvider provider) async {
+  /// Операции завершения наладки — их применяет вызывающий вместе со своими,
+  /// одной транзакцией. Отдельным запросом наладку закрывать нельзя: если он
+  /// пройдёт, а старт этапа следом не пройдёт, приладка окажется засчитанной
+  /// за этап, который так и не начался.
+  ///
+  /// Расчёт приладки (и запись в журнал наладок) остаётся здесь: он ходит в
+  /// другие таблицы и к транзакции этапа отношения не имеет.
+  Future<List<Map<String, dynamic>>> _setupDoneOps(TaskModel task) async {
     final setupDoneText = await _buildSetupDoneText(task);
-    await provider.addCommentAutoUser(
-      taskId: task.id,
-      type: 'setup_done',
-      text: setupDoneText,
-      userIdOverride: widget.employeeId,
-    );
-    await provider.closeOpenTimeEvent(
-      task: task,
-      initiatedBy: widget.employeeId,
-      subjectUserId: widget.employeeId,
-      note: 'setup_done',
-    );
     final helpers = _helperIds(task);
-    if (helpers.isNotEmpty && task.assignees.first == widget.employeeId) {
-      for (final helperId in helpers) {
-        await provider.closeOpenTimeEvent(
-          task: task,
-          initiatedBy: widget.employeeId,
-          subjectUserId: helperId,
-          note: 'setup_done',
-        );
-      }
-    }
+    final ownsStage =
+        task.assignees.isNotEmpty && task.assignees.first == widget.employeeId;
+    return StageEventPlans.setupDone(
+      userId: widget.employeeId,
+      setupDoneText: setupDoneText,
+      helperIds: ownsStage ? helpers : const <String>[],
+    );
   }
+
 
   /// Текст комментария setup_done с количеством засчитанных приладок по
   /// режиму рабочего места (см. computeSetupCount). Любая ошибка расчёта не
@@ -8472,12 +9235,18 @@ class _TasksScreenState extends State<TasksScreen>
       return url;
     } catch (e) {
       debugPrint('❌ load form image error: $e');
-      _formImageCache[key] = _FormImageCacheEntry(
-        url: null,
-        details: null,
-        fetchedAt: DateTime.now(),
-      );
-      return null;
+      // Обрыв связи не значит «у заказа нет формы». Раньше такой сбой
+      // записывался в кэш как пустой результат, и форма с PDF исчезали
+      // из карточки заказа до истечения TTL. Оставляем прошлое значение —
+      // следующая перерисовка повторит запрос.
+      if (!isTransientNetworkFailure(e)) {
+        _formImageCache[key] = _FormImageCacheEntry(
+          url: null,
+          details: null,
+          fetchedAt: DateTime.now(),
+        );
+      }
+      return _formImageCache[key]?.url;
     } finally {
       _formImagePending.remove(key);
     }
@@ -8555,6 +9324,101 @@ class _FormImageCacheEntry {
   });
 }
 
+/// Один шаг маршрута заказа: подпись и цветовой статус.
+class _OrderStageStatus {
+  const _OrderStageStatus({required this.label, required this.status});
+
+  final String label;
+  final StageRunStatus status;
+}
+
+/// Маршрут заказа чипами — по одному на этап, в порядке прохождения.
+///
+/// Оформление повторяет полосу этапов в модуле производства
+/// (`production_screen._buildStageRow`): точка, название и рамка одного тона.
+/// Одни цветные точки без подписей читались плохо — по ним видно только
+/// «сколько этапов и где горит», но не какой именно этап красный.
+///
+/// Длинный маршрут обрезается правым краем строки, как и в производстве:
+/// высота строки списка фиксирована, и переносить чипы вниз нельзя. Полный
+/// список с названиями и статусами показывает тултип.
+class _StageStatusChips extends StatelessWidget {
+  const _StageStatusChips({
+    required this.stages,
+    required this.scale,
+    required this.enabled,
+  });
+
+  final List<_OrderStageStatus> stages;
+  final double scale;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    double scaled(double value) => value * scale;
+    const Color disabledColor = Color(0xFF9CA3AF);
+
+    return Tooltip(
+      message: stages
+          .map((stage) =>
+              '${stage.label} — ${stageRunStatusLabel(stage.status).toLowerCase()}')
+          .join('\n'),
+      child: ClipRect(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < stages.length; i++) ...[
+              if (i > 0) SizedBox(width: scaled(6)),
+              Builder(
+                builder: (context) {
+                  final color = enabled
+                      ? stageRunStatusColor(stages[i].status)
+                      : disabledColor;
+                  return Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: scaled(8),
+                      vertical: scaled(3),
+                    ),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: color.withValues(alpha: 0.28)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: scaled(6),
+                          height: scaled(6),
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        SizedBox(width: scaled(6)),
+                        Text(
+                          stages[i].label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: scaled(11),
+                            fontWeight: FontWeight.w600,
+                            color: color,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _TaskCard extends StatelessWidget {
   final TaskModel task;
   final OrderModel? order;
@@ -8568,6 +9432,10 @@ class _TaskCard extends StatelessWidget {
   final int sequenceNumber;
   final bool enabled;
 
+  /// Маршрут заказа со статусами — по одной точке на этап, в порядке
+  /// прохождения. Расшифровка цветов — легенда в шапке рабочего пространства.
+  final List<_OrderStageStatus> stageStatuses;
+
   const _TaskCard({
     required this.task,
     required this.order,
@@ -8580,7 +9448,25 @@ class _TaskCard extends StatelessWidget {
     this.scale = 1.0,
     this.sequenceNumber = 0,
     this.enabled = true,
+    this.stageStatuses = const <_OrderStageStatus>[],
   });
+
+  /// Высота строки списка заданий.
+  ///
+  /// Карточка сведена к трём элементам: номер в очереди, заказчик, размер.
+  /// Номер заказа, тип изделия, подсказка про предыдущий этап и бейдж статуса
+  /// убраны — на планшете в цеху их читали редко, а места они занимали больше,
+  /// чем сами заказчик и размер, ради которых в список и смотрят.
+  ///
+  /// Прежняя строка была двухэтажной: заголовок ~19 px, подпись ~16 px,
+  /// отступы 8+8 и поля карточки 5+5 — около 63 px. Здесь одна строка более
+  /// крупного текста и меньшие отступы.
+  ///
+  /// Высоту дважды поднимали по десятой части: 42 → 46 → 51. На планшете в
+  /// цеху строка должна попадаться пальцем без прицеливания.
+  static const double _rowHeight = 51;
+  static const double _rowHeightCompact = 44;
+  static const double _cardMargin = 4;
 
   @override
   Widget build(BuildContext context) {
@@ -8594,39 +9480,25 @@ class _TaskCard extends StatelessWidget {
     final displayTitle = (order != null && order!.customer.isNotEmpty)
         ? order!.customer
         : (name.isNotEmpty ? name : displayId);
+    final sizeLabel = order?.product.sizeLabel ?? '';
     double scaled(double value) => value * scale;
-    final EdgeInsets contentPadding = EdgeInsets.symmetric(
-      horizontal: scaled(compact ? 10 : 12),
-      vertical: scaled(compact ? 6 : 8),
-    );
-    final double titleSize = scaled(compact ? 13 : 14.5);
-    final double subtitleSize = scaled(compact ? 11.5 : 12.5);
-    final double statusSize = scaled(11.5);
-    final String? stageHint = showStageHint
-        ? (readyForStage
-            ? 'Доступно, так как предыдущий этап уже начат'
-            : 'Ожидает начала предыдущего этапа')
-        : null;
+
+    // Заказчик и размер — главные элементы строки, ради них в список и
+    // смотрят. Прежний заголовок был 14.5, здесь он вырос дважды: сначала до
+    // 17, затем ещё на пятую часть. Размер держим чуть меньше имени и
+    // приглушаем цветом: одинаково чёрными их с разбега не различить.
+    final double titleSize = scaled(compact ? 18.5 : 20.5);
+    final double sizeTextSize = scaled(compact ? 17 : 18.5);
+    final double indexSize = scaled(compact ? 12 : 12.5);
+    final double indexBox = scaled(compact ? 24 : 26);
     final Color readyColor = Colors.green.shade600;
-    final Color stageHintColor =
-        readyForStage ? readyColor : Colors.grey.shade600;
     final Color disabledColor = const Color(0xFF9CA3AF);
-    final badge = _taskListBadge(
-      task: task,
-      readyForStage: readyForStage,
-      shiftPaused: shiftPaused,
-    );
-    final meta = <String>[
-      if (displayId.trim().isNotEmpty) displayId.trim(),
-      if (name.trim().isNotEmpty && name.trim() != displayTitle.trim())
-        name.trim(),
-    ].join(' · ');
 
     return Card(
-      margin: EdgeInsets.symmetric(vertical: scaled(compact ? 3 : 5)),
+      margin: EdgeInsets.symmetric(vertical: scaled(_cardMargin / 2)),
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(scaled(13)),
+        borderRadius: BorderRadius.circular(scaled(12)),
         side: BorderSide(
           color: selected
               ? WorkspaceColors.primary
@@ -8641,141 +9513,104 @@ class _TaskCard extends StatelessWidget {
               : (readyForStage
                   ? readyColor.withValues(alpha: 0.05)
                   : Colors.white)),
-      child: ListTile(
+      child: InkWell(
         onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(scaled(12)),
         hoverColor: WorkspaceColors.primary.withValues(alpha: 0.05),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(scaled(13)),
-        ),
-        dense: compact,
-        visualDensity: compact
-            ? const VisualDensity(horizontal: -2, vertical: -2)
-            : (scale < 1
-                ? const VisualDensity(horizontal: -1, vertical: -1)
-                : null),
-        isThreeLine: stageHint != null,
-        contentPadding: contentPadding,
-        leading: Container(
-          width: scaled(30),
-          height: scaled(30),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected
-                ? WorkspaceColors.primary
-                : WorkspaceColors.secondaryBackground,
-            shape: BoxShape.circle,
-          ),
-          child: Text(
-            sequenceNumber > 0 ? sequenceNumber.toString() : '•',
-            style: TextStyle(
-              color: selected ? Colors.white : WorkspaceColors.mutedForeground,
-              fontWeight: FontWeight.w700,
-              fontSize: statusSize,
+        child: SizedBox(
+          height: scaled(compact ? _rowHeightCompact : _rowHeight),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: scaled(compact ? 8 : 10),
             ),
-          ),
-        ),
-        title: Text(
-          displayTitle,
-          style: TextStyle(
-            fontSize: titleSize,
-            fontWeight: FontWeight.w600,
-            color: enabled
-                ? (selected
-                    ? WorkspaceColors.primary
-                    : WorkspaceColors.foreground)
-                : disabledColor,
-          ),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: (meta.isNotEmpty || stageHint != null)
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (meta.isNotEmpty)
-                    Text(
-                      meta,
-                      style: TextStyle(
-                        fontSize: subtitleSize,
-                        color: WorkspaceColors.mutedForeground,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+            child: Row(
+              children: [
+                Container(
+                  width: indexBox,
+                  height: indexBox,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? WorkspaceColors.primary
+                        : WorkspaceColors.secondaryBackground,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    sequenceNumber > 0 ? sequenceNumber.toString() : '•',
+                    style: TextStyle(
+                      color: selected
+                          ? Colors.white
+                          : WorkspaceColors.mutedForeground,
+                      fontWeight: FontWeight.w700,
+                      fontSize: indexSize,
                     ),
-                  if (stageHint != null)
-                    Padding(
-                      padding: EdgeInsets.only(top: meta.isNotEmpty ? 2 : 0),
-                      child: Text(
-                        stageHint,
-                        style: TextStyle(
-                          fontSize: subtitleSize - 0.5,
-                          color: stageHintColor,
-                          fontWeight:
-                              readyForStage ? FontWeight.w600 : FontWeight.w500,
+                  ),
+                ),
+                SizedBox(width: scaled(10)),
+                // Заказчик и размер идут вместе, слева: это одна смысловая
+                // подпись задания. Размер, отброшенный к правому краю, при
+                // широком экране отрывался от имени на пол-строки, и глазу
+                // приходилось прыгать через пустоту.
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: titleSize,
+                            fontWeight: FontWeight.w700,
+                            color: enabled
+                                ? (selected
+                                    ? WorkspaceColors.primary
+                                    : WorkspaceColors.foreground)
+                                : disabledColor,
+                          ),
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (sizeLabel.isNotEmpty) ...[
+                        SizedBox(width: scaled(10)),
+                        Text(
+                          sizeLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: sizeTextSize,
+                            fontWeight: FontWeight.w600,
+                            color: enabled
+                                ? WorkspaceColors.mutedForeground
+                                : disabledColor,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (stageStatuses.isNotEmpty) ...[
+                  SizedBox(width: scaled(14)),
+                  Flexible(
+                    flex: 2,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _StageStatusChips(
+                        stages: stageStatuses,
+                        scale: scale,
+                        enabled: enabled,
                       ),
                     ),
-                ],
-              )
-            : null,
-        trailing: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: scaled(8),
-            vertical: scaled(5),
-          ),
-          decoration: BoxDecoration(
-            color: enabled
-                ? badge.color.withValues(alpha: 0.1)
-                : const Color(0xFFE5E7EB),
-            borderRadius: BorderRadius.circular(scaled(20)),
-          ),
-          child: Text(
-            badge.label,
-            style: TextStyle(
-              color: enabled ? badge.color : const Color(0xFF6B7280),
-              fontWeight: FontWeight.w600,
-              fontSize: scaled(10.5),
+                  ),
+                ] else
+                  const Spacer(),
+              ],
             ),
           ),
         ),
       ),
     );
   }
-}
-
-class _TaskListBadge {
-  final String label;
-  final Color color;
-  const _TaskListBadge(this.label, this.color);
-}
-
-_TaskListBadge _taskListBadge({
-  required TaskModel task,
-  required bool readyForStage,
-  required bool shiftPaused,
-}) {
-  if (task.status == TaskStatus.completed) {
-    return _TaskListBadge('Завершено', Colors.green);
-  }
-  if (task.status == TaskStatus.problem) {
-    return _TaskListBadge('Проблема', Colors.redAccent);
-  }
-  if (shiftPaused) {
-    return _TaskListBadge('Пересмена', Colors.deepPurple);
-  }
-  if (task.status == TaskStatus.paused) {
-    return _TaskListBadge('Пауза', Colors.grey);
-  }
-  if (task.status == TaskStatus.inProgress) {
-    return _TaskListBadge('В работе', Colors.blue);
-  }
-  if (readyForStage) {
-    return _TaskListBadge('Можно начинать', Colors.green.shade700);
-  }
-  return _TaskListBadge('Ожидает этап', Colors.orange.shade700);
 }
 
 class _AssignedEmployeesRow extends StatelessWidget {
@@ -8843,9 +9678,10 @@ class _AssignedEmployeesRow extends StatelessWidget {
         return;
       }
 
-      final available = personnel.employees
-          .where((e) => !task.assignees.contains(e.id))
-          .toList();
+      final available = employeesForSharedWorkspace(
+        personnel.employees,
+        excludedIds: task.assignees.toSet(),
+      );
       if (available.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Нет свободных сотрудников для помощи.')));
@@ -8854,7 +9690,8 @@ class _AssignedEmployeesRow extends StatelessWidget {
 
       String? selectedId;
       String password = '';
-      bool wrongPass = false;
+      String? passwordError;
+      bool checkingPassword = false;
       await showDialog(
         context: context,
         barrierDismissible: false,
@@ -8877,7 +9714,7 @@ class _AssignedEmployeesRow extends StatelessWidget {
                   ],
                   onChanged: (val) => setStateDialog(() {
                     selectedId = val;
-                    wrongPass = false;
+                    passwordError = null;
                   }),
                 ),
                 const SizedBox(height: 8),
@@ -8885,7 +9722,7 @@ class _AssignedEmployeesRow extends StatelessWidget {
                   obscureText: true,
                   decoration: InputDecoration(
                     labelText: 'Пароль',
-                    errorText: wrongPass ? 'Неверный пароль' : null,
+                    errorText: passwordError,
                   ),
                   onChanged: (val) => password = val,
                 ),
@@ -8893,11 +9730,17 @@ class _AssignedEmployeesRow extends StatelessWidget {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(ctx),
+                onPressed: () {
+                  // Отмена — помощника не добавляем.
+                  selectedId = null;
+                  Navigator.pop(ctx);
+                },
                 child: const Text('Отмена'),
               ),
               TextButton(
-                onPressed: () {
+                onPressed: checkingPassword
+                    ? null
+                    : () async {
                   if (selectedId == null) return;
                   final emp = personnel.employees.firstWhere(
                     (e) => e.id == selectedId,
@@ -8915,10 +9758,30 @@ class _AssignedEmployeesRow extends StatelessWidget {
                       password: '',
                     ),
                   );
-                  if (emp.password == password) {
+                  // Пароль помощника сверяет сервер по хешу; локальный — только
+                  // на случай обрыва связи.
+                  setStateDialog(() {
+                    checkingPassword = true;
+                    passwordError = null;
+                  });
+                  String? error;
+                  try {
+                    error = passwordCheckError(await verifyEmployeePassword(
+                      employeeId: emp.id,
+                      input: password,
+                      cachedPassword: emp.password,
+                    ));
+                  } catch (e) {
+                    error = 'Не удалось проверить пароль: $e';
+                  }
+                  if (!ctx.mounted) return;
+                  if (error == null) {
                     Navigator.pop(ctx);
                   } else {
-                    setStateDialog(() => wrongPass = true);
+                    setStateDialog(() {
+                      checkingPassword = false;
+                      passwordError = error;
+                    });
                   }
                 },
                 child: const Text('Добавить'),
@@ -8929,34 +9792,16 @@ class _AssignedEmployeesRow extends StatelessWidget {
       );
 
       if (selectedId != null) {
-        if (explicitStageMode == null) {
-          await taskProvider.addComment(
-            taskId: task.id,
-            type: 'exec_mode_stage',
-            text: _executionModeCode(ExecutionMode.joint),
-            userId: currentUserId,
-          );
-        }
-
-        final newAssignees = List<String>.from(task.assignees)
-          ..add(selectedId!);
-        await taskProvider.updateAssignees(task.id, newAssignees);
-
-        if (_needsExecModeRecord(task, selectedId!, ExecutionMode.joint)) {
-          await taskProvider.addComment(
-            taskId: task.id,
-            type: 'exec_mode',
-            text: _executionModeCode(ExecutionMode.joint),
-            userId: selectedId!,
-          );
-        }
-
-        await taskProvider.addCommentAutoUser(
+        final added = await taskProvider.applyStageEvents(
           taskId: task.id,
-          type: 'joined',
-          text: 'Присоединился(лась) к этапу',
-          userIdOverride: selectedId!,
+          ops: _addHelperOps(
+            task: task,
+            helperId: selectedId!,
+            actorId: currentUserId,
+            needsStageModeRecord: explicitStageMode == null,
+          ),
         );
+        if (!added) _showStageWriteFailure(context, taskProvider);
       }
     }
 
@@ -9047,6 +9892,13 @@ Future<_QuantityInput?> _askQuantity(
         : '',
   );
   final unitLabel = (unit ?? '').trim();
+  // Упаковка: сотрудник вводит ШТУКИ, упаковки считаются из них по фасовке
+  // заказа. Обратный пересчёт невозможен — при некратном количестве по числу
+  // упаковок точных штук уже не узнать.
+  final bool packsStage = isQuantityPackUnit(unitLabel);
+  final double? packSize =
+      packsStage && order != null ? packSizeFromOrder(order) : null;
+  final String inputUnit = quantityInputUnit(unitLabel);
   const paperEditValue = '__open_paper_edit__';
   final v = await showDialog<_QuantityInput?>(
     context: context,
@@ -9054,23 +9906,63 @@ Future<_QuantityInput?> _askQuantity(
       String? errorText;
       return StatefulBuilder(
         builder: (ctx, setState) {
+          // Подсказка под полем: сколько упаковок засчитается за введённые
+          // штуки. Пересчитывается на каждый символ, чтобы упаковщик видел
+          // результат до нажатия OK.
+          String packsHint() {
+            if (packSize == null || packSize <= 0) {
+              return 'Фасовка не указана в заказе («Упаковка: N») — '
+                  'упаковки посчитать не из чего.';
+            }
+            final packLabel = formatTaskInitialQuantity(packSize);
+            final entered = double.tryParse(
+              totalController.text.trim().replaceAll(',', '.'),
+            );
+            final packs = entered == null
+                ? null
+                : packCountForPieces(pieces: entered, packSize: packSize);
+            if (packs == null) return 'В упаковке $packLabel шт.';
+            final remainder = packRemainderPieces(
+              pieces: entered!,
+              packSize: packSize,
+            );
+            final base = 'Упаковок: $packs (по $packLabel шт)';
+            if (remainder <= 0) return base;
+            return '$base, последняя неполная — '
+                '${formatTaskInitialQuantity(remainder)} шт';
+          }
+
           return AlertDialog(
             title: const Text('Количество выполнено'),
-            content: TextField(
-              controller: totalController,
-              autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                hintText: unitLabel.isNotEmpty
-                    ? 'Введите количество в $unitLabel'
-                    : 'Введите количество экземпляров',
-                border: const OutlineInputBorder(),
-                errorText: errorText,
-              ),
-              onChanged: (_) {
-                if (errorText != null) setState(() => errorText = null);
-              },
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: totalController,
+                  autofocus: true,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    hintText: inputUnit.isNotEmpty
+                        ? 'Введите количество в $inputUnit'
+                        : 'Введите количество экземпляров',
+                    border: const OutlineInputBorder(),
+                    errorText: errorText,
+                  ),
+                  onChanged: (_) => setState(() => errorText = null),
+                ),
+                if (packsStage) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    packsHint(),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
+              ],
             ),
             actions: [
               if (allowPaperEdit)
@@ -9119,11 +10011,8 @@ Future<_QuantityInput?> _askQuantity(
                           unit: unitLabel,
                         )
                       : null;
-                  // Для unit «упаковка» количество = число упаковок как
-                  // есть. Раньше ввод домножался на product.blQuantity
-                  // (поле «Количество» основной бумаги) — в комментарий и
-                  // аналитику уходило завышенное значение. Остальные
-                  // единицы и так сохранялись без множителей.
+                  // Число сохраняется как введено, без множителей: на
+                  // упаковке это штуки, упаковки лежат рядом отдельным полем.
                   final status =
                       getQuantityStatus(actual: n, expected: expected);
                   if (status == QuantityStatus.warning ||
@@ -9150,16 +10039,22 @@ Future<_QuantityInput?> _askQuantity(
                         false;
                     if (!confirmed) return;
                   }
-                  final displayQuantity = formatTaskInitialQuantity(n);
-                  final display = unitLabel.isNotEmpty
-                      ? '$displayQuantity $unitLabel'
-                      : displayQuantity;
+                  final packs = packsStage
+                      ? packCountForPieces(pieces: n, packSize: packSize)
+                      : null;
+                  final display = quantityDisplayLabel(
+                    actual: n,
+                    unit: inputUnit,
+                    packs: packs,
+                  );
                   final payload = quantityStatusToJson(
                     actual: n,
-                    unit: unitLabel,
+                    unit: inputUnit,
                     expected: expected,
                     status: status,
                     displayText: display,
+                    packs: packs,
+                    packSize: packsStage ? packSize : null,
                   );
                   Navigator.pop(
                     ctx,
@@ -9221,4 +10116,73 @@ Duration _setupElapsedTotal(TaskModel task) {
       : DateTime.fromMillisecondsSinceEpoch(
           doneList.map((c) => c.timestamp).reduce((a, b) => a > b ? a : b));
   return end.difference(start);
+}
+
+/// Полоса «действия ждут связи».
+///
+/// Зачем она нужна. Раньше обрыв связи выглядел как разовая ошибка в снекбаре:
+/// он гас через шесть секунд, и дальше человек работал в неведении — ушло его
+/// действие или нет. Записи пересмены и брони материалов терялись именно так.
+/// Теперь такие действия лежат в очереди на планшете и уходят сами, а полоса
+/// показывает, что очередь ещё не пуста, и просит не жать кнопки повторно.
+class _PendingWritesBanner extends StatelessWidget {
+  const _PendingWritesBanner({required this.count, required this.scale});
+
+  final int count;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.read<TaskProvider>();
+    return Container(
+      width: double.infinity,
+      margin: EdgeInsets.fromLTRB(
+        WorkspaceMetrics.outerPadding,
+        WorkspaceMetrics.controlGap,
+        WorkspaceMetrics.outerPadding,
+        0,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: scale * 12,
+        vertical: scale * 8,
+      ),
+      decoration: BoxDecoration(
+        color: WorkspaceColors.warningBackground,
+        borderRadius: BorderRadius.circular(scale * 10),
+        border: Border.all(color: WorkspaceColors.warning),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_upload_outlined,
+              size: scale * 18, color: WorkspaceColors.warning),
+          SizedBox(width: scale * 8),
+          Expanded(
+            child: Text(
+              count == 1
+                  ? 'Одно действие ждёт связи и отправится само. '
+                      'Повторять не нужно.'
+                  : 'Действий ждёт связи: $count. Они отправятся сами, '
+                      'повторять не нужно.',
+              style: TextStyle(
+                fontSize: scale * 12.5,
+                fontWeight: FontWeight.w600,
+                color: WorkspaceColors.foreground,
+              ),
+            ),
+          ),
+          SizedBox(width: scale * 8),
+          TextButton(
+            onPressed: () => provider.flushStageOutbox(),
+            style: TextButton.styleFrom(
+              foregroundColor: WorkspaceColors.warning,
+              padding: EdgeInsets.symmetric(horizontal: scale * 10),
+              minimumSize: Size(0, scale * 32),
+            ),
+            child: Text('Отправить сейчас',
+                style: TextStyle(fontSize: scale * 12)),
+          ),
+        ],
+      ),
+    );
+  }
 }

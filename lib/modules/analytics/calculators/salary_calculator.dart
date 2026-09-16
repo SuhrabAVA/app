@@ -1,9 +1,12 @@
+import '../../../utils/shift_day.dart';
 import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
+import '../models/day_shift_type.dart';
 import '../models/employee_status_period.dart';
 import '../models/pay_type.dart';
 import '../models/salary_adjustments.dart';
 import '../models/salary_settings.dart';
+import '../models/workplace_coefficient.dart' show helperCoefficientOrMain;
 
 /// Строка «По статусу «Название»: N смен × ставка = сумма» в расчёте ЗП.
 class StatusPayLine {
@@ -93,16 +96,32 @@ class SalaryCalculator {
   SalaryCalculator._();
 
   /// Рассчитывает сдельную часть зарплаты.
+  ///
+  /// [helperCoefficients] — собственная ставка помощника совместной работы
+  /// (workplaceId -> ₸ за единицу). Ответственность и объём работы у
+  /// основного исполнителя больше, поэтому за ту же выработку помощнику
+  /// платят по своей цене. Рабочее место без записи — ставка основного, то
+  /// есть оплата поровну.
+  ///
+  /// Количество в событиях уже персональное: на обычных рабочих местах это
+  /// доля по отработанному времени, на станках (split_quantity_by_time =
+  /// false) — полный тираж каждому. Умножать здесь ещё на какой-либо
+  /// множитель нельзя: вклад уже учтён в количестве.
   static double piecewise({
     required List<AnalyticsEvent> workEvents,
     required Map<String, double> workplaceCoefficients,
+    Map<String, double> helperCoefficients = const {},
   }) {
     var sum = 0.0;
     for (final e in workEvents) {
       if (e.type != AnalyticsEventType.work) continue;
-      final coeff = workplaceCoefficients[e.workplaceId] ?? 0;
-      if (!coeff.isFinite) continue;
-      final value = e.qty * coeff;
+      final main = workplaceCoefficients[e.workplaceId] ?? 0;
+      if (!main.isFinite) continue;
+      final rate = e.isHelper
+          ? helperCoefficientOrMain(helperCoefficients[e.workplaceId], main)
+          : main;
+      if (!rate.isFinite) continue;
+      final value = e.qty * rate;
       if (value.isFinite) sum += value;
     }
     return sum;
@@ -129,15 +148,10 @@ class SalaryCalculator {
     return (qty, pay);
   }
 
-  /// Дата смены события: ночная смена, начавшаяся до 6 утра, относится к
-  /// предыдущему календарному дню. Используется и для подсчёта смен
-  /// (shiftCounts), и для определения, под каким статусом было событие —
-  /// оба места должны использовать одно и то же правило, иначе границы
-  /// статуса разойдутся с границами смен.
-  static DateTime _shiftDateOf(DateTime start) {
-    final base = DateTime(start.year, start.month, start.day);
-    return start.hour < 6 ? base.subtract(const Duration(days: 1)) : base;
-  }
+  /// Дата смены события — общее правило, см. [shiftDayOf]. Тем же правилом
+  /// закрываются периоды статуса (employee_status_repository), иначе день на
+  /// стыке был бы оплачен по одному правилу, а посчитан по другому.
+  static DateTime _shiftDateOf(DateTime start) => shiftDayOf(start);
 
   static String _dayKey(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -192,11 +206,25 @@ class SalaryCalculator {
     return pieceSalary <= 0;
   }
 
-  /// Карта «день месяца → statusId» для дней, покрытых статусом с
-  /// НАСТРОЕННОЙ (> 0) фиксированной ставкой. Статус без ставки (или со
-  /// ставкой 0) не влияет на оплату — день остаётся обычным (см. план,
-  /// раздел «Unrated status»), поэтому такие дни в карту не попадают.
-  static Map<String, String> _statusByDay({
+  /// День месяца под статусом с настроенной ставкой.
+  static _StatusDay? _statusDayOf({
+    required DateTime day,
+    required List<EmployeeStatusPeriod> ratedPeriods,
+  }) {
+    for (final p in ratedPeriods) {
+      if (p.covers(day)) {
+        // Периоды не должны перекрываться (гарантируется БД).
+        return _StatusDay(statusId: p.statusId, dayOfMonth: day.day);
+      }
+    }
+    return null;
+  }
+
+  /// Карта «ключ дня → статус» для дней, покрытых статусом с НАСТРОЕННОЙ
+  /// (> 0) фиксированной ставкой. Статус без ставки (или со ставкой 0) не
+  /// влияет на оплату — день остаётся обычным (см. план, раздел «Unrated
+  /// status»), поэтому такие дни в карту не попадают.
+  static Map<String, _StatusDay> _statusByDay({
     required AnalyticsMonth? month,
     required List<EmployeeStatusPeriod> periods,
     required Map<String, double> statusPayRates,
@@ -206,17 +234,63 @@ class SalaryCalculator {
         periods.where((p) => (statusPayRates[p.statusId] ?? 0) > 0).toList();
     if (ratedPeriods.isEmpty) return const {};
 
-    final result = <String, String>{};
+    final result = <String, _StatusDay>{};
     for (var i = 0; i < month.daysCount; i++) {
       final day = month.firstDay.add(Duration(days: i));
-      for (final p in ratedPeriods) {
-        if (p.covers(day)) {
-          result[_dayKey(day)] = p.statusId;
-          break; // Периоды не должны перекрываться (гарантируется БД).
-        }
-      }
+      final statusDay = _statusDayOf(day: day, ratedPeriods: ratedPeriods);
+      if (statusDay != null) result[_dayKey(day)] = statusDay;
     }
     return result;
+  }
+
+  /// Смены под статусом [statusId].
+  ///
+  /// Приоритет у графика: если день назначен сменой (день/ночь), он
+  /// засчитывается целиком, сколько бы сотрудник ни отработал и отметился ли
+  /// вообще. Оплата по статусу — фиксированная за смену, а не за часы, и
+  /// уборщик с охранником заданий не выполняют: по событиям им нечего было бы
+  /// засчитать. Если графика на день нет (или там выходной, а человек
+  /// работал), считаем по событиям — прежнее правило «отработал ≥ полсмены».
+  static (int days, int nights) _statusShiftCounts({
+    required String statusId,
+    required Map<String, _StatusDay> statusByDay,
+    required List<AnalyticsEvent> statusEvents,
+    required Map<int, DayShiftType> scheduledShifts,
+    required int halfShiftMinutes,
+  }) {
+    final eventsByDayKey = <String, List<AnalyticsEvent>>{};
+    for (final e in statusEvents) {
+      eventsByDayKey
+          .putIfAbsent(_dayKey(_shiftDateOf(e.startTime)), () => [])
+          .add(e);
+    }
+
+    var days = 0;
+    var nights = 0;
+    for (final entry in statusByDay.entries) {
+      final statusDay = entry.value;
+      if (statusDay.statusId != statusId) continue;
+
+      switch (scheduledShifts[statusDay.dayOfMonth]) {
+        case DayShiftType.day:
+          days++;
+          continue;
+        case DayShiftType.night:
+          nights++;
+          continue;
+        case DayShiftType.off:
+        case null:
+          break;
+      }
+
+      final (d, n) = shiftCounts(
+        events: eventsByDayKey[entry.key] ?? const [],
+        halfShiftMinutes: halfShiftMinutes,
+      );
+      days += d;
+      nights += n;
+    }
+    return (days, nights);
   }
 
   /// Полный расчёт зарплаты по сотруднику.
@@ -241,6 +315,8 @@ class SalaryCalculator {
     Map<String, double> statusPayRates = const {},
     Map<String, String> statusNames = const {},
     Map<String, double> setupPrices = const {},
+    Map<int, DayShiftType> scheduledShifts = const {},
+    Map<String, double> helperCoefficients = const {},
   }) {
     final statusByDay = _statusByDay(
       month: month,
@@ -260,11 +336,11 @@ class SalaryCalculator {
       final normal = <AnalyticsEvent>[];
       final byStatus = <String, List<AnalyticsEvent>>{};
       for (final e in events) {
-        final statusId = statusByDay[_dayKey(_shiftDateOf(e.startTime))];
-        if (statusId == null) {
+        final statusDay = statusByDay[_dayKey(_shiftDateOf(e.startTime))];
+        if (statusDay == null) {
           normal.add(e);
         } else {
-          byStatus.putIfAbsent(statusId, () => []).add(e);
+          byStatus.putIfAbsent(statusDay.statusId, () => []).add(e);
         }
       }
       normalEvents = normal;
@@ -272,8 +348,11 @@ class SalaryCalculator {
     }
 
     // ── Обычная часть (дни без статуса) — формулы как раньше ──────────────
-    final pieceSalary =
-        piecewise(workEvents: normalEvents, workplaceCoefficients: coefficients);
+    final pieceSalary = piecewise(
+      workEvents: normalEvents,
+      workplaceCoefficients: coefficients,
+      helperCoefficients: helperCoefficients,
+    );
     // Оплата приладки — сдельного типа, поэтому, как и pieceSalary, считается
     // только по обычным дням (дни под статусом оплачиваются ставкой статуса).
     final (setupQtyPaid, setupPayAmount) =
@@ -292,11 +371,22 @@ class SalaryCalculator {
     var statusNightsSum = 0;
     var fixedStatusPay = 0.0;
     final statusLines = <StatusPayLine>[];
-    final statusIds = eventsByStatus.keys.toList()
+    // Список статусов берётся из ДНЕЙ, а не из событий: уборщик или охранник
+    // не выполняют заданий вообще, и по событиям их статус был бы не найден,
+    // а смена — не оплачена.
+    final statusIds = <String>{
+      ...statusByDay.values.map((d) => d.statusId),
+      ...eventsByStatus.keys,
+    }.toList()
       ..sort((a, b) => (statusNames[a] ?? a).compareTo(statusNames[b] ?? b));
     for (final sId in statusIds) {
-      final (sDays, sNights) = shiftCounts(
-          events: eventsByStatus[sId]!, halfShiftMinutes: halfShiftMinutes);
+      final (sDays, sNights) = _statusShiftCounts(
+        statusId: sId,
+        statusByDay: statusByDay,
+        statusEvents: eventsByStatus[sId] ?? const [],
+        scheduledShifts: scheduledShifts,
+        halfShiftMinutes: halfShiftMinutes,
+      );
       final sShifts = sDays + sNights;
       final rate = statusPayRates[sId] ?? 0;
       final amount = sShifts * rate;
@@ -375,4 +465,12 @@ class SalaryCalculator {
 class _DayBuckets {
   int dayMinutes = 0;
   int nightMinutes = 0;
+}
+
+/// День месяца, покрытый статусом с настроенной ставкой.
+class _StatusDay {
+  const _StatusDay({required this.statusId, required this.dayOfMonth});
+
+  final String statusId;
+  final int dayOfMonth;
 }

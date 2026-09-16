@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../utils/kostanay_time.dart';
 import '../../tasks/task_comment_presentation.dart';
 import '../models/analytics_day_comment.dart';
 import '../models/analytics_event.dart';
@@ -146,7 +147,8 @@ class OrderCommentsDialog extends StatelessWidget {
   bool _isDuringIncident(AnalyticsDayComment c) {
     for (final e in incidents) {
       final from = e.startTime.subtract(const Duration(minutes: 1));
-      final to = (e.endTime ?? DateTime.now()).add(const Duration(minutes: 1));
+      final to =
+          (e.endTime ?? nowInKostanay()).add(const Duration(minutes: 1));
       if (!c.timestamp.isBefore(from) && !c.timestamp.isAfter(to)) return true;
     }
     return false;

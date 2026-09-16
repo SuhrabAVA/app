@@ -11,6 +11,8 @@ import 'package:uuid/uuid.dart';
 import 'personnel_provider.dart';
 import 'employee_model.dart';
 import 'employee_status_model.dart';
+import 'personnel_list_controls.dart';
+import 'personnel_list_filters.dart';
 import 'positions_picker.dart';
 import '../../utils/media_viewer.dart';
 
@@ -31,8 +33,27 @@ Future<void> ensureAuthed() async {
 }
 
 /// Экран для отображения и управления списком сотрудников.
-class EmployeesScreen extends StatelessWidget {
+class EmployeesScreen extends StatefulWidget {
   const EmployeesScreen({super.key});
+
+  @override
+  State<EmployeesScreen> createState() => _EmployeesScreenState();
+}
+
+class _EmployeesScreenState extends State<EmployeesScreen> {
+  final EmployeeListFilter _filter = EmployeeListFilter();
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _reset() {
+    _search.clear();
+    setState(_filter.clear);
+  }
 
   void _openAddDialog(BuildContext context) {
     showDialog(
@@ -54,9 +75,21 @@ class EmployeesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = Provider.of<PersonnelProvider>(context);
     final positionsById = {for (var p in provider.positions) p.id: p.name};
+    final statusesById = {for (var s in provider.statuses) s.id: s.name};
+    bool visible(EmployeeModel e) => _filter.matches(
+          e,
+          positionName: (id) => positionsById[id] ?? '',
+          statusId: provider.currentStatusIdFor(e.id),
+          statusName: (id) => statusesById[id] ?? '',
+        );
     // Уволенные живут в своей вкладке, чтобы не мешать работе с действующими.
-    final active = provider.employees.where((e) => !e.isFired).toList();
-    final fired = provider.employees.where((e) => e.isFired).toList();
+    final allActive = provider.employees.where((e) => !e.isFired).toList();
+    final allFired = provider.employees.where((e) => e.isFired).toList();
+    final active = allActive.where(visible).toList();
+    final fired = allFired.where(visible).toList();
+
+    String tabCount(int shown, int total) =>
+        _filter.isActive ? '$shown из $total' : '$total';
 
     return DefaultTabController(
       length: 2,
@@ -71,24 +104,65 @@ class EmployeesScreen extends StatelessWidget {
           ],
           bottom: TabBar(
             tabs: [
-              Tab(text: 'Работают (${active.length})'),
-              Tab(text: 'Уволены (${fired.length})'),
+              Tab(text: 'Работают (${tabCount(active.length, allActive.length)})'),
+              Tab(text: 'Уволены (${tabCount(fired.length, allFired.length)})'),
             ],
           ),
         ),
-        body: TabBarView(
+        body: Column(
           children: [
-            _buildList(
-              context,
-              employees: active,
-              positionsById: positionsById,
-              emptyText: 'Нет действующих сотрудников',
+            PersonnelFilterBar(
+              controller: _search,
+              hint: 'ФИО, логин, ИИН, должность, статус…',
+              onQueryChanged: (v) => setState(() => _filter.query = v),
+              shown: active.length + fired.length,
+              total: provider.employees.length,
+              isActive: _filter.isActive,
+              onReset: _reset,
+              filters: [
+                MultiSelectFilterChip(
+                  label: 'Должность',
+                  options: [
+                    const FilterOption(kFilterNoneId, 'Без должности'),
+                    for (final p in provider.positions)
+                      FilterOption(p.id, p.name),
+                  ],
+                  selected: _filter.positionIds,
+                  onChanged: (ids) => setState(() => _filter.positionIds
+                    ..clear()
+                    ..addAll(ids)),
+                ),
+                MultiSelectFilterChip(
+                  label: 'Статус',
+                  options: [
+                    const FilterOption(kFilterNoneId, 'Без статуса'),
+                    for (final s in provider.statuses)
+                      FilterOption(s.id, s.name),
+                  ],
+                  selected: _filter.statusIds,
+                  onChanged: (ids) => setState(() => _filter.statusIds
+                    ..clear()
+                    ..addAll(ids)),
+                ),
+              ],
             ),
-            _buildList(
-              context,
-              employees: fired,
-              positionsById: positionsById,
-              emptyText: 'Уволенных сотрудников нет',
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _buildList(
+                    context,
+                    employees: active,
+                    positionsById: positionsById,
+                    emptyText: 'Нет действующих сотрудников',
+                  ),
+                  _buildList(
+                    context,
+                    employees: fired,
+                    positionsById: positionsById,
+                    emptyText: 'Уволенных сотрудников нет',
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -103,7 +177,11 @@ class EmployeesScreen extends StatelessWidget {
     required String emptyText,
   }) {
     if (employees.isEmpty) {
-      return Center(child: Text(emptyText));
+      return PersonnelEmptyResult(
+        isFiltered: _filter.isActive,
+        emptyText: emptyText,
+        onReset: _reset,
+      );
     }
     return ListView.separated(
       itemCount: employees.length,

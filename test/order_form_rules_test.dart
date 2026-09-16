@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/modules/orders/order_form_rules.dart';
-import 'package:app/modules/orders/order_model.dart';
-import 'package:app/modules/orders/product_model.dart';
+import 'package:sheet_clone/modules/orders/order_form_rules.dart';
+import 'package:sheet_clone/modules/orders/order_model.dart';
+import 'package:sheet_clone/modules/orders/product_model.dart';
 
 OrderModel _draft({bool hasForm = false, bool isOldForm = false}) => OrderModel(
       id: '1',

@@ -7,6 +7,12 @@ const String kStartedStageQueueChangeMessage =
 const String kOutdatedProdPlanStageIdSchemaMessage =
     'Схема базы данных устарела: отсутствует prod_plan_stages.stage_id. Примените миграции Supabase';
 
+const String kMissingReplacePlanStagesMessage =
+    'Схема базы данных устарела: отсутствует функция replace_plan_stages. Примените миграции Supabase';
+
+const String kEmptyStageQueueMessage =
+    'Не удалось сохранить очередь: список этапов пуст. Соберите очередь заново.';
+
 enum OrderQueueSyncOperationType {
   keep,
   insert,
@@ -306,6 +312,26 @@ class OrderQueueSyncService {
     // время и количество (они идут в аналитику и зарплату). Обновляются только
     // ожидающие этапы, а фактически отработанные остаются в плане как есть.
 
+    // Состав, seq и step_no плана переписывает одна транзакция на сервере.
+    // Раньше это была лесенка из отдельных запросов: удаления, «парковка» в
+    // отрицательные seq, обновления, вставки. Транзакции не было, и обрыв
+    // после парковки (сеть, таймаут) оставлял этапы с отрицательными seq
+    // навсегда — план показывался перевёрнутым, а заказ больше не сохранялся.
+    //
+    // Обычное сохранение заказа маршрут не меняет, а функция трогает каждую
+    // строку плана. Поэтому зовём её только когда состав или порядок этапов
+    // действительно разошлись: иначе каждый сейв бил бы updated_at по всему
+    // плану и рассылал realtime на ровном месте.
+    if (!planMatchesQueue(currentStages, nextQueue)) {
+      await _runTableStep<void>(
+        orderId: orderId,
+        tableName: 'prod_plan_stages',
+        action: () => _replacePlanStages(planId, nextQueue),
+      );
+    }
+
+    // Задачи сверяем после успешной перезаписи плана: сам план к этому
+    // моменту уже согласован, и падение здесь не оставит его разобранным.
     for (final op in operations.where(
       (op) => op.type == OrderQueueSyncOperationType.cancelOrDeletePending,
     )) {
@@ -313,61 +339,21 @@ class OrderQueueSyncService {
       if (current == null) continue;
       await _runTableStep<void>(
         orderId: orderId,
-        tableName: 'prod_plan_stages',
-        action: () => _deletePendingPlanStage(current),
-      );
-      await _runTableStep<void>(
-        orderId: orderId,
         tableName: 'tasks',
         action: () => _deletePendingTasks(orderId, current),
       );
     }
 
-    final updateOperations = operations
-        .where((op) => op.type == OrderQueueSyncOperationType.updatePending)
-        .toList(growable: false);
-    final parkedUpdates = await _runTableStep<Map<String, OrderQueueSyncEntry>>(
-      orderId: orderId,
-      tableName: 'prod_plan_stages',
-      action: () => _parkPendingPlanStageUpdates(updateOperations),
-    );
-
-    final physicalSeqByKey = physicalSeqByIdentityKey(nextQueue);
-
-    for (final op in updateOperations) {
+    for (final op in operations.where(
+      (op) => op.type == OrderQueueSyncOperationType.updatePending,
+    )) {
       final current = op.current;
       final next = op.next;
       if (current == null || next == null) continue;
-      final parkedCurrent = parkedUpdates[current.identityKey] ?? current;
-      await _runTableStep<void>(
-        orderId: orderId,
-        tableName: 'prod_plan_stages',
-        action: () => _updatePendingPlanStage(
-          parkedCurrent,
-          next,
-          physicalSeqByKey[next.identityKey] ?? next.step,
-        ),
-      );
       await _runTableStep<void>(
         orderId: orderId,
         tableName: 'tasks',
         action: () => _syncPendingTaskGroup(orderId, current, next),
-      );
-    }
-
-    for (final op in operations.where(
-      (op) => op.type == OrderQueueSyncOperationType.insert,
-    )) {
-      final next = op.next;
-      if (next == null) continue;
-      await _runTableStep<void>(
-        orderId: orderId,
-        tableName: 'prod_plan_stages',
-        action: () => _insertPlanStage(
-          planId,
-          next,
-          physicalSeqByKey[next.identityKey] ?? next.step,
-        ),
       );
     }
 
@@ -421,6 +407,103 @@ class OrderQueueSyncService {
         .select('id')
         .single();
     return inserted['id'].toString();
+  }
+
+  /// Атомарно приводит состав и порядок этапов плана к [nextQueue].
+  ///
+  /// `replace_plan_stages` делает трёхстороннее слияние в одной транзакции:
+  /// совпавшие строки обновляет, сохраняя их `id` (а с ним историю этапа,
+  /// комментарии и файлы — они ссылаются на него с ON DELETE CASCADE),
+  /// исчезнувшие ожидающие удаляет, новые вставляет. Защищённые строки
+  /// (status <> waiting) не двигает и возвращает списком в поле `protected`.
+  /// Промежуточная «парковка» seq живёт внутри транзакции и наружу не видна.
+  Future<void> _replacePlanStages(
+    String planId,
+    List<OrderQueueSyncEntry> nextQueue,
+  ) async {
+    if (nextQueue.isEmpty) {
+      // Пустую очередь функция отвергает, и правильно делает: тихая
+      // перезапись плана «ничем» стёрла бы весь маршрут заказа.
+      throw const OrderQueueSyncBlockedException(kEmptyStageQueueMessage);
+    }
+    final stages = planStagesRpcPayload(nextQueue);
+    final dynamic result;
+    try {
+      result = await _sb.rpc(
+        'replace_plan_stages',
+        params: <String, dynamic>{'p_plan_id': planId, 'p_stages': stages},
+      );
+    } catch (error) {
+      _throwIfMissingReplacePlanStages(error);
+      rethrow;
+    }
+
+    final protected = _protectedStageNamesFromRpcResult(result);
+    if (protected.isNotEmpty) {
+      // Пересечься с проверкой blocked выше это может только в гонке: статус
+      // сменился между чтением плана и вызовом функции. Данные при этом целы —
+      // защищённые строки функция не тронула, — поэтому здесь достаточно следа
+      // в журнале, а не отката сохранения.
+      debugPrint(
+        'OrderQueueSyncService: план $planId сохранён, защищённые этапы '
+        'оставлены как есть: ${protected.join(', ')}',
+      );
+    }
+  }
+
+  /// План уже совпадает с очередью: тех же этапов столько же и каждый стоит на
+  /// своём шаге. Переписывать нечего.
+  @visibleForTesting
+  static bool planMatchesQueue(
+    List<OrderQueueSyncEntry> currentStages,
+    List<OrderQueueSyncEntry> nextQueue,
+  ) {
+    if (currentStages.length != nextQueue.length) return false;
+    for (final current in currentStages) {
+      if (!nextQueue.any(current.sameQueueSlot)) return false;
+    }
+    return true;
+  }
+
+  /// Вход `replace_plan_stages`: только состав очереди и логический порядок.
+  ///
+  /// Физический `seq` клиент больше не считает — его раздаёт функция, и только
+  /// она видит seq, занятые защищёнными этапами. Параллельные рабочие места
+  /// одного шага остаются отдельными строками с одинаковым `step_no`.
+  @visibleForTesting
+  static List<Map<String, dynamic>> planStagesRpcPayload(
+    List<OrderQueueSyncEntry> nextQueue,
+  ) {
+    return <Map<String, dynamic>>[
+      for (final entry in nextQueue)
+        <String, dynamic>{
+          'stage_id': entry.stageId,
+          'stage_group_key': entry.stageGroupKey,
+          'name': entry.displayName,
+          'step_no': entry.step,
+        },
+    ];
+  }
+
+  static List<String> _protectedStageNamesFromRpcResult(dynamic result) {
+    if (result is! Map) return const <String>[];
+    final protected = result['protected'];
+    if (protected is! List) return const <String>[];
+    return protected
+        .whereType<Map>()
+        .map((row) => (row['name'] ?? row['stage_id'] ?? '').toString().trim())
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static void _throwIfMissingReplacePlanStages(Object error) {
+    if (error is! PostgrestException) return;
+    final code = (error.code ?? '').trim();
+    if (code != 'PGRST202' && code != '42883') return;
+    if (!error.message.contains('replace_plan_stages')) return;
+    throw const OrderQueueSyncSchemaOutdatedException(
+      kMissingReplacePlanStagesMessage,
+    );
   }
 
   Future<List<OrderQueueSyncEntry>> _loadPlanStages(String planId) async {
@@ -498,40 +581,6 @@ class OrderQueueSyncService {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  @visibleForTesting
-  static Map<String, int> physicalSeqByIdentityKey(
-    List<OrderQueueSyncEntry> queue,
-  ) {
-    final stepCounts = <int, int>{};
-    for (final entry in queue) {
-      stepCounts[entry.step] = (stepCounts[entry.step] ?? 0) + 1;
-    }
-
-    final stepOffsets = <int, int>{};
-    final usedSeqs = <int>{};
-    final result = <String, int>{};
-    for (final entry in queue) {
-      final count = stepCounts[entry.step] ?? 0;
-      if (count <= 1) {
-        result[entry.identityKey] = entry.step;
-        usedSeqs.add(entry.step);
-        continue;
-      }
-
-      var offset = stepOffsets[entry.step] ?? 0;
-      var candidate = entry.step * 1000 + offset;
-      while (usedSeqs.contains(candidate) ||
-          stepCounts.containsKey(candidate)) {
-        offset += 1;
-        candidate = entry.step * 1000 + offset;
-      }
-      stepOffsets[entry.step] = offset + 1;
-      usedSeqs.add(candidate);
-      result[entry.identityKey] = candidate;
-    }
-    return result;
-  }
-
   static bool _isMissingProdPlanStageGroupKey(Object error) {
     if (error is! PostgrestException) return false;
     final message = error.message.toLowerCase();
@@ -548,30 +597,10 @@ class OrderQueueSyncService {
         message.contains('prod_plan_stages');
   }
 
-  static bool _isMissingProdPlanStageName(Object error) {
-    if (error is! PostgrestException) return false;
-    final message = error.message.toLowerCase();
-    return error.code == 'PGRST204' &&
-        message.contains('name') &&
-        message.contains('prod_plan_stages');
-  }
-
   static void _throwIfMissingProdPlanStageId(Object error) {
     if (_isMissingProdPlanStageId(error)) {
       throw const OrderQueueSyncSchemaOutdatedException();
     }
-  }
-
-  static Map<String, dynamic> _withoutStageGroupKey(
-    Map<String, dynamic> payload,
-  ) {
-    return Map<String, dynamic>.from(payload)..remove('stage_group_key');
-  }
-
-  static Map<String, dynamic> _withoutStageName(
-    Map<String, dynamic> payload,
-  ) {
-    return Map<String, dynamic>.from(payload)..remove('name');
   }
 
   Future<List<OrderQueueSyncEntry>> _deleteDuplicatePendingPlanStages(
@@ -625,181 +654,18 @@ class OrderQueueSyncService {
     }
   }
 
-  Future<void> _updatePendingPlanStage(
-    OrderQueueSyncEntry current,
-    OrderQueueSyncEntry next,
-    int physicalSeq,
-  ) async {
-    final updates = {
-      'stage_id': next.stageId,
-      'stage_group_key': next.stageGroupKey,
-      'name': next.displayName,
-      'seq': physicalSeq,
-      'status': 'waiting',
-    };
-    await _updatePlanStageWithOptionalStepNo(current, updates, next.step);
-  }
-
-  Future<void> _insertPlanStage(
-    String planId,
-    OrderQueueSyncEntry next,
-    int physicalSeq,
-  ) async {
-    final row = {
-      'plan_id': planId,
-      'stage_id': next.stageId,
-      'stage_group_key': next.stageGroupKey,
-      'name': next.displayName,
-      'seq': physicalSeq,
-      'status': 'waiting',
-    };
-    try {
-      await _insertPlanStageWithOptionalStepNo(row, next.step);
-    } catch (error) {
-      _throwIfMissingProdPlanStageId(error);
-      if (_isMissingProdPlanStageGroupKey(error)) {
-        await _insertPlanStageWithoutStageGroupKey(row, next.step);
-        return;
-      }
-      if (_isMissingProdPlanStageName(error)) {
-        await _insertPlanStageWithoutStageName(row, next.step);
-        return;
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> _insertPlanStageWithOptionalStepNo(
-    Map<String, dynamic> row,
-    int stepNo,
-  ) async {
-    try {
-      await _sb
-          .from('prod_plan_stages')
-          .insert({...row, 'step_no': stepNo});
-    } catch (error) {
-      _throwIfMissingProdPlanStageId(error);
-      if (_isMissingProdPlanStageGroupKey(error) ||
-          _isMissingProdPlanStageName(error)) {
-        rethrow;
-      }
-      await _sb.from('prod_plan_stages').insert(row);
-    }
-  }
-
-  Future<void> _insertPlanStageWithoutStageGroupKey(
-    Map<String, dynamic> row,
-    int stepNo,
-  ) async {
-    final legacyRow = _withoutStageGroupKey(row);
-    try {
-      await _insertPlanStageWithOptionalStepNo(legacyRow, stepNo);
-    } catch (error) {
-      _throwIfMissingProdPlanStageId(error);
-      if (!_isMissingProdPlanStageName(error)) rethrow;
-      await _insertPlanStageWithOptionalStepNo(
-        _withoutStageName(legacyRow),
-        stepNo,
-      );
-    }
-  }
-
-  Future<void> _insertPlanStageWithoutStageName(
-    Map<String, dynamic> row,
-    int stepNo,
-  ) async {
-    final legacyRow = _withoutStageName(row);
-    try {
-      await _insertPlanStageWithOptionalStepNo(legacyRow, stepNo);
-    } catch (error) {
-      _throwIfMissingProdPlanStageId(error);
-      if (!_isMissingProdPlanStageGroupKey(error)) rethrow;
-      await _insertPlanStageWithOptionalStepNo(
-        _withoutStageGroupKey(legacyRow),
-        stepNo,
-      );
-    }
-  }
-
-  Future<void> _updatePlanStageWithOptionalStepNo(
-    OrderQueueSyncEntry current,
-    Map<String, dynamic> updates,
-    int stepNo,
-  ) async {
-    Future<void> run(
-      Map<String, dynamic> payload, {
-      required bool includeStageGroupKeyFilter,
-    }) async {
-      if (current.id != null && current.id!.isNotEmpty) {
-        await _sb
-            .from('prod_plan_stages')
-            .update(payload)
-            .eq('id', current.id!);
-        return;
-      }
-      final query = _sb
-          .from('prod_plan_stages')
-          .update(payload)
-          .eq('stage_id', current.stageId);
-      if (includeStageGroupKeyFilter) {
-        query.eq('stage_group_key', current.stageGroupKey);
-      }
-      await query.eq('seq', current.physicalSeq ?? current.step);
-    }
-
-    try {
-      await run(
-        {...updates, 'step_no': stepNo},
-        includeStageGroupKeyFilter: true,
-      );
-    } catch (error) {
-      _throwIfMissingProdPlanStageId(error);
-      if (_isMissingProdPlanStageGroupKey(error)) {
-        await run(
-          _withoutStageGroupKey(updates),
-          includeStageGroupKeyFilter: false,
-        );
-        return;
-      }
-      try {
-        await run(updates, includeStageGroupKeyFilter: true);
-      } catch (fallbackError) {
-        _throwIfMissingProdPlanStageId(fallbackError);
-        if (!_isMissingProdPlanStageGroupKey(fallbackError)) rethrow;
-        await run(
-          _withoutStageGroupKey(updates),
-          includeStageGroupKeyFilter: false,
-        );
-      }
-    }
-  }
-
-  Future<Map<String, OrderQueueSyncEntry>> _parkPendingPlanStageUpdates(
-    List<OrderQueueSyncOperation> updateOperations,
-  ) async {
-    if (updateOperations.length < 2) {
-      return const <String, OrderQueueSyncEntry>{};
-    }
-    final parked = <String, OrderQueueSyncEntry>{};
-    var offset = 0;
-    for (final op in updateOperations) {
-      final current = op.current;
-      if (current == null) continue;
-      final tempStep = -1000000 - offset;
-      offset += 1;
-      await _updatePlanStageWithOptionalStepNo(
-        current,
-        {'seq': tempStep},
-        tempStep,
-      );
-      parked[current.identityKey] = current.copyWith(
-        step: tempStep,
-        physicalSeq: tempStep,
-      );
-    }
-    return parked;
-  }
-
+  /// Строки очереди рабочего места здесь НЕ трогаем намеренно.
+  ///
+  /// Ими занимаются триггеры базы (миграция
+  /// 20260903_atomic_stage_writes_and_queue_slots): при удалении задачи её
+  /// строка очереди освобождается с сохранением номера, при появлении новой
+  /// задачи того же этапа — прикрепляется к ней. Так пересборка маршрута не
+  /// сбивает ручной порядок в МУПЗ.
+  ///
+  /// Раньше очередь не чистилась вообще: строка оставалась висеть на удалённой
+  /// задаче, новая задача получала ВТОРУЮ строку, и заказ с двумя строками
+  /// нельзя было поднять в очереди — показ читал одну строку, перетаскивание
+  /// переписывало другую (ТОО Raw на Листорезке).
   Future<void> _deletePendingTasks(
     String orderId,
     OrderQueueSyncEntry current,

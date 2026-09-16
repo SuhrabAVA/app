@@ -1,5 +1,5 @@
 name: sheet_clone
-description: A Flutter project
+description: Easy Pack Pro — учёт производства и склада
 publish_to: "none"
 
 environment:
@@ -64,9 +64,18 @@ flutter:
   uses-material-design: true
   assets:
     - .env
+    # Логотип компании: тот же файл, из которого собраны иконки Windows и
+    # Android (scripts/generate_app_icons.ps1).
+    - assets/branding/app_icon.png
 msix_config:
   display_name: Easy Pack Pro
-  publisher_display_name: MyCompany
+  publisher_display_name: Easy Pack Pro
+  # identity_name и publisher обязаны совпадать с сертификатом подписи —
+  # менять их только вместе с ним, иначе установщик перестанет ставиться.
   identity_name: com.mycompany.myapp
   publisher: CN=MyCompany
+  # Логотип плиток и списка «Приложения»; из него msix сам режет все размеры.
+  logo_path: assets/branding/app_icon.png
+  # Иначе имя файла берётся из name: в pubspec и получается sheet_clone.msix.
+  output_name: EasyPackPro
   capabilities: internetClient

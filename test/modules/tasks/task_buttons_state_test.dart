@@ -74,9 +74,12 @@ TaskButtonsState build({
   bool shiftResumeBlocked = false,
   bool startInFlight = false,
   bool setupInFlight = false,
+  bool shiftInFlight = false,
+  bool finishInFlight = false,
   bool hasAssignees = true,
   bool allPerformersFinished = false,
   bool anyUserActive = false,
+  bool stageReopened = false,
 }) {
   return computeTaskButtons(
     taskStatus: taskStatus,
@@ -97,9 +100,12 @@ TaskButtonsState build({
     shiftResumeBlocked: shiftResumeBlocked,
     startInFlight: startInFlight,
     setupInFlight: setupInFlight,
+    shiftInFlight: shiftInFlight,
+    finishInFlight: finishInFlight,
     hasAssignees: hasAssignees,
     allPerformersFinished: allPerformersFinished,
     anyUserActive: anyUserActive,
+    stageReopened: stageReopened,
   );
 }
 
@@ -110,6 +116,16 @@ void main() {
       expect(b.phase, TaskRowPhase.freshWithMachine);
       expect(b.setup.label, 'Начать наладку');
       _expectButtons(b, const _Expect(setup: true));
+    });
+
+    test(
+        'Возобновлённый этап со станком — «Начать наладку» и «Начать» '
+        '(станок налажен прошлым кругом)', () {
+      // Живой случай: после «Возобновить» наладка была серой — флаги
+      // считались по всей истории этапа, а не с момента возобновления.
+      final b = build(hasMachine: true, stageReopened: true);
+      expect(b.phase, TaskRowPhase.freshWithMachine);
+      _expectButtons(b, const _Expect(setup: true, start: true));
     });
 
     test('Новый этап без станка — активна только «Начать»', () {
@@ -548,6 +564,45 @@ void main() {
       );
     });
 
+    test('пересмена и завершение в полёте выключают свои кнопки', () {
+      // Пересмена и завершение спрашивают расход бумаги, количество и
+      // заметку — между нажатием и записью проходят секунды. Кнопка всё это
+      // время оставалась живой, и второе нажатие писало вторую пересмену,
+      // второе количество и второе списание бумаги.
+      TaskButtonsState running({
+        bool shiftInFlight = false,
+        bool finishInFlight = false,
+      }) =>
+          build(
+            taskStatus: TaskStatus.inProgress,
+            rowState: UserRunState.active,
+            productionStarted: true,
+            participated: true,
+            shiftInFlight: shiftInFlight,
+            finishInFlight: finishInFlight,
+          );
+
+      expect(running().shift.enabled, isTrue);
+      expect(running().finish.enabled, isTrue);
+      expect(running(shiftInFlight: true).shift.enabled, isFalse);
+      expect(running(shiftInFlight: true).finish.enabled, isTrue,
+          reason: 'замок пересмены не трогает остальные кнопки');
+      expect(running(finishInFlight: true).finish.enabled, isFalse);
+    });
+
+    test('«Продолжить пересмену» в полёте тоже заперта', () {
+      final b = build(
+        taskStatus: TaskStatus.paused,
+        shiftPaused: true,
+        productionStarted: true,
+        participated: true,
+        shiftInFlight: true,
+      );
+      expect(b.phase, TaskRowPhase.shiftPaused);
+      expect(b.shift.label, 'Продолжить пересмену');
+      expect(b.shift.enabled, isFalse);
+    });
+
     test('не полноправный исполнитель (помощник) кнопок не получает', () {
       final b = build(
         taskStatus: TaskStatus.inProgress,
@@ -568,6 +623,155 @@ void main() {
         participated: false,
       );
       expect(b.finish.enabled, isFalse);
+    });
+  });
+
+  group('Полноправность исполнителя строки', () {
+    test('этап ещё ничей — права есть у любого', () {
+      expect(
+        isRowAssignee(
+          assignees: const [],
+          rowUserId: 'u2',
+          stageMode: ExecutionMode.separate,
+          rowMode: ExecutionMode.separate,
+        ),
+        isTrue,
+      );
+    });
+
+    test('регресс: второй исполнитель отдельного этапа может начать', () {
+      // Сотрудника нет в assignees: он назначает себя сам нажатием «Начать».
+      expect(
+        isRowAssignee(
+          assignees: const ['u1'],
+          rowUserId: 'u2',
+          stageMode: ExecutionMode.separate,
+          rowMode: ExecutionMode.separate,
+        ),
+        isTrue,
+      );
+    });
+
+    test('в совместный этап посторонний сам не заходит', () {
+      for (final mode in [ExecutionMode.joint, ExecutionMode.solo]) {
+        expect(
+          isRowAssignee(
+            assignees: const ['u1'],
+            rowUserId: 'u2',
+            stageMode: mode,
+            rowMode: ExecutionMode.joint,
+          ),
+          isFalse,
+          reason: 'режим этапа: $mode',
+        );
+      }
+    });
+
+    test('каждый отдельный исполнитель полноправен', () {
+      expect(
+        isRowAssignee(
+          assignees: const ['u1', 'u2'],
+          rowUserId: 'u2',
+          stageMode: ExecutionMode.separate,
+          rowMode: ExecutionMode.separate,
+        ),
+        isTrue,
+      );
+    });
+
+    test('в совместном режиме права только у основного исполнителя', () {
+      expect(
+        isRowAssignee(
+          assignees: const ['u1', 'helper'],
+          rowUserId: 'u1',
+          stageMode: ExecutionMode.joint,
+          rowMode: ExecutionMode.joint,
+        ),
+        isTrue,
+      );
+      expect(
+        isRowAssignee(
+          assignees: const ['u1', 'helper'],
+          rowUserId: 'helper',
+          stageMode: ExecutionMode.joint,
+          rowMode: ExecutionMode.joint,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('незакрытая наладка после запуска тиража', () {
+    // Этап «Фри» заказа Burger king, 09.09. Наладку начал Вуколов 08.09 и ушёл
+    // на пересмену; закрыл её за него сменщик и пустил тираж. Личный
+    // `setup_start` Вуколова остался висеть, и по возвращении строка попадала
+    // в фазу setupProblem: «Продолжить наладку» гасло из-за productionStarted,
+    // «Вернуть в работу» — потому что setupProblem нет в списке фаз старта.
+    // Кроме «Пересмены» нажать было нечего.
+
+    test('проблема: тираж уже шёл — работает обычная фаза problem', () {
+      final state = build(
+        taskStatus: TaskStatus.problem,
+        rowState: UserRunState.problem,
+        hasMachine: true,
+        setupUnfinishedForRow: true,
+        setupPendingForStage: true,
+        productionStarted: true,
+      );
+      expect(state.phase, TaskRowPhase.problem);
+      // Помощников добавляют только при идущей наладке или тираже — здесь
+      // доступны возврат в работу и пересмена.
+      _expectButtons(state, const _Expect(start: true, shift: true));
+    });
+
+    test('пауза: тираж уже шёл — работает обычная фаза productionPaused', () {
+      final state = build(
+        taskStatus: TaskStatus.paused,
+        rowState: UserRunState.paused,
+        hasMachine: true,
+        setupUnfinishedForRow: true,
+        setupPendingForStage: true,
+        productionStarted: true,
+      );
+      expect(state.phase, TaskRowPhase.productionPaused);
+      expect(state.start.enabled, isTrue);
+    });
+
+    test('до тиража фазы наладки сохраняются', () {
+      final paused = build(
+        rowState: UserRunState.paused,
+        hasMachine: true,
+        setupUnfinishedForRow: true,
+      );
+      expect(paused.phase, TaskRowPhase.setupPaused);
+      expect(paused.setup.enabled, isTrue);
+      expect(paused.setup.label, 'Продолжить наладку');
+
+      final problem = build(
+        rowState: UserRunState.problem,
+        hasMachine: true,
+        setupUnfinishedForRow: true,
+      );
+      expect(problem.phase, TaskRowPhase.setupProblem);
+      expect(problem.setup.enabled, isTrue);
+    });
+
+    test('строка никогда не остаётся без единой кнопки', () {
+      final state = build(
+        taskStatus: TaskStatus.problem,
+        rowState: UserRunState.problem,
+        hasMachine: true,
+        setupUnfinishedForRow: true,
+        setupPendingForStage: true,
+        productionStarted: true,
+      );
+      final anyEnabled = state.setup.enabled ||
+          state.start.enabled ||
+          state.pause.enabled ||
+          state.finish.enabled ||
+          state.problem.enabled ||
+          state.shift.enabled;
+      expect(anyEnabled, isTrue);
     });
   });
 }

@@ -41,6 +41,10 @@ const Set<String> _pieceUnitAliases = <String>{
   'pieces',
 };
 
+/// Подпись единицы «штуки» — в ней сотрудник вводит количество везде, где
+/// рабочее место измеряет продукцию поштучно, включая упаковку.
+const String kPieceUnitLabel = 'шт';
+
 const Set<String> _packUnitAliases = <String>{
   'уп',
   'уп.',
@@ -212,6 +216,39 @@ double? packSizeFromParams(Iterable<String> params) {
   return null;
 }
 
+/// Подпись единицы, в которой сотрудник ВВОДИТ количество на этапе с
+/// единицей [stageUnit].
+///
+/// Для упаковки ввод идёт в штуках: количество упаковок из штук считается
+/// однозначно, а обратно — нет.
+String quantityInputUnit(String? stageUnit) =>
+    isQuantityPackUnit(stageUnit) ? kPieceUnitLabel : (stageUnit ?? '').trim();
+
+/// Сколько упаковок засчитывается за [pieces] штук при фасовке [packSize].
+///
+/// Округление вверх: неполная упаковка — тоже упаковка, её собрали и она
+/// уехала заказчику. При тираже 12000 по 100 шт и факте 12030 сотруднику
+/// засчитывается 121 упаковка, а не 120.
+///
+/// null, если фасовка не задана («Упаковка: N» в параметрах заказа не
+/// заполнена) или количество неположительное — считать не из чего.
+int? packCountForPieces({required double pieces, required double? packSize}) {
+  if (packSize == null || packSize <= 0) return null;
+  if (pieces <= 0) return null;
+  return (pieces / packSize).ceil();
+}
+
+/// Остаток неполной упаковки: сколько штук в последней, недособранной.
+/// 0 — количество кратно фасовке.
+double packRemainderPieces({
+  required double pieces,
+  required double? packSize,
+}) {
+  if (packSize == null || packSize <= 0 || pieces <= 0) return 0;
+  final remainder = pieces % packSize;
+  return remainder.abs() < 0.0001 ? 0 : remainder;
+}
+
 double? getExpectedQuantity({
   required OrderModel order,
   required TaskModel task,
@@ -223,16 +260,13 @@ double? getExpectedQuantity({
   }
 
   if (isQuantityPackUnit(unit)) {
-    // Сотрудник на упаковке отчитывается в упаковках, поэтому план тоже в
-    // упаковках: тираж ÷ фасовка. Фасовку берём из параметра «Упаковка: N»
-    // (product.blQuantity для этого не годится — это параметр бумаги, из-за
-    // чего он раньше ошибочно служил множителем факта). Без фасовки плана
-    // нет: null → статус unknown, факт сохраняется как есть.
-    final packSize = packSizeFromOrder(order);
-    if (packSize == null || packSize <= 0) return null;
+    // Упаковщик отчитывается В ШТУКАХ, а не в упаковках — поэтому и план в
+    // штуках, тот же тираж. Считать наоборот (тираж ÷ фасовка) нельзя: если
+    // сделали не кратно фасовке, по числу упаковок точное количество штук
+    // уже не восстановить. Упаковки считаются из штук — packCountForPieces.
     final runSize = order.product.quantity;
     if (runSize <= 0) return null;
-    return runSize / packSize;
+    return runSize.toDouble();
   }
 
   if (isQuantityPieceUnit(unit)) {
@@ -247,15 +281,37 @@ double? getExpectedQuantity({
   return null;
 }
 
+/// Допуск, в пределах которого количество считается нормальным.
+///
+/// Раньше зелёным было только ТОЧНОЕ совпадение с тиражом — и зелёного не
+/// видел никто: этап почти никогда не выходит ровно в план, то несколько
+/// листов уходит в брак, то лишние остаются от приладки. Отклонение в пределах
+/// 2 % — производственная норма, а не повод разбираться.
+const double kQuantityOkDeviation = 0.02;
+
+/// За этой границей отклонение перестаёт быть «немного» и требует разбора.
+const double kQuantityWarningDeviation = 0.10;
+
+/// Насколько количество разошлось с планом: доля от плана, всегда ≥ 0.
+///
+/// `null` — плана нет (не задан тираж, неизвестна единица), сравнивать не с
+/// чем. Это не то же самое, что «отклонения нет».
+double? quantityDeviation({
+  required double actual,
+  required double? expected,
+}) {
+  if (expected == null || expected <= 0) return null;
+  return (actual - expected).abs() / expected;
+}
+
 QuantityStatus getQuantityStatus({
   required double actual,
   required double? expected,
 }) {
-  if (expected == null || expected <= 0) return QuantityStatus.unknown;
-  final diff = (actual - expected).abs();
-  if (diff <= 0.0001) return QuantityStatus.success;
-  final deviation = diff / expected;
-  if (deviation <= 0.1) return QuantityStatus.warning;
+  final deviation = quantityDeviation(actual: actual, expected: expected);
+  if (deviation == null) return QuantityStatus.unknown;
+  if (deviation <= kQuantityOkDeviation) return QuantityStatus.success;
+  if (deviation <= kQuantityWarningDeviation) return QuantityStatus.warning;
   return QuantityStatus.danger;
 }
 
@@ -278,6 +334,8 @@ String quantityStatusToJson({
   required double? expected,
   required QuantityStatus status,
   required String displayText,
+  int? packs,
+  double? packSize,
 }) {
   return jsonEncode(<String, dynamic>{
     'actual': actual,
@@ -285,6 +343,81 @@ String quantityStatusToJson({
     'expected': expected,
     'quantity_status': status.name,
     'display': displayText,
+    // Упаковки — производные от штук, но храним их вместе с фасовкой: по
+    // готовой записи должно быть видно, сколько упаковок засчитано и из
+    // какой фасовки они посчитаны (фасовку в заказе могут потом изменить).
+    if (packs != null) 'packs': packs,
+    if (packSize != null && packSize > 0) 'pack_size': packSize,
+  });
+}
+
+/// Подпись количества для комментария и таблиц: «12030 шт · 121 уп».
+///
+/// Одна на проект: её строит и диалог ввода, и правка количества техлидом —
+/// разъехавшись, они дали бы в истории заказа две разные записи об одном.
+String quantityDisplayLabel({
+  required double actual,
+  required String unit,
+  int? packs,
+}) {
+  final value = formatQuantityNumber(actual);
+  final base = unit.trim().isEmpty ? value : '$value ${unit.trim()}';
+  return packs == null ? base : '$base · $packs уп';
+}
+
+/// Число без хвостовых нулей: 12030.0 → «12030», 12.5 → «12,5» не делаем —
+/// точка остаётся, как во всех остальных подписях количества.
+String formatQuantityNumber(double value) {
+  if (value == value.roundToDouble()) return value.toInt().toString();
+  return value
+      .toStringAsFixed(2)
+      .replaceAll(RegExp(r'0+\$'), '')
+      .replaceAll(RegExp(r'\.\$'), '');
+}
+
+/// Пересобирает payload записи количества под исправленное значение.
+///
+/// Единица, план и фасовка берутся из прежней записи — техлид правит только
+/// число. Статус и подпись пересчитываются, упаковки — тоже (иначе в
+/// аналитике осталось бы старое число упаковок, а это оплата).
+///
+/// Что было до правки, сохраняется в `original_actual`: при повторной правке
+/// оно не перезаписывается, чтобы исходное значение сотрудника не потерялось.
+/// Записи без payload (старый свободный текст) остаются текстом — придумывать
+/// им единицу и план неоткуда.
+String rebuildQuantityPayload({
+  required String previousText,
+  required double newActual,
+  required String editorId,
+  required DateTime editedAt,
+}) {
+  final previous = tryDecodeQuantityPayload(previousText);
+  if (previous == null) return formatQuantityNumber(newActual);
+
+  final unit = (previous['unit'] ?? '').toString();
+  final expected = _number(previous['expected']);
+  final packSize = _number(previous['pack_size']);
+  final packs = packCountForPieces(pieces: newActual, packSize: packSize);
+  final status = getQuantityStatus(actual: newActual, expected: expected);
+
+  final originalActual =
+      _number(previous['original_actual']) ?? _number(previous['actual']);
+
+  return jsonEncode(<String, dynamic>{
+    'actual': newActual,
+    'unit': unit,
+    'expected': expected,
+    'quantity_status': status.name,
+    'display': quantityDisplayLabel(
+      actual: newActual,
+      unit: unit,
+      packs: packs,
+    ),
+    if (packs != null) 'packs': packs,
+    if (packSize != null && packSize > 0) 'pack_size': packSize,
+    if (originalActual != null) 'original_actual': originalActual,
+    'edited_by': editorId,
+    'edited_at': editedAt.toUtc().toIso8601String(),
   });
 }
 

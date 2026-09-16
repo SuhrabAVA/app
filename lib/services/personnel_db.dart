@@ -25,6 +25,18 @@ class PersonnelDB {
     });
   }
 
+  /// Fixed position (manager, warehouse_head...): insert only if the id is
+  /// absent. ON CONFLICT DO NOTHING instead of catching 23505 - every app start
+  /// used to log a 409 per position.
+  Future<void> insertPositionIfAbsent(
+      {required String id, required String name}) async {
+    await s.from('positions').upsert(
+      {'id': id, 'name': name},
+      onConflict: 'id',
+      ignoreDuplicates: true,
+    );
+  }
+
   Future<void> updatePosition(
       {required String id, required String name, String? description}) async {
     final payload = <String, dynamic>{
@@ -162,6 +174,7 @@ class PersonnelDB {
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint,
     PriladkaCalcMode? priladkaCalcMode,
     double priladkaPrice = 0,
+    bool splitQuantityByTime = true,
   }) async {
     await s.from('workplaces').insert({
       'id': id,
@@ -175,6 +188,7 @@ class PersonnelDB {
       'execution_mode': executionMode.name,
       'priladka_calc_mode': priladkaCalcMode?.dbValue,
       'priladka_price': priladkaPrice,
+      'split_quantity_by_time': splitQuantityByTime,
     });
     if (positionIds.isNotEmpty) {
       final rows = positionIds
@@ -200,6 +214,7 @@ class PersonnelDB {
     bool setPriladkaCalcMode = false,
     PriladkaCalcMode? priladkaCalcMode,
     double? priladkaPrice,
+    bool? splitQuantityByTime,
   }) async {
     final patch = <String, dynamic>{};
     if (name != null) patch['name'] = name;
@@ -221,6 +236,9 @@ class PersonnelDB {
     }
     if (priladkaPrice != null) {
       patch['priladka_price'] = priladkaPrice;
+    }
+    if (splitQuantityByTime != null) {
+      patch['split_quantity_by_time'] = splitQuantityByTime;
     }
     if (patch.isNotEmpty) {
       await s.from('workplaces').update(patch).eq('id', id);

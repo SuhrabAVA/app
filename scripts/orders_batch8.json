@@ -1,0 +1,19 @@
+{
+  "manager": "Аблимитов Тахир менеджер",
+  "customer": "New York",
+  "order_date": "18.08.2026",
+  "product_type": "В-образный фри",
+  "quantity": 3000,
+  "length_mm": 10, "width_mm": 11, "depth_mm": 0,
+  "paper": {"name": "Тестовая бумага", "format": "333", "grammage": "444"},
+  "width_b": 24.5, "length_l": 520,
+  "handle": "-",
+  "cardboard": "нет",
+  "makeready": 1000, "val": 24,
+  "form": {"series": "New York", "number": 1761},
+  "paints": [
+    {"name": "Тест Чёрный Чёрный", "grams": 5},
+    {"name": "Тест Красный Красный", "grams": 5}
+  ],
+  "comments": "Бланк №145 от 18.08.2026. Печать 2*0: чёрный, красный. Реальная бумага: ВП 40гр, ролл — «остатки» (без номера), ширина b 24-25, длина L 520м. Документов нет."
+}

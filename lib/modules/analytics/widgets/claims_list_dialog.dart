@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../utils/kostanay_time.dart';
 import '../../../utils/media_viewer.dart';
 import '../models/claim_model.dart';
 import '../utils/analytics_colors.dart';
@@ -100,7 +101,7 @@ class _ClaimTile extends StatelessWidget {
           children: [
             _sourceChip(theme),
             Text(
-              _dateFormat.format(claim.createdAt.toLocal()),
+              _dateFormat.format(toKostanayTime(claim.createdAt)),
               style: const TextStyle(fontSize: 12),
             ),
             if (author.isNotEmpty)

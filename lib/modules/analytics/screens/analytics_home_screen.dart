@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../services/realtime_sync_service.dart';
 import '../../orders/orders_provider.dart';
 import '../../personnel/personnel_provider.dart';
 import '../../tasks/task_provider.dart';
@@ -17,6 +18,7 @@ import '../widgets/salary_settings_drawer.dart';
 import 'analytics_access_denied_screen.dart';
 import 'employee_detail_screen.dart';
 import 'employees_analytics_screen.dart';
+import 'status_staff_analytics_screen.dart';
 import 'work_schedule_screen.dart';
 import 'workplaces_analytics_screen.dart';
 
@@ -45,6 +47,7 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
   late AnalyticsService _service;
   late TaskProvider _taskProvider;
   late OrdersProvider _ordersProvider;
+  late PersonnelProvider _personnelProvider;
   bool _bootstrapped = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   Timer? _refreshDebounce;
@@ -61,6 +64,7 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
     if (!_bootstrapped) {
       _bootstrapped = true;
       final personnelProvider = context.read<PersonnelProvider>();
+      _personnelProvider = personnelProvider;
       _ordersProvider = context.read<OrdersProvider>();
       _taskProvider = context.read<TaskProvider>();
       _service = AnalyticsService(
@@ -69,10 +73,16 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
         tasks: _taskProvider,
         permission: widget.permission,
       );
+      RealtimeSyncService.instance.registerRefreshHandler(
+        owner: this,
+        resource: RealtimeResource.analytics,
+        handler: _service.refresh,
+      );
       _service.loadMonth(AnalyticsMonth.current());
       // если пришла обновлённая база — перезагрузим аналитику.
       _taskProvider.addListener(_onProvidersChanged);
       _ordersProvider.addListener(_onProvidersChanged);
+      _personnelProvider.addListener(_onProvidersChanged);
     }
   }
 
@@ -92,8 +102,10 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
   void dispose() {
     _refreshDebounce?.cancel();
     if (_bootstrapped) {
+      RealtimeSyncService.instance.unregisterOwner(this);
       _taskProvider.removeListener(_onProvidersChanged);
       _ordersProvider.removeListener(_onProvidersChanged);
+      _personnelProvider.removeListener(_onProvidersChanged);
       _service.dispose();
     }
     super.dispose();
@@ -244,6 +256,10 @@ class _AnalyticsHomeScreenState extends State<AnalyticsHomeScreen> {
           permission: widget.permission,
         ),
         WorkScheduleScreen(
+          service: _service,
+          permission: widget.permission,
+        ),
+        StatusStaffAnalyticsScreen(
           service: _service,
           permission: widget.permission,
         ),

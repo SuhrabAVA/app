@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../orders/orders_provider.dart';
+import '../../personnel/employee_attendance_repository.dart';
 import '../../personnel/employee_status_model.dart';
 import '../../personnel/employee_status_repository.dart';
 import '../../personnel/personnel_provider.dart';
@@ -9,6 +10,7 @@ import '../models/analytics_day_comment.dart';
 import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
 import '../models/claim_model.dart';
+import '../models/day_shift_type.dart';
 import '../models/employee_status_period.dart';
 import '../models/salary_adjustments.dart';
 import '../models/salary_settings.dart';
@@ -21,6 +23,7 @@ import '../repositories/prod_stage_history_repository.dart';
 import '../repositories/salary_adjustments_repository.dart';
 import '../repositories/salary_settings_repository.dart';
 import '../repositories/work_schedule_repository.dart';
+import '../models/workplace_coefficient.dart';
 import '../repositories/workplace_coefficient_repository.dart';
 import 'analytics_permission_service.dart';
 
@@ -32,6 +35,11 @@ class AnalyticsState {
   /// не участвует в расчётах зарплаты/КПД.
   final List<AnalyticsDayComment> dayComments;
   final Map<String, double> coefficients;
+
+  /// Ставки помощников совместной работы: workplaceId -> ₸ за единицу.
+  /// Рабочее место без записи оплачивает помощника по ставке основного
+  /// исполнителя. Финансовые данные.
+  final Map<String, double> helperCoefficients;
   final SalarySettings settings;
   final Map<String, SalaryAdjustments> adjustments;
   final Map<String, Map<int, WorkScheduleEntry>> schedules;
@@ -49,9 +57,19 @@ class AnalyticsState {
   /// окладной части ЗП — грузится из таблицы employees (view её не отдаёт).
   final Map<String, double> employeeBaseSalaries;
   final List<ClaimModel> claims;
+
+  /// Отметки прихода/ухода: employeeId → день месяца → отметка. Только для
+  /// показа — начисление идёт по графику, отметка на него не влияет.
+  final Map<String, Map<int, EmployeeAttendanceDay>> attendance;
+
   /// Помесячные скорости рабочих мест за все месяцы до выбранного.
   /// Используется для расчёта КПД.
   final Map<String, List<double>> workplacePreviousSpeeds;
+
+  /// Тираж по рабочим местам за месяц: workplaceId -> сумма записей
+  /// «сделано на этапе». Это выработка САМОГО рабочего места, а не сумма
+  /// выработки людей: на станках каждому участнику записан полный тираж.
+  final Map<String, double> workplaceStageTotals;
   final bool loading;
   final Object? error;
 
@@ -60,6 +78,7 @@ class AnalyticsState {
     this.events = const [],
     this.dayComments = const [],
     this.coefficients = const {},
+    this.helperCoefficients = const {},
     SalarySettings? settings,
     this.adjustments = const {},
     this.schedules = const {},
@@ -70,16 +89,30 @@ class AnalyticsState {
     this.employeePayTypes = const {},
     this.employeeBaseSalaries = const {},
     this.claims = const [],
+    this.attendance = const {},
     this.workplacePreviousSpeeds = const {},
+    this.workplaceStageTotals = const {},
     this.loading = false,
     this.error,
   }) : settings = settings ?? SalarySettings.defaults(month.firstDay);
+
+  /// График сотрудника на месяц: день месяца → тип смены. Расчёт ЗП берёт
+  /// отсюда смены под статусом (уборщик/охранник заданий не выполняют, по
+  /// событиям им нечего засчитать).
+  Map<int, DayShiftType> scheduledShiftsFor(String employeeId) {
+    final byDay = schedules[employeeId];
+    if (byDay == null || byDay.isEmpty) return const {};
+    return {
+      for (final entry in byDay.entries) entry.key: entry.value.shiftType,
+    };
+  }
 
   AnalyticsState copyWith({
     AnalyticsMonth? month,
     List<AnalyticsEvent>? events,
     List<AnalyticsDayComment>? dayComments,
     Map<String, double>? coefficients,
+    Map<String, double>? helperCoefficients,
     SalarySettings? settings,
     Map<String, SalaryAdjustments>? adjustments,
     Map<String, Map<int, WorkScheduleEntry>>? schedules,
@@ -90,7 +123,9 @@ class AnalyticsState {
     Map<String, String?>? employeePayTypes,
     Map<String, double>? employeeBaseSalaries,
     List<ClaimModel>? claims,
+    Map<String, Map<int, EmployeeAttendanceDay>>? attendance,
     Map<String, List<double>>? workplacePreviousSpeeds,
+    Map<String, double>? workplaceStageTotals,
     bool? loading,
     Object? error,
     bool clearError = false,
@@ -100,6 +135,7 @@ class AnalyticsState {
       events: events ?? this.events,
       dayComments: dayComments ?? this.dayComments,
       coefficients: coefficients ?? this.coefficients,
+      helperCoefficients: helperCoefficients ?? this.helperCoefficients,
       settings: settings ?? this.settings,
       adjustments: adjustments ?? this.adjustments,
       schedules: schedules ?? this.schedules,
@@ -110,8 +146,10 @@ class AnalyticsState {
       employeePayTypes: employeePayTypes ?? this.employeePayTypes,
       employeeBaseSalaries: employeeBaseSalaries ?? this.employeeBaseSalaries,
       claims: claims ?? this.claims,
+      attendance: attendance ?? this.attendance,
       workplacePreviousSpeeds:
           workplacePreviousSpeeds ?? this.workplacePreviousSpeeds,
+      workplaceStageTotals: workplaceStageTotals ?? this.workplaceStageTotals,
       loading: loading ?? this.loading,
       error: clearError ? null : (error ?? this.error),
     );
@@ -136,6 +174,7 @@ class AnalyticsService extends ChangeNotifier {
     EmployeePaySettingsRepository? payRepo,
     EmployeeStatusPayRateRepository? statusRateRepo,
     ClaimsRepository? claimsRepo,
+    EmployeeAttendanceRepository? attendanceRepo,
     AnalyticsRepository? analyticsRepo,
     ProdStageHistoryRepository? historyRepo,
     AnalyticsPermissionService? permission,
@@ -149,6 +188,7 @@ class AnalyticsService extends ChangeNotifier {
         _payRepo = payRepo ?? EmployeePaySettingsRepository(),
         _statusRateRepo = statusRateRepo ?? EmployeeStatusPayRateRepository(),
         _claimsRepo = claimsRepo ?? ClaimsRepository(),
+        _attendanceRepo = attendanceRepo ?? EmployeeAttendanceRepository(),
         _analyticsRepo = analyticsRepo ?? AnalyticsRepository(),
         _historyRepo = historyRepo ?? ProdStageHistoryRepository(),
         _permission = permission;
@@ -165,6 +205,7 @@ class AnalyticsService extends ChangeNotifier {
   final EmployeePaySettingsRepository _payRepo;
   final EmployeeStatusPayRateRepository _statusRateRepo;
   final ClaimsRepository _claimsRepo;
+  final EmployeeAttendanceRepository _attendanceRepo;
   final AnalyticsRepository _analyticsRepo;
   final ProdStageHistoryRepository _historyRepo;
   final AnalyticsPermissionService? _permission;
@@ -232,6 +273,9 @@ class AnalyticsService extends ChangeNotifier {
       final coeffsFuture = loadFinance
           ? _coefficientsRepo.loadEffective(month.firstDay)
           : Future.value(const <String, double>{});
+      final helperCoefficientsFuture = loadFinance
+          ? _coefficientsRepo.loadEffectiveHelperCoefficients(month.firstDay)
+          : Future.value(const <String, double>{});
       final settingsFuture = loadFinance
           ? _salarySettingsRepo.loadEffective(month.firstDay)
           : Future.value(SalarySettings.defaults(month.firstDay));
@@ -255,6 +299,12 @@ class AnalyticsService extends ChangeNotifier {
           ? _statusRateRepo.loadEffective(month.firstDay)
           : Future.value(const <String, double>{});
       final claimsFuture = _claimsRepo.listForMonth(month.firstDay);
+      // Отметки прихода/ухода — только для показа: на начисление не влияют
+      // (смена под статусом оплачивается по графику). Таблица появилась
+      // отдельной миграцией, поэтому её отсутствие не должно валить месяц.
+      final attendanceFuture = _attendanceRepo
+          .loadForMonth(month.firstDay)
+          .catchError((_) => <String, Map<int, EmployeeAttendanceDay>>{});
 
       final allData = await allDataFuture;
       final coeffs = await coeffsFuture;
@@ -300,6 +350,7 @@ class AnalyticsService extends ChangeNotifier {
         events: events,
         dayComments: allData.dayComments,
         coefficients: coeffs,
+        helperCoefficients: await helperCoefficientsFuture,
         settings: settings,
         adjustments: adjustments,
         schedules: schedules,
@@ -310,7 +361,9 @@ class AnalyticsService extends ChangeNotifier {
         employeePayTypes: empPayTypes,
         employeeBaseSalaries: empBaseSalaries,
         claims: claims,
+        attendance: await attendanceFuture,
         workplacePreviousSpeeds: allData.prevSpeeds,
+        workplaceStageTotals: allData.workplaceStageTotals,
         loading: false,
       );
       _hasLoadedOnce = true;
@@ -373,6 +426,43 @@ class AnalyticsService extends ChangeNotifier {
     final next = Map<String, double>.from(_state.coefficients);
     next[workplaceId] = coefficient;
     _state = _state.copyWith(coefficients: next);
+    notifyListeners();
+  }
+
+  /// Ставка помощника совместной работы, ₸ за единицу.
+  ///
+  /// null (или пустое поле в форме) — платить помощнику по ставке основного
+  /// исполнителя.
+  ///
+  /// Коэффициент рабочего места сохраняем тем же upsert-ом: строка одна на
+  /// месяц, и передать только ставку помощника нельзя — второе поле
+  /// затёрлось бы значением по умолчанию.
+  Future<void> setWorkplaceHelperCoefficient({
+    required String workplaceId,
+    required double? helperCoefficient,
+    String? actorId,
+  }) async {
+    if (_permission?.canEdit != true) {
+      throw StateError('У вас нет прав на изменение финансовых данных.');
+    }
+    await _coefficientsRepo.upsert(
+      permission: _permission,
+      workplaceId: workplaceId,
+      coefficient: _state.coefficients[workplaceId] ?? 0,
+      setHelperCoefficient: true,
+      helperCoefficient: helperCoefficient,
+      month: _state.month.firstDay,
+      updatedBy: actorId,
+    );
+    final next = Map<String, double>.from(_state.helperCoefficients);
+    if (helperCoefficient == null ||
+        !helperCoefficient.isFinite ||
+        helperCoefficient < 0) {
+      next.remove(workplaceId);
+    } else {
+      next[workplaceId] = helperCoefficient;
+    }
+    _state = _state.copyWith(helperCoefficients: next);
     notifyListeners();
   }
 

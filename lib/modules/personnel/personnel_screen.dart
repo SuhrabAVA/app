@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'order_options_screen.dart';
 import 'personnel_provider.dart';
 import 'positions_screen.dart';
 import 'employees_screen.dart';
@@ -65,6 +66,15 @@ class PersonnelScreen extends StatelessWidget {
               page: const ProductTypesScreen(),
               color: const Color(0xFFA5D6A7),
               icon: Icons.category_outlined,
+            ),
+            // Рядом с типами продукта: опции заводятся на тип продукта, и
+            // техлид приходит сюда за тем же — настроить форму заказа.
+            _buildModuleCard(
+              context,
+              title: 'Редактор опций',
+              page: const OrderOptionsScreen(),
+              color: const Color(0xFFF48FB1),
+              icon: Icons.tune,
             ),
           ],
         ),

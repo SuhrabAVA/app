@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'personnel_list_controls.dart';
+import 'personnel_list_filters.dart';
 import 'personnel_provider.dart';
 import 'workplace_model.dart';
 import 'position_model.dart'; // <-- ВАЖНО: нужен для типов PositionModel
@@ -14,14 +16,41 @@ const Set<String> _protectedWorkplaceIds = {
   'b92a89d1-8e95-4c6d-b990-e308486e4bf1',
 };
 
-class WorkplacesScreen extends StatelessWidget {
+class WorkplacesScreen extends StatefulWidget {
   const WorkplacesScreen({super.key});
+
+  @override
+  State<WorkplacesScreen> createState() => _WorkplacesScreenState();
+}
+
+class _WorkplacesScreenState extends State<WorkplacesScreen> {
+  final WorkplaceListFilter _filter = WorkplaceListFilter();
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _reset() {
+    _search.clear();
+    setState(_filter.clear);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<PersonnelProvider>(
       builder: (context, pr, _) {
-        final items = pr.workplaces;
+        final items = pr.workplaces
+            .where((w) =>
+                _filter.matches(w, positionName: pr.positionNameById))
+            .toList();
+        final units = <String>{
+          for (final w in pr.workplaces)
+            if ((w.unit ?? '').trim().isNotEmpty) w.unit!.trim(),
+        }.toList()
+          ..sort();
         String modeLabel(WorkplaceExecutionMode mode) {
           switch (mode) {
             case WorkplaceExecutionMode.separate:
@@ -41,7 +70,66 @@ class WorkplacesScreen extends StatelessWidget {
               ),
             ],
           ),
-          body: ListView.separated(
+          body: Column(
+            children: [
+              PersonnelFilterBar(
+                controller: _search,
+                hint: 'Название, должность, ед. изм.…',
+                onQueryChanged: (v) => setState(() => _filter.query = v),
+                shown: items.length,
+                total: pr.workplaces.length,
+                isActive: _filter.isActive,
+                onReset: _reset,
+                filters: [
+                  MultiSelectFilterChip(
+                    label: 'Должность',
+                    options: [
+                      const FilterOption(kFilterNoneId, 'Без должностей'),
+                      for (final p in pr.positions) FilterOption(p.id, p.name),
+                    ],
+                    selected: _filter.positionIds,
+                    onChanged: (ids) => setState(() => _filter.positionIds
+                      ..clear()
+                      ..addAll(ids)),
+                  ),
+                  TriFilterChip(
+                    label: 'Станок',
+                    value: _filter.hasMachine,
+                    yes: 'да',
+                    no: 'нет',
+                    onChanged: (v) => setState(() => _filter.hasMachine = v),
+                  ),
+                  ChoiceFilterChip<WorkplaceExecutionMode?>(
+                    label: 'Режим',
+                    value: _filter.mode,
+                    choices: [
+                      (null, 'Все'),
+                      for (final mode in WorkplaceExecutionMode.values)
+                        (mode, modeLabel(mode)),
+                    ],
+                    onChanged: (v) => setState(() => _filter.mode = v),
+                  ),
+                  MultiSelectFilterChip(
+                    label: 'Ед. изм.',
+                    options: [
+                      const FilterOption(kFilterNoneId, 'Не задана'),
+                      for (final unit in units) FilterOption(unit, unit),
+                    ],
+                    selected: _filter.units,
+                    onChanged: (ids) => setState(() => _filter.units
+                      ..clear()
+                      ..addAll(ids)),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: items.isEmpty
+                    ? PersonnelEmptyResult(
+                        isFiltered: _filter.isActive,
+                        emptyText: 'Рабочих мест пока нет',
+                        onReset: _reset,
+                      )
+                    : ListView.separated(
             itemCount: items.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, i) {
@@ -63,7 +151,12 @@ class WorkplacesScreen extends StatelessWidget {
                     final priladka = w.hasMachine
                         ? '\nПриладка: ${w.priladkaCalcMode?.label ?? 'способ не выбран!'}'
                         : '';
-                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}$priladka\nРежим: ${modeLabel(w.executionMode)}";
+                    final split =
+                        w.executionMode == WorkplaceExecutionMode.joint &&
+                                !w.splitQuantityByTime
+                            ? '\nКоличество: полное каждому (станок)'
+                            : '';
+                    return "Должности: $roles\nЕд. изм.: $unit\nСтанок: ${w.hasMachine ? 'да' : 'нет'}$priladka\nРежим: ${modeLabel(w.executionMode)}$split";
                   }(),
                 ),
                 trailing: Row(
@@ -92,6 +185,9 @@ class WorkplacesScreen extends StatelessWidget {
                 ),
               );
             },
+                      ),
+              ),
+            ],
           ),
         );
       },
@@ -108,6 +204,7 @@ class WorkplacesScreen extends StatelessWidget {
     PriladkaCalcMode? priladkaMode;
     String? priladkaError;
     WorkplaceExecutionMode executionMode = WorkplaceExecutionMode.joint;
+    bool splitQuantityByTime = true;
 
     // Локально храним выбранные id должностей
     final Set<String> selectedPositions = <String>{};
@@ -204,6 +301,19 @@ class WorkplacesScreen extends StatelessWidget {
                       },
                       contentPadding: EdgeInsets.zero,
                     ),
+                    if (executionMode == WorkplaceExecutionMode.joint)
+                      CheckboxListTile(
+                        title: const Text('Делить количество по времени'),
+                        subtitle: const Text(
+                          'Снимите, если бригада обслуживает одну машину: '
+                          'тираж делает станок, и каждому участнику '
+                          'записывается полное количество.',
+                        ),
+                        value: splitQuantityByTime,
+                        onChanged: (val) =>
+                            setState(() => splitQuantityByTime = val ?? true),
+                        contentPadding: EdgeInsets.zero,
+                      ),
                     const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerLeft,
@@ -289,6 +399,7 @@ class WorkplacesScreen extends StatelessWidget {
           unit: unitC.text.trim(),
           executionMode: executionMode,
           priladkaCalcMode: hasMachine ? priladkaMode : null,
+          splitQuantityByTime: splitQuantityByTime,
         );
       } catch (e) {
         if (context.mounted) {
@@ -365,6 +476,7 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
   String? _priladkaError;
   late Set<String> _selectedPositions;
   late WorkplaceExecutionMode _executionMode;
+  bool _splitQuantityByTime = true;
 
   @override
   void initState() {
@@ -373,6 +485,7 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
     _priladkaMode = widget.workplace.priladkaCalcMode;
     _selectedPositions = {...widget.workplace.positionIds};
     _executionMode = widget.workplace.executionMode;
+    _splitQuantityByTime = widget.workplace.splitQuantityByTime;
     // Если есть описание в модели — можно раскомментировать:
     // _desc.text = widget.workplace.description;
   }
@@ -393,6 +506,7 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
           executionMode: _executionMode,
           setPriladkaCalcMode: true,
           priladkaCalcMode: _priladkaMode,
+          splitQuantityByTime: _splitQuantityByTime,
         );
     if (mounted) Navigator.pop(context);
   }
@@ -495,6 +609,19 @@ class _EditWorkplaceDialogState extends State<_EditWorkplaceDialog> {
               },
               contentPadding: EdgeInsets.zero,
             ),
+            if (_executionMode == WorkplaceExecutionMode.joint)
+              CheckboxListTile(
+                title: const Text('Делить количество по времени'),
+                subtitle: const Text(
+                  'Снимите, если бригада обслуживает одну машину: тираж '
+                  'делает станок, и каждому участнику записывается полное '
+                  'количество.',
+                ),
+                value: _splitQuantityByTime,
+                onChanged: (val) =>
+                    setState(() => _splitQuantityByTime = val ?? true),
+                contentPadding: EdgeInsets.zero,
+              ),
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../utils/kostanay_time.dart';
 import 'order_restart_history_repository.dart';
 
 /// Переключатель поколений заказа (оригинал и возобновления).
@@ -42,10 +43,14 @@ class OrderGenerationSwitcher extends StatelessWidget {
 
   static final DateFormat _dateFormat = DateFormat('dd.MM.yyyy');
 
+  static const _activeBackground = Color(0xFF2F6BFF);
+  static const _inactiveBackground = Color(0xFFF1F2F6);
+  static const _inactiveForeground = Color(0xFF4A4A57);
+
   /// Подпись кнопки поколения — дата создания того заказа.
   static String labelFor(OrderGenerationEntry entry) {
     final date = entry.displayDate;
-    if (date != null) return _dateFormat.format(date.toLocal());
+    if (date != null) return _dateFormat.format(toKostanayTime(date));
     return 'Заказ ${entry.generation + 1}';
   }
 
@@ -62,28 +67,6 @@ class OrderGenerationSwitcher extends StatelessWidget {
 
     final isHistorySelected = selectedOrderId != currentOrderId;
 
-    // Компактные chips: дефолтный ChoiceChip (высота ~48px с tap-target)
-    // выглядел непропорционально крупным рядом с текстом комментариев.
-    Widget chip({
-      required String label,
-      required bool selected,
-      required VoidCallback onTap,
-    }) {
-      return Padding(
-        padding: const EdgeInsets.only(right: 6),
-        child: ChoiceChip(
-          label: Text(label),
-          labelStyle: const TextStyle(fontSize: 12),
-          labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-          visualDensity: VisualDensity.compact,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          selected: selected,
-          onSelected: (_) => onTap(),
-        ),
-      );
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -91,13 +74,13 @@ class OrderGenerationSwitcher extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              chip(
+              OrderGenerationChip(
                 label: currentLabel,
                 selected: !isHistorySelected,
                 onTap: () => onSelected(currentOrderId),
               ),
               for (final entry in others)
-                chip(
+                OrderGenerationChip(
                   label: labelFor(entry),
                   selected: selectedOrderId == entry.id,
                   onTap: () => onSelected(entry.id),
@@ -116,6 +99,65 @@ class OrderGenerationSwitcher extends StatelessWidget {
           ),
         SizedBox(height: bottomSpacing),
       ],
+    );
+  }
+}
+
+/// Пилюля-вкладка поколения.
+///
+/// Своя, а не [ChoiceChip]: дефолтный чип тянул 48px tap-target и рисовал
+/// рамку выбора, из-за чего ряд поколений выглядел тяжелее самих
+/// комментариев. Активная — залитая, с галочкой; остальные — светло-серые,
+/// без рамок.
+class OrderGenerationChip extends StatelessWidget {
+  const OrderGenerationChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground =
+        selected ? Colors.white : OrderGenerationSwitcher._inactiveForeground;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: selected
+            ? OrderGenerationSwitcher._activeBackground
+            : OrderGenerationSwitcher._inactiveBackground,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selected) ...[
+                  Icon(Icons.check, size: 14, color: foreground),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.1,
+                    fontWeight: FontWeight.w600,
+                    color: foreground,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

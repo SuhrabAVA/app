@@ -95,7 +95,16 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
       final problem =
           list.where((e) => e.type == AnalyticsEventType.problem).toList();
 
-      final currentSpeed = AnalyticsCalculator.speedQtyPerMinute(list);
+      // Выработка САМОГО рабочего места — это тираж, зафиксированный на
+      // этапах, а не сумма выработки людей: в совместной работе на станке
+      // каждому участнику записан полный тираж, и сумма выросла бы во
+      // столько раз, сколько человек было в бригаде. Для месяцев без
+      // записей тиража (данные до перехода) остаётся прежний подсчёт.
+      final stageTotal = state.workplaceStageTotals[wp.id];
+      final qty = stageTotal ?? AnalyticsCalculator.totalQty(list);
+      final usefulMinutes = AnalyticsCalculator.usefulMinutes(list);
+      final currentSpeed =
+          usefulMinutes > 0 && qty.isFinite ? qty / usefulMinutes : 0.0;
       final kpd = KpdCalculator.compute(
         currentSpeed: currentSpeed,
         previousMonthsSpeeds: state.workplacePreviousSpeeds[wp.id] ?? const [],
@@ -111,8 +120,8 @@ class _WorkplacesTableState extends State<WorkplacesTable> {
       return _WpRow(
         workplace: wp,
         events: list,
-        qty: AnalyticsCalculator.totalQty(list),
-        usefulMinutes: AnalyticsCalculator.usefulMinutes(list),
+        qty: qty,
+        usefulMinutes: usefulMinutes,
         setupQty: AnalyticsCalculator.totalSetupQty(list),
         setupMinutes: AnalyticsCalculator.setupMinutes(list),
         pauseCount: pause.length,

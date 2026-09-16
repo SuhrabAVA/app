@@ -1,3 +1,6 @@
+import '../../../utils/kostanay_time.dart';
+import '../../tasks/quantity_status_service.dart';
+import '../../tasks/stage_quantity_records.dart';
 import '../../tasks/task_model.dart';
 import '../models/analytics_event.dart';
 
@@ -32,7 +35,28 @@ class _QtyRecord {
   final String key;
   final DateTime timestamp;
   final double qty;
-  const _QtyRecord({required this.key, required this.timestamp, required this.qty});
+
+  /// id, тип и текст исходного комментария — по ним техлид правит число.
+  final String commentId;
+  final String type;
+  final String rawText;
+
+  const _QtyRecord({
+    required this.key,
+    required this.timestamp,
+    required this.qty,
+    this.commentId = '',
+    this.type = '',
+    this.rawText = '',
+  });
+
+  AnalyticsQtySource toSource() => AnalyticsQtySource(
+        commentId: commentId,
+        type: type,
+        qty: qty,
+        timestamp: timestamp,
+        rawText: rawText,
+      );
 }
 
 class _MonthSpeedTotals {
@@ -56,12 +80,20 @@ class TaskAnalyticsMapper {
   // ── Public API ──────────────────────────────────────────────────────────
 
   /// Build AnalyticsEvents for [currentRows] (comments within the target month).
+  /// [helpersByTask] — taskId -> сотрудники, работавшие помощниками в
+  /// совместной работе. Количество после завершения этапа засчитывается всем
+  /// участникам целиком, поэтому роль нельзя вывести из самих событий: её
+  /// приносит вызывающий, который видит assignees и комментарии «joined».
   static List<AnalyticsEvent> buildEvents(
     List<TaskCommentRow> rows,
     DateTime monthStart,
     DateTime monthEnd,
-    DateTime reference,
-  ) {
+    DateTime reference, {
+    Map<String, Set<String>> helpersByTask = const {},
+  }) {
+    bool isHelper(String taskId, String employeeId) =>
+        helpersByTask[taskId]?.contains(employeeId) ?? false;
+
     final events = <AnalyticsEvent>[];
 
     final rawEventsByGroup = <String, List<TaskTimeEvent>>{};
@@ -70,6 +102,14 @@ class TaskAnalyticsMapper {
     final workplaceByTask = <String, String>{};
     final metaByTask = <String, TaskCommentRow>{};
     final seenQtyKeys = <String>{};
+    // Кто ПЕРВЫМ начал наладку на задаче (по самому раннему setup-интервалу,
+    // помощники не в счёт) и отложенные записи setup_done: приладка платится
+    // тому, кто наладку начал, а не тому, кто её закрыл после пересмены.
+    // Привязать можно только после прохода — интервалы приходят вперемешку.
+    final firstSetupStarterByTask = <String, String>{};
+    final firstSetupAtByTask = <String, DateTime>{};
+    final pendingSetupRows =
+        <({String taskId, String fallbackUserId, _QtyRecord record})>[];
 
     for (final row in rows) {
       final taskId = row.taskId;
@@ -104,10 +144,29 @@ class TaskAnalyticsMapper {
           workplaceByTask[taskId] = ev.workplaceId;
         }
 
+        // Самый ранний setup-интервал задачи задаёт «первого наладчика».
+        // События помощников (helperId задан) не считаются: приладку получает
+        // основной исполнитель, начавший наладку.
+        final isHelperEvent = (ev.helperId ?? '').trim().isNotEmpty;
+        if (ev.type == TaskTimeType.setup &&
+            !isHelperEvent &&
+            ev.subjectUserId.isNotEmpty) {
+          final prevAt = firstSetupAtByTask[taskId];
+          if (prevAt == null || normalized.$1.isBefore(prevAt)) {
+            firstSetupAtByTask[taskId] = normalized.$1;
+            firstSetupStarterByTask[taskId] = ev.subjectUserId;
+          }
+        }
+
         rawEventsByGroup
             .putIfAbsent('$taskId::${ev.subjectUserId}', () => [])
             .add(ev.copyWith(startTime: normalized.$1, endTime: normalized.$2));
       } else {
+        // Тираж этапа принадлежит рабочему месту, а не человеку: в выработку
+        // сотрудника он не идёт ни напрямую, ни минутным fallback-событием.
+        // Итог по рабочему месту считает buildWorkplaceStageTotals.
+        if (type == kStageTotalCommentType) continue;
+
         final qty = _parseQty(row.text);
         final qtyKey = _makeQtyKey(row, taskId);
         if (seenQtyKeys.contains(qtyKey)) continue; // dedup
@@ -119,20 +178,46 @@ class TaskAnalyticsMapper {
           // режиму рабочего места) имеет приоритет и принимает 0 — «размеры
           // совпали, переналадка не потребовалась». Старые комментарии без
           // маркера — легаси-поведение: 1 приладка.
+          //
+          // Владельца записи выбираем ПОСЛЕ прохода: setup_done пишется на
+          // того, кто закрыл наладку, а платить надо начавшему её (после
+          // пересмены это разные люди). Сам комментарий не трогаем — в ленте
+          // остаётся верно: «завершил» тот, кто завершил.
           final explicit = _parseSetupCount(row.text);
-          setupRecordsByGroup.putIfAbsent(groupKey, () => []).add(_QtyRecord(
+          pendingSetupRows.add((
+            taskId: taskId,
+            fallbackUserId: row.userId,
+            record: _QtyRecord(
               key: qtyKey,
               timestamp: row.timestamp,
-              qty: explicit ?? (qty > 0 ? qty : 1.0)));
+              qty: explicit ?? (qty > 0 ? qty : 1.0),
+            ),
+          ));
         } else if ((type == 'quantity_done' ||
                 type == 'quantity_team_total' ||
                 type == 'quantity_share') &&
             qty > 0) {
-          qtyRecordsByGroup
-              .putIfAbsent(groupKey, () => [])
-              .add(_QtyRecord(key: qtyKey, timestamp: row.timestamp, qty: qty));
+          qtyRecordsByGroup.putIfAbsent(groupKey, () => []).add(_QtyRecord(
+                key: qtyKey,
+                timestamp: row.timestamp,
+                qty: qty,
+                commentId: row.id,
+                type: type,
+                rawText: row.text,
+              ));
         }
       }
+    }
+
+    // Приладку относим первому наладчику задачи. Если setup-интервалов нет
+    // (легаси-данные) — остаётся прежнее поведение: автор комментария.
+    for (final pending in pendingSetupRows) {
+      final owner = firstSetupStarterByTask[pending.taskId] ??
+          (pending.fallbackUserId.isNotEmpty ? pending.fallbackUserId : '');
+      if (owner.isEmpty) continue;
+      setupRecordsByGroup
+          .putIfAbsent('${pending.taskId}::$owner', () => [])
+          .add(pending.record);
     }
 
     rawEventsByGroup.forEach((groupKey, list) {
@@ -151,21 +236,37 @@ class TaskAnalyticsMapper {
           setupRecordsByGroup[groupKey] ?? const <_QtyRecord>[])
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-      for (final raw in list) {
+      for (var i = 0; i < list.length; i++) {
+        final raw = list[i];
         final eventType = _mapType(raw.type);
         if (eventType == null) continue;
-        final effectiveEnd = raw.endTime ?? reference;
+        // Количество, введённое на завершении этапа или при удалении помощника,
+        // приходит меткой ЧУТЬ ПОЗЖЕ закрытия интервала (RPC пишет его после
+        // close — проверено на данных: интервал закрыт 11:28:14, а
+        // quantity_team_total записан 11:28:21). Поэтому «хвост» количества
+        // добираем до старта следующего интервала группы, а для последнего —
+        // до now. Так завершающее количество прикрепляется к своему интервалу,
+        // а не превращается в отдельное минутное fallback-событие. Через max
+        // окно никогда не сужается против прежнего поведения (raw.endTime).
+        final selfEnd = raw.endTime ?? reference;
+        final nextStart =
+            (i + 1 < list.length) ? list[i + 1].startTime : reference;
+        final consumeEnd = nextStart.isAfter(selfEnd) ? nextStart : selfEnd;
         double qty = 0, setupQty = 0;
 
+        final qtySources = <AnalyticsQtySource>[];
         if (eventType == AnalyticsEventType.work) {
           while (qtyQueue.isNotEmpty &&
-              !qtyQueue.first.timestamp.isAfter(effectiveEnd)) {
+              !qtyQueue.first.timestamp.isAfter(consumeEnd)) {
             final rec = qtyQueue.removeAt(0);
-            if (!rec.timestamp.isBefore(raw.startTime)) qty += rec.qty;
+            if (!rec.timestamp.isBefore(raw.startTime)) {
+              qty += rec.qty;
+              qtySources.add(rec.toSource());
+            }
           }
         } else if (eventType == AnalyticsEventType.setup) {
           while (setupQueue.isNotEmpty &&
-              !setupQueue.first.timestamp.isAfter(effectiveEnd)) {
+              !setupQueue.first.timestamp.isAfter(consumeEnd)) {
             final rec = setupQueue.removeAt(0);
             if (!rec.timestamp.isBefore(raw.startTime)) setupQty += rec.qty;
           }
@@ -174,8 +275,10 @@ class TaskAnalyticsMapper {
         events.add(AnalyticsEvent(
           id: raw.id,
           type: eventType,
-          startTime: raw.startTime.toLocal(),
-          endTime: raw.endTime?.toLocal(),
+          // Показ всегда в Костанайском времени (UTC+5), не в таймзоне
+          // устройства: иначе на ПК с зоной UTC+6 время «уезжало» на +1 час.
+          startTime: toKostanayTime(raw.startTime),
+          endTime: raw.endTime == null ? null : toKostanayTime(raw.endTime!),
           employeeId: employeeId,
           workplaceId: raw.workplaceId.isNotEmpty ? raw.workplaceId : workplaceId,
           taskId: taskId,
@@ -183,8 +286,10 @@ class TaskAnalyticsMapper {
           customer: meta?.customer,
           note: raw.note,
           qty: qty,
+          qtySources: qtySources,
           setupQty: setupQty,
           isActive: raw.endTime == null,
+          isHelper: isHelper(taskId, employeeId),
         ));
       }
 
@@ -196,8 +301,9 @@ class TaskAnalyticsMapper {
         events.add(AnalyticsEvent(
           id: 'fallback:$groupKey:${rec.timestamp.millisecondsSinceEpoch}',
           type: AnalyticsEventType.work,
-          startTime: rec.timestamp.toLocal(),
-          endTime: rec.timestamp.add(const Duration(minutes: 1)).toLocal(),
+          startTime: toKostanayTime(rec.timestamp),
+          endTime:
+              toKostanayTime(rec.timestamp.add(const Duration(minutes: 1))),
           employeeId: employeeId,
           workplaceId: workplaceId,
           taskId: taskId,
@@ -205,8 +311,10 @@ class TaskAnalyticsMapper {
           customer: meta?.customer,
           note: 'quantity_fallback',
           qty: rec.qty,
+          qtySources: [rec.toSource()],
           setupQty: 0,
           isActive: false,
+          isHelper: isHelper(taskId, employeeId),
         ));
       }
     });
@@ -226,8 +334,9 @@ class TaskAnalyticsMapper {
         events.add(AnalyticsEvent(
           id: 'fallback:$groupKey:${rec.timestamp.millisecondsSinceEpoch}',
           type: AnalyticsEventType.work,
-          startTime: rec.timestamp.toLocal(),
-          endTime: rec.timestamp.add(const Duration(minutes: 1)).toLocal(),
+          startTime: toKostanayTime(rec.timestamp),
+          endTime:
+              toKostanayTime(rec.timestamp.add(const Duration(minutes: 1))),
           employeeId: employeeId,
           workplaceId: workplaceId,
           taskId: taskId,
@@ -235,8 +344,10 @@ class TaskAnalyticsMapper {
           customer: meta?.customer,
           note: 'quantity_fallback',
           qty: rec.qty,
+          qtySources: [rec.toSource()],
           setupQty: 0,
           isActive: false,
+          isHelper: isHelper(taskId, employeeId),
         ));
       }
     });
@@ -255,6 +366,9 @@ class TaskAnalyticsMapper {
     final qtyRecordsByGroup = <String, List<_QtyRecord>>{};
     final workplaceByTask = <String, String>{};
     final metaByTask = <String, TaskCommentRow>{};
+    final seenStageTotals = <String>{};
+    final stageTotalRows =
+        <({String taskId, DateTime monthKey, double qty})>[];
 
     for (final row in rows) {
       final taskId = row.taskId;
@@ -283,6 +397,22 @@ class TaskAnalyticsMapper {
         rawEventsByGroup
             .putIfAbsent('$taskId::${ev.subjectUserId}', () => [])
             .add(ev.copyWith(startTime: start, endTime: end));
+      } else if (type == kStageTotalCommentType) {
+        // Тираж этапа — им меряется скорость месяца, ровно как у текущего
+        // месяца (`buildWorkplaceStageTotals`). Копим отдельно от личных
+        // записей: смешивать их нельзя, это разные величины.
+        if (!row.timestamp.isBefore(monthStart)) continue;
+        final qty = _parseQty(row.text);
+        if (qty <= 0) continue;
+        final qtyKey = _makeQtyKey(row, taskId);
+        if (!seenStageTotals.add(qtyKey)) continue;
+        final monthKey =
+            DateTime.utc(row.timestamp.year, row.timestamp.month);
+        stageTotalRows.add((
+          taskId: taskId,
+          monthKey: monthKey,
+          qty: qty,
+        ));
       } else if (type == 'quantity_done' ||
           type == 'quantity_team_total' ||
           type == 'quantity_share') {
@@ -293,6 +423,17 @@ class TaskAnalyticsMapper {
             .putIfAbsent('$taskId::${row.userId}', () => [])
             .add(_QtyRecord(key: qtyKey, timestamp: row.timestamp, qty: qty));
       }
+    }
+
+    // Рабочее место известно только после прохода по всем строкам.
+    final stageTotalsByWorkplaceMonth =
+        <String, Map<DateTime, double>>{};
+    for (final row in stageTotalRows) {
+      final workplaceId = workplaceByTask[row.taskId] ?? '';
+      if (workplaceId.isEmpty) continue;
+      final byMonth =
+          stageTotalsByWorkplaceMonth.putIfAbsent(workplaceId, () => {});
+      byMonth[row.monthKey] = (byMonth[row.monthKey] ?? 0) + row.qty;
     }
 
     final totalsByWorkplace = <String, Map<DateTime, _MonthSpeedTotals>>{};
@@ -334,7 +475,15 @@ class TaskAnalyticsMapper {
       for (final monthKey in monthKeys) {
         final totals = byMonth[monthKey]!;
         if (totals.minutes <= 0) continue;
-        final speed = totals.qty / totals.minutes;
+        // Тираж месяца, если он записан, иначе прежний подсчёт по личным
+        // количествам. Та же развилка, что у текущего месяца в
+        // `workplaces_table`: без неё КПД сравнивал бы тираж текущего месяца
+        // с суммой личных количеств прошлых, то есть с числом, раздутым во
+        // столько раз, сколько человек было в бригаде.
+        final stageTotal =
+            stageTotalsByWorkplaceMonth[workplaceId]?[monthKey];
+        final qtyForSpeed = stageTotal ?? totals.qty;
+        final speed = qtyForSpeed / totals.minutes;
         if (!speed.isFinite) continue;
         speedsByWorkplace.putIfAbsent(workplaceId, () => []).add(speed);
       }
@@ -346,11 +495,56 @@ class TaskAnalyticsMapper {
 
   static final _allCommentTypes = const {
     'time_event',
+    kStageTotalCommentType,
     'quantity_done',
     'quantity_team_total',
     'quantity_share',
     'setup_done',
   };
+
+  /// Тираж по рабочим местам за месяц: workplaceId -> сумма записей
+  /// `quantity_stage_total`.
+  ///
+  /// Считается ОТДЕЛЬНО от событий сотрудников и намеренно не попадает в
+  /// [AnalyticsEvent.qty]: тираж этапа принадлежит рабочему месту, а не
+  /// человеку. Сумма персональных долей для этой цели не годится — на
+  /// станках каждому пишется полное количество, и итог вырос бы во столько
+  /// раз, сколько людей было в бригаде.
+  static Map<String, double> buildWorkplaceStageTotals(
+    List<TaskCommentRow> rows,
+    DateTime monthStart,
+    DateTime monthEnd,
+  ) {
+    final totals = <String, double>{};
+    final seen = <String>{};
+    final workplaceByTask = <String, String>{};
+
+    for (final row in rows) {
+      if (row.taskId.isEmpty) continue;
+      workplaceByTask.putIfAbsent(
+        row.taskId,
+        () => row.capturedByWorkplaceId?.isNotEmpty == true
+            ? row.capturedByWorkplaceId!
+            : row.stageId,
+      );
+    }
+
+    for (final row in rows) {
+      if (row.type != kStageTotalCommentType) continue;
+      if (row.timestamp.isBefore(monthStart) ||
+          !row.timestamp.isBefore(monthEnd)) {
+        continue;
+      }
+      final key = _makeQtyKey(row, row.taskId);
+      if (!seen.add(key)) continue;
+      final qty = _parseQty(row.text);
+      if (qty <= 0) continue;
+      final workplaceId = workplaceByTask[row.taskId] ?? row.stageId;
+      if (workplaceId.isEmpty) continue;
+      totals[workplaceId] = (totals[workplaceId] ?? 0) + qty;
+    }
+    return totals;
+  }
 
   static bool isAnalyticsCommentType(String type) =>
       _allCommentTypes.contains(type);
@@ -419,12 +613,21 @@ class TaskAnalyticsMapper {
     return double.tryParse(match.group(1)!.replaceAll(',', '.'));
   }
 
-  static double _parseQty(String raw) {
-    final normalized = raw.replaceAll(',', '.').trim();
-    final match = RegExp(r'-?[0-9]+(?:\.[0-9]+)?').firstMatch(normalized);
-    if (match != null) return double.tryParse(match.group(0)!) ?? 0;
-    return double.tryParse(normalized) ?? 0;
-  }
+  /// Количество из записи — в тех единицах, в которых считает рабочее место.
+  ///
+  /// Упаковка — единственное место, где сотруднику засчитывается не то, что
+  /// он ввёл: вводит он ШТУКИ (иначе точное фактическое количество заказа не
+  /// собрать при некратном тираже), а засчитываются УПАКОВКИ, посчитанные из
+  /// штук с округлением вверх — поле `packs` записи (см. packCountForPieces).
+  /// Подменять их штуками нельзя: коэффициент рабочего места задан за
+  /// упаковку и умножается прямо на это число в сдельной части ЗП
+  /// (SalaryCalculator), поэтому смена единицы разом умножила бы выплату на
+  /// фасовку. У старых записей поля `packs` нет — там `actual` уже в
+  /// упаковках, и разбор остаётся прежним.
+  /// Разбор количества делегирован в `stage_quantity_records`: тот же парсер
+  /// читает записи в производстве. Две копии рано или поздно разошлись бы, и
+  /// аналитика с карточкой этапа показали бы разные числа.
+  static double _parseQty(String raw) => parseStageQuantityText(raw);
 
   static (DateTime, DateTime?)? _normalizeTimeRange(
       DateTime start, DateTime? end, DateTime reference) {

@@ -71,27 +71,4 @@ class DocDB {
   Future<void> deleteById(String id) async {
     await s.from('documents').delete().eq('id', id);
   }
-
-  /// Realtime-подписка на изменения в таблице, фильтруем по collection в колбэке.
-  RealtimeChannel listenCollection(
-    String collection,
-    void Function(Map<String, dynamic> row, PostgresChangeEvent event) onEvent,
-  ) {
-    return s
-        .channel('docs:$collection')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'documents',
-          // Без filter: ловим все события по таблице и фильтруем вручную
-          callback: (payload) {
-            final row =
-                (payload.newRecord ?? payload.oldRecord ?? {}) as Map<String, dynamic>;
-            if (row['collection'] == collection) {
-              onEvent(row, payload.eventType);
-            }
-          },
-        )
-        .subscribe();
-  }
 }

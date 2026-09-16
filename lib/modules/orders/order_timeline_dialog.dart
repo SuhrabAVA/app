@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+
+import '../tasks/workspace_design.dart';
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../utils/kostanay_time.dart';
 import '../personnel/personnel_provider.dart';
 import '../tasks/task_comment_presentation.dart';
 import '../tasks/task_model.dart';
-import 'id_format.dart';
 import 'order_comment_attachment.dart';
 import 'order_comments_repository.dart';
 import 'order_comments_timeline.dart';
@@ -15,35 +17,43 @@ import 'order_model.dart';
 import 'order_restart_history_repository.dart';
 import 'restart_history_service.dart';
 
-/// Диалог, показывающий ход выполнения заказа на основе комментариев этапов.
+/// Лента истории заказа: события самого заказа, комментарии этапов и чат.
 ///
-/// Если передан [loadEvents], сверху появляется переключатель поколений
-/// цепочки возобновлений: каждая кнопка открывает историю именно того
-/// поколения (только просмотр), ничего не сливается в один список.
-class OrderTimelineDialog extends StatefulWidget {
+/// Раньше жила только внутри отдельного диалога «часов» в списке заказов.
+/// Диалог убран — история встроена в карточку заказа, поэтому лента вынесена
+/// в самостоятельный виджет и не тянет за собой оформление окна.
+///
+/// [showGenerationSwitcher] включает переключатель поколений цепочки
+/// возобновлений: каждая кнопка открывает историю именно того поколения
+/// (только просмотр), ничего не сливается в один список.
+class OrderHistoryView extends StatefulWidget {
   final OrderModel order;
-  final List<Map<String, dynamic>> events;
 
   /// Загрузка истории произвольного поколения (обычно
-  /// `OrdersProvider.fetchOrderHistory`). Если null — переключатель поколений
-  /// не показывается, поведение прежнее.
-  final Future<List<Map<String, dynamic>>> Function(String orderId)? loadEvents;
+  /// `OrdersProvider.fetchOrderHistory`).
+  final Future<List<Map<String, dynamic>>> Function(String orderId) loadEvents;
+
+  /// Уже загруженные события текущего заказа — чтобы не ждать запрос дважды.
+  final List<Map<String, dynamic>>? initialEvents;
 
   final RestartHistoryService? historyService;
 
-  const OrderTimelineDialog({
+  final bool showGenerationSwitcher;
+
+  const OrderHistoryView({
     super.key,
     required this.order,
-    required this.events,
-    this.loadEvents,
+    required this.loadEvents,
+    this.initialEvents,
     this.historyService,
+    this.showGenerationSwitcher = true,
   });
 
   @override
-  State<OrderTimelineDialog> createState() => _OrderTimelineDialogState();
+  State<OrderHistoryView> createState() => _OrderHistoryViewState();
 }
 
-class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
+class _OrderHistoryViewState extends State<OrderHistoryView> {
   List<OrderGenerationEntry> _generations = const [];
   bool _loadingGenerations = false;
   late String _selectedOrderId;
@@ -87,8 +97,11 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
   void initState() {
     super.initState();
     _selectedOrderId = widget.order.id;
-    _eventsByOrderId[widget.order.id] = Future.value(widget.events);
-    if (widget.loadEvents != null) {
+    final seeded = widget.initialEvents;
+    if (seeded != null) {
+      _eventsByOrderId[widget.order.id] = Future.value(seeded);
+    }
+    if (widget.showGenerationSwitcher) {
       _loadGenerations();
     }
   }
@@ -108,7 +121,7 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
   Future<List<Map<String, dynamic>>> _eventsFor(String orderId) {
     return _eventsByOrderId.putIfAbsent(
       orderId,
-      () => widget.loadEvents!(orderId),
+      () => widget.loadEvents(orderId),
     );
   }
 
@@ -135,7 +148,9 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
   String _formatTimestamp(dynamic value) {
     final dt = _parseTimestamp(value);
     if (dt == null) return '';
-    return _dateTimeFormat.format(dt);
+    // Метки хранятся в UTC — показываем в Костанайском времени (UTC+5),
+    // независимо от таймзоны устройства.
+    return _dateTimeFormat.format(toKostanayTime(dt));
   }
 
   String _describeOrderEvent(String type, String description) {
@@ -219,6 +234,9 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
 
   String _userDisplay(PersonnelProvider provider, String? userId) {
     if (userId == null || userId.isEmpty) return '';
+    // Техлид сотрудником не является: у него служебный id, и без этой ветки в
+    // истории вместо автора стояло бы слово «tech_leader».
+    if (userId == 'tech_leader') return 'Технический лидер';
     try {
       final emp = provider.employees.firstWhere((e) => e.id == userId);
       final full = '${emp.firstName} ${emp.lastName}'.trim();
@@ -284,26 +302,157 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
         ? (description.isEmpty ? 'Сообщение в чате' : description)
         : _describeOrderEvent(eventType, description);
 
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      title: Text(
-        titleText,
-        style: const TextStyle(fontWeight: FontWeight.w600),
-      ),
-      subtitle: Column(
+    // Тот же язык, что у комментариев: цветной значок слева, шапка
+    // «время • автор» серым, дальше содержание. Прежний ListTile выбивался из
+    // ленты — заголовок, серая строка и абзац без единого акцента.
+    final accent = _eventAccent(eventType, isChat: isChat);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (meta.isNotEmpty) ...[
-            Text(meta,
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.black54)),
-            const SizedBox(height: 2),
-          ],
-          Text(bodyText),
+          Container(
+            width: 28,
+            height: 28,
+            margin: const EdgeInsets.only(top: 2),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: accent.background,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(accent.icon, size: 15, color: accent.color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (meta.isNotEmpty)
+                  Text(
+                    meta,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      color: WorkspaceColors.mutedForeground,
+                    ),
+                  ),
+                const SizedBox(height: 1),
+                Text(
+                  titleText,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: accent.color,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                // Каждая правка своей строкой: «Тираж: 1000 → 2000» читается
+                // как таблица, а слитый абзац — нет.
+                for (final line in const LineSplitter().convert(bodyText))
+                  if (line.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 1),
+                      child: _eventBodyLine(line.trim()),
+                    ),
+              ],
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  /// Строка описания: подпись поля приглушена, значения — обычным текстом.
+  Widget _eventBodyLine(String line) {
+    final separator = line.indexOf(': ');
+    if (separator <= 0) {
+      return Text(
+        line,
+        style: const TextStyle(
+          fontSize: 13,
+          height: 1.35,
+          color: WorkspaceColors.foreground,
+        ),
+      );
+    }
+    return Text.rich(
+      TextSpan(children: [
+        TextSpan(
+          text: '${line.substring(0, separator + 1)} ',
+          style: const TextStyle(
+            fontSize: 13,
+            height: 1.35,
+            color: WorkspaceColors.mutedForeground,
+          ),
+        ),
+        TextSpan(
+          text: line.substring(separator + 2),
+          style: const TextStyle(
+            fontSize: 13,
+            height: 1.35,
+            color: WorkspaceColors.foreground,
+          ),
+        ),
+      ]),
+    );
+  }
+
+  /// Значок и цвет события. Ключ — тип, который пишет провайдер.
+  _EventAccent _eventAccent(String type, {required bool isChat}) {
+    if (isChat) {
+      return const _EventAccent(
+        Icons.chat_bubble_outline,
+        WorkspaceColors.blue,
+        WorkspaceColors.blueBackground,
+      );
+    }
+    switch (type.toLowerCase()) {
+      case 'создание':
+      case 'created':
+        return const _EventAccent(
+          Icons.add_circle_outline,
+          WorkspaceColors.success,
+          WorkspaceColors.successBackground,
+        );
+      case 'изменение заказа':
+        return const _EventAccent(
+          Icons.edit_outlined,
+          WorkspaceColors.setup,
+          WorkspaceColors.setupBackground,
+        );
+      case 'изменение бумаги':
+      case 'резерв бумаги':
+        return const _EventAccent(
+          Icons.description_outlined,
+          WorkspaceColors.blue,
+          WorkspaceColors.blueBackground,
+        );
+      case 'изменение опций':
+        return const _EventAccent(
+          Icons.tune,
+          WorkspaceColors.warning,
+          WorkspaceColors.warningBackground,
+        );
+      case 'отгрузка':
+      case 'shipment':
+        return const _EventAccent(
+          Icons.local_shipping_outlined,
+          WorkspaceColors.success,
+          WorkspaceColors.successBackground,
+        );
+      case 'удаление':
+      case 'deleted':
+        return const _EventAccent(
+          Icons.delete_outline,
+          WorkspaceColors.danger,
+          WorkspaceColors.secondaryBackground,
+        );
+      default:
+        return const _EventAccent(
+          Icons.history,
+          WorkspaceColors.mutedForeground,
+          WorkspaceColors.secondaryBackground,
+        );
+    }
   }
 
   Widget _buildEventsList(BuildContext context, PersonnelProvider personnel) {
@@ -330,12 +479,18 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
         if (sortedEvents.isEmpty) {
           return const Text('Комментариев по выполнению пока нет');
         }
-        return ListView.separated(
-          shrinkWrap: true,
-          itemCount: sortedEvents.length,
-          separatorBuilder: (_, __) => const Divider(height: 16),
-          itemBuilder: (_, index) =>
-              _buildEventTile(context, sortedEvents[index], personnel),
+        // Прокрутку ленты делает этот список, поэтому shrinkWrap здесь не
+        // нужен: он растягивал ListView на всю высоту содержимого, скроллить
+        // становилось нечего, а жест внешнему скроллу уже не доставался.
+        return Scrollbar(
+          thumbVisibility: true,
+          child: ListView.separated(
+            padding: const EdgeInsets.only(bottom: 12),
+            itemCount: sortedEvents.length,
+            separatorBuilder: (_, __) => const Divider(height: 16),
+            itemBuilder: (_, index) =>
+                _buildEventTile(context, sortedEvents[index], personnel),
+          ),
         );
       },
     );
@@ -345,39 +500,35 @@ class _OrderTimelineDialogState extends State<OrderTimelineDialog> {
   Widget build(BuildContext context) {
     final personnel = context.watch<PersonnelProvider>();
 
-    final displayId = orderDisplayId(widget.order);
-    final orderTitle = displayId == '—' ? widget.order.id : displayId;
-
-    return AlertDialog(
-      title: Text('Выполнение заказа $orderTitle'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (widget.loadEvents != null)
-              OrderGenerationSwitcher(
-                generations: _generations,
-                currentOrderId: widget.order.id,
-                selectedOrderId: _selectedOrderId,
-                loading: _loadingGenerations,
-                currentLabel: 'Этот заказ',
-                // Диалог истории и так только для просмотра.
-                readOnlyNotice: null,
-                onSelected: (orderId) =>
-                    setState(() => _selectedOrderId = orderId),
-              ),
-            Flexible(child: _buildEventsList(context, personnel)),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Закрыть'),
-        ),
+    // Виджету нужна ограниченная высота: ленту прокручивает собственный
+    // список, а не внешний скролл. Единственное место использования —
+    // панель комментариев в карточке МУПЗ — высоту задаёт.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.showGenerationSwitcher)
+          OrderGenerationSwitcher(
+            generations: _generations,
+            currentOrderId: widget.order.id,
+            selectedOrderId: _selectedOrderId,
+            loading: _loadingGenerations,
+            currentLabel: 'Этот заказ',
+            // История и так только для просмотра.
+            readOnlyNotice: null,
+            onSelected: (orderId) =>
+                setState(() => _selectedOrderId = orderId),
+          ),
+        Expanded(child: _buildEventsList(context, personnel)),
       ],
     );
   }
+}
+
+/// Значок события истории: иконка, её цвет и заливка кружка.
+class _EventAccent {
+  const _EventAccent(this.icon, this.color, this.background);
+
+  final IconData icon;
+  final Color color;
+  final Color background;
 }

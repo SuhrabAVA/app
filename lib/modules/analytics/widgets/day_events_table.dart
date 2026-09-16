@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../../utils/kostanay_time.dart';
 import '../../personnel/workplace_model.dart';
 import '../../tasks/task_comment_presentation.dart';
 import '../calculators/timeline_calculator.dart';
 import '../models/analytics_day_comment.dart';
 import '../models/analytics_event.dart';
+import 'quantity_edit_dialog.dart';
 import '../utils/analytics_colors.dart';
 import '../utils/format_utils.dart';
 
@@ -25,6 +27,8 @@ class DayEventsTable extends StatefulWidget {
     this.comments = const [],
     this.employeeNameOf,
     this.now,
+    this.canEditQuantity = false,
+    this.onQuantityEdited,
   });
 
   final List<AnalyticsEvent> events;
@@ -36,6 +40,13 @@ class DayEventsTable extends StatefulWidget {
   final List<AnalyticsDayComment> comments;
   final String Function(String employeeId)? employeeNameOf;
   final DateTime? now;
+
+  /// Может ли текущий пользователь исправлять количество (техлид).
+  /// Ячейка «Количество» становится нажимаемой только тогда.
+  final bool canEditQuantity;
+
+  /// Вызывается после успешной правки: экран перезагружает месяц.
+  final VoidCallback? onQuantityEdited;
 
   @override
   State<DayEventsTable> createState() => _DayEventsTableState();
@@ -49,7 +60,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
 
   @override
   Widget build(BuildContext context) {
-    final reference = widget.now ?? DateTime.now();
+    final reference = widget.now ?? nowInKostanay();
     final groups = _buildGroups(reference);
 
     if (groups.isEmpty) {
@@ -229,7 +240,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
         ),
         _cell(row.timeLabel),
         _cell(row.durationLabel),
-        _cell(row.quantityLabel),
+        _quantityCell(row),
         _cell(row.description, maxLines: 3, isMuted: true),
       ],
     );
@@ -354,6 +365,58 @@ class _DayEventsTableState extends State<DayEventsTable> {
         ),
       );
 
+  /// Ячейка количества: у техлида это кнопка правки, у остальных — текст.
+  ///
+  /// Нажимаемой становится только строка с исходными записями: у простоя и
+  /// пауз править нечего.
+  Widget _quantityCell(_DayRow row) {
+    final event = row.event;
+    final canEdit = widget.canEditQuantity &&
+        event != null &&
+        event.qtySources.any((s) => s.commentId.trim().isNotEmpty);
+    if (!canEdit) return _cell(row.quantityLabel);
+
+    return InkWell(
+      onTap: () async {
+        final saved = await showQuantityEditDialog(
+          context: context,
+          event: event,
+          workplaceUnit: _unitFor(event.workplaceId),
+        );
+        if (saved) widget.onQuantityEdited?.call();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                row.quantityLabel,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AnalyticsColors.text,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.edit_outlined, size: 13, color: AnalyticsColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _unitFor(String workplaceId) {
+    final wp = widget.workplaceById[workplaceId];
+    final unit = wp?.unit?.trim() ?? '';
+    return unit.isNotEmpty ? unit : 'ед.';
+  }
+
   Widget _cell(String value, {int maxLines = 2, bool isMuted = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -415,6 +478,7 @@ class _DayEventsTableState extends State<DayEventsTable> {
             durationMinutes: duration,
             durationLabel: AnalyticsFormat.onlyMinutes(duration),
             quantityLabel: qtyStr,
+            event: e,
             description: description,
             note: e.note,
             badgeColor: _colorFor(e.type),
@@ -493,11 +557,10 @@ class _DayEventsTableState extends State<DayEventsTable> {
   }
 
   String _hhmm(DateTime dt) {
-    // Метки комментариев приходят UTC-флагированными из
-    // TaskAnalyticsMapper.parseCommentTimestamp (isUtc: true). Без toLocal()
-    // события дня показывались на 5 часов назад (Алматы = UTC+5).
-    final local = dt.toLocal();
-    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    // Время событий и дневных комментариев уже приведено к Костанайскому
+    // (UTC+5) в TaskAnalyticsMapper / AnalyticsRepository. Читаем компоненты
+    // напрямую — повторный toLocal() снова сдвинул бы на таймзону устройства.
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
 
@@ -551,6 +614,10 @@ class _DayRow {
   final int durationMinutes;
   final String durationLabel;
   final String quantityLabel;
+
+  /// Событие строки — нужно, чтобы открыть правку количества по его
+  /// исходным записям. null у строк-заглушек (например, простоя).
+  final AnalyticsEvent? event;
   final String description;
   final String? note;
   final Color badgeColor;
@@ -563,6 +630,7 @@ class _DayRow {
     required this.durationMinutes,
     required this.durationLabel,
     required this.quantityLabel,
+    this.event,
     required this.description,
     required this.note,
     required this.badgeColor,

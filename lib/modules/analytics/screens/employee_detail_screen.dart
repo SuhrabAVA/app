@@ -182,7 +182,10 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
     int daySelected,
     AnalyticsState state,
   ) {
-    final midnight = DateTime(state.month.year, state.month.month, daySelected);
+    // Полночь — в Костанайской рамке (UTC+5), как и c.timestamp: иначе
+    // позиция маркера уезжала бы на таймзону устройства.
+    final midnight =
+        DateTime.utc(state.month.year, state.month.month, daySelected);
     String hhmm(DateTime dt) =>
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return [
@@ -297,6 +300,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
         final breakdown = SalaryCalculator.compute(
           events: allEvents,
           coefficients: state.coefficients,
+      helperCoefficients: state.helperCoefficients,
           settings: state.settings,
           adjustments: adj,
           halfShiftMinutes: AnalyticsConstants.halfShiftMinutes,
@@ -307,6 +311,7 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
           statusPayRates: state.statusPayRates,
           statusNames: {for (final s in state.statuses) s.id: s.name},
           setupPrices: widget.service.workplaceSetupPrices,
+          scheduledShifts: state.scheduledShiftsFor(_employeeId),
         );
 
         final usefulMin = AnalyticsCalculator.usefulMinutes(allEvents);
@@ -393,6 +398,10 @@ class _EmployeeDetailScreenState extends State<EmployeeDetailScreen> {
                 timeline: timeline,
                 workplaceById: {for (final w in personnel.workplaces) w.id: w},
                 comments: dayComments,
+                // Правка количества — только техлиду: она меняет и аналитику
+                // сотрудника, и комментарии заказа, и фактическое количество.
+                canEditQuantity: widget.permission.canEdit,
+                onQuantityEdited: () => widget.service.refresh(),
                 employeeNameOf: (id) {
                   try {
                     final e = personnel.employees.firstWhere((x) => x.id == id);

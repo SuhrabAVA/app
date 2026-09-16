@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../orders/product_type_settings.dart';
+import 'personnel_list_controls.dart';
+import 'personnel_list_filters.dart';
 import 'product_type_settings_shell.dart';
 
 /// Список типов продукта с точкой входа в редактор настроек.
@@ -26,10 +28,24 @@ class _ProductTypesScreenState extends State<ProductTypesScreen> {
   /// product_type_id → есть неопубликованный черновик настроек.
   Set<String> _typesWithDraft = <String>{};
 
+  final ProductTypeListFilter _filter = ProductTypeListFilter();
+  final TextEditingController _search = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _reset() {
+    _search.clear();
+    setState(_filter.clear);
   }
 
   Future<void> _load() async {
@@ -114,12 +130,49 @@ class _ProductTypesScreenState extends State<ProductTypesScreen> {
       return const Center(child: Text('Типы продукта не заведены.'));
     }
 
+    final types = _types
+        .where((t) =>
+            _filter.matches(t, draft: _typesWithDraft.contains(t.id)))
+        .toList();
+
+    return Column(
+      children: [
+        PersonnelFilterBar(
+          controller: _search,
+          hint: 'Название типа продукта…',
+          onQueryChanged: (v) => setState(() => _filter.query = v),
+          shown: types.length,
+          total: _types.length,
+          isActive: _filter.isActive,
+          onReset: _reset,
+          filters: [
+            TriFilterChip(
+              label: 'Черновик',
+              value: _filter.hasDraft,
+              onChanged: (v) => setState(() => _filter.hasDraft = v),
+            ),
+          ],
+        ),
+        Expanded(
+          child: types.isEmpty
+              ? PersonnelEmptyResult(
+                  isFiltered: _filter.isActive,
+                  emptyText: 'Типы продукта не заведены.',
+                  onReset: _reset,
+                )
+              : _buildList(types),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildList(List<ProductTypeRef> types) {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _types.length,
+      itemCount: types.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (_, i) {
-        final type = _types[i];
+        final type = types[i];
         final hasDraft = _typesWithDraft.contains(type.id);
         return ListTile(
           title: Text(type.title),

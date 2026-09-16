@@ -163,3 +163,141 @@ String _ownerSuffix(RouteStage subStage, ProductTypeRoute route) {
   }
   return '';
 }
+
+/// Удаление этапа целиком.
+///
+/// Здесь перечисления нет намеренно: с этапом уходят только его собственные
+/// рабочие места, условие и под-этапы его вариантов — то есть ровно то, что
+/// техлид видит в этой же строке и её панели. Списком предупреждаем там, где
+/// уносится НЕВИДИМОЕ: удаление варианта и переход one_of → all.
+Future<bool> confirmStageDeletion(
+  BuildContext context, {
+  required RouteStage stage,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Удалить этап «${stage.title}»?'),
+      content: const Text(
+        'Вместе с этапом удалятся его рабочие места, условия и под-этапы '
+        'вариантов.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Удалить'),
+        ),
+      ],
+    ),
+  );
+  return confirmed == true;
+}
+
+/// Удаление под-этапа варианта.
+///
+/// Под-этап — лист графа: своих под-этапов у него нет по CHECK на level, и
+/// каскадом уходят только его рабочие места и условие. Перечисляем именно их,
+/// чтобы окно подтверждения не было пустым ритуалом.
+Future<bool> confirmSubStageDeletion(
+  BuildContext context, {
+  required RouteStage subStage,
+  required String variantTitle,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Удалить под-этап «${subStage.title}»?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Под-этап варианта «$variantTitle». Вместе с ним удалятся:'),
+          const SizedBox(height: 8),
+          Text('•  рабочих мест: ${subStage.workplaces.length}'),
+          if (subStage.conditions.isNotEmpty) const Text('•  условие этапа'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Удалить под-этап'),
+        ),
+      ],
+    ),
+  );
+  return confirmed == true;
+}
+
+/// Создание этапа-группы: подпись и первое рабочее место.
+///
+/// Первое РМ обязательно сразу: этап без рабочих мест не проходит
+/// validate_product_type_config (stage_without_workplaces), и создавать
+/// заведомо невалидную строку, чтобы техлид её потом чинил, незачем.
+Future<({String title, String workplaceId})?> promptGroupStage(
+  BuildContext context,
+) async {
+  final titleController = TextEditingController();
+  String? workplaceId;
+
+  return showDialog<({String title, String workplaceId})?>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setInner) => AlertDialog(
+        title: const Text('Новый этап-группа'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Несколько рабочих мест на одном шаге: все попадут в план '
+              'строками с общим номером шага.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                labelText: 'Подпись этапа',
+                hintText: 'например, Склейка дна',
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: workplaceId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Первое рабочее место'),
+              items: [
+                for (final w in ProductTypeSettings.instance.workplaces)
+                  DropdownMenuItem<String>(value: w.id, child: Text(w.name)),
+              ],
+              onChanged: (value) => setInner(() => workplaceId = value),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: titleController.text.trim().isEmpty || workplaceId == null
+                ? null
+                : () => Navigator.pop(ctx, (
+                      title: titleController.text.trim(),
+                      workplaceId: workplaceId!,
+                    )),
+            child: const Text('Создать'),
+          ),
+        ],
+      ),
+    ),
+  );
+}

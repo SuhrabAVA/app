@@ -11,12 +11,16 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'warehouse_provider.dart';
 import '../../services/doc_db.dart';
+import 'paint_stock_rules.dart';
+import 'paper_multi_filter.dart';
 import 'tmc_model.dart';
 import '../../utils/auth_helper.dart';
 import 'add_entry_dialog.dart';
 import '../../utils/kostanay_time.dart';
 import 'deleted_records_repository.dart';
+import 'paint_deletion_rules.dart';
 import 'deleted_records_screen.dart';
+import 'stock_journal_repository.dart';
 import 'warehouse_logs_repository.dart';
 import 'warehouse_table_styles.dart';
 
@@ -45,47 +49,41 @@ class TypeTableTabsScreen extends StatefulWidget {
 class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     with TickerProviderStateMixin {
   // === Paper: multi-filter ===
-  final Set<String> _fltPaperNames = {};
-  final Set<String> _fltPaperFormats = {};
-  final Set<String> _fltPaperGrammages = {};
-  List<String> _allPaperNames = [];
-  List<String> _allPaperFormats = [];
-  List<String> _allPaperGrammages = [];
+  // Один фильтр на все четыре вкладки (paper_multi_filter.dart).
+  final PaperMultiFilter _paperFilter = PaperMultiFilter();
 
-  void _rebuildPaperFilterDicts() {
-    final names = <String>{};
-    final formats = <String>{};
-    final grammages = <String>{};
-    for (final p in _items) {
-      if (p.description.trim().isNotEmpty) names.add(p.description.trim());
-      final f = (p.format ?? '').trim();
-      final g = (p.grammage ?? '').trim();
-      if (f.isNotEmpty) formats.add(f);
-      if (g.isNotEmpty) grammages.add(g);
-    }
-    _allPaperNames = names.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    _allPaperFormats = formats.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    _allPaperGrammages = grammages.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  bool get _isPaper => _normalizeType(widget.type) == 'paper';
+
+  /// Варианты для чипов: из позиций склада И из журналов — у списаний
+  /// удалённого рулона карточки в «Списке» уже нет, а отфильтровать их
+  /// по-прежнему нужно.
+  PaperFilterOptions _paperFilterOptions() {
+    return PaperFilterOptions.from([
+      for (final p in _items)
+        (name: p.description, format: p.format, grammage: p.grammage),
+      for (final r in [..._writeoffs, ..._arrivals, ..._inventories])
+        (name: r.description, format: r.format, grammage: r.grammage),
+    ]);
   }
 
   List<TmcModel> _applyPaperMultiFilters(List<TmcModel> src) {
-    return src.where((e) {
-      final okN =
-          _fltPaperNames.isEmpty || _fltPaperNames.contains(e.description);
-      final okF = _fltPaperFormats.isEmpty ||
-          ((e.format ?? '').isNotEmpty && _fltPaperFormats.contains(e.format));
-      final okG = _fltPaperGrammages.isEmpty ||
-          ((e.grammage ?? '').isNotEmpty &&
-              _fltPaperGrammages.contains(e.grammage));
-      return okN && okF && okG;
-    }).toList();
+    if (!_isPaper || !_paperFilter.isActive) return src;
+    return src
+        .where((e) => _paperFilter.matches(
+            name: e.description, format: e.format, grammage: e.grammage))
+        .toList();
+  }
+
+  List<_LogRow> _applyPaperMultiFiltersToLogs(List<_LogRow> src) {
+    if (!_isPaper || !_paperFilter.isActive) return src;
+    return src
+        .where((e) => _paperFilter.matches(
+            name: e.description, format: e.format, grammage: e.grammage))
+        .toList();
   }
 
   void _openPaperFilters() {
-    _rebuildPaperFilterDicts();
+    final options = _paperFilterOptions();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -126,22 +124,21 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    chips(_allPaperNames, _fltPaperNames, 'Названия'),
+                    chips(options.names, _paperFilter.names, 'Названия'),
                     const SizedBox(height: 12),
-                    chips(_allPaperFormats, _fltPaperFormats, 'Форматы'),
+                    chips(options.formats, _paperFilter.formats, 'Форматы'),
                     const SizedBox(height: 12),
-                    chips(_allPaperGrammages, _fltPaperGrammages, 'Грамажи'),
+                    chips(options.grammages, _paperFilter.grammages,
+                        'Граммажи'),
                     const SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         TextButton(
                           onPressed: () {
-                            setSt(() {
-                              _fltPaperNames.clear();
-                              _fltPaperFormats.clear();
-                              _fltPaperGrammages.clear();
-                            });
+                            setSt(_paperFilter.clear);
+                            // Сброс сразу виден в таблице, без «Применить».
+                            setState(() {});
                           },
                           child: const Text('Сбросить'),
                         ),
@@ -162,7 +159,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           ),
         );
       },
-    );
+      // Чипы меняют фильтр сразу. Закрыли лист мимо «Применить» (тап по фону,
+      // «назад») — таблица всё равно должна показать выбранное.
+    ).whenComplete(() {
+      if (mounted) setState(() {});
+    });
   }
 
   late final TabController _tabs;
@@ -364,7 +365,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       if (hint != null) hint,
       if (typeKey == 'stationery') 'warehouse_stationery_writeoffs',
       if (typeKey == 'pens') 'warehouse_pens_writeoffs',
-      if (typeKey == 'paper') 'paper_writeoffs',
       if (typeKey == 'paint') 'paints_writeoffs',
       if (typeKey == 'material') 'materials_writeoffs',
     ];
@@ -562,6 +562,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     }
   }
 
+  String _emptyLogText(String base) =>
+      _paperFilter.isActive || _query.trim().isNotEmpty
+          ? '$base по фильтру и поиску'
+          : base;
+
   /// Подпись + кнопка догрузки под таблицей лога, когда история не вся.
   Widget _logsFooter(WarehouseLogAction action, int loadedCount) {
     return Padding(
@@ -574,7 +579,12 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         children: [
           Expanded(
             child: Text(
-              'Показаны последние $loadedCount записей — история загружена не вся.',
+              // С фильтром или поиском пустая таблица не значит «таких записей
+              // нет»: ищем только в загруженной части журнала.
+              _paperFilter.isActive || _query.trim().isNotEmpty
+                  ? 'Поиск и фильтр — среди последних $loadedCount записей. '
+                      'Более старые не загружены: нажмите «Показать ещё».'
+                  : 'Показаны последние $loadedCount записей — история загружена не вся.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
           ),
@@ -932,8 +942,11 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     try {
       final rows = await Supabase.instance.client
           .from('orders')
-          .select(
-              'id, assignment_id, title, name, order_name, product_name, new_form_no, data, product')
+          // Только существующие колонки. У orders нет title/name/order_name/data:
+          // прежний запрос всегда падал, и в журнале склада вместо заказа
+          // оставался его uuid.
+          .select('id, assignment_id, product_name, new_form_no, '
+              'product_name_j:product->>name, product_title_j:product->>title')
           .inFilter('id', orderIds.toList(growable: false));
       if (rows is! List) return labels;
       for (final raw in rows.whereType<Map>()) {
@@ -941,37 +954,14 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         final orderId = (row['id'] ?? '').toString().trim();
         if (orderId.isEmpty) continue;
 
-        final dataRaw = row['data'];
-        final data = dataRaw is Map
-            ? Map<String, dynamic>.from(dataRaw as Map)
-            : <String, dynamic>{};
-        final topProductRaw = row['product'];
-        final topProduct = topProductRaw is Map
-            ? Map<String, dynamic>.from(topProductRaw as Map)
-            : <String, dynamic>{};
-        final dataProductRaw = data['product'];
-        final dataProduct = dataProductRaw is Map
-            ? Map<String, dynamic>.from(dataProductRaw as Map)
-            : <String, dynamic>{};
-
         final label = _firstOrderLabel([
           row['assignment_id'],
-          row['title'],
-          row['order_name'],
           row['product_name'],
-          data['title'],
-          data['assignment_id'],
-          data['order_name'],
-          data['product_name'],
-          topProduct['name'],
-          topProduct['title'],
-          dataProduct['name'],
-          dataProduct['title'],
-          row['name'],
-          data['name'],
+          row['product_name_j'],
+          row['product_title_j'],
         ]);
 
-        final formNo = _firstOrderLabel([row['new_form_no'], data['new_form_no']]);
+        final formNo = _firstOrderLabel([row['new_form_no']]);
         if (label.isNotEmpty) {
           labels[orderId] = label;
         } else if (formNo.isNotEmpty) {
@@ -1654,7 +1644,21 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: (typeKey == 'paper')
                     ? IconButton(
-                        icon: const Icon(Icons.filter_list),
+                        tooltip: _paperFilter.isActive
+                            ? 'Фильтр: выбрано ${_paperFilter.selectedCount}'
+                            : 'Фильтр по названию, формату, граммажу',
+                        icon: Badge(
+                          isLabelVisible: _paperFilter.isActive,
+                          label: Text('${_paperFilter.selectedCount}'),
+                          child: Icon(
+                            _paperFilter.isActive
+                                ? Icons.filter_alt
+                                : Icons.filter_list,
+                            color: _paperFilter.isActive
+                                ? Theme.of(context).colorScheme.primary
+                                : null,
+                          ),
+                        ),
                         onPressed: _openPaperFilters)
                     : null,
                 border:
@@ -1693,7 +1697,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         : List<TmcModel>.from(_items);
     final items = _applyFilterItems(base);
     final showReserveColumns = _isReserveAwareType(typeKey);
-    final showAvailableColumn = typeKey == 'paint';
     final showFormat =
         items.any((i) => i.format != null && i.format!.trim().isNotEmpty);
     final showGrammage =
@@ -1707,7 +1710,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
       showGrammage: showGrammage,
       showWeight: showWeight,
       showNote: showNote,
-      showAvailableColumn: showAvailableColumn,
       showReserveColumns: showReserveColumns,
     );
     final double totalWidth =
@@ -1828,7 +1830,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     required bool showGrammage,
     required bool showWeight,
     required bool showNote,
-    required bool showAvailableColumn,
     required bool showReserveColumns,
   }) {
     String fmtNum(num? v, {int frac = 2}) =>
@@ -1857,17 +1858,22 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         flex: true,
         cell: (item, i) => Text(item.description),
       ),
+      // «Кол-во» — это доступное, а не складское.
+      //
+      // Складская цифра включает метры и граммы, обещанные конкретным заказам.
+      // Сотрудник, который видит её, планирует по количеству, которого у него
+      // нет, и списывает чужой резерв. Что именно занято — рядом, в колонке
+      // «В резерве»: она кликабельна и показывает, какие заказы держат.
       _TmcColumnSpec(
         label: 'Кол-во',
         width: 90,
-        cell: (item, i) => typeKey == 'paper'
+        cell: (item, i) => showReserveColumns
             ? FutureBuilder<double>(
                 future: _reservedQtyForItem(item, typeKey),
                 builder: (context, snapshot) {
-                  final reserved = snapshot.data ?? 0;
+                  final reserved = snapshot.data ?? item.reservedQty;
                   final available = item.quantity - reserved;
-                  final safeAvailable = available < 0 ? 0 : available;
-                  return Text(fmtNum(safeAvailable, frac: 2));
+                  return Text(fmtNum(available < 0 ? 0 : available, frac: 2));
                 },
               )
             : Text(fmtNum(item.quantity, frac: 2)),
@@ -1927,14 +1933,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               onPressed: () => _deleteItem(item)),
         ]),
       ),
-      if (showAvailableColumn)
-        _TmcColumnSpec(
-          label: 'Доступно',
-          width: 90,
-          cell: (item, i) => Text(
-            fmtNum(item.availableQty < 0 ? 0 : item.availableQty, frac: 2),
-          ),
-        ),
+      // Отдельная колонка «Доступно» у красок убрана: ровно ту же цифру
+      // теперь показывает «Кол-во», и две одинаковые рядом только путали.
       if (showReserveColumns)
         _TmcColumnSpec(
           label: 'В резерве',
@@ -2018,7 +2018,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// --- Вкладка «Списания» ---
   Widget _writeoffsTab() {
-    final rows = _applyFilterLogs(List<_LogRow>.from(_writeoffs));
+    final rows = _applyFilterLogs(
+        _applyPaperMultiFiltersToLogs(List<_LogRow>.from(_writeoffs)));
     final showFmt = rows.any((r) => (r.format ?? '').trim().isNotEmpty);
     final showGram = rows.any((r) => (r.grammage ?? '').trim().isNotEmpty);
 
@@ -2044,7 +2045,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Center(heightFactor: 4, child: Text('Нет списаний')),
+                  Center(
+                      heightFactor: 4,
+                      child: Text(_emptyLogText('Нет списаний'))),
                   if (_woHasMore)
                     _logsFooter(WarehouseLogAction.writeoff, _writeoffs.length),
                 ],
@@ -2104,7 +2107,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// --- Вкладка «Приходы» ---
   Widget _arrivalsTab() {
-    final rows = _applyFilterLogs(List<_LogRow>.from(_arrivals));
+    final rows = _applyFilterLogs(
+        _applyPaperMultiFiltersToLogs(List<_LogRow>.from(_arrivals)));
     final showFmt = rows.any((r) => (r.format ?? '').trim().isNotEmpty);
     final showGram = rows.any((r) => (r.grammage ?? '').trim().isNotEmpty);
 
@@ -2130,7 +2134,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Center(heightFactor: 4, child: Text('Нет приходов')),
+                  Center(
+                      heightFactor: 4,
+                      child: Text(_emptyLogText('Нет приходов'))),
                   if (_arrHasMore)
                     _logsFooter(WarehouseLogAction.arrival, _arrivals.length),
                 ],
@@ -2190,7 +2196,8 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
 
   /// --- Вкладка «Инвентаризация» ---
   Widget _inventoryTab() {
-    final rows = _applyFilterLogs(List<_LogRow>.from(_inventories));
+    final rows = _applyFilterLogs(
+        _applyPaperMultiFiltersToLogs(List<_LogRow>.from(_inventories)));
     final showFmt = rows.any((r) => (r.format ?? '').trim().isNotEmpty);
     final showGram = rows.any((r) => (r.grammage ?? '').trim().isNotEmpty);
 
@@ -2215,8 +2222,9 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Center(
-                      heightFactor: 4, child: Text('Нет инвентаризаций')),
+                  Center(
+                      heightFactor: 4,
+                      child: Text(_emptyLogText('Нет инвентаризаций'))),
                   if (_invHasMore)
                     _logsFooter(
                         WarehouseLogAction.inventory, _inventories.length),
@@ -2630,13 +2638,55 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     await _loadAll();
   }
 
+  /// Неприкасаемый запас краски в единицах карточки склада.
+  ///
+  /// Краски заводятся в граммах ('гр'), но у старых записей встречается 'кг',
+  /// и вычитать 5000 из килограммов означало бы запретить списание вообще.
+  double _untouchablePaintInItemUnit(TmcModel item) {
+    final unit = item.unit.toLowerCase();
+    if (unit.contains('кг') || unit.contains('kg')) {
+      return kUntouchablePaintGrams / 1000;
+    }
+    return kUntouchablePaintGrams;
+  }
+
   Future<void> _writeOff(TmcModel item) async {
     final qtyC = TextEditingController();
     final commentC = TextEditingController();
     final unitSuffix = item.unit.trim().isEmpty ? '' : ' (${item.unit})';
-    final isPaper = _normalizeType(widget.type) == 'paper';
+    final typeKeyForLimit = _normalizeType(widget.type);
+    final isPaper = typeKeyForLimit == 'paper';
     final paperDetails = isPaper ? _paperDetails(item) : '';
     final titleSuffix = paperDetails.isEmpty ? '' : ' ($paperDetails)';
+
+    // Резерв — обещание конкретным заказам, и списать его нельзя: заказ,
+    // который уже показан менеджеру как обеспеченный, иначе остаётся без
+    // материала на середине маршрута. Поэтому потолок ручного списания —
+    // доступное, а не складское.
+    final bool reserveAware = _isReserveAwareType(typeKeyForLimit);
+    final double reservedQty =
+        reserveAware ? await _reservedQtyForItem(item, typeKeyForLimit) : 0;
+
+    // Неприкасаемый запас краски: 5 кг, которые склад держит всегда. Ручное
+    // списание их НЕ запирает — запас закрыт только для брони под заказ.
+    // Кладовщик распоряжается физической банкой: её отдают в другой цех,
+    // проливают, списывают по негодности, и запрет тут не сохранял краску, а
+    // расходился с тем, что уже случилось на полке.
+    // Из потолка запас поэтому не вычитается — он только показывается, чтобы
+    // было видно, с какого числа расходуется неснижаемый остаток.
+    final bool isPaintLimit = typeKeyForLimit == 'paint';
+    final double untouchableQty =
+        isPaintLimit ? _untouchablePaintInItemUnit(item) : 0;
+
+    final double rawAvailable = item.quantity - reservedQty;
+    final double availableQty = rawAvailable < 0 ? 0 : rawAvailable;
+    // Сколько можно взять, не трогая неснижаемый остаток.
+    final double rawFreeAboveReserve = availableQty - untouchableQty;
+    final double freeAboveReserve =
+        rawFreeAboveReserve < 0 ? 0 : rawFreeAboveReserve;
+    final String limitUnit = _reserveUnitLabel(item, typeKeyForLimit);
+    if (!mounted) return;
+
     final result = await showDialog<double?>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2648,7 +2698,19 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
               controller: qtyC,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(labelText: 'Количество$unitSuffix'),
+              decoration: InputDecoration(
+                labelText: 'Количество$unitSuffix',
+                helperMaxLines: 2,
+                helperText: reserveAware
+                    ? 'Доступно: ${availableQty.toStringAsFixed(2)} $limitUnit'
+                        '${reservedQty > 0 ? ' (в резерве заказов: '
+                            '${reservedQty.toStringAsFixed(2)} $limitUnit)' : ''}'
+                        '${untouchableQty > 0 ? ' • без запаса: '
+                            '${freeAboveReserve.toStringAsFixed(2)} $limitUnit, '
+                            'дальше идёт неснижаемый остаток '
+                            '${untouchableQty.toStringAsFixed(2)} $limitUnit' : ''}'
+                    : null,
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -2674,8 +2736,28 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     );
 
     if (result == null || result <= 0) return;
-    // Не позволяем списать больше, чем есть (для канцтоваров/ручек)
     final __t = _normalizeType(widget.type);
+    // Бумага и краска: потолок — доступное. Погрешность нужна, потому что
+    // метраж хранится double и приходит из разных полей формы.
+    if (reserveAware && result > availableQty + 1e-6) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              reservedQty > 0
+                  ? 'Нельзя списать больше доступного: '
+                      '${availableQty.toStringAsFixed(2)} $limitUnit. '
+                      'Ещё ${reservedQty.toStringAsFixed(2)} $limitUnit '
+                      'забронировано заказами.'
+                  : 'Нельзя списать больше, чем на складе: '
+                      '${availableQty.toStringAsFixed(2)} $limitUnit.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    // Не позволяем списать больше, чем есть (для канцтоваров/ручек)
     if ((__t == 'stationery' || __t == 'pens') && result > item.quantity) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2705,10 +2787,21 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         );
       }
       if (mounted) {
+        // Про просевший запас говорим сразу: списание разрешено, но остаток
+        // ниже неснижаемого — это уже долг перед следующим заказом, и узнать
+        // о нём из карточки склада негде.
+        final double left = item.quantity - result;
+        final bool reserveBroken = untouchableQty > 0 && left < untouchableQty;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content:
-                  Text('Списано ${result.toStringAsFixed(2)} ${item.unit}')),
+            content: Text(
+              'Списано ${result.toStringAsFixed(2)} ${item.unit}'
+              '${reserveBroken ? '. Неснижаемый остаток просел: осталось '
+                  '${(left < 0 ? 0 : left).toStringAsFixed(2)} ${item.unit} '
+                  'из ${untouchableQty.toStringAsFixed(2)} — пополните склад' : ''}',
+            ),
+            duration: Duration(seconds: reserveBroken ? 6 : 4),
+          ),
         );
       }
     } catch (e) {
@@ -2952,6 +3045,18 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
           newQty: factual,
           note: noteC.text.trim().isEmpty ? null : noteC.text.trim(),
         );
+      } else if (isJournaledStockType(typeKey)) {
+        // Бумага и краска: одна запись журнала с остатком до пересчёта.
+        // Раньше здесь остаток переписывался update-ом, а строка
+        // инвентаризации вставлялась отдельно и без прежнего остатка —
+        // отменить такую инвентаризацию было нечем.
+        final provider = Provider.of<WarehouseProvider>(context, listen: false);
+        await provider.recordStockCount(
+          itemId: item.id,
+          type: typeKey,
+          quantity: factual,
+          note: noteC.text.trim().isEmpty ? null : noteC.text.trim(),
+        );
       } else {
         final provider = Provider.of<WarehouseProvider>(context, listen: false);
         await provider.updateTmcQuantity(id: item.id, newQuantity: factual);
@@ -3115,6 +3220,32 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
     if (ok == true) {
       final typeKey = _normalizeType(widget.type);
       final entityType = _deletedEntityTypes[typeKey] ?? 'tmc_generic';
+      final messenger = ScaffoldMessenger.of(context);
+
+      // Сначала удаление, журнал — после успеха.
+      //
+      // Раньше запись «удалено» писалась ПЕРВОЙ и при отказе базы не
+      // откатывалась: три неудачные попытки удалить занятую бронью краску
+      // оставили в «Удалённых записях» три записи о карточке, которая
+      // осталась на складе. Журнал врал.
+      try {
+        await Provider.of<WarehouseProvider>(context, listen: false)
+            .deleteTmc(item.id, type: widget.type);
+      } on PaintInUseException catch (e) {
+        // Отказ законный: краску держит заказ. Раньше он уходил в лог
+        // необработанным исключением, а на экране не менялось ничего.
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+        return;
+      } catch (e) {
+        // Отказ по внешнему ключу переводим на человеческий: сырой
+        // PostgrestException не говорит кладовщику ни причины, ни действия.
+        final blocked = warehouseDeleteBlockedMessage(e.toString());
+        messenger.showSnackBar(
+          SnackBar(content: Text(blocked ?? 'Не удалось удалить: $e')),
+        );
+        return;
+      }
+
       await DeletedRecordsRepository.archive(
         entityType: entityType,
         entityId: item.id,
@@ -3122,8 +3253,6 @@ class _TypeTableTabsScreenState extends State<TypeTableTabsScreen>
         reason: reasonC.text.trim().isEmpty ? null : reasonC.text.trim(),
         extra: {'type_key': typeKey},
       );
-      await Provider.of<WarehouseProvider>(context, listen: false)
-          .deleteTmc(item.id, type: widget.type);
       await _loadAll();
     }
   }

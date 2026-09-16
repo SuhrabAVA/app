@@ -410,5 +410,200 @@ void main() {
           .fold<double>(0, (s, e) => s + e.setupQty);
       expect(setupQty, 1);
     });
+
+    test('Test 11 — упаковка: засчитываются упаковки, а не введённые штуки',
+        () {
+      // Упаковщик ввёл 12030 шт при фасовке 100 — это 121 упаковка.
+      // Коэффициент рабочего места задан за упаковку, поэтому в аналитику
+      // (и в сдельную часть ЗП) должны уйти 121, а не 12030.
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'production',
+            start: _ts(10),
+            end: _ts(11)),
+        TaskCommentRow(
+          id: 'q1',
+          type: 'quantity_done',
+          text: jsonEncode({
+            'actual': 12030.0,
+            'unit': 'шт',
+            'expected': 12000.0,
+            'quantity_status': 'warning',
+            'display': '12030 шт · 121 уп',
+            'packs': 121,
+            'pack_size': 100.0,
+          }),
+          userId: 'empA',
+          timestamp: _ts(11),
+          taskId: 't1',
+          stageId: 'stage1',
+          orderId: 'order1',
+        ),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      final total = events
+          .where((e) =>
+              e.type == AnalyticsEventType.work && e.employeeId == 'empA')
+          .fold<double>(0, (s, e) => s + e.qty);
+      expect(total, 121);
+    });
+
+    test('Test 12 — запись без packs считается как прежде', () {
+      // Легаси-упаковка: число уже в упаковках, поля packs нет.
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'production',
+            start: _ts(10),
+            end: _ts(11)),
+        TaskCommentRow(
+          id: 'q1',
+          type: 'quantity_done',
+          text: jsonEncode({
+            'actual': 120.0,
+            'unit': 'пачка',
+            'expected': 120.0,
+            'quantity_status': 'success',
+            'display': '120 пачка',
+          }),
+          userId: 'empA',
+          timestamp: _ts(11),
+          taskId: 't1',
+          stageId: 'stage1',
+          orderId: 'order1',
+        ),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      final total = events
+          .where((e) =>
+              e.type == AnalyticsEventType.work && e.employeeId == 'empA')
+          .fold<double>(0, (s, e) => s + e.qty);
+      expect(total, 120);
+    });
+
+    test('Test 13 — количество сразу ПОСЛЕ закрытия интервала прикрепляется '
+        'к нему, без отдельного fallback-события', () {
+      // Регресс: на завершении RPC пишет quantity_team_total меткой чуть позже
+      // закрытия time_event (проверено на данных: интервал закрыт 11:28:14,
+      // количество записано 11:28:21). Раньше оно выпадало в фантомный
+      // минутный fallback — теперь добирается «хвостом» к своему интервалу.
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'production',
+            start: _ts(10),
+            end: _ts(11)),
+        _qtyRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'q1',
+            qtyType: 'quantity_team_total',
+            qty: 25000,
+            ts: _ts(11).add(const Duration(seconds: 7))),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      final work =
+          events.where((e) => e.type == AnalyticsEventType.work).toList();
+      expect(work.length, 1,
+          reason: 'одно рабочее событие, без отдельного fallback');
+      expect(work.single.qty, 25000);
+      expect(work.single.note, isNot('quantity_fallback'));
+    });
+
+    test('Test 14 — приладка достаётся тому, кто НАЧАЛ наладку, а не тому, '
+        'кто закрыл её после пересмены', () {
+      // Пересмена во время наладки: empA начал наладку и ушёл со смены,
+      // empB продолжил и завершил — setup_done пишется на empB. Платить
+      // приладку надо empA (он начал), см. правило заказчика.
+      final rows = [
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'evA',
+            evType: 'setup',
+            start: _ts(9),
+            end: _ts(10)),
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empB',
+            id: 'evB',
+            evType: 'setup',
+            start: _ts(10),
+            end: _ts(11)),
+        TaskCommentRow(
+          id: 's1',
+          type: 'setup_done',
+          text: 'Завершил(а) настройку станка (приладок: 3)',
+          userId: 'empB', // закрыл наладку сменщик
+          timestamp: _ts(11),
+          taskId: 't1',
+          stageId: 'stage1',
+          orderId: 'order1',
+        ),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      double setupOf(String employeeId) => events
+          .where((e) =>
+              e.type == AnalyticsEventType.setup && e.employeeId == employeeId)
+          .fold<double>(0, (s, e) => s + e.setupQty);
+
+      expect(setupOf('empA'), 3,
+          reason: 'приладку получает начавший наладку empA');
+      expect(setupOf('empB'), 0,
+          reason: 'сменщик, закрывший наладку, приладку не получает');
+    });
+
+    test('Test 15 — без setup-интервалов приладка остаётся у автора '
+        'setup_done (легаси-данные)', () {
+      final rows = [
+        TaskCommentRow(
+          id: 's1',
+          type: 'setup_done',
+          text: 'Завершил(а) настройку станка',
+          userId: 'empA',
+          timestamp: _ts(10),
+          taskId: 't1',
+          stageId: 'stage1',
+          orderId: 'order1',
+        ),
+        _timeEventRow(
+            taskId: 't1',
+            userId: 'empA',
+            id: 'ev1',
+            evType: 'production',
+            start: _ts(10),
+            end: _ts(11)),
+      ];
+
+      final events = TaskAnalyticsMapper.buildEvents(
+          rows, _monthStart, _monthEnd, _reference);
+
+      // Наладочного интервала нет — событие setup не строится, но и падать
+      // ничего не должно: поведение остаётся прежним.
+      expect(
+        events.where((e) => e.type == AnalyticsEventType.setup),
+        isEmpty,
+      );
+      expect(events.where((e) => e.type == AnalyticsEventType.work).length, 1);
+    });
   });
 }

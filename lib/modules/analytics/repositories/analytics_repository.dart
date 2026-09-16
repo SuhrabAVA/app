@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../utils/kostanay_time.dart';
 import '../models/analytics_day_comment.dart';
 import '../models/analytics_event.dart';
 import '../models/analytics_month.dart';
@@ -49,6 +50,7 @@ class AnalyticsRepository {
         List<AnalyticsEvent> events,
         Map<String, List<double>> prevSpeeds,
         List<AnalyticsDayComment> dayComments,
+        Map<String, double> workplaceStageTotals,
       })> loadAllMonthData(AnalyticsMonth month, {DateTime? now}) async {
     final monthStart = month.firstDay.toUtc();
     final monthEnd = month.nextMonthFirstDay.toUtc();
@@ -66,6 +68,8 @@ class AnalyticsRepository {
     final prevRows = <TaskCommentRow>[];
     // Отображаемые события дня (не участвуют в расчётах зарплаты/КПД).
     final dayComments = <AnalyticsDayComment>[];
+    // taskId -> сотрудники, работавшие помощниками (не основной исполнитель).
+    final helpersByTask = <String, Set<String>>{};
 
     for (int i = 0; i < taskMaps.length; i++) {
       // Yield to the event loop every 100 tasks to keep the UI responsive.
@@ -79,9 +83,31 @@ class AnalyticsRepository {
           (task['captured_by_workplace_id'] ?? '').toString().trim();
       final customer = customersByOrderId[orderId];
 
+      // Основной исполнитель совместной работы — первый в assignees: это же
+      // правило действует в рабочем пространстве («Добавлять помощников
+      // может только основной исполнитель»).
+      final assignees = <String>[
+        if (task['assignees'] is List)
+          for (final raw in (task['assignees'] as List))
+            if ((raw?.toString().trim() ?? '').isNotEmpty) raw.toString().trim(),
+      ];
+      final mainOperator = assignees.isEmpty ? '' : assignees.first;
+
       for (final comment
           in TaskAnalyticsMapper.normalizeComments(task['comments'])) {
         final type = (comment['type'] ?? '').toString();
+
+        // Помощников собираем по ВСЕМ комментариям задачи, а не только за
+        // выбранный месяц: этап мог начаться в прошлом месяце, и тогда
+        // «joined» в текущую выборку не попал бы, а помощник считался бы
+        // основным исполнителем и получил полную ставку.
+        if (type == 'joined' && mainOperator.isNotEmpty) {
+          final userId =
+              (comment['userId'] ?? comment['user_id'] ?? '').toString().trim();
+          if (userId.isNotEmpty && userId != mainOperator) {
+            helpersByTask.putIfAbsent(taskId, () => <String>{}).add(userId);
+          }
+        }
         final timestamp =
             TaskAnalyticsMapper.parseCommentTimestamp(comment['timestamp']);
         if (timestamp == null) continue;
@@ -95,7 +121,9 @@ class AnalyticsRepository {
               text: (comment['text'] ?? '').toString(),
               userId:
                   (comment['userId'] ?? comment['user_id'] ?? '').toString(),
-              timestamp: timestamp,
+              // Метка для показа/группировки по дню — в Костанайском времени
+              // (UTC+5). Фильтрация месяца выше идёт по исходному UTC.
+              timestamp: toKostanayTime(timestamp),
               taskId: taskId,
               orderId: orderId,
               workplaceId: stageId,
@@ -133,11 +161,21 @@ class AnalyticsRepository {
     dayComments.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
     final events = TaskAnalyticsMapper.buildEvents(
-        currentRows, monthStart, monthEnd, reference);
+        currentRows, monthStart, monthEnd, reference,
+        helpersByTask: helpersByTask);
     final prevSpeeds =
         TaskAnalyticsMapper.buildPreviousSpeeds(prevRows, monthStart, reference);
+    // Тираж по рабочим местам — отдельной величиной: суммировать выработку
+    // людей нельзя, на станках у каждого записан полный тираж.
+    final workplaceStageTotals = TaskAnalyticsMapper.buildWorkplaceStageTotals(
+        currentRows, monthStart, monthEnd);
 
-    return (events: events, prevSpeeds: prevSpeeds, dayComments: dayComments);
+    return (
+      events: events,
+      prevSpeeds: prevSpeeds,
+      dayComments: dayComments,
+      workplaceStageTotals: workplaceStageTotals,
+    );
   }
 
   Future<List<AnalyticsEvent>> loadEventsForMonth(AnalyticsMonth month,
@@ -163,7 +201,8 @@ class AnalyticsRepository {
     while (true) {
       final List<dynamic> page = await _client
           .from('tasks')
-          .select('id, stage_id, order_id, captured_by_workplace_id, comments')
+          .select(
+              'id, stage_id, order_id, captured_by_workplace_id, assignees, comments')
           .order('created_at', ascending: true)
           .range(offset, offset + pageSize - 1);
       if (page.isEmpty) break;

@@ -22,7 +22,9 @@ import 'modules/warehouse/supplier_provider.dart';
 import 'modules/warehouse/warehouse_provider.dart';
 import 'my_app.dart';
 import 'services/error_log_service.dart';
+import 'services/order_edit_http_client.dart';
 import 'utils/http_overrides.dart';
+import 'widgets/brand_mark.dart';
 
 Future<void> main() async {
   runZonedGuarded(
@@ -131,6 +133,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
         await Supabase.initialize(
           url: supabaseUrl,
           anonKey: supabaseAnonKey,
+          httpClient: OrderEditHttpClient(Uri.parse(supabaseUrl)),
           headers: {
             'X-Supabase-Client-Platform-Version':
                 'Microsoft Windows 11 10.0 (Build 26100)',
@@ -169,26 +172,31 @@ class _BootstrapAppState extends State<BootstrapApp> {
   @override
   Widget build(BuildContext context) {
     if (!_isReady) {
+      // Экран запуска — первое, что видит сотрудник. Вместо голого индикатора
+      // здесь логотип компании: он же дублирует иконку приложения, поэтому
+      // запуск не выглядит «безымянным».
       return MaterialApp(
+        debugShowCheckedModeBanner: false,
         theme: appTheme,
         home: Scaffold(
+          backgroundColor: Colors.white,
           body: Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(32),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  const Text('Инициализация приложения...'),
+                  // Только логотип: индикатор загрузки здесь не нужен,
+                  // инициализация занимает секунды.
+                  const AnimatedBrandLockup(height: 104),
                   if (_fatalError != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 40),
                     Text(
-                      'Ошибка запуска: $_fatalError',
+                      'Не удалось запустить приложение:\n$_fatalError',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.red),
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     ElevatedButton(
                       onPressed: _initialize,
                       child: const Text('Повторить'),
@@ -207,7 +215,19 @@ class _BootstrapAppState extends State<BootstrapApp> {
         ChangeNotifierProvider(create: (_) => WarehouseProvider()),
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
         ChangeNotifierProvider(create: (_) => PersonnelProvider()),
-        ChangeNotifierProvider(create: (_) => OrdersProvider()),
+        // lazy: false — единственный провайдер, которому это нужно.
+        //
+        // OrdersProvider в конструкторе регистрируется в
+        // StockAvailabilityRecheckCoordinator, и это ЕДИНСТВЕННЫЙ обработчик
+        // пересчёта обеспеченности заказов. По умолчанию провайдер создаётся
+        // при первом обращении, а обращаются к нему только экраны заказов,
+        // производства, задач и аналитики. На планшете кладовщика, который
+        // открывает один «Склад», провайдера не существовало — приход бумаги
+        // или краски проходил, координатор молча возвращал пустой Future, и
+        // заказ оставался в «Ожидании материалов». Менеджер за компьютером
+        // видел через realtime тот же старый статус: realtime только
+        // перечитывает заказы и ничего не пересчитывает.
+        ChangeNotifierProvider(create: (_) => OrdersProvider(), lazy: false),
         ChangeNotifierProvider(create: (_) => StageProvider()),
         ChangeNotifierProvider(create: (_) => ProductionQueueProvider()),
         ChangeNotifierProvider(create: (_) => TaskProvider()),
