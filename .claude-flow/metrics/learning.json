@@ -1,0 +1,17 @@
+{
+  "initialized": "2026-06-05T09:42:47.487Z",
+  "routing": {
+    "accuracy": 0,
+    "decisions": 0
+  },
+  "patterns": {
+    "shortTerm": 0,
+    "longTerm": 0,
+    "quality": 0
+  },
+  "sessions": {
+    "total": 0,
+    "current": null
+  },
+  "_note": "Intelligence grows as you use Ruflo"
+}

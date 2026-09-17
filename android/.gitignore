@@ -1,8 +1,6 @@
-gradle-wrapper.jar
+# Gradle wrapper намеренно в репозитории: чистый клон должен собираться.
 /.gradle
 /captures/
-/gradlew
-/gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
 .cxx/

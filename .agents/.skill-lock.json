@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "skills": {
+    "flutter-design": {
+      "source": "anilcancakir/my-claude-code",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/anilcancakir/my-claude-code.git",
+      "skillFolderHash": "",
+      "installedAt": "2026-06-05T07:12:55.174Z",
+      "updatedAt": "2026-06-05T07:14:02.312Z"
+    }
+  },
+  "dismissed": {}
+}

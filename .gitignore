@@ -57,12 +57,13 @@ app.*.map.json
 # Android build artifacts
 /android/build/
 
-# Claude / claude-flow tooling
-.claude/
-.claude-flow/
-.agents/
-.mcp.json
+# Claude / claude-flow tooling — конфиг в репозитории, локальное и архивы мимо.
+# settings.local.json содержит ключ Supabase — наружу не уходит.
+.claude/settings.local.json
 .claude.zip
+
+# Отдельный клон того же репозитория, случайно оказавшийся внутри проекта (653 МБ).
+/sheet_clone/
 
 # Supabase CLI local cache
 supabase/.temp/
